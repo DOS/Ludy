@@ -70,7 +70,7 @@ export interface LineWakeFeed {
 }
 // The most keys one check takes (the database's own limit), the most checks a pass makes for a grant, and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
 const FEED_KEYS_MAX = 200;
-const FEED_CHECKS_MAX = 4;
+const FEED_CHECKS_MAX = 8;
 const FEED_PER_TYPE = WAKE_ITEMS_MAX;
 
 export interface WakeSweepDeps {
@@ -232,8 +232,8 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
   };
   // The items that are new for the grant become events, each with its one key (stored with it). The candidates are taken in the reads' own urgency order (newest wait first, the window closing soonest first), the types
   // dealt round-robin so one type cannot fill the batch, and checked for newness in ONE `line_check` per grant of up to FEED_KEYS_MAX keys (a command writes an audit row, so one a pass, not one a type). The new ones are
-  // sent in that same order, at most FEED_PER_TYPE (WAKE_ITEMS_MAX) of a type; only when a type still has room and candidates are left is the next batch checked (at most FEED_CHECKS_MAX in a pass, which covers the 100
-  // rows a read gives for each of eight types). So a type whose newest items were all sent already never hides an older one that is new, and the rest go in the next pass.
+  // sent in that same order, at most FEED_PER_TYPE (WAKE_ITEMS_MAX) of a type; only when a type still has room and candidates are left is the next batch checked (at most FEED_CHECKS_MAX in a pass, which covers the up to 500
+  // rows the feed reads for each of eight types). So a type whose newest items were all sent already never hides an older one that is new, and the rest go in the next pass.
   const sendFeedItems = async (grant: WakeGrant, items: readonly LineWakeItem[]): Promise<number> => {
     if (items.length === 0) return 0;
     const lanes = new Map<string, LineWakeItem[]>();

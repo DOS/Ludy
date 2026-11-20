@@ -29,6 +29,8 @@ export const ENGAGE_WAKE_LOOKBACK_DAYS = 7;
 export const ENGAGE_WAKE_FRESH_HOURS = 24;
 // The most items one read returns for each rule (newest first).
 export const ENGAGE_WAKE_ROWS_MAX = 100;
+// The most pages the sweep reads of a rule in a pass (so at most 500 rows of a rule); a longer list is a person's to clear, and Home shows the first page.
+export const ENGAGE_WAKE_PAGES_MAX = 5;
 
 export const ENGAGE_WAKE_KINDS = ['direct', 'email'] as const;
 
@@ -49,6 +51,8 @@ export type EngageWakeConversations = z.infer<typeof zEngageWakeConversations>;
 export const zEngageWakeConversationsInput = z.strictObject({
   unansweredHours: zEngageWakeRules.shape.unansweredHours,
   replyWindowHours: zEngageWakeRules.shape.replyWindowHours,
+  // Where in each list to start: a read gives at most ENGAGE_WAKE_ROWS_MAX rows of a rule, so the sweep asks for the next page (the same offset for every list) while a list came back full.
+  offset: z.number().int().min(0).max(ENGAGE_WAKE_PAGES_MAX * ENGAGE_WAKE_ROWS_MAX).default(0),
 });
 
 // What the CRM's read answers (crm.wake.facts).
@@ -59,7 +63,7 @@ export const zEngageWakeCrm = z.strictObject({
   bookingsTomorrow: z.array(z.strictObject({ bookingId: zId, on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })).max(ENGAGE_WAKE_ROWS_MAX),
 });
 export type EngageWakeCrm = z.infer<typeof zEngageWakeCrm>;
-export const zEngageWakeCrmInput = z.strictObject({});
+export const zEngageWakeCrmInput = z.strictObject({ offset: z.number().int().min(0).max(ENGAGE_WAKE_PAGES_MAX * ENGAGE_WAKE_ROWS_MAX).default(0) });
 
 // The day in Vietnam's calendar (UTC+7, no daylight saving) an instant falls on.
 export const vietnamDayOf = (instant: string | Date): string => new Date((typeof instant === 'string' ? Date.parse(instant) : instant.getTime()) + 7 * 3_600_000).toISOString().slice(0, 10);

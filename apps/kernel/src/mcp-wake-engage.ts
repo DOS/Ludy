@@ -16,7 +16,7 @@
 //   ads.daily_cap_over              a day that spent more than its share of a daily cap (from ads.mcp.flags)           window: the day
 //   ads.monthly_cap_over            a day that spent more than its share of a monthly cap (from ads.mcp.flags)         window: the day
 import { money, toMoney } from '@crove/l10n-vn';
-import { vietnamDayOf, zEngageWakeConversations, zEngageWakeCrm, zAdsFlag, type AdsFlag, type EngageWakeConversations, type EngageWakeCrm } from '@crove/kernel-contract';
+import { ENGAGE_WAKE_PAGES_MAX, ENGAGE_WAKE_ROWS_MAX, vietnamDayOf, zEngageWakeConversations, zEngageWakeCrm, zAdsFlag, type AdsFlag, type EngageWakeConversations, type EngageWakeCrm } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { McpWakeLinePlan } from '@crove/kernel';
 import type { LineWakeFeed, LineWakeItem, WakeGrant } from './mcp-wake-sweep.ts';
@@ -105,6 +105,20 @@ async function readOrNull<T>(runtime: Runtime, name: string, input: unknown, gra
   }
 }
 
+// A read gives one page of at most ENGAGE_WAKE_ROWS_MAX rows of each list, so the next page is asked for while any list came back full (at most ENGAGE_WAKE_PAGES_MAX pages), and the pages are put together: no
+// qualifying thread, quote or booking is hidden behind the first hundred. `lists` names the lists of the answer; `parse` holds it to the contract.
+async function readPages<T>(runtime: Runtime, name: string, base: Record<string, unknown>, grant: WakeGrant, plan: McpWakeLinePlan, parse: (raw: unknown) => T | null, merge: (pages: T[]) => T, full: (page: T) => boolean): Promise<T | null> {
+  const pages: T[] = [];
+  for (let page = 0; page < ENGAGE_WAKE_PAGES_MAX; page += 1) {
+    const raw = await readOrNull<unknown>(runtime, name, { ...base, offset: page * ENGAGE_WAKE_ROWS_MAX }, grant, plan);
+    const parsed = raw === null ? null : parse(raw);
+    if (parsed === null) break;
+    pages.push(parsed);
+    if (!full(parsed)) break;
+  }
+  return pages.length === 0 ? null : merge(pages);
+}
+
 export function engageWakeFeed(runtime: Runtime, now: () => Date = () => new Date()): LineWakeFeed {
   return {
     types: ['engage.conversation_new', 'engage.conversation_unanswered', 'engage.reply_window_closing', 'engage.quote_unanswered', 'engage.booking_tomorrow', 'social.post_comment_new', 'ads.pace_over', 'ads.daily_cap_over', 'ads.monthly_cap_over'],
@@ -118,18 +132,40 @@ export function engageWakeFeed(runtime: Runtime, now: () => Date = () => new Dat
       const inboxOn = !plan.appsOff.includes('social');
       if ((engage || social) && inboxOn) {
         // The inbox's rules: one read for the four (and so one scan of the threads).
-        const raw = await readOrNull<unknown>(runtime, 'kernel.wake.conversations', { unansweredHours: plan.unansweredHours, replyWindowHours: plan.replyWindowHours }, grant, plan);
-        const parsed = raw === null ? null : zEngageWakeConversations.safeParse(raw);
-        if (parsed?.success) {
-          for (const it of conversationItems(parsed.data)) {
+        const read = await readPages<EngageWakeConversations>(
+          runtime,
+          'kernel.wake.conversations',
+          { unansweredHours: plan.unansweredHours, replyWindowHours: plan.replyWindowHours },
+          grant,
+          plan,
+          (raw) => {
+            const parsed = zEngageWakeConversations.safeParse(raw);
+            return parsed.success ? parsed.data : null;
+          },
+          (pages) => ({ newInbound: pages.flatMap((p) => p.newInbound), unanswered: pages.flatMap((p) => p.unanswered), replyWindow: pages.flatMap((p) => p.replyWindow), comments: pages.flatMap((p) => p.comments) }),
+          (p) => [p.newInbound, p.unanswered, p.replyWindow, p.comments].some((list) => list.length >= ENGAGE_WAKE_ROWS_MAX),
+        );
+        if (read) {
+          for (const it of conversationItems(read)) {
             if (it.type.startsWith('engage.') ? engage : social) out.push(it);
           }
         }
       }
       if (engage) {
-        const raw = await readOrNull<unknown>(runtime, 'crm.wake.facts', {}, grant, plan);
-        const parsed = raw === null ? null : zEngageWakeCrm.safeParse(raw);
-        if (parsed?.success) out.push(...crmItems(parsed.data));
+        const crm = await readPages<EngageWakeCrm>(
+          runtime,
+          'crm.wake.facts',
+          {},
+          grant,
+          plan,
+          (raw) => {
+            const parsed = zEngageWakeCrm.safeParse(raw);
+            return parsed.success ? parsed.data : null;
+          },
+          (pages) => ({ quoteSteps: pages.flatMap((p) => p.quoteSteps), bookingsTomorrow: pages.flatMap((p) => p.bookingsTomorrow) }),
+          (p) => p.quoteSteps.length >= ENGAGE_WAKE_ROWS_MAX || p.bookingsTomorrow.length >= ENGAGE_WAKE_ROWS_MAX,
+        );
+        if (crm) out.push(...crmItems(crm));
       }
       if (ads) {
         const raw = await readOrNull<{ flags?: unknown }>(runtime, 'ads.mcp.flags', {}, grant, plan);

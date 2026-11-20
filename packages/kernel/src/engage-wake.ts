@@ -8,7 +8,7 @@
 //     as the inbox's own "Hôm nay cần bạn" item does.
 // "Unanswered" is the inbox's own state (see conversation-signals.ts): status `new`, and the wait counts from the oldest customer message after the last message of the org's. The instant is when Ludy stored the
 // message, never the sender's clock. A message the customer removed or the org hid does not wait.
-import { sql } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 import {
   ENGAGE_WAKE_DEFAULTS,
@@ -30,8 +30,6 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
-// Threads one look reads (the status `new` threads of the org, the most recent wait first): a longer inbox is a person's to clear.
-const THREADS_MAX = 500;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The org's N
@@ -84,10 +82,7 @@ export const conversationWakeRulesSet = defineCommand({
 interface ThreadRow {
   id: string;
   kind: 'direct' | 'email' | 'comment_thread';
-  external_post_id: string | null;
-  reply_window_until: Date | null;
-  since: Date | null;
-  answered_before: boolean;
+  at: Date;
 }
 
 export const wakeConversations = defineQuery({
@@ -108,10 +103,15 @@ export const wakeConversations = defineQuery({
     const me = grant ? null : ctx.actor.userId;
     const now = new Date();
     const lookback = new Date(now.getTime() - ENGAGE_WAKE_LOOKBACK_DAYS * DAY_MS);
+    const freshFrom = new Date(now.getTime() - ENGAGE_WAKE_FRESH_HOURS * HOUR_MS);
+    const waitedUntil = new Date(now.getTime() - input.unansweredHours * HOUR_MS);
     const windowEnd = new Date(now.getTime() + input.replyWindowHours * HOUR_MS);
-    const { rows } = await sql<ThreadRow>`
-      SELECT c.id, c.kind, c.external_post_id, c.reply_window_until, w.since,
-             EXISTS (SELECT 1 FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out') AS answered_before
+    const mine = me === null ? sql`` : sql`AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`;
+    // One rule at a time, each with its own eligibility, order and bound, so threads that do not qualify for a rule can never crowd out the ones that do; a page is ENGAGE_WAKE_ROWS_MAX rows from `offset`.
+    // `since` is the oldest customer message after the last message of the org's; a message the customer removed or the org hid does not wait. The cut on last_inbound_at is cheap and safe (a wait that began
+    // after the lookback means the last customer message is after it too, with a day of slack for the platform's clock).
+    const waiting = (extra: RawBuilder<unknown>, order: RawBuilder<unknown>, since: Date) => sql<ThreadRow>`
+      SELECT c.id, c.kind, w.since AS at
       FROM crove_kernel.conversation c
       CROSS JOIN LATERAL (
         SELECT pg_catalog.min(m.received_at) AS since
@@ -122,43 +122,35 @@ export const wakeConversations = defineQuery({
                                 WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
       ) w
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND w.since IS NOT NULL
-        -- Cheap cut before the lateral look at messages is paid for: a wait that began after the lookback means the last customer message is after it too (a day of slack for the platform's clock).
-        AND (c.last_inbound_at IS NULL OR c.last_inbound_at >= ${new Date(lookback.getTime() - DAY_MS)}::timestamptz)
-        AND w.since >= ${lookback}::timestamptz
-        ${me === null ? sql`` : sql`AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`}
-      ORDER BY w.since DESC, c.id
-      LIMIT ${THREADS_MAX}`.execute(ctx.trx);
-
-    // The reply windows are chosen on their own, soonest first, before any list is cut: a thread with a few minutes left is never hidden behind a longer inbox.
+        AND (c.last_inbound_at IS NULL OR c.last_inbound_at >= ${new Date(since.getTime() - DAY_MS)}::timestamptz)
+        ${extra} ${mine}
+      ORDER BY ${order}
+      LIMIT ${ENGAGE_WAKE_ROWS_MAX} OFFSET ${input.offset}`.execute(ctx.trx);
+    const unanswered = await waiting(sql`AND c.kind IN ('direct', 'email') AND w.since <= ${waitedUntil}::timestamptz AND w.since >= ${lookback}::timestamptz`, sql`w.since DESC, c.id`, lookback);
+    const newInbound = await waiting(
+      sql`AND c.kind IN ('direct', 'email') AND w.since >= ${freshFrom}::timestamptz
+          AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out')`,
+      sql`w.since DESC, c.id`,
+      freshFrom,
+    );
+    const comments = await waiting(sql`AND c.kind = 'comment_thread' AND c.external_post_id IS NOT NULL AND w.since >= ${freshFrom}::timestamptz`, sql`w.since DESC, c.id`, freshFrom);
+    // The reply windows are chosen on their own, soonest first: a thread with a few minutes left is never hidden behind a longer inbox.
     const closing = await sql<{ id: string; reply_window_until: Date }>`
       SELECT c.id, c.reply_window_until
       FROM crove_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND c.reply_window_until > ${now}::timestamptz AND c.reply_window_until <= ${windowEnd}::timestamptz
         AND EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
                     AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0))
-        ${me === null ? sql`` : sql`AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`}
+        ${mine}
       ORDER BY c.reply_window_until, c.id
-      LIMIT ${ENGAGE_WAKE_ROWS_MAX}`.execute(ctx.trx);
-
-    const freshFrom = new Date(now.getTime() - ENGAGE_WAKE_FRESH_HOURS * HOUR_MS).getTime();
-    const waitedUntil = now.getTime() - input.unansweredHours * HOUR_MS;
-    const out: EngageWakeConversations = { newInbound: [], unanswered: [], replyWindow: [], comments: [] };
-    const push = <T>(list: T[], row: T) => {
-      if (list.length < ENGAGE_WAKE_ROWS_MAX) list.push(row);
-    };
-    for (const r of rows) {
-      const since = r.since as Date;
-      const direct = r.kind === 'direct' || r.kind === 'email';
-      // A first message nobody has answered yet, in the last day.
-      if (direct && !r.answered_before && since.getTime() >= freshFrom) push(out.newInbound, { id: r.id, kind: r.kind, since: since.toISOString() });
-      // A customer who waited past N hours (less than the lookback: the query already cut older ones).
-      if (direct && since.getTime() <= waitedUntil && since >= lookback) push(out.unanswered, { id: r.id, kind: r.kind, since: since.toISOString() });
-      // A comment under a published post nobody has answered, in the last day.
-      if (r.kind === 'comment_thread' && r.external_post_id !== null && since.getTime() >= freshFrom) push(out.comments, { id: r.id, since: since.toISOString() });
-    }
-    out.replyWindow = closing.rows.map((r) => ({ id: r.id, closesAt: r.reply_window_until.toISOString() }));
+      LIMIT ${ENGAGE_WAKE_ROWS_MAX} OFFSET ${input.offset}`.execute(ctx.trx);
     // The answer is held to the contract before it leaves: ids, a kind and instants, and nothing else.
-    return zEngageWakeConversations.parse(out);
+    return zEngageWakeConversations.parse({
+      newInbound: newInbound.rows.map((r) => ({ id: r.id, kind: r.kind, since: r.at.toISOString() })),
+      unanswered: unanswered.rows.map((r) => ({ id: r.id, kind: r.kind, since: r.at.toISOString() })),
+      replyWindow: closing.rows.map((r) => ({ id: r.id, closesAt: r.reply_window_until.toISOString() })),
+      comments: comments.rows.map((r) => ({ id: r.id, since: r.at.toISOString() })),
+    });
   },
 });
 

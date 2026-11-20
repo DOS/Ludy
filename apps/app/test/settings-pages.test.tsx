@@ -112,7 +112,7 @@ describe('which cards each tab of Settings holds', () => {
   });
 
   it('Ứng dụng: the switches, the retention of conversations and the minutes templates', () => {
-    expect(cardsOf(render('SettingsAppsPage'))).toEqual(['org-apps', 'conversation-retention', 'engage-wake-rules', 'minutes-templates']);
+    expect(cardsOf(render('SettingsAppsPage'))).toEqual(['org-apps', 'conversation-retention', 'minutes-templates']);
   });
 
   it('Lịch hẹn: the working hours and the booking event types', () => {
@@ -125,7 +125,7 @@ describe('which cards each tab of Settings holds', () => {
   });
 
   it('Bán hàng: the deal board, for owners and admins', () => {
-    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['sales-process']);
+    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['sales-process', 'engage-wake-rules']);
     expect(cardsOf(render('SettingsSalesPage', 'member'))).toEqual([]);
     // A member opens the tab and is told why it holds nothing for them, not an empty page.
     expect(render('SettingsSalesPage', 'member')).toContain('Chỉ chủ sở hữu và quản trị viên thay đổi được các mục này.');

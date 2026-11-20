@@ -86,6 +86,25 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       return id;
     };
 
+    // Many threads in one connection (for the paging tests): `n` threads of one kind whose customer began waiting `startMinutes` ago and then each a minute later.
+    const bulk = (n: number, kind: 'direct' | 'comment_thread', startMinutes: number) =>
+      admin(async (c) => {
+        const ids: string[] = [];
+        for (let i = 0; i < n; i += 1) {
+          const id = randomUUID();
+          const identity = randomUUID();
+          const minutes = startMinutes - i;
+          await c.query(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, $4)`, [orgId, identity, `u-${id.slice(0, 8)}`, CANARY]);
+          await c.query(
+            `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, external_post_id, identity_id, status, last_seq, last_inbound_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', 1, now() - make_interval(mins => $8))`,
+            [orgId, id, channel, kind, `t-${id}`, kind === 'comment_thread' ? `post-${id.slice(0, 8)}` : null, identity, minutes],
+          );
+          await c.query(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, 1, 'in', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'contact', 'x', true)`, [orgId, id, channel, kind, minutes]);
+          ids.push(id);
+        }
+        return ids;
+      });
+
     // The CRM: a party, a deal that is called by a name, a quote sent `sentDaysAgo` days ago.
     const party = () => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, CANARY]).then((r) => (r[0] as { id: string }).id);
     const dealWithQuote = async (sentDaysAgo: number) => {
@@ -100,9 +119,9 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     };
     const raise = () => worker.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: SYSTEM, orgId });
     // A confirmed booking at 10:00 tomorrow, Vietnam's calendar.
-    const bookingTomorrow = async () => {
+    const bookingTomorrow = async (hour = 10) => {
       const tomorrow = new Date(Date.now() + 86_400_000 + 7 * 3_600_000).toISOString().slice(0, 10);
-      const starts = new Date(`${tomorrow}T10:00:00+07:00`);
+      const starts = new Date(`${tomorrow}T${String(hour).padStart(2, '0')}:00:00+07:00`);
       const ends = new Date(starts.getTime() + 1_800_000);
       const type = randomUUID();
       const event = randomUUID();
@@ -131,7 +150,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     };
     // Makes the signals due again (the sweep looks at a grant's signals every five minutes).
     const due = (grantId: string) => rows("UPDATE crove_kernel.agent_grant_wake SET signals_checked_at = now() - interval '6 minutes' WHERE grant_id = $1", [grantId]);
-    return { orgId, owner, member, exec, query, thread, dealWithQuote, raise, bookingTomorrow, wakeUp, deliveries, sweep, due };
+    return { orgId, owner, member, exec, query, thread, bulk, dealWithQuote, raise, bookingTomorrow, wakeUp, deliveries, sweep, due };
   }
 
   beforeAll(async () => {
@@ -208,6 +227,12 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(home.items.some((i) => i.id.startsWith('next-step:') && i.title.key === 'crm.quoteUnanswered')).toBe(true);
     const facts = await worker.query<EngageWakeCrm>('crm.wake.facts', {}, { actor: { type: 'user', userId: o.owner, aal: 'aal1', mcp: { grantId, clientId: 'wake-up', clientName: 'Wake-up', scopes: ALL_SCOPES } }, orgId: o.orgId });
     expect(facts.bookingsTomorrow).toEqual([{ bookingId: booking.id, on: booking.on }]);
+    // A page is read from an offset, so a long list is reached in pages: a second booking is on the first page, and nothing is on the one after a hundred.
+    const second = await o.bookingTomorrow(14);
+    const asGrant = { actor: { type: 'user' as const, userId: o.owner, aal: 'aal1' as const, mcp: { grantId, clientId: 'wake-up', clientName: 'Wake-up', scopes: ALL_SCOPES } }, orgId: o.orgId };
+    expect((await worker.query<EngageWakeCrm>('crm.wake.facts', {}, asGrant)).bookingsTomorrow.map((b) => b.bookingId).sort()).toEqual([booking.id, second.id].sort());
+    expect((await worker.query<EngageWakeCrm>('crm.wake.facts', { offset: 1 }, asGrant)).bookingsTomorrow).toHaveLength(1);
+    expect((await worker.query<EngageWakeCrm>('crm.wake.facts', { offset: 100 }, asGrant)).bookingsTomorrow).toHaveLength(0);
   });
 
   it('reads the inbox rules as ids and instants only, for the member (Home) and for the grant, and Home shows them with no agent', async () => {
@@ -358,6 +383,31 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(counts).toEqual([20, 40, 45, 45]);
   });
 
+  it('reaches every qualifying thread however many do not qualify or come first: each rule has its own eligibility and bound, and the next page is read while a list is full', async () => {
+    const o = await org();
+    // 105 fresh comment threads (newer, and not the unanswered rule's), one direct thread that waited five hours, and 105 direct threads that waited over four hours.
+    const comments = await o.bulk(105, 'comment_thread', 120);
+    const lone = await o.thread({ kind: 'direct', sinceMinutes: 5 * 60 });
+    const input = { unansweredHours: 4, replyWindowHours: 3 };
+    const first = await o.query<EngageWakeConversations>(o.owner, 'kernel.wake.conversations', input);
+    expect(first.unanswered.map((r) => r.id)).toEqual([lone]);
+    expect(first.comments).toHaveLength(100);
+    const second = await o.query<EngageWakeConversations>(o.owner, 'kernel.wake.conversations', { ...input, offset: 100 });
+    expect(second.comments).toHaveLength(5);
+    expect(new Set([...first.comments, ...second.comments].map((r) => r.id))).toEqual(new Set(comments));
+    // The feed puts the pages together: every comment thread is an event over the passes, none is lost behind the first hundred.
+    const grantId = await o.wakeUp();
+    const feed = engageWakeFeed(worker);
+    const types = ['social.post_comment_new', 'engage.conversation_unanswered'];
+    for (let pass = 0; pass < 8; pass += 1) {
+      await o.sweep([feed]);
+      await o.due(grantId);
+    }
+    const sent = (await o.deliveries(grantId)).filter((r) => types.includes(r.type));
+    expect(sent.filter((r) => r.type === 'social.post_comment_new')).toHaveLength(105);
+    expect(sent.filter((r) => r.type === 'engage.conversation_unanswered').map((r) => r.body.data.conversation_id)).toEqual([lone]);
+  });
+
   it('lets a key the database refuses stop only its own type, and logs it by code, never by value', async () => {
     const o = await org();
     const grantId = await o.wakeUp();
@@ -409,11 +459,13 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     await expect(worker.execute('kernel.mcp.wake.line_check', { grantId, keys: [`engage_conversation_new:Nguyễn Văn A:2026-11-19`] }, { actor: { type: 'system', component: 'kernel.mcp.wake' }, orgId: o.orgId })).rejects.toBeTruthy();
     const fresh = await worker.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId, keys: [key, `engage_booking_tomorrow:${conversation}:2026-11-20`] }, { actor: { type: 'system', component: 'kernel.mcp.wake' }, orgId: o.orgId });
     expect(fresh.fresh).toEqual([`engage_booking_tomorrow:${conversation}:2026-11-20`]);
-    // A grant that is not for this line gets the refusal of the scope, not an event.
+    // A grant that is not for this line gets the refusal of the scope, not an event: an otherwise valid event for the read-only grant (its own id and grant in the body, the type's own key), and the one failure is the scope.
     const readOnly = await o.wakeUp(['ludy.read']);
-    await expect(
-      worker.execute('kernel.mcp.wake.enqueue', { id: randomUUID(), grantId: readOnly, type: 'engage.booking_tomorrow', body: body(randomUUID(), 'engage.booking_tomorrow', { booking_id: conversation, on: '2026-11-20' }) }, { actor: { type: 'system', component: 'kernel.mcp.wake' }, orgId: o.orgId }),
-    ).rejects.toBeTruthy();
+    const eventId = randomUUID();
+    const booking = randomUUID();
+    const scoped = { id: eventId, grantId: readOnly, type: 'engage.booking_tomorrow', body: { id: eventId, type: 'engage.booking_tomorrow', created_at: new Date().toISOString(), org: o.orgId, grant: readOnly, data: { booking_id: booking, on: '2026-11-20' } }, keys: [`engage_booking_tomorrow:${booking}:2026-11-20`] };
+    await expect(worker.execute('kernel.mcp.wake.enqueue', scoped, { actor: { type: 'system', component: 'kernel.mcp.wake' }, orgId: o.orgId })).rejects.toMatchObject({ code: 'MCP_WAKE_SCOPE', status: 403 });
+    expect(await o.deliveries(readOnly)).toHaveLength(0);
   });
 
   it('has the same types in the catalog as in the registry in code, each with the scope of its line', async () => {
