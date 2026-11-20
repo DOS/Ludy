@@ -268,9 +268,10 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     for (const bad of [{ taxCode: '000000' }, { taxCode: '12345678901' }, { taxCode: 'AB12345678' }, { insuranceNumber: '000000' }, { insuranceNumber: 'SI-1234567890' }, { birthDate: '1899-12-31' }, { birthDate: '2999-01-01' }]) {
       await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...bad }), JSON.stringify(bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
-    // An edit changes and clears them; the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
+    // An edit changes and clears them (including clearing birthDate back to null); the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
     const INS2 = '123456789012';
-    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2 });
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2, birthDate: null });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: null, taxCode: null, insuranceNumber: INS2 });
     const year = Number(vietnamToday().slice(0, 4));
     await o.exec(o.admin, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });
     await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });

@@ -558,4 +558,68 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     }
     expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(3);
   });
+
+  it('pins expected runtime-role grants and immutable identity columns on crove_hr tables (#2720)', async () => {
+    const EXPECTED_HR_TABLE_GRANTS: Record<string, readonly string[]> = {
+      candidate: ['INSERT', 'SELECT'],
+      department: ['INSERT', 'SELECT'],
+      job_opening: ['INSERT', 'SELECT'],
+      payroll_bank_template: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_dependent: ['INSERT', 'SELECT'],
+      payroll_employee: ['INSERT', 'SELECT'],
+      payroll_employment: ['INSERT', 'SELECT'],
+      payroll_leave_entry: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_line: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_run: ['INSERT', 'SELECT'],
+    };
+    const TENANT_ROLES = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'];
+    const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
+
+    const found = await rows<{ relname: string; role: string; ops: string[] }>(
+      `SELECT c.relname,
+              r.rolname AS role,
+              ARRAY(
+                SELECT op
+                  FROM pg_catalog.unnest($3::text[]) AS op
+                 WHERE pg_catalog.has_table_privilege(r.oid, c.oid, op)
+                 ORDER BY op
+              ) AS ops
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN pg_catalog.pg_roles r
+        WHERE n.nspname = 'crove_hr'
+          AND c.relname = ANY($1::text[])
+          AND r.rolname = ANY($2::text[])
+        ORDER BY 1, 2`,
+      [Object.keys(EXPECTED_HR_TABLE_GRANTS), [...TENANT_ROLES, 'crove_auth_reader'], ALL_OPS],
+    );
+    expect(new Set(found.map((r) => r.relname))).toEqual(new Set(Object.keys(EXPECTED_HR_TABLE_GRANTS)));
+    for (const row of found) {
+      if (row.role === 'crove_auth_reader') {
+        expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual([]);
+      } else {
+        expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual(EXPECTED_HR_TABLE_GRANTS[row.relname]);
+      }
+    }
+
+    // Employment terms are append-only (no column UPDATE), and pay run / line identity and adjustment target columns are never updatable by tenant roles.
+    const forbiddenColumnUpdates = await rows<{ relname: string; attname: string; role: string }>(
+      `SELECT c.relname, a.attname, r.rolname AS role
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+         CROSS JOIN pg_catalog.pg_roles r
+        WHERE n.nspname = 'crove_hr'
+          AND r.rolname = ANY($1::text[])
+          AND pg_catalog.has_column_privilege(r.oid, c.oid, a.attnum, 'UPDATE')
+          AND (
+            c.relname = 'payroll_employment'
+            OR (c.relname = 'payroll_run' AND a.attname IN ('org_id', 'id', 'legal_entity_id', 'month', 'created_by', 'created_at'))
+            OR (c.relname = 'payroll_line' AND a.attname IN ('org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'kind', 'adjusts_run_id', 'note', 'created_by', 'created_at'))
+          )
+        ORDER BY 1, 2, 3`,
+      [[...TENANT_ROLES, 'crove_auth_reader']],
+    );
+    expect(forbiddenColumnUpdates).toEqual([]);
+  });
 });
