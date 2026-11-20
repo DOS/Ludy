@@ -52,7 +52,7 @@ export function catalogueItems(rows: ReadonlyArray<Readonly<Record<string, unkno
   });
 }
 
-const result = (kind: 'party' | 'item', ref: string, found: ReadonlyArray<{ code: string; id: string | null }>): MisaAmisMatchResult => {
+const result = (kind: 'party' | 'item' | 'stock', ref: string, found: ReadonlyArray<{ code: string; id: string | null }>): MisaAmisMatchResult => {
   const [only] = found;
   return found.length === 1 && only ? { kind, ref, state: 'matched', code: only.code, entryId: only.id } : { kind, ref, state: found.length === 0 ? 'unknown' : 'ambiguous', code: null, entryId: null };
 };
@@ -69,12 +69,75 @@ export function matchParties(wanted: Iterable<string>, catalogue: readonly Catal
 
 /** Each wanted item code against the active catalogue entries with exactly that code (case and spelling as MISA has it). */
 export function matchItems(wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
+  return matchByCode('item', wanted, catalogue);
+}
+
+function matchByCode(kind: 'item' | 'stock', wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
   const byCode = new Map<string, CatalogueItem[]>();
   for (const entry of catalogue) {
     if (!entry.active) continue;
     byCode.set(entry.code, [...(byCode.get(entry.code) ?? []), entry]);
   }
-  return [...new Set(wanted)].sort().map((code) => result('item', code, byCode.get(code) ?? []));
+  return [...new Set(wanted)].sort().map((code) => result(kind, code, byCode.get(code) ?? []));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Units and stocks (#4125, MISA ASP only): a line names its unit and its stock by id, so Ludy's unit names (catalogue 4) and stock codes (catalogue 3) are looked up. A unit has no code, it is found by its name the way
+// a person reads it the same (Unicode composed, lower case, one space between words); nothing looser: none or two are not a match and a person picks.
+
+/** A unit name as the comparison reads it (NFC, lower case, single spaces, trimmed); null when empty or over 64 characters (the key's limit). */
+export function normalizeUnitName(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+  return name.length >= 1 && name.length <= 64 ? name : null;
+}
+
+export interface CatalogueUnit {
+  /** The catalogue's own unit name (kept as MISA has it, up to 100 characters). */
+  name: string;
+  id: string | null;
+  active: boolean;
+}
+
+/** The catalogue's unit rows (get_dictionary data_type 4); a row without a name cannot be matched to. */
+export function catalogueUnits(rows: ReadonlyArray<Readonly<Record<string, unknown>>>): CatalogueUnit[] {
+  return rows.flatMap((row) => {
+    const name = codeOf(row.unit_name);
+    return name === null ? [] : [{ name, id: idOf(row.unit_id), active: activeOf(row.inactive) }];
+  });
+}
+
+/** The catalogue's stock rows (get_dictionary data_type 3), by stock code; the stock's name is read again by the push and never kept. */
+export function catalogueStocks(rows: ReadonlyArray<Readonly<Record<string, unknown>>>): CatalogueItem[] {
+  return rows.flatMap((row) => {
+    const code = codeOf(row.stock_code);
+    return code === null ? [] : [{ code, id: idOf(row.stock_id), active: activeOf(row.inactive) }];
+  });
+}
+
+/** Each wanted unit name (as Ludy writes it) against the active catalogue units of the same name; the result is keyed by the normalized name. */
+export function matchUnits(wanted: Iterable<string>, catalogue: readonly CatalogueUnit[]): MisaAmisMatchResult[] {
+  const byName = new Map<string, CatalogueUnit[]>();
+  for (const entry of catalogue) {
+    const key = entry.active ? normalizeUnitName(entry.name) : null;
+    if (key !== null) byName.set(key, [...(byName.get(key) ?? []), entry]);
+  }
+  const keys = new Set<string>();
+  for (const raw of wanted) {
+    const key = normalizeUnitName(raw);
+    if (key !== null) keys.add(key);
+  }
+  return [...keys].sort().map((key) => {
+    const found = byName.get(key) ?? [];
+    const [only] = found;
+    if (found.length === 1 && only) return { kind: 'unit' as const, ref: key, state: 'matched' as const, code: only.name, entryId: only.id };
+    return { kind: 'unit' as const, ref: key, state: found.length === 0 ? ('unknown' as const) : ('ambiguous' as const), code: null, entryId: null };
+  });
+}
+
+/** Each wanted stock code against the active catalogue stocks with exactly that code. */
+export function matchStocks(wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
+  return matchByCode('stock', wanted, catalogue);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -77,7 +77,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   try {
     // A party a person already confirmed by name is checked (its code still in the catalogue), not asked again.
     const confirmedIds = new Set(target.confirmed.map((c) => c.partyId));
-    const found = await matchCatalogue(client, connection, { ...wanted, names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
+    const found = await matchCatalogue(client, connection, { taxCodes: wanted.taxCodes, itemCodes: wanted.itemCodes, ...(target.product === 'asp' ? { unitNames: wanted.unitNames, stockCodes: wanted.stockCodes } : {}), names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
     // Only the verdicts that change something are recorded: a confirmed name that still holds is a row that stays, so it is not a result (and does not count toward the results a record may hold).
     results = found.filter((r) => !(r.kind === 'party_name' && r.state === 'confirmed'));
   } catch (error) {
