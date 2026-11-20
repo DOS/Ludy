@@ -209,12 +209,12 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     await expect(o.exec(o.viewer, 'notes.template.create', { name: 'Không được' })).rejects.toMatchObject({ status: 403 });
     const update = (userId: string, templateId: string, revision: number, visibility: 'private' | 'org', name = 'Đổi tên') =>
       o.exec<NoteTemplateWritten>(userId, 'notes.template.update', { templateId, revision, name, title: '', body: 'Mới', tags: [], visibility });
-    await expect(update(o.other, shared.templateId, 1, 'org')).rejects.toMatchObject({ code: 'TEMPLATE_AUTHOR_ONLY', status: 403 });
-    await expect(update(o.owner, priv.templateId, 1, 'private')).rejects.toMatchObject({ code: 'TEMPLATE_NOT_FOUND', status: 404 });
+    await expect(update(o.other, shared.templateId, 1, 'org')).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_AUTHOR_ONLY', status: 403 });
+    await expect(update(o.owner, priv.templateId, 1, 'private')).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_NOT_FOUND', status: 404 });
     expect(await update(o.admin, shared.templateId, 1, 'org', 'Biên bản họp')).toEqual({ templateId: shared.templateId, revision: 2 });
-    await expect(update(o.admin, shared.templateId, 2, 'private')).rejects.toMatchObject({ code: 'TEMPLATE_AUTHOR_ONLY' });
-    await expect(update(o.author, shared.templateId, 1, 'org')).rejects.toMatchObject({ code: 'TEMPLATE_REVISION_CONFLICT', status: 409 });
-    await expect(o.exec(o.other, 'notes.template.delete', { templateId: shared.templateId })).rejects.toMatchObject({ code: 'TEMPLATE_AUTHOR_ONLY' });
+    await expect(update(o.admin, shared.templateId, 2, 'private')).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_AUTHOR_ONLY' });
+    await expect(update(o.author, shared.templateId, 1, 'org')).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_REVISION_CONFLICT', status: 409 });
+    await expect(o.exec(o.other, 'notes.template.delete', { templateId: shared.templateId })).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_AUTHOR_ONLY' });
     await o.exec(o.owner, 'notes.template.delete', { templateId: shared.templateId });
     expect(await names(o.author)).toEqual(['Mẫu riêng']);
     // Audit rows keep markers, never template text.

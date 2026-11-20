@@ -642,6 +642,7 @@ export function NotesPage() {
       todos: t('export.todos'),
       todoLists: t('export.todoLists'),
       templates: t('export.templates'),
+      templateTitle: t('templates.titleLabel'),
       private: t('export.private'),
       shared: t('export.shared'),
       tags: t('export.tags'),

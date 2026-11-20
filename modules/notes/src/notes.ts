@@ -734,7 +734,7 @@ interface TemplateRow {
 
 const TEMPLATE_COLUMNS = ['id', 'author_user_id', 'visibility', 'name', 'title', 'body', 'tags', 'revision', 'created_at', 'updated_at'] as const;
 
-const templateNotFound = () => new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu ghi chú này');
+const templateNotFound = () => new DomainError('NOTE_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu ghi chú này');
 
 function templateView(r: TemplateRow, userId: string): NoteTemplate {
   return {
@@ -768,7 +768,7 @@ async function loadTemplateForChange(ctx: CommandContext, templateId: string, ch
 function assertMayManageTemplate(ctx: CommandContext, row: TemplateRow, userId: string): void {
   if (row.author_user_id === userId) return;
   if (row.visibility === 'org' && ctx.role !== null && MANAGERS.includes(ctx.role)) return;
-  throw new DomainError('TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu, hoặc chủ sở hữu và quản trị viên với mẫu dùng chung, mới sửa hoặc xóa được mẫu này');
+  throw new DomainError('NOTE_TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu, hoặc chủ sở hữu và quản trị viên với mẫu dùng chung, mới sửa hoặc xóa được mẫu này');
 }
 
 const templateTarget = (input: { templateId: string }) => ({ type: 'notes.template', id: input.templateId });
@@ -837,11 +837,11 @@ export const noteTemplateUpdate = defineCommand({
     const before = await loadTemplateForChange(ctx, input.templateId, (row) => {
       assertMayManageTemplate(ctx, row, userId);
       if (row.author_user_id !== userId && input.visibility !== 'org') {
-        throw new DomainError('TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu mới chuyển được mẫu dùng chung về riêng tư');
+        throw new DomainError('NOTE_TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu mới chuyển được mẫu dùng chung về riêng tư');
       }
     });
     if (before.revision !== input.revision) {
-      throw new DomainError('TEMPLATE_REVISION_CONFLICT', 409, 'Mẫu ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
+      throw new DomainError('NOTE_TEMPLATE_REVISION_CONFLICT', 409, 'Mẫu ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
         revision: before.revision,
       });
     }

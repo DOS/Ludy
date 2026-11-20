@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Quick note templates picker, save-as-template dialog, and 20-snapshot version history drawer (#3562, Notes v2 E3).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   NOTE_BODY_MAX,
@@ -160,7 +160,7 @@ export function NewFromTemplateButton({
   const t = useTranslations('notes');
   const common = useTranslations('common');
   const { locale } = useLocaleSetting();
-  const api = useRef(clientForOrg(slug)).current;
+  const api = useMemo(() => clientForOrg(slug), [slug]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<NoteTemplate | null>(null);
   const [editForm, setEditForm] = useState<TemplateFormState>({
@@ -495,7 +495,7 @@ export function SaveAsTemplateButton({
 }) {
   const t = useTranslations('notes');
   const common = useTranslations('common');
-  const api = useRef(clientForOrg(slug)).current;
+  const api = useMemo(() => clientForOrg(slug), [slug]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<TemplateFormState>({
     name: '',
@@ -620,7 +620,7 @@ export function NoteVersionHistoryButton({
   const t = useTranslations('notes');
   const common = useTranslations('common');
   const f = useFormat();
-  const api = useRef(clientForOrg(slug)).current;
+  const api = useMemo(() => clientForOrg(slug), [slug]);
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState<'unified' | 'side'>('unified');
@@ -727,7 +727,7 @@ export function NoteVersionHistoryButton({
                           onClick={() => setSelectedId(v.id)}
                           data-testid={`note-version-item-${v.revision}`}
                           aria-pressed={active}
-                          className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors ${
+                          className={`flex max-md:min-h-11 w-full items-center justify-between gap-2 rounded-md border border-transparent px-2.5 py-2 text-left text-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 ${
                             active ? 'bg-accent text-accent-foreground font-medium' : 'hover:bg-muted/60 text-foreground'
                           }`}
                         >

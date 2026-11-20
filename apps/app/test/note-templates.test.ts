@@ -11,6 +11,7 @@ const EXPORT_WORDS: NotesExportWords = {
   todos: 'Việc',
   todoLists: 'Danh sách việc',
   templates: 'Mẫu ghi chú',
+  templateTitle: 'Tiêu đề mặc định',
   private: 'Riêng tư',
   shared: 'Dùng chung',
   tags: 'Nhãn',
@@ -130,6 +131,7 @@ describe('notesMarkdown with templates (#3562)', () => {
     expect(md).toContain('## Mẫu ghi chú (1)');
     expect(md).toContain('### Mẫu họp sáng');
     expect(md).toContain('- Riêng tư: tpl-1');
+    expect(md).toContain('- Tiêu đề mặc định: Họp đầu ngày');
     expect(md).toContain('## Việc hôm nay');
   });
 });

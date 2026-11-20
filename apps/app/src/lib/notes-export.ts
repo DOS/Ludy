@@ -10,6 +10,7 @@ export interface NotesExportWords {
   todos: string;
   todoLists: string;
   templates?: string | undefined;
+  templateTitle?: string | undefined;
   private: string;
   shared: string;
   tags: string;
@@ -86,7 +87,7 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
     out.push('', `## ${w.templates ?? 'Templates'} (${templates.length})`);
     for (const tpl of templates) {
       out.push('', `### ${flat(tpl.name)}`, '', line(tpl.visibility === 'org' ? w.shared : w.private, tpl.id));
-      if (tpl.title.trim()) out.push(line('Title', flat(tpl.title)));
+      if (tpl.title.trim()) out.push(line(w.templateTitle ?? 'Title', flat(tpl.title)));
       if (tpl.tags.length > 0) out.push(line(w.tags, tpl.tags.join(', ')));
       out.push(line(w.created, tpl.createdAt), line(w.updated, tpl.updatedAt));
       if (tpl.body.trim()) out.push('', tpl.body.trimEnd());
