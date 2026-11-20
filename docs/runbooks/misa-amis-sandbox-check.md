@@ -50,4 +50,4 @@ If a push goes wrong in the sandbox: nothing is deleted from Ludy; a voucher MIS
 
 ## What the push does not log or store
 
-No access code, token, ClientID, party name or amount is in a row, an audit fact, an event, a ledger row or a log line: ids, codes, dates, counts and states. The one piece of MISA's own text kept is the capped `reason` of a refused voucher, shown escaped and never logged.
+No access code, token, ClientID, party name or amount is in a row, an audit fact, an event, a ledger row or a log line: ids, codes, dates, counts and states. Of what the push receives from MISA, the one piece of its text kept is the capped `reason` of a refused voucher, shown escaped and never logged; the other MISA text kept is a name proposal's `candidate_name` (item 19), which is not part of the push and is never logged or audited.
