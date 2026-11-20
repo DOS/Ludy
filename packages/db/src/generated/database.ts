@@ -1470,6 +1470,9 @@ export interface FinanceMisaAmisMatchTable {
   catalogue_code: ColumnType<string | null, string | null, NotGranted>;
   catalogue_id: ColumnType<string | null, string | null, NotGranted>;
   checked_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  candidate_name: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_finance.misa_amis_push */

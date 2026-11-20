@@ -317,6 +317,30 @@ describe('blockers: what AMIS needs that was not given', () => {
     expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
   });
 
+  it('writes a party with no tax code with the code a person confirmed for its name (#4124), and blocks it while the name is only proposed or the confirmation is of another party', () => {
+    const PARTY = '77777777-7777-4777-8777-777777777777';
+    const person = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const confirmed = ctx({ partyCodes: new Map(), partyNameCodes: new Map([[PARTY, 'KH_NVA']]) });
+    expect(purchaseServiceAmisVouchers(person, confirmed).blockers).toEqual([]);
+    expect(JSON.stringify(purchaseServiceAmisVouchers(person, confirmed))).toContain('KH_NVA');
+    // Not confirmed (a proposal is not a match): blocked as before. A confirmation for another party does not count. A party with no id cannot be named.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map() })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map([['88888888-8888-4888-8888-888888888888', 'KH_KHAC']]) })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    const noId = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    expect(purchaseServiceAmisVouchers(noId, confirmed).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A tax code that is PRESENT but cannot be used (not 10 or 13 digits: a mistyped one) is never matched by name, whatever is confirmed: it stays a blocker for a person to fix. Only none, or a blank one, is a party with no tax code.
+    for (const taxCode of ['12345', '010123456', 'không có', '0101234564-0']) {
+      const unusable = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(unusable, confirmed).blockers, taxCode).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    }
+    for (const taxCode of [null, '', '   ']) {
+      const blank = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(blank, confirmed).blockers, String(taxCode)).toEqual([]);
+    }
+    // No check done: nothing is judged, as before.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
   it('names an item code the catalogue does not have, by line, once a check is done; with no check it judges nothing', () => {
     const checked = ctx({ itemCodes: new Set(['KHAC']) });
     expect(purchaseServiceAmisVouchers(purchase(), checked).blockers.map((b) => [b.code, b.lineNo])).toEqual([

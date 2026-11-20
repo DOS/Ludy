@@ -19,7 +19,7 @@ import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
 import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
 import { DomainError } from '@crove/kernel-runtime';
-import { normalizeTaxCode } from './misa-amis-matching.ts';
+import { hasNoTaxCode, normalizeTaxCode } from './misa-amis-matching.ts';
 import { canonical } from './domain/money.ts';
 import {
   cashVoucherNo,
@@ -62,6 +62,8 @@ export interface AmisContext {
   defaultUnitName: string;
   /** Party tax code (digits only, see normalizeTaxCode) -> the party's code in AMIS; null when no check against the catalogue is done, which is not the same as "no match". */
   partyCodes: ReadonlyMap<string, string> | null;
+  /** A party of Ludy with no tax code, by its id, to the code a person confirmed for it by name (S3b, #4124); absent or null when none. */
+  partyNameCodes?: ReadonlyMap<string, string> | null;
   /** The party tax codes (digits only) the check found more than one active catalogue entry for; a party in it is blocked as `party_code_ambiguous`, not `party_code_unknown` (#4114). Absent or null: none is known to be. */
   partyAmbiguous?: ReadonlySet<string> | null;
   /** The item codes the catalogue has (active, exactly one entry); null when no check is done. A line whose item code is not in it is blocked (`item_code_unknown`). */
@@ -168,15 +170,16 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
  * The AMIS party code of a party, by tax code; undefined when the dictionary says there is none; null when it was not read.
  * Before a catalogue check a party with no tax code (a private person) is null: it is sent by name and address without a code
  * and is no blocker (whether AMIS accepts that is UNCONFIRMED, see the top of this file). After a check it is undefined, a
- * blocker like any party the catalogue does not have: there is nothing to match it on, and matching it by name as a proposal
- * a person confirms is S3b (#4124), so until then the check does not let it through unjudged.
+ * blocker like any party the catalogue does not have, unless a person confirmed the catalogue entry a name match proposed for it
+ * (S3b, #4124): then it is that entry's code. A proposal not yet confirmed is a blocker too.
  */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
   if (ctx.partyCodes === null) return null;
-  if (party.taxCode === null) return undefined;
-  // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched, so it is as unknown as one the catalogue does not have.
+  // The catalogue is matched on the tax code's digits. A party whose tax code is present but cannot be used (not 10 or 13 digits) is a blocker for a person to fix, never matched by name; only a party with no tax
+  // code at all (none, or blank) takes the code a person confirmed for its name.
   const key = normalizeTaxCode(party.taxCode);
-  return key === null ? undefined : ctx.partyCodes.get(key);
+  if (key !== null) return ctx.partyCodes.get(key);
+  return hasNoTaxCode(party.taxCode) && party.id ? ctx.partyNameCodes?.get(party.id) : undefined;
 }
 
 /** Why a party the catalogue gave no code for is blocked: several active entries carry its tax code (`party_code_ambiguous`: the fix is in MISA, deactivate the duplicate), or none does (`party_code_unknown`). */

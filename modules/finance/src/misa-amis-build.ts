@@ -18,7 +18,7 @@ import {
   type AmisMapping,
 } from './misa-amis-vouchers.ts';
 import { goodsPurchaseRows, salesRows, servicePurchaseRows, type CashVoucher, type PurchaseVoucher, type SalesVoucher } from './misa.ts';
-import { normalizeTaxCode } from './misa-amis-matching.ts';
+import { hasNoTaxCode, normalizeTaxCode, type WantedName } from './misa-amis-matching.ts';
 
 /** Stands where the AMIS branch will be, so the mapper does not report it missing; the digest leaves the branch out, and the worker writes the real one. */
 export const AMIS_PLACEHOLDER_BRANCH = '00000000-0000-4000-8000-000000000000';
@@ -43,6 +43,8 @@ export interface AmisMatches {
   // The party tax codes the check found several active entries for (#4114); absent for a caller that does not read them.
   partyAmbiguous?: ReadonlySet<string> | null;
   itemCodes: ReadonlySet<string> | null;
+  /** The codes a person confirmed for parties with no tax code, by party id (S3b, #4124). */
+  partyNameCodes?: ReadonlyMap<string, string> | null;
 }
 
 /**
@@ -56,6 +58,7 @@ export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_
   salesItemCode: ask.salesItemCode ?? null,
   defaultUnitName: 'Lần',
   partyCodes: matches?.partyCodes ?? null,
+  partyNameCodes: matches?.partyNameCodes ?? null,
   partyAmbiguous: matches?.partyAmbiguous ?? null,
   itemCodes: matches?.itemCodes ?? null,
 });
@@ -64,6 +67,8 @@ export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_
 export interface AmisWanted {
   taxCodes: string[];
   itemCodes: string[];
+  /** The parties with no tax code at all (none or blank), by id and name as Ludy has them: looked up by name (S3b, #4124). The names are for the worker's memory and the comparison, never stored. */
+  names: WantedName[];
 }
 
 /**
@@ -77,9 +82,12 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
   let loaded = 0;
   const taxCodes = new Set<string>();
   const itemCodes = new Set<string>();
-  const wantParty = (party: { taxCode: string | null } | null | undefined) => {
+  const names = new Map<string, string>();
+  const wantParty = (party: { id?: string | null; name?: string; taxCode: string | null } | null | undefined) => {
     const key = normalizeTaxCode(party?.taxCode);
     if (key !== null) taxCodes.add(key);
+    // Only a party with no tax code at all is looked up by name: a tax code that is present and unusable stays a blocker (party_code_unknown) for a person to fix, never matched to a same-name entry.
+    else if (party?.id && party.name && hasNoTaxCode(party.taxCode)) names.set(party.id, party.name);
   };
   if (ask.kind === 'purchase_services' || ask.kind === 'purchase_goods') {
     const vouchers = await query<PurchaseVoucher[]>('finance.vouchers.purchases', range);
@@ -121,7 +129,7 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
       entries.push({ sourceId: v.sourceId, sourceType, mapping: cashAmisVouchers(v, ctx) });
     }
   }
-  return { entries, loaded, wanted: { taxCodes: [...taxCodes].sort(), itemCodes: [...itemCodes].sort() } };
+  return { entries, loaded, wanted: { taxCodes: [...taxCodes].sort(), itemCodes: [...itemCodes].sort(), names: [...names].map(([partyId, name]) => ({ partyId, name })).sort((a, b) => a.partyId.localeCompare(b.partyId)) } };
 }
 
 // Canonical JSON: keys sorted, an exact number written as its own text, nothing else that JSON.stringify would leave to chance. Only plain data goes in (the mapper's output).

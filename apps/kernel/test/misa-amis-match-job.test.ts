@@ -73,11 +73,11 @@ interface Harness {
   executed: Array<{ name: string; input: unknown }>;
   opened: unknown[];
 }
-function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown; product?: 'amis' | 'asp' } = {}): Harness {
+function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown; recorded?: boolean; product?: 'amis' | 'asp' } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const opened: unknown[] = [];
-  const target = options.target ?? { action: 'check', id: CONNECTION, product: options.product ?? 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK, requestedAt: REQUESTED };
+  const target = options.target ?? { action: 'check', id: CONNECTION, product: options.product ?? 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK, requestedAt: REQUESTED, confirmed: [] };
   const runtime = {
     query: async (name: string, input: unknown) => {
       queries.push({ name, input });
@@ -88,7 +88,7 @@ function harness(options: { target?: unknown; vouchers?: unknown[]; credential?:
     },
     execute: async (name: string, input: unknown) => {
       executed.push({ name, input });
-      return {};
+      return options.recorded === undefined ? {} : { recorded: options.recorded };
     },
   } as unknown as Runtime;
   const broker = {
@@ -152,8 +152,15 @@ describe('the MISA AMIS match check job', () => {
     expect(everything).not.toContain(CLIENT_ID);
   });
 
+  it('says a record was dropped (the request was filed again while it read) so the worker runs it again, and says nothing when the record was taken', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(harness({ recorded: false }), fakeAmis())).toMatchObject({ state: 'done', superseded: true });
+    expect(await run(harness({ recorded: true }), fakeAmis())).not.toHaveProperty('superseded');
+    log.mockRestore();
+  });
+
   it('asks only for the catalogue a batch needs: no tax code and no item code, no call at all', async () => {
-    const h = harness({ vouchers: [purchase(null)], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
+    const h = harness({ vouchers: [purchase(null)], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED, confirmed: [] } });
     const amis = fakeAmis();
     expect(await run(h, amis)).toEqual({ state: 'done', results: 0 });
     expect(amis.calls).toEqual([]);
@@ -168,7 +175,7 @@ describe('the MISA AMIS match check job', () => {
   it('reads a catalogue of more than a page page by page, and finds an entry on a later page', async () => {
     const many = Array.from({ length: 2500 }, (_, i) => ({ account_object_code: `KH${i}`, company_tax_code: `09${String(i).padStart(8, '0')}` }));
     many[2300] = { account_object_code: 'NCC_ABC', company_tax_code: '0101234564' };
-    const h = harness({ vouchers: [purchase('0101234564')], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
+    const h = harness({ vouchers: [purchase('0101234564')], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED, confirmed: [] } });
     const amis = fakeAmis({ parties: many });
     expect(await run(h, amis)).toEqual({ state: 'done', results: 1 });
     expect(amis.calls.filter((c) => c.path === '/amiskt/v1/get_dictionary').map((c) => c.body.skip)).toEqual([0, 1000, 2000]);
@@ -177,7 +184,7 @@ describe('the MISA AMIS match check job', () => {
 
   it('fails as catalogue_too_large, recording nothing found, when the catalogue is longer than 20 pages: a party past the cut must not read as unknown', async () => {
     const endless = Array.from({ length: 20_000 }, (_, i) => ({ account_object_code: `KH${i}`, company_tax_code: `09${String(i).padStart(8, '0')}` }));
-    const h = harness({ vouchers: [purchase('0999999999')], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
+    const h = harness({ vouchers: [purchase('0999999999')], target: { action: 'check', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED, confirmed: [] } });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const amis = fakeAmis({ parties: endless });
     expect(await run(h, amis)).toEqual({ state: 'failed', failure: 'catalogue_too_large' });
@@ -230,6 +237,74 @@ describe('the MISA AMIS match check job', () => {
     const base = { connectionId: CONNECTION, state: 'done', failure: null, results: [{ kind: 'party', ref: '0101234564', state: 'matched', code: 'NCC_A', entryId: '6F9619FF-8B86-D011-B42D-00C04FC964FF' }] };
     expect(zMisaAmisMatchRecordCheck.safeParse({ ...base, requestedAt: REQUESTED }).success).toBe(true);
     expect(zMisaAmisMatchRecordCheck.safeParse(base).success).toBe(false);
+  });
+});
+
+describe('the name proposals of the check (#4124)', () => {
+  const PARTY1 = '77777777-7777-4777-8777-777777777777';
+  const PARTY2 = '88888888-8888-4888-8888-888888888888';
+  const NAME = 'Công ty TNHH Một Thành Viên Hoa Sen';
+  const vendor = (id: string, name: string, taxCode: string | null = null) => ({ ...purchase(taxCode), sourceId: id, vendor: { id, name, taxCode, address: null } });
+  const entry = (code: string, name: string, over: Record<string, unknown> = {}) => ({ account_object_code: code, account_object_id: ENTRY1, account_object_name: name, address: PLANTED_ADDRESS, company_tax_code: '0301234565', ...over });
+  const asNames = (confirmed: Array<{ partyId: string; code: string }> = []) => ({ action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK, requestedAt: REQUESTED, confirmed });
+  const recordedResults = (h: Harness) => (recorded(h)[0] as { results: Array<Record<string, unknown>> }).results;
+  const dictionaryReads = (amis: ReturnType<typeof fakeAmis>) => amis.calls.filter((c) => c.path === '/amiskt/v1/get_dictionary').map((c) => c.body.data_type);
+
+  it('proposes the one active entry of the same name for a party with no tax code, with its name on that row alone, reading the party catalogue once', async () => {
+    const h = harness({ target: asNames(), vouchers: [vendor(PARTY1, `  ${NAME.toUpperCase()}  `), vendor(PARTY2, 'Một Tên Không Có Trong Danh Mục', '0101234564')] });
+    const amis = fakeAmis({ parties: [entry('KH_HOA_SEN', NAME), entry('KH_KHAC', 'Tên khác hẳn'), entry('NCC_ABC', 'Tên bất kỳ', { company_tax_code: '0101234564' })] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done' });
+    // One read of the party catalogue answers the tax code and the name questions; the items are not read (the ask has no item code that a voucher uses beyond the service code).
+    expect(dictionaryReads(amis).filter((t) => t === 1)).toHaveLength(1);
+    expect(recordedResults(h)).toEqual(
+      expect.arrayContaining([
+        { kind: 'party_name', ref: PARTY1, state: 'name_proposal', code: 'KH_HOA_SEN', entryId: ENTRY1, candidateName: NAME },
+        { kind: 'party', ref: '0101234564', state: 'matched', code: 'NCC_ABC', entryId: ENTRY1 },
+      ]),
+    );
+    // The entry's address and tax code are never in what is recorded, and only the proposal row has a name.
+    const text = JSON.stringify(recorded(h));
+    for (const secret of [PLANTED_ADDRESS, '0301234565']) expect(text, secret).not.toContain(secret);
+    expect(recordedResults(h).filter((r) => r.candidateName != null)).toHaveLength(1);
+  });
+
+  it('proposes nothing for several entries of the name (ambiguous, no code, no name), none, an inactive entry or a name too short; a name differing by a diacritic is another name', async () => {
+    const h = harness({ target: asNames(), vouchers: [vendor(PARTY1, NAME), vendor(PARTY2, 'Hoa Sen Tinh'), vendor('99999999-9999-4999-8999-999999999999', 'Ab')] });
+    const amis = fakeAmis({ parties: [entry('A1', NAME), entry('A2', NAME.toLowerCase()), entry('B1', 'Hoa Sen Tinh', { inactive: true }), entry('C1', 'Hoa Sen Tình'), entry('D1', 'Ab')] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await run(h, amis);
+    expect(recordedResults(h).filter((r) => r.kind === 'party_name')).toEqual([{ kind: 'party_name', ref: PARTY1, state: 'ambiguous', code: null, entryId: null }]);
+  });
+
+  it('checks a name a person confirmed instead of asking for it again: kept while its code is in the catalogue and active, gone when it is not', async () => {
+    const vouchers = [vendor(PARTY1, NAME), vendor(PARTY2, 'Một Tên Khác')];
+    // PARTY1 is confirmed with KH_HOA_SEN, which the catalogue still has: kept, and no proposal for it even though another entry has its name. PARTY2 is confirmed with a code that is inactive now: gone.
+    const confirmed = [{ partyId: PARTY1, code: 'KH_HOA_SEN' }, { partyId: PARTY2, code: 'KH_CU' }];
+    const h = harness({ target: asNames(confirmed), vouchers });
+    const amis = fakeAmis({ parties: [entry('KH_HOA_SEN', 'Tên đã đổi trong danh mục'), entry('KH_MOI', NAME), entry('KH_CU', 'Một Tên Khác', { inactive: true })] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await run(h, amis);
+    // Only the verdict that changes something is recorded: PARTY1's row stays as it is (nothing to say, and no proposal although another entry has its name), PARTY2's goes.
+    expect(recordedResults(h).filter((r) => r.kind === 'party_name')).toEqual([{ kind: 'party_name', ref: PARTY2, state: 'unknown', code: null, entryId: null }]);
+  });
+
+  it('reads the party catalogue for a confirmed name even when no voucher has a tax code to look up, and writes no name or entry detail into the log', async () => {
+    const h = harness({ target: asNames([{ partyId: PARTY1, code: 'KH_HOA_SEN' }]), vouchers: [] });
+    const amis = fakeAmis({ parties: [entry('KH_HOA_SEN', NAME)] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await run(h, amis);
+    expect(dictionaryReads(amis)).toEqual([1]);
+    const logged = JSON.stringify([...log.mock.calls, ...warn.mock.calls]);
+    for (const secret of [NAME, PLANTED_ADDRESS, 'KH_HOA_SEN']) expect(logged, secret).not.toContain(secret);
+  });
+
+  it('refuses a record whose states do not belong to the kind, or a proposal without its name or a name without a proposal', () => {
+    const base = { connectionId: CONNECTION, state: 'done', failure: null, requestedAt: REQUESTED };
+    const row = (over: Record<string, unknown>) => ({ ...base, results: [{ kind: 'party_name', ref: PARTY1, state: 'name_proposal', code: 'KH', entryId: null, candidateName: NAME, ...over }] });
+    expect(zMisaAmisMatchRecordCheck.safeParse(row({})).success).toBe(true);
+    expect(zMisaAmisMatchRecordCheck.safeParse(row({ candidateName: 'x'.repeat(201) })).success).toBe(false);
   });
 });
 

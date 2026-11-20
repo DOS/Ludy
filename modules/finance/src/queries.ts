@@ -437,7 +437,7 @@ interface VoucherSource {
   entryDate: string;
   description: string;
   invoice: { series: string; number: string; date: string };
-  party: { name: string; taxCode: string | null; address: string | null };
+  party: { id: string; name: string; taxCode: string | null; address: string | null };
   vatAmount: string;
   lines: Array<{
     lineNo: number;
@@ -476,6 +476,7 @@ async function loadVouchers(
       'd.invoice_number',
       'd.invoice_date',
       'd.vat_amount',
+      'p.id as party_id',
       'p.name as party_name',
       'p.tax_code as party_tax_code',
       'p.address as party_address',
@@ -527,7 +528,7 @@ async function loadVouchers(
     entryDate: r.entry_date,
     description: r.description,
     invoice: { series: r.invoice_series, number: r.invoice_number, date: r.invoice_date },
-    party: { name: r.party_name, taxCode: r.party_tax_code, address: r.party_address },
+    party: { id: r.party_id, name: r.party_name, taxCode: r.party_tax_code, address: r.party_address },
     vatAmount: r.vat_amount,
     lines: byDocument.get(r.document_id) ?? [],
   }));
