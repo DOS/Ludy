@@ -306,6 +306,8 @@ export interface RpcChannels {
   misaAsp?: boolean;
   // The push of vouchers to MISA AMIS is switched on too (MISA_AMIS_PUSH=on, after the sandbox check, #3902). Off: the confirm route answers 404 and the screen draws no button.
   misaAmisPush?: boolean;
+  // The push to MISA ASP is switched on too (MISA_ASP_PUSH=on, #4113): its own switch, so AMIS's push and ASP's are on or off apart.
+  misaAspPush?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
@@ -3024,6 +3026,9 @@ export function createRpcHandler(
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
+      // Engage's wake rules (#3862): the org's N, read by every member and set by owners and admins in Settings.
+      wakeRules: os.conversations.wakeRules.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.wake_rules', {}, { actor, orgId }))),
+      setWakeRules: os.conversations.setWakeRules.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.wake_rules_set', input, { actor, orgId }))),
       eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
       channelCounts: os.conversations.channelCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.channel_counts', input, { actor, orgId }))),
       eraseChannel: os.conversations.eraseChannel.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_channel', input)),
@@ -3102,8 +3107,22 @@ export function createRpcHandler(
       misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
         // `guard` turns the DomainError into its own status (404), as inside inFinance, but nothing of the org is read before the switch is.
         guard(async () => {
-          if (!channels?.misaAmis || !channels.misaAmisPush) throw new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA AMIS chưa được bật trên hệ thống này');
-          return inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push', input, { actor, orgId }));
+          const disabled = () => new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA chưa được bật trên hệ thống này');
+          const amisOn = channels?.misaAmis === true && channels.misaAmisPush === true;
+          const aspOn = channels?.misaAsp === true && channels.misaAspPush === true;
+          // With both switches off nothing is read at all (F4): the same 404 for everyone.
+          if (!amisOn && !aspOn) throw disabled();
+          return inFinance(context, async (orgId, actor) => {
+            // Where only one product's push is on, a connection of the other product answers the same 404 as a deployment with that push off (the product is the connection's own, read in the caller's context).
+            if (!amisOn || !aspOn) {
+              const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+              // `zId` accepts a capital letter in a UUID, the database answers lower case: compare without the case, or a connection of the off product would pass the gate.
+              const wanted = input.connectionId.toLowerCase();
+              const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+              if (product !== undefined && !(product === 'asp' ? aspOn : amisOn)) throw disabled();
+            }
+            return runtime.execute('finance.misa_amis.push', input, { actor, orgId });
+          });
         }),
       ),
       // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
@@ -3548,7 +3567,7 @@ export function createRpcHandler(
     // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). The access code the customer made in AMIS is sealed here, once; the command gets the envelope, never the code, and only a
     // worker may open it. The connector is on only when this deployment holds the integrator's ClientID: without it no connect is possible and the card says the connector is off.
     misaAmis: {
-      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true, pushOffered: channels?.misaAmis === true && channels?.misaAmisPush === true, aspOffered: channels?.misaAsp === true }))),
+      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true, pushOffered: channels?.misaAmis === true && channels?.misaAmisPush === true, aspOffered: channels?.misaAsp === true, aspPushOffered: channels?.misaAsp === true && channels?.misaAspPush === true }))),
       connections: {
         list: os.misaAmis.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis_connection.list', {}, { actor, orgId }))),
         connect: os.misaAmis.connections.connect.handler(({ context, input }) =>
@@ -3586,7 +3605,8 @@ export function createRpcHandler(
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối MISA AMIS');
             // The product of the connection decides which ClientID must be held; a connection that is not found falls through to the command's own 404.
             const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
-            const product = rows.find((r) => r.id === input.id)?.product;
+            const wanted = input.id.toLowerCase();
+            const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
             if (product !== undefined && !(product === 'asp' ? channels?.misaAsp : channels?.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
             return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
           }),
@@ -3597,7 +3617,12 @@ export function createRpcHandler(
         check: os.misaAmis.matches.check.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA AMIS');
-            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            // The check job reads the catalogue with the AMIS client and opens only an access code sealed for AMIS (misa-amis-match-job.ts): it is for an AMIS connection, and a connection of MISA ASP answers the same 404 as
+            // a deployment without the connector, so the check is never queued to fail. (ASP's own catalogue check is a later slice; its client and provider are the push job's.)
+            const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+            const wanted = input.id.toLowerCase();
+            const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+            if (!channels?.misaAmis || product === 'asp') throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Việc kiểm tra chứng từ với danh mục MISA ASP chưa có' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
             return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
           }),
         ),

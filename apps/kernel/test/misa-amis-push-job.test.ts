@@ -94,12 +94,12 @@ function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher
   const begins: Harness['begins'] = [];
   const opened: unknown[] = [];
   const script = [...(options.script ?? [])];
-  const target = options.target ?? { action: 'push', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
+  const target = options.target ?? { action: 'push', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
   const runtime = {
     query: async (name: string, input: unknown) => {
       queries.push({ name, input });
       if (name === 'finance.misa_amis.push_target') return target;
-      if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
+      if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: (target as { product?: string }).product === 'asp' ? 'accounting_misa_asp' : 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
       if (name === 'finance.vouchers.cash') return typeof options.vouchers === 'function' ? options.vouchers() : (options.vouchers ?? [cash()]);
       if (name === 'finance.misa_amis_match.results') return options.matches ?? NO_MATCH_RESULTS;
       throw new Error(`unexpected query ${name}`);
@@ -753,5 +753,73 @@ describe('the MISA AMIS push job: when a chain gives up it says so, and a row on
     // At worst four requests (a token request, a save refused for its token, a second token request and a second save: the one renewal of an expired token), each at the deadline, then the rebuild of the batch
     // and the record, given two minutes.
     expect(PUSH_IN_FLIGHT_SECONDS).toBeGreaterThanOrEqual(4 * deadlineSeconds + 120);
+  });
+});
+
+// MISA ASP (#4113, S4 of #4103): the same steps with ASP's client on ASP's paths; the job opens only a code sealed for the connection's product, leaves a product it has no client for alone, and never asks MISA for results
+// of an ASP row (its results come by the callback or from a person).
+describe('the MISA AMIS push job: a MISA ASP connection', () => {
+  const aspTarget = { action: 'push', id: CONNECTION, product: 'asp', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
+  // The ASP client over a fake that answers on ASP's paths with the same envelope.
+  function fakeAsp() {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const transport: AmisTransport = async (request: AmisRequest) => {
+      const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      calls.push({ path, body });
+      if (request.headers.ClientID !== CLIENT_ID) return fail('InvalidAPPID');
+      if (path === '/asp/v1/token') return body.access_code === ACCESS_CODE && body.org_company_code === COMPANY ? ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' }) : fail('InvalidAccessToken');
+      if (request.headers['X-MISA-AccessToken'] !== 'token-1') return fail('InvalidToken');
+      if (path === '/asp/v1/get_dictionary') return ok([{ organization_unit_id: BRANCH, name: 'Trụ sở' }]);
+      if (path === '/asp/v1/save') return ok(null);
+      return fail('InvalidParam');
+    };
+    return { transport, calls, client: createAmisClient({ clientId: CLIENT_ID, product: 'asp', transport }) };
+  }
+  const runAsp = (h: Harness, deps: { client?: ReturnType<typeof createAmisClient> | null; aspClient?: ReturnType<typeof createAmisClient> | null }) =>
+    runMisaAmisPush({ runtime: h.runtime, broker: h.broker, client: deps.client ?? null, aspClient: deps.aspClient ?? null, now: () => new Date('2026-11-19T03:00:00Z') }, { orgId: ORG, connectionId: CONNECTION });
+
+  it('sends through the ASP client on ASP\'s paths, opens the code sealed for ASP, and records "sent"', async () => {
+    const rows = await approved([cash()]);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], target: aspTarget });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // The AMIS client is not even handed over: the product decides.
+    const out = await runAsp(h, { aspClient: asp.client });
+    expect(out).toMatchObject({ state: 'done', batches: 1, sent: 1, failed: 0, waiting: false });
+    expect(asp.calls.map((c) => c.path)).toEqual(['/asp/v1/token', '/asp/v1/get_dictionary', '/asp/v1/save']);
+    expect(h.opened).toEqual([{ sealed: { keyId: 'k1', envelope: Buffer.from('sealed') }, binding: { orgId: ORG, provider: 'accounting_misa_asp', externalAccountId: 'entity' } }]);
+    expect(records(h)).toEqual([{ connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'sent', reason: null }], call: { key: 'misa_amis:save:test', end: { state: 'succeeded' } } }]);
+  });
+
+  it('leaves a connection alone when the deployment has no client for its product, and opens nothing and calls no one', async () => {
+    const h = harness({ target: aspTarget });
+    const amis = fakeAmis();
+    // Only the AMIS client is on: an ASP connection is never pushed with it.
+    const out = await runAsp(h, { client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) });
+    expect(out).toEqual({ state: 'skipped', reason: 'product_off' });
+    expect(amis.calls).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(h.begins).toEqual([]);
+  });
+
+  it('opens no access code sealed for another provider: the AMIS code of an ASP connection is not read, and nothing is called', async () => {
+    const h = harness({ target: aspTarget, credential: () => ({ provider: 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') }) });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runAsp(h, { aspClient: asp.client })).toEqual({ state: 'credentials', waiting: false });
+    expect(h.opened).toEqual([]);
+    expect(asp.calls).toEqual([]);
+  });
+
+  it('never asks MISA for results of an ASP row: the job has no polling step, and the follow-up is not queued for a row that waits for the callback', async () => {
+    const h = harness({ target: aspTarget, script: [{ action: 'none', reason: 'nothing', waiting: false }] });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const out = await runAsp(h, { aspClient: asp.client });
+    expect(out).toMatchObject({ state: 'done', waiting: false });
+    expect(asp.calls).toEqual([]);
+    // Past the press's own one more look (round 1 has nothing left), the chain ends.
+    expect(pushFollowUp({ orgId: ORG, connectionId: CONNECTION, round: 1 }, out)).toBeNull();
   });
 });

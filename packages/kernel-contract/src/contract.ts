@@ -271,6 +271,7 @@ import {
   zSavedReplyUpdate,
   zConversationAddress,
 } from './conversations.ts';
+import { zEngageWakeRules, zEngageWakeRulesView } from './engage-wake.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -2367,6 +2368,9 @@ export const contract = {
     // admins, with a fresh second factor).
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    // Engage's wake rules (#3862): the org's N for the three rules that have one (every member reads, owners and admins set; set in Settings, never on the inbox screen).
+    wakeRules: oc.input(z.strictObject({})).output(zEngageWakeRulesView),
+    setWakeRules: oc.input(zEngageWakeRules).output(zEngageWakeRulesView),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
     // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
     // second factor; the channel must be disconnected first).

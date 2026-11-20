@@ -35,6 +35,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
 // A card of another app, or one with its own tests, as a marker: what is checked here is which tab holds it.
 const stub = (name: string) => () => <div data-card={name} />;
 vi.mock('../src/components/conversation-retention.tsx', () => ({ ConversationRetentionCard: stub('conversation-retention') }));
+vi.mock('../src/components/engage-wake-rules.tsx', () => ({ EngageWakeRulesCard: stub('engage-wake-rules') }));
 vi.mock('../src/components/extension-devices.tsx', () => ({ ExtensionDevices: stub('extension-devices') }));
 vi.mock('../src/components/meeting-platforms.tsx', () => ({ MeetingPlatforms: stub('meeting-platforms') }));
 vi.mock('../src/components/minutes-templates.tsx', () => ({ MinutesTemplatesCard: stub('minutes-templates') }));
@@ -124,7 +125,7 @@ describe('which cards each tab of Settings holds', () => {
   });
 
   it('Bán hàng: the deal board, for owners and admins', () => {
-    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['sales-process']);
+    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['sales-process', 'engage-wake-rules']);
     expect(cardsOf(render('SettingsSalesPage', 'member'))).toEqual([]);
     // A member opens the tab and is told why it holds nothing for them, not an empty page.
     expect(render('SettingsSalesPage', 'member')).toContain('Chỉ chủ sở hữu và quản trị viên thay đổi được các mục này.');

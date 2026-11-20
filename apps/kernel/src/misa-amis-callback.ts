@@ -9,7 +9,7 @@
 // own capped text for a refusal is the one thing stored, in the machinery table, until the relay is done with it). A verified message is answered 200 whatever its results are, so the answer never tells a caller
 // whether an org_refid exists; the API reads no tenant row at all. `batchError` and every other unsigned field are not passed on.
 import { sql } from 'kysely';
-import { readCallback } from '@crove/misa-amis';
+import { readCallbackAny, type AmisCallbackKey } from '@crove/misa-amis';
 import type { Runtime } from '@crove/kernel-runtime';
 
 // 1000 results of about 300 bytes each, with the envelope and MISA's error texts (each cut at 500 characters): well inside this.
@@ -20,8 +20,11 @@ export type MisaAmisCallbackOutcome =
   | { status: 401; code: 'WEBHOOK_SIGNATURE' }
   | { status: 400; code: 'WEBHOOK_MALFORMED' };
 
-export async function acceptMisaAmisCallback(runtime: Runtime, clientId: string, rawBody: string): Promise<MisaAmisCallbackOutcome> {
-  const read = readCallback(rawBody, clientId);
+// `keys` are the ClientIDs the deployment holds, one per product (MISA AMIS and MISA ASP post to the one address, #4103): the signature must verify under one of them and the envelope's `app_id` must be that one.
+// The product of the key that verified travels with the results (the enqueue of that product), so the relay can settle a voucher only for the product that signed. Nothing here, and nothing the route logs, says
+// which key matched or which failed.
+export async function acceptMisaAmisCallback(runtime: Runtime, keys: readonly AmisCallbackKey[], rawBody: string): Promise<MisaAmisCallbackOutcome> {
+  const read = readCallbackAny(rawBody, keys);
   if (!read.ok) return read.reason === 'signature' || read.reason === 'app_id' ? { status: 401, code: 'WEBHOOK_SIGNATURE' } : { status: 400, code: 'WEBHOOK_MALFORMED' };
   const { callback } = read;
   // A message that repeats a refid keeps its last result, as polling does; the relay records forward only, whatever the order.
@@ -30,10 +33,11 @@ export async function acceptMisaAmisCallback(runtime: Runtime, clientId: string,
   if (results.length === 0) return { status: 200 };
   // The envelope's company code is a hint the relay compares with the located connection's own code. MISA's text is kept for a refusal only.
   await runtime.orgless(async (db) => {
-    await sql`
-      SELECT crove_finance.misa_amis_callback_enqueue(
-        ${callback.orgCompanyCode}, ${results.map((r) => r.orgRefId)}::uuid[], ${results.map((r) => r.voucherType)}::integer[], ${results.map((r) => r.success)}::boolean[],
-        ${results.map((r) => r.errorCode)}::text[], ${results.map((r) => (r.success ? null : r.errorMessage))}::text[])`.execute(db);
+    const args = sql`${callback.orgCompanyCode}, ${results.map((r) => r.orgRefId)}::uuid[], ${results.map((r) => r.voucherType)}::integer[], ${results.map((r) => r.success)}::boolean[],
+        ${results.map((r) => r.errorCode)}::text[], ${results.map((r) => (r.success ? null : r.errorMessage))}::text[]`;
+    // One definer per product, each writing its own product on the machinery row: a result signed under one product's ClientID is never taken for the other's. Where both products hold the same ClientID the
+    // signature cannot tell them apart: the result is stored for each, and the claim finds the stored voucher only through a connection of that product, so only the real one's row is settled.
+    for (const product of read.products) await (product === 'asp' ? sql`SELECT crove_finance.misa_asp_callback_enqueue(${args})` : sql`SELECT crove_finance.misa_amis_callback_enqueue(${args})`).execute(db);
   });
   return { status: 200 };
 }
