@@ -38,12 +38,14 @@ export interface MisaAmisMatchResults {
   connectionId: string | null;
   status: MisaAmisMatchStatus;
   partyCodes: ReadonlyMap<string, string> | null;
+  // The party tax codes that more than one active catalogue entry carries (the check's `ambiguous` rows): the preview names them apart from a party the catalogue does not have (#4114). Null with the codes.
+  partyAmbiguous: ReadonlySet<string> | null;
   itemCodes: ReadonlySet<string> | null;
   /** The codes a person confirmed for parties with no tax code, by the party's id (S3b, #4124); null with the others until a check is done. */
   partyNameCodes?: ReadonlyMap<string, string> | null;
 }
 
-export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, itemCodes: null, partyNameCodes: null };
+export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
 
 // How many confirmed names one check verifies (the oldest checked first): the verdicts are part of the results, which are bounded, and a confirmation not reached here is still checked by the re-read before every send.
 const MISA_AMIS_CONFIRMED_VERIFY_MAX = 500;
@@ -276,11 +278,13 @@ export const misaAmisMatchResultsQuery = defineQuery({
       .execute();
     // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
     // A connection that was checked once (a done check finished) and has no stored result (its batch needed none) is still checked: the sets are empty, not null.
-    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null, partyNameCodes: null };
+    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
     const partyCodes = new Map<string, string>();
+    const partyAmbiguous = new Set<string>();
     const itemCodes = new Set<string>();
     const partyNameCodes = new Map<string, string>();
     for (const row of rows) {
+      if (row.kind === 'party' && row.state === 'ambiguous') partyAmbiguous.add(row.match_key);
       if (row.catalogue_code === null) continue;
       // A party with no tax code has a code only once a person confirmed the catalogue entry proposed for its name; a proposal is not a match.
       if (row.kind === 'party_name') {
@@ -290,7 +294,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
         else itemCodes.add(row.match_key);
       }
     }
-    return { connectionId: check.connection_id, status, partyCodes, itemCodes, partyNameCodes };
+    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes };
   },
 });
 

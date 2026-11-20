@@ -51,7 +51,7 @@ describe('explainMisaAmisBlockers', () => {
   it('asks the model once with the kinds only and answers the notes', async () => {
     const { ai, asked } = setup(async () => NOTES);
     expect(await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi')).toEqual({ ai: 'used', notes: WRITTEN });
-    expect(asked).toEqual([{ language: 'vi', kinds: ['item_code_unknown', 'vat_rate_unmapped'] }]);
+    expect(asked).toEqual([{ language: 'vi', product: 'amis', kinds: ['item_code_unknown', 'vat_rate_unmapped'] }]);
     expect(JSON.stringify(asked)).not.toContain('CRMDV');
   });
 
@@ -71,36 +71,50 @@ describe('explainMisaAmisBlockers', () => {
   it('keeps an answer by its kinds for a while, so reopening the preview does not pay twice', async () => {
     const { ai, asked } = setup(async () => NOTES);
     const now = 1_000;
-    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now);
-    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now + 1000);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now + 1000);
     expect(asked).toHaveLength(1);
-    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 1);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 1);
     expect(asked).toHaveLength(2);
     // Other kinds, another language or another org are asked again; the same kinds with other counts are not (the model is told no count).
-    await explainMisaAmisBlockers(ai, ORG, USER, preview([item('CRMDV000000009', [{ code: 'no_lines', lineNo: null }])]), 'vi', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 2);
-    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'en', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 3);
-    await explainMisaAmisBlockers(ai, '44444444-4444-4444-8444-444444444444', USER, BLOCKED, 'vi', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 4);
+    await explainMisaAmisBlockers(ai, ORG, USER, preview([item('CRMDV000000009', [{ code: 'no_lines', lineNo: null }])]), 'vi', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 2);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'en', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 3);
+    await explainMisaAmisBlockers(ai, '44444444-4444-4444-8444-444444444444', USER, BLOCKED, 'vi', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 4);
     expect(asked).toHaveLength(5);
     const more = preview([item('CRMDV000000010', [{ code: 'vat_rate_unmapped', lineNo: 1 }, { code: 'item_code_unknown', lineNo: 1 }, { code: 'item_code_unknown', lineNo: 2 }, { code: 'item_code_unknown', lineNo: 3 }])]);
-    await explainMisaAmisBlockers(ai, ORG, USER, more, 'en', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 5);
+    await explainMisaAmisBlockers(ai, ORG, USER, more, 'en', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_KEEP_MS + 5);
     expect(asked).toHaveLength(5);
+  });
+
+  it('tells the model the product of the connection, and keeps an answer apart by product: the same kinds for ASP are asked again, with their own wording', async () => {
+    const { ai, asked } = setup(async () => NOTES);
+    const now = 1_000_000;
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'asp', () => now + 1000);
+    expect(asked).toEqual([
+      { language: 'vi', product: 'amis', kinds: ['item_code_unknown', 'vat_rate_unmapped'] },
+      { language: 'vi', product: 'asp', kinds: ['item_code_unknown', 'vat_rate_unmapped'] },
+    ]);
+    // The same product within the keeping time is not asked twice.
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'asp', () => now + 2000);
+    expect(asked).toHaveLength(2);
   });
 
   it('keeps a refusal for a shorter while, and never keeps a transport failure', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { ai, asked } = setup(async () => ({ kind: 'none', code: 'REFUSED' }));
     const now = 1_000;
-    expect(await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now)).toEqual({ ai: 'failed', notes: [] });
-    expect(await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now + 1000)).toEqual({ ai: 'failed', notes: [] });
+    expect(await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now)).toEqual({ ai: 'failed', notes: [] });
+    expect(await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now + 1000)).toEqual({ ai: 'failed', notes: [] });
     expect(asked).toHaveLength(1);
-    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', () => now + MISA_AMIS_BLOCKER_NOTES_REFUSED_KEEP_MS + 1);
+    await explainMisaAmisBlockers(ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now + MISA_AMIS_BLOCKER_NOTES_REFUSED_KEEP_MS + 1);
     expect(asked).toHaveLength(2);
     expect(MISA_AMIS_BLOCKER_NOTES_REFUSED_KEEP_MS).toBeLessThan(MISA_AMIS_BLOCKER_NOTES_KEEP_MS);
     const failing = setup(async () => {
       throw new Error('upstream down');
     });
-    await explainMisaAmisBlockers(failing.ai, ORG, USER, BLOCKED, 'vi', () => now);
-    await explainMisaAmisBlockers(failing.ai, ORG, USER, BLOCKED, 'vi', () => now + 1000);
+    await explainMisaAmisBlockers(failing.ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now);
+    await explainMisaAmisBlockers(failing.ai, ORG, USER, BLOCKED, 'vi', 'amis', () => now + 1000);
     expect(failing.asked).toHaveLength(2);
   });
 

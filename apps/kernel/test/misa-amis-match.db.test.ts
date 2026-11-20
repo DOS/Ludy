@@ -174,7 +174,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   let entityId = '';
   const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
   const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
-  const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
+  const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; partyAmbiguous: Set<string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
   const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
   const record = async (input: Record<string, unknown>) => worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: await requestedAt(), ...input }, { actor: SYSTEM, orgId });
 
@@ -271,6 +271,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       expect(read.connectionId).toBe(connectionId);
       expect(read.status).toMatchObject({ state: 'done', failure: null, checkedAt: expect.any(String) });
       expect(read.partyCodes).toEqual(new Map([['0101234564', 'NCC_ABC']]));
+      // The party the check found several active entries for is read back apart from the one it found none for (#4114): the preview names the two with different blockers.
+      expect(read.partyAmbiguous).toEqual(new Set(['0312345678']));
       expect(read.itemCodes).toEqual(new Set(['BH_CHUNG']));
     }
     // The stored rows hold a reference, a state, the matched entry's code and id: no column for a name, an address or a tax code of the catalogue.

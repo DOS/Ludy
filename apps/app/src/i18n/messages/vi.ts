@@ -7706,6 +7706,7 @@ export const vi = {
     blocker: {
       branch_missing: 'Thiếu chi nhánh AMIS',
       party_code_unknown: 'Đối tượng chưa có trong AMIS',
+      party_code_ambiguous: 'Đối tượng có nhiều hơn một mã trong AMIS',
       item_code_unknown: 'Thiếu mã hàng AMIS',
       stock_missing: 'Thiếu mã kho',
       vat_rate_unmapped: 'Thuế suất AMIS không nhận',

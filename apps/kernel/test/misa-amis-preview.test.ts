@@ -68,6 +68,7 @@ const done = (partyCodes: Array<[string, string]>, itemCodes: string[]): MisaAmi
   connectionId: '22222222-2222-4222-8222-222222222222',
   status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:59:00.000Z', checkedAt: CHECKED },
   partyCodes: new Map(partyCodes),
+  partyAmbiguous: new Set(),
   itemCodes: new Set(itemCodes),
 });
 
@@ -90,7 +91,7 @@ describe('misaAmisPreview after a check against the firm\'s catalogue (#4112)', 
     const unmatched = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([], []) }).query, ask);
     expect(unmatched).toMatchObject({ checkedAgainstAmis: true, ready: 0, blocked: 1 });
     expect(unmatched.items[0]?.blockers.map((b) => b.code).sort()).toEqual(['item_code_unknown', 'party_code_unknown']);
-    const waiting: MisaAmisMatchResults = { connectionId: '22222222-2222-4222-8222-222222222222', status: { state: 'requested', failure: null, requestedAt: CHECKED, checkedAt: null }, partyCodes: null, itemCodes: null };
+    const waiting: MisaAmisMatchResults = { connectionId: '22222222-2222-4222-8222-222222222222', status: { state: 'requested', failure: null, requestedAt: CHECKED, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null };
     const pending = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': waiting }).query, ask);
     expect(pending).toMatchObject({ checkedAgainstAmis: false, ready: 1, blocked: 0, matchCheck: { state: 'requested', checkedAt: null } });
     const failed: MisaAmisMatchResults = { ...waiting, status: { state: 'failed', failure: 'credentials', requestedAt: CHECKED, checkedAt: null } };

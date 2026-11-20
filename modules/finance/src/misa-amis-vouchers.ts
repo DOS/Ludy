@@ -64,6 +64,8 @@ export interface AmisContext {
   partyCodes: ReadonlyMap<string, string> | null;
   /** A party of Ludy with no tax code, by its id, to the code a person confirmed for it by name (S3b, #4124); absent or null when none. */
   partyNameCodes?: ReadonlyMap<string, string> | null;
+  /** The party tax codes (digits only) the check found more than one active catalogue entry for; a party in it is blocked as `party_code_ambiguous`, not `party_code_unknown` (#4114). Absent or null: none is known to be. */
+  partyAmbiguous?: ReadonlySet<string> | null;
   /** The item codes the catalogue has (active, exactly one entry); null when no check is done. A line whose item code is not in it is blocked (`item_code_unknown`). */
   itemCodes: ReadonlySet<string> | null;
 }
@@ -71,6 +73,7 @@ export interface AmisContext {
 export type AmisBlockerCode =
   | 'branch_missing'
   | 'party_code_unknown'
+  | 'party_code_ambiguous'
   | 'item_code_unknown'
   | 'stock_missing'
   | 'vat_rate_unmapped'
@@ -179,6 +182,13 @@ function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undef
   return hasNoTaxCode(party.taxCode) && party.id ? ctx.partyNameCodes?.get(party.id) : undefined;
 }
 
+/** Why a party the catalogue gave no code for is blocked: several active entries carry its tax code (`party_code_ambiguous`: the fix is in MISA, deactivate the duplicate), or none does (`party_code_unknown`). */
+function partyBlockerCode(party: VoucherParty, ctx: AmisContext): 'party_code_unknown' | 'party_code_ambiguous' {
+  if (party.taxCode === null || ctx.partyAmbiguous == null) return 'party_code_unknown';
+  const key = normalizeTaxCode(party.taxCode);
+  return key !== null && ctx.partyAmbiguous.has(key) ? 'party_code_ambiguous' : 'party_code_unknown';
+}
+
 /** Whether the catalogue has this item code (true while no check is done: nothing is known against it). */
 const itemKnown = (code: string | null, ctx: AmisContext): boolean => code !== null && (ctx.itemCodes === null || ctx.itemCodes.has(code));
 
@@ -249,7 +259,7 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
   if (ctx.branchId === null) blockers.push({ code: 'branch_missing', sourceId: voucher.sourceId, lineNo: null });
   if (voucher.lines.length === 0) blockers.push({ code: 'no_lines', sourceId: voucher.sourceId, lineNo: null });
   const code = voucher.party ? partyCode(voucher.party, ctx) : null;
-  if (voucher.party && code === undefined) blockers.push({ code: 'party_code_unknown', sourceId: voucher.sourceId, lineNo: null });
+  if (voucher.party && code === undefined) blockers.push({ code: partyBlockerCode(voucher.party, ctx), sourceId: voucher.sourceId, lineNo: null });
   if (blockers.length > 0) return blocked(meta, blockers);
 
   const needsPurpose = voucher.type === 'cash_payment' || voucher.type === 'bank_debit';
@@ -297,7 +307,7 @@ function purchaseBlockers<R extends PurchaseRow>(voucher: PurchaseVoucher, rows:
   const at = (code: AmisBlockerCode, lineNo: number | null) => blockers.push({ code, sourceId: voucher.sourceId, lineNo });
   if (ctx.branchId === null) at('branch_missing', null);
   if (rows.length === 0) at('no_lines', null);
-  if (partyCode(voucher.vendor, ctx) === undefined) at('party_code_unknown', null);
+  if (partyCode(voucher.vendor, ctx) === undefined) at(partyBlockerCode(voucher.vendor, ctx), null);
   for (const row of rows) {
     if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
     if (!itemKnown(itemCode(row), ctx)) at('item_code_unknown', row.line.lineNo);
@@ -463,7 +473,7 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
   if (ctx.branchId === null) at('branch_missing', null);
   if (rows.length === 0) at('no_lines', null);
   const code = partyCode(voucher.customer, ctx);
-  if (code === undefined) at('party_code_unknown', null);
+  if (code === undefined) at(partyBlockerCode(voucher.customer, ctx), null);
   if (!itemKnown(ctx.salesItemCode, ctx)) for (const row of rows) at('item_code_unknown', row.line.lineNo);
   for (const row of rows) if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
   if (blockers.length > 0) return blocked(meta, blockers);
