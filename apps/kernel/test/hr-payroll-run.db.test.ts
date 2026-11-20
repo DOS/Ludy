@@ -574,7 +574,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // The tax code is the one on file, or the identity number when none is: the document says so.
     const anRow = progressive?.rows.find((r) => r.name === NAMES[0]);
     expect(anRow).toMatchObject({ identityNumber: DECL_IDENTITY, taxCode: DECL_TAX, birthDate: '1990-05-17' });
-    expect(binhRow?.taxCode).toBe('079 111 222 333');
+    expect(binhRow?.taxCode).toBe('079111222333');
     expect(doc.notes.join(' ')).toContain('chưa có mã số thuế riêng');
   });
 
@@ -612,6 +612,43 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // Only An (35M) and Chi (30M) are withheld; Chi authorized the payer to finalize, so An alone gets a certificate and Chi is listed as not given one. Bình (9M) and the 12M person owe no tax.
     expect(certificates.sheets[0]?.rows.map((r) => r.name)).toEqual([NAMES[0]]);
     expect(certificates.sheets[1]?.rows.map((r) => r.name)).toEqual([NAMES[2]]);
+  });
+
+  it('(declarations, #2748) sets org address only for default entity, warns on D02-LT/03-TNCN missing months, and validates nationalId fallback against PG17', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      await o.exec(o.owner, 'kernel.org.set_address', { address: '123 Lê Lợi, Quận 1, TP. Hồ Chí Minh' });
+      const branch = await o.exec<{ id: string }>(o.owner, 'kernel.legal_entity.create', {
+        name: 'Chi nhánh Miền Bắc',
+        kind: 'branch',
+        taxCode: '0312345670-001',
+        parentId: null,
+      });
+      await o.hire({ identityNumber: '079 111 222 333' }, '35000000', 'Nguyễn CCCD Canary');
+      await o.hire({ identityNumber: 'B1234567' }, '35000000', 'Trần Hộ Chiếu Canary');
+      const jul = await o.open('2026-07');
+      await o.approve(jul.runId, (await o.sheet(jul.runId)).fingerprint, { acceptFlags: true });
+      // Leave August as a draft run so D02-LT 2026-08 and 03/TNCN 2026 both carry missing-month warnings.
+      await o.open('2026-08');
+
+      const d02Default = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02Default.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('123 Lê Lợi, Quận 1, TP. Hồ Chí Minh');
+      expect(d02Default.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng 2026-08');
+
+      const d02Branch = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08', legalEntityId: branch.id }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02Branch.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('');
+
+      const cert = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'certificate', period: '2026' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(cert.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('123 Lê Lợi, Quận 1, TP. Hồ Chí Minh');
+      expect(cert.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng');
+      const certRows = cert.sheets[0]?.rows ?? [];
+      expect(certRows.find((r) => r.name === 'Nguyễn CCCD Canary')?.taxCode).toBe('079111222333');
+      expect(certRows.find((r) => r.name === 'Trần Hộ Chiếu Canary')).toMatchObject({ taxCode: '', identityNumber: 'B1234567', note: 'Thiếu mã số thuế' });
+      expect(cert.notes.join(' ')).toContain('1 người chưa có mã số thuế riêng');
+    } finally {
+      setRuleStatus('commentary');
+    }
   });
 
   it('(declarations, #3437) populates D02-LT position, workplace, and effective-dated contractType from PostgreSQL and masks erased staff', async () => {
