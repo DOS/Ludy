@@ -339,7 +339,7 @@ export const bankFeedRecordPull = defineCommand({
     const mapped = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.bank_account', 'a.legal_entity_id', 'a.cursor', 'c.provider', 'c.status'])
+      .select(['a.id', 'a.bank_account', 'a.legal_entity_id', 'a.cursor', 'a.feed_from', 'c.provider', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.feedAccountId)
       .forUpdate('a')
@@ -348,6 +348,15 @@ export const bankFeedRecordPull = defineCommand({
     if (mapped.status !== 'active') throw new DomainError('BANK_FEED_INACTIVE', 422, 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại');
     // Under the row lock: another sync recorded a page since this one read the cursor, so this page is stale.
     if (mapped.cursor !== input.fromCursor) throw new DomainError('BANK_FEED_CURSOR_MOVED', 409, 'Một lần đồng bộ khác đã ghi tài khoản này trước; lần này dừng lại');
+    // The first pull may run later than the day the cut-over was set (a delay across midnight), so its window starts later than the day the owner saw. The feed supplies from the day its first pull really starts: a day before that stays the statement files', never skipped by both (#4218).
+    let movedTo: string | null = null;
+    if (mapped.cursor === null && mapped.feed_from !== null) {
+      const start = reachFrom(ctx.now, mapped.provider);
+      if (mapped.feed_from < start) {
+        movedTo = start;
+        await ctx.trx.updateTable('crove_finance.bank_feed_account').set({ feed_from: start }).where('org_id', '=', ctx.orgId).where('id', '=', mapped.id).execute();
+      }
+    }
     // From the cut-over day on the feed supplies the account (#4218): a line it brings from before that day (the first pull goes back a month) is the statement files', and is left out so one transaction is never booked under two keys.
     const cutover = await feedCutover(ctx, mapped.legal_entity_id, mapped.bank_account);
     const lines = cutover === null ? input.lines : input.lines.filter((l) => l.date >= cutover);
@@ -363,6 +372,7 @@ export const bankFeedRecordPull = defineCommand({
     if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0 });
     // The lines the cut-over day kept out are on the trail whether or not the rest was stored (#4218); the audit fields merge into this command's one row.
     if (skippedBefore > 0) ctx.audit({ feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore });
+    if (movedTo !== null) ctx.audit({ feedFromMovedTo: movedTo, feedFromWas: mapped.feed_from });
     return result ?? { importId: null };
   },
 });

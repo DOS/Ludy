@@ -584,12 +584,14 @@ suite('bank statement import (#326)', () => {
     expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
     await setStatus('active');
     expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, skipped: 2 });
-    // The pull leaves out the lines the feed brings from before the day. The day is set in SQL here so the sandbox's fixed days (2026-11-14 to 2026-11-20) stay under test whatever today is.
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, '2026-11-19']));
+    // A first pull that runs later than the day set (here: the day is set in SQL to before the pull's window, as a delay across midnight would leave it) moves the day up to where the pull really starts.
+    const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
     await sync(connectionId);
+    expect(await feedFromOf()).toBe(dayOf(-7));
+    // The pull leaves out the lines the feed brings from before the day: nothing it stored is dated before it.
     const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
-    expect(fed.length).toBeGreaterThan(0);
-    expect(fed.every((l) => l.value_date >= '2026-11-19')).toBe(true);
+    expect(fed.every((l) => l.value_date >= (dayOf(-7)))).toBe(true);
     // Once the account has synced, the day cannot move earlier (the lines the feed left out are not fetched again); later, or cleared, it can.
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
     expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
