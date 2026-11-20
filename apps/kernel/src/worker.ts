@@ -1647,6 +1647,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
       }
       console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
+      // Still superseded after the runs above (the request was filed again every time): fail the job so the queue runs it again after its retry delay, instead of leaving the check waiting.
+      if ('superseded' in done && done.superseded) throw new Error('misa-amis match: the request was filed again during every run');
     });
   }
 
