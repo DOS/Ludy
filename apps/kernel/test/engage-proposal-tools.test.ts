@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
 import type { Runtime, UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
+import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor } from '../src/mcp-endpoint.ts';
 import { ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL } from '../src/mcp-proposal-tools.ts';
 
@@ -16,7 +17,7 @@ const runtime = {
     return { proposalId: '00000000-0000-4000-8000-0000000000aa', status: 'pending' };
   },
 } as unknown as Runtime;
-const listed = (actor: UserActor) => toolsFor(runtime, actor, 'org', new DraftBudget());
+const listed = (actor: UserActor) => toolsFor(runtime, actor, 'org', new DraftBudget(), new McpWriteBudget());
 
 const TOOLS: Record<string, string> = {
   ludy_conversation_reply: 'kernel.conversation.reply_approved',
