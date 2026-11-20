@@ -63,6 +63,7 @@ export const MISA_AMIS_DEFAULT_ITEM_ROLES = ['service', 'sales', 'sales_stock'] 
 export const zMisaAmisDefaultItem = z.strictObject({
   id: zId,
   role: z.enum(MISA_AMIS_DEFAULT_ITEM_ROLES),
-  code: z.string().trim().min(1).max(50).nullable(),
+  // No control character (a NUL cannot be stored in text and would be a 500, not a refusal): a code is typed as the catalogue spells it.
+  code: z.string().trim().min(1).max(50).regex(/^[^\p{Cc}]+$/u).nullable(),
 });
 export type MisaAmisDefaultItem = z.infer<typeof zMisaAmisDefaultItem>;

@@ -623,6 +623,8 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await worker.query('finance.misa_amis_match.check_target', { id: aspId }, { actor: system, orgId })).toMatchObject({ action: 'check', defaultSalesStockCode: 'KHO1' });
     // Owner or admin only; a member and a viewer are refused.
     for (const who of [member, viewer]) expect(await call('connections/setDefaultItem', who, { id: aspId, role: 'sales_stock', code: 'KHO2' })).toMatchObject({ status: 403 });
+    // A control character is refused as a bad input (a NUL would otherwise reach the table and fail there).
+    for (const code of ['KHO\u00001', 'KHO\n1', 'KHO\u007f']) expect(await call('connections/setDefaultItem', owner, { id: aspId, role: 'sales_stock', code })).toMatchObject({ status: 400 });
     // An AMIS connection keeps none (its sales lines leave no stock), and clearing one is always allowed.
     expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: 'KHO1' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_STOCK_NOT_ASP' } });
     expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: null })).toMatchObject({ status: 200 });
