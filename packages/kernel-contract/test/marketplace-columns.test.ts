@@ -10,7 +10,7 @@ const sheetOf = (column: object) => ({ headerRow: 2, columns: [{ index: 0, heade
 describe('zMarketplaceColumnSheet', () => {
   it('takes shapes: digits as 9, letters as a, and the marks of a date or an amount', () => {
     expect(zMarketplaceColumnSheet.safeParse(sheetOf({ samples: ['9999-99-99', '9.999.999', 'aaaa aaa aaa'] })).success).toBe(true);
-    expect(zMarketplaceColumnSheet.safeParse(sheetOf({ samples: ['a@a.aaa'] })).success).toBe(true);
+    expect(zMarketplaceColumnSheet.safeParse(sheetOf({ samples: ['aaa@'] })).success).toBe(true);
     expect(zMarketplaceColumnSheet.safeParse(sheetOf({ samples: [] })).success).toBe(true);
   });
 
