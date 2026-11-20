@@ -80,14 +80,19 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
 
   await test.step('link via [[ autocomplete in a private note, navigate via wiki-link, and verify RLS backlinks', async () => {
     await page.getByRole('button', { name: 'Ghi chú mới' }).first().click();
-    await page.getByRole('textbox', { name: 'Tiêu đề' }).fill('Đánh giá thưởng nội bộ');
+    const titleInput = page.getByRole('textbox', { name: 'Tiêu đề' });
     const body = page.getByRole('textbox', { name: 'Nội dung' });
+    await expect(titleInput).toHaveValue('Ghi chú mới');
+    await expect(body).toHaveValue('');
+    await titleInput.fill('Đánh giá thưởng nội bộ');
     await body.click();
     await body.pressSequentially('Đối chiếu với [[Kế hoạch');
     await expect(page.getByTestId('note-wiki-autocomplete')).toBeVisible();
     await page.getByTestId('note-wiki-option').filter({ hasText: 'Kế hoạch quý 4' }).click();
     await expect(body).toHaveValue('Đối chiếu với [[Kế hoạch quý 4]]');
+    await expect(titleInput).toHaveValue('Đánh giá thưởng nội bộ');
     await expect(page.getByRole('status').filter({ hasText: 'Đã lưu' })).toBeVisible({ timeout: 10_000 });
+    await expect(rows.filter({ hasText: 'Đánh giá thưởng nội bộ' })).toBeVisible({ timeout: 10_000 });
 
     // Click rendered wiki-link in Preview mode -> navigates to Kế hoạch quý 4 and shows private backlink to author.
     await page.getByRole('button', { name: 'Xem trước' }).click();
