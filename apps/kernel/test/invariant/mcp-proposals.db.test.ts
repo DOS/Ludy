@@ -103,6 +103,8 @@ describe('which commands an MCP grant may reach as a proposal (#3858 slice d)', 
       'ads.object.archive_approved': 'ludy.ads.draft',
       'ads.budget.lower_approved': 'ludy.ads.draft',
       'ads.schedule.shorten_approved': 'ludy.ads.draft',
+      // Step 1 of 2 for #4181: the twin that cancels a queued change of a running ad (it runs only from an approved proposal and only for a change that would raise spend); the change that adds it is the next PR.
+      'ads.manage.cancel_approved': 'ludy.ads.draft',
     };
     const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
     const declared = all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
