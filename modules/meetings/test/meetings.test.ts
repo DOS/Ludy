@@ -141,6 +141,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.remove',
       'meetings.followup.send',
       'meetings.live.chunk',
+      'meetings.capture.heartbeat',
       'meetings.live.assemble_record',
       'meetings.live.start',
       'meetings.live.stop',

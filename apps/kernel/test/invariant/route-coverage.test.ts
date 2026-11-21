@@ -64,6 +64,7 @@ const PUBLIC: Record<string, string> = {
   '/api/sign/otp/verify': 'public eSign email OTP verification (#3324): same token in JSON body; locks OTP after 5 failed attempts without leaking secrets',
   '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
   '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
+  '/api/sign/delegate': 'public eSign audited signer delegation (#3819): same token in JSON body; enforces org_app_on + entitlement opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), allow_delegation = true, delegation_count < 2 anti-relay cap, single-mailbox RFC validation, mail_suppression check, and atomic token consume',
   '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
   '/api/sign/direct/view': 'public eSign direct template link view (#3551): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
   '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (#3551): fragment token + optional OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
@@ -98,7 +99,6 @@ const PUBLIC: Record<string, string> = {
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
   '/api/sign/attachment': 'public eSign verified signer supporting attachment upload (#3818, Slice 4b): active signing token is the credential; enforces org_app_on and entitlement with opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), IP + token rate limits, 10 MB size cap, magic-byte check (PDF/PNG/JPEG only), and SHA-256 audit event',
-  '/api/sign/delegate': 'public eSign audited signer delegation (#3819, Slice 4c): single-use fragment token is the credential in the JSON body; enforces org_app_on and entitlement with opaque 404, allow_delegation = true, delegation_count < 2 cap, single-mailbox validation, mail_suppression check, IP + token rate limits, and atomic token consume',
   '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820, Slice 4d): lists only active public-hub-opted-in 1-signer templates for an org with org_app_on and entitlement opaque 404 and per-IP rate limiting',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
@@ -334,6 +334,8 @@ describe('route enumeration with an extension token (#2582)', () => {
       ['POST', '/api/rpc/notes/search'],
       ['POST', '/api/rpc/notes/panel'],
       ['POST', '/api/rpc/notes/exportMine'],
+      ['POST', '/api/rpc/notes/todoPlan'],
+      ['POST', '/api/rpc/notes/organize'],
       ['POST', '/api/rpc/notes/vyResults'],
       ['POST', '/api/rpc/notes/privateCounts'],
       ['POST', '/api/rpc/notes/todos/list'],

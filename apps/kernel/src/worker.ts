@@ -59,7 +59,23 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
-import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, sweepSignPreExpiryReminders, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
+import {
+  SIGN_CLEANUP_CRON,
+  SIGN_EXPIRE_SWEEP_CRON,
+  SIGN_JOB_RETRY_LIMIT,
+  isSignTemplateInspectJob,
+  runSignCaReconcileJob,
+  runSignPdfInspectJob,
+  runSignPdfSealJob,
+  sweepSignCleanup,
+  sweepSignExpire,
+  sweepSignPendingWork,
+  sweepSignPreExpiryReminders,
+  type SignCaReconcileJob,
+  type SignEnvelopeJob,
+  type SignPdfInspectJob,
+  type SignTemplateInspectJob,
+} from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
 import {
@@ -441,6 +457,19 @@ async function enqueueSignSeal(boss: JobSender, orgId: string, envelopeId: strin
     { orgId, envelopeId } satisfies SignEnvelopeJob,
     {
       singletonKey: jobKey(orgId, QUEUES.signPdfSeal, envelopeId),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignCaReconcile(boss: JobSender, orgId: string, requestId: string): Promise<void> {
+  await boss.send(
+    QUEUES.signCaReconcile,
+    { orgId, requestId } satisfies SignCaReconcileJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signCaReconcile, requestId),
       retryLimit: SIGN_JOB_RETRY_LIMIT,
       retryDelay: 20,
       retryBackoff: true,
@@ -1398,6 +1427,43 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         }
       },
     );
+    await boss.work<SignCaReconcileJob>(
+      QUEUES.signCaReconcile,
+      { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
+      async ([job]) => {
+        if (!job) return;
+        const done = await runSignCaReconcileJob(
+          {
+            workerDb: deps.workerDb,
+            runtime: deps.runtime,
+            store: deps.store,
+            extract: deps.extract,
+            broker: deps.channels?.broker,
+          },
+          job.data,
+        );
+        if (done.status === 'pending') {
+          const parsedNextPollMs = done.nextPollAt ? Date.parse(done.nextPollAt) : Number.NaN;
+          const startAfter = Number.isFinite(parsedNextPollMs)
+            ? Math.max(1, Math.ceil((parsedNextPollMs - Date.now()) / 1000) + 1)
+            : 15;
+          await boss.send(
+            QUEUES.signCaReconcile,
+            job.data,
+            {
+              startAfter,
+              singletonKey: jobKey(job.data.orgId, QUEUES.signCaReconcile, `${job.data.requestId}:poll:${done.pollAttempts ?? 1}`),
+              retryLimit: SIGN_JOB_RETRY_LIMIT,
+              retryDelay: 5,
+              retryBackoff: true,
+            },
+          );
+        }
+        if (done.status !== 'skipped') {
+          console.log(`[sign-ca] ${job.data.requestId.slice(0, 8)}: ${done.status}`);
+        }
+      },
+    );
     await boss.work(QUEUES.signExpireSweep, { batchSize: 1 }, async () => {
       let failure: unknown;
       try {
@@ -1423,9 +1489,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
           enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
           enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
+          enqueueCaReconcile: (orgId, requestId) => enqueueSignCaReconcile(boss, orgId, requestId),
         });
-        if (recovered.inspect > 0 || recovered.seal > 0) {
-          console.log(`[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal}`);
+        if (recovered.inspect > 0 || recovered.seal > 0 || recovered.caReconcile > 0) {
+          console.log(
+            `[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal} ca=${recovered.caReconcile}`,
+          );
         }
       } catch (error) {
         failure ??= error;
@@ -2958,6 +3027,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (sign && row.type === 'sign.envelope.seal_queued') {
                 await enqueueSignSeal(boss, row.org_id, String(row.payload.envelopeId));
               }
+              if (sign && row.type === 'sign.ca.sign_queued') {
+                await enqueueSignCaReconcile(boss, row.org_id, String(row.payload.requestId));
+              }
               if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
                 await sweepSignPendingWork({
                   workerDb: deps.workerDb,
@@ -2967,6 +3039,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                   enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
+                  enqueueCaReconcile: (orgId, requestId) => enqueueSignCaReconcile(boss, orgId, requestId),
                 });
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to
