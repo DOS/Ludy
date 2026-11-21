@@ -71,4 +71,15 @@ export const PIT_RULES: readonly PayrollRule[] = [
     },
     value: { percent: '10', paymentThreshold: '5000000', progressiveFromContractMonths: 3 },
   }),
+  defineRule({
+    kind: 'pit_non_resident',
+    key: 'default',
+    effectiveFrom: '2026-01-01',
+    status: 'commentary',
+    source: {
+      cite: `${LAW} (plan section 5, row 11): non-resident PIT is a flat 20% on Vietnam-sourced taxable salary income without compulsory insurance, personal, dependent, or voluntary pension deductions; pending accountant confirmation (#2535)`,
+      confidence: 'primary',
+    },
+    value: { percent: '20' },
+  }),
 ];
