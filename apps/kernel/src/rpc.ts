@@ -3589,6 +3589,14 @@ export function createRpcHandler(
           return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
         }),
       ),
+      // Saves the mapping of a passed check (#4037): the command re-reads the file's check in its own transaction and refuses anything that is not the same file, platform and mapping the person saw checked.
+      columnsConfirm: os.marketplace.columnsConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsProfile: os.marketplace.columnsProfile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_profile', input, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -4065,6 +4073,9 @@ export function createRpcHandler(
           return { connectionId };
         }),
       ),
+      // The webhook hook key (#4203): no idempotency key, so a replay never hands the secret out again; the answer is the key, shown once.
+      hookSet: os.bankFeeds.hookSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.bank_feed.hook_set', input, { actor, orgId }))),
+      hook: os.bankFeeds.hook.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.hook', input, { actor, orgId }))),
       map: os.bankFeeds.map.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

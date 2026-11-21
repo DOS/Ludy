@@ -93,6 +93,7 @@ import { failUndraftable, requestDueConversationDrafts, sweepConversationComposi
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
+import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -1568,6 +1569,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<BankFeedSyncJob | { sweep: true }>(QUEUES.bankFeedSync, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
+        // Notices of a hook that waited more than ten minutes (a worker that was away) go first, whatever they hold (#4203).
+        const swept = await sweepBankFeedHookNotices(deps.workerDb);
+        if (swept > 0) console.log(`[bank-feed-hook] swept ${swept} old notice(s)`);
         // Every active bank feed, a page of connections at a time by key.
         let after: { orgId: string; connectionId: string } | null = null;
         for (;;) {
@@ -3330,6 +3334,41 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             });
           });
           if (claimed < BANK_FEED_NOTICE_CLAIM) break;
+        }
+      }
+      // A signed notice of a bank feed whose provider signs with each customer's own secret (Tingee, #4203): the route stored the raw notice under a hook key of one connection; here the connection's sealed secret is opened,
+      // the signature (HMAC, constant-time) and the client the body names are checked, and each connection with a good notice gets one coalesced pull. A refused one is counted on its hook (ten in an hour stop it). The claim
+      // and the sends share one transaction, so a failure leaves the notices waiting (and the sweep deletes any older than ten minutes). Nothing of a notice is logged: the line below carries counts.
+      const hostedFeeds = deps.channels?.bankFeedHosted;
+      if (finance && deps.channels?.broker && hostedFeeds && Object.keys(hostedFeeds).length > 0) {
+        const broker = deps.channels.broker;
+        for (;;) {
+          const tally = { ok: 0, refused: 0, dropped: 0 };
+          // The refused notices are counted on their hooks after the batch commits (see rejectBankFeedHook): one entry per refused notice.
+          const refusedHooks: string[] = [];
+          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+            const rows = await claimBankFeedHookNotices(trx);
+            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+            const seen = new Set<string>();
+            return rows.map((row, i) => {
+              const verdict = verdicts[i] ?? 'dropped';
+              tally[verdict]++;
+              if (verdict !== 'ok' || seen.has(row.connectionId)) return async () => null;
+              seen.add(row.connectionId);
+              const target = { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
+              return (boss: JobSender) =>
+                boss.send(QUEUES.bankFeedSync, target, {
+                  singletonKey: jobKey(target.orgId, QUEUES.bankFeedSync, target.connectionId),
+                  singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
+                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+            });
+          });
+          for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
+          if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
+          if (claimed < BANK_FEED_HOOK_CLAIM) break;
         }
       }
       // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the

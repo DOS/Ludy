@@ -12,8 +12,12 @@ export const financeManifest = defineModule({
       account: columns(['code', 'name', 'parent_code', 'standard']),
       bank_account_number: columns(['org_id', 'id', 'legal_entity_id', 'created_by', 'created_at'], { bank_account: 'payment', account_number: 'payment' }),
       bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at', 'feed_from'], { bank_account: 'payment', external_account_id: 'payment' }),
+      // The webhook hook key of a bank feed connection (#4203, Tingee S3): only the SHA-256 of the key in the address, the dates and the count of refused notices; definer-only.
+      bank_feed_hook: columns(['org_id', 'id', 'channel_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
+      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted when the worker claims it and, once older than ten minutes, by the next claim or the nightly sweep; definer-only.
+      bank_feed_webhook_notice: columns(['org_id', 'id', 'hook_id', 'request_id', 'notice_timestamp', 'signature', 'received_at'], { body: 'pii' }),
       // MISA AMIS's callback results waiting for the worker (#3903): ids, codes and flags, and MISA's own capped text for a refusal (untrusted, never logged), deleted once the relay is done.
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', counterparty_account: 'payment', description: 'pii' }),
       bank_party_rule: columns(['org_id', 'id', 'legal_entity_id', 'kind', 'party_id', 'confirmed_by', 'confirmed_at', 'source_voucher_id', 'created_at'], { key_hash: 'pii' }),
@@ -47,6 +51,8 @@ export const financeManifest = defineModule({
       journal_voucher: columns(['org_id', 'id', 'number', 'voucher_date', 'proposal_id', 'created_by', 'created_at', 'closing_year', 'stock_closing_month', 'stock_count_id', 'payroll_run_id', 'settlement_id', 'payout_settlement_id', 'payout_bank_line_id', 'settlement_month', 'fee_document_id', 'surplus_count_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { description: 'pii' }),
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
       marketplace_column_check: columns(['org_id', 'id', 'file_id', 'platform', 'assignments', 'state', 'failure', 'refusal', 'requested_by', 'requested_at', 'finished_at', 'sheet'], { preview: 'pii' }),
+      // The mapping of a marketplace report's columns a person confirmed (#4037): header texts of the mapped columns and their standard fields; no cell value, no sample, no buyer column.
+      marketplace_column_profile: columns(['org_id', 'id', 'platform', 'header_row', 'columns', 'header_digest', 'confirmed_by', 'confirmed_at']),
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
