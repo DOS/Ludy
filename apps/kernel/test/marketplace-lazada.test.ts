@@ -196,13 +196,26 @@ describe('listOrders', () => {
     const first = await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z');
     expect(first.orders).toHaveLength(100);
     // The window cannot move, so the same window is continued by offset.
-    expect(first.nextCursor).toBe('u:2026-11-09T03:00:00.000Z:100');
+    // ... a little back from the end of the page (25 positions), so an order updated in between cannot make an unread one slip past.
+    expect(first.nextCursor).toBe('u:2026-11-09T03:00:00.000Z:75');
     const second = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
-    expect(second.orders).toHaveLength(20);
-    expect(fake.calls.filter((c) => c.path === '/orders/get').map((c) => c.params.offset)).toEqual(['0', '100']);
+    expect(second.orders).toHaveLength(45);
+    expect(fake.calls.filter((c) => c.path === '/orders/get').map((c) => c.params.offset)).toEqual(['0', '75']);
     expect(new Set([...first.orders, ...second.orders].map((o) => o.orderNo)).size).toBe(120);
     // Read to its end: the cursor leaves the offset and moves on.
     expect(second.nextCursor).toBe('u:2026-11-09T03:00:00.000Z');
+  });
+
+  it('does not skip an unread order when an order already read is updated between two pages of a window that cannot move', async () => {
+    const same = Array.from({ length: 120 }, (_, i) => fakeOrder({ id: String(1500000000000000 + i), number: `9113${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(1600000000000000 + i) }]));
+    const { provider } = setup(same);
+    const first = await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z');
+    // Three orders already read are updated before the next page: they move to the end of the list and the unread ones shift up by three.
+    const [a, b, c] = [same[0]!, same[1]!, same[2]!];
+    for (const o of [a, b, c]) o.updatedAt = '2026-11-09T12:00:00+07:00';
+    const second = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
+    const seen = new Set([...first.orders, ...second.orders].map((o) => o.orderNo));
+    expect(seen.size).toBe(120);
   });
 
   it('reads the last order after a full page that spans two adjacent seconds (50 at one second, 50 at the next, one after)', async () => {
@@ -223,9 +236,9 @@ describe('listOrders', () => {
   it('shows a window of more than 5000 orders within one second as not_recognized, at Lazada\'s offset limit, never skipping them silently', async () => {
     const many = Array.from({ length: 5100 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
     const { provider } = setup(many);
-    expect(await kind(() => provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4900'))).toBe('not_recognized');
+    expect(await kind(() => provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4950'))).toBe('not_recognized');
     // Below the limit it still reads.
-    expect((await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4800')).nextCursor).toBe('u:2026-11-09T03:00:00.000Z:4900');
+    expect((await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4800')).nextCursor).toBe('u:2026-11-09T03:00:00.000Z:4875');
   });
 
   it('answers a full page of orders whose items are in two states as more port orders than a page, and the poll job takes it (the limit is on orders)', async () => {
@@ -255,7 +268,20 @@ describe('listOrders', () => {
 });
 
 describe('the closed status table', () => {
-  it.each(Object.entries(LAZADA_ITEM_STAGE))('maps %s to %s', async (status, stage) => {
+  // The expected mapping is this test's own table, not the adapter's: a change to the adapter's table that is not meant must fail here.
+  const EXPECTED: Array<[string, string]> = [
+    ['unpaid', 'placed'], ['pending', 'placed'], ['topack', 'placed'],
+    ['ready_to_ship', 'shipped'], ['toship', 'shipped'], ['packed', 'shipped'], ['shipped', 'shipped'], ['shipping', 'shipped'],
+    ['delivered', 'completed'],
+    ['canceled', 'cancelled'], ['failed', 'cancelled'], ['lost', 'cancelled'],
+    ['returned', 'returned'],
+  ];
+
+  it('is exactly the expected table', () => {
+    expect(Object.entries(LAZADA_ITEM_STAGE).sort()).toEqual([...EXPECTED].sort());
+  });
+
+  it.each(EXPECTED)('maps %s to %s', async (status, stage) => {
     const { provider } = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status }])]);
     expect((await provider.listOrders(SECRET, 'lazada', null)).orders[0]?.stage).toBe(stage);
   });
