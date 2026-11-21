@@ -15098,6 +15098,7 @@ export const en = {
       },
       marketplace_connection: {
         connect: 'Connect a seller account on a marketplace',
+        ingest_page: 'Take a page of orders from a marketplace into the Inbox and link it to the connection',
         list: 'See the marketplace connections',
         poll_target: 'See which marketplace connection to pull orders from',
         record_poll: 'Record the result of pulling orders from a marketplace',

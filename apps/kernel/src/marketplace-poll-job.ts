@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pull of a marketplace connection's orders, the worker's half (#2519, ADR-0045 point 7, plan stock-and-marketplaces.md section 8.7), run as the system for one connection. The credential
 // is opened here and nowhere else (the API only seals it, ADR-0025). The provider is asked for the orders since the connection's cursor; what it lists is written as a CSV in the layout of the
-// platform's own order report and ingested with kernel.file.ingest (source `upload`, the connection's entity, content type text/csv), the SAME intake as a file a member drops in the Inbox.
+// platform's own order report and ingested with finance.marketplace_connection.ingest_page (which runs kernel.file.ingest: source `upload`, the connection's entity, content type text/csv, and links the file to the connection), the SAME intake as a file a member drops in the Inbox.
 // The normal extraction event then fires and readMarketplaceFile stages the file, so the parsing sandbox, the checks, the Inbox card and the 90-day retention apply unchanged.
 //
 // The poll NEVER confirms: a member confirms in the Inbox, and a profile that is not confirmed against a real seller's file writes no order and no stock by itself. It never calls a write
@@ -155,9 +155,10 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
   const generation = await putFile(deps.store, storageKey, bytes, 'text/csv', sha256);
   // The same intake as an upload (source `upload`: the file-source CHECK has no source of its own for a platform's pull, and a new one would need a migration of the hot file table). The
   // content hash dedupes a page read twice, and the extraction job that the event queues stages it for a member. A throw here leaves the cursor where it was, so the retry reads the page again.
+  // The command files it and links the file to the connection in the same transaction (#4250); the entity is the connection's, read there, and the source is fixed.
   const filed = await deps.runtime.execute<{ fileId: string; duplicate: boolean }>(
-    'kernel.file.ingest',
-    { filename: csvFilename(target.platform, job.connectionId, writable), contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload', legalEntityId: target.legalEntityId },
+    'finance.marketplace_connection.ingest_page',
+    { marketplaceConnectionId: job.connectionId, filename: csvFilename(target.platform, job.connectionId, writable), contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation },
     options,
   );
   // Only now does the cursor move. A page that was already ingested hands nothing new to the Inbox.

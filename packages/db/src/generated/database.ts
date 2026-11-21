@@ -85,6 +85,7 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_column_check': FinanceMarketplaceColumnCheckTable;
   'crove_finance.marketplace_column_profile': FinanceMarketplaceColumnProfileTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
+  'crove_finance.marketplace_connection_file': FinanceMarketplaceConnectionFileTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_amis_match': FinanceMisaAmisMatchTable;
@@ -1461,6 +1462,15 @@ export interface FinanceMarketplaceConnectionTable {
   last_poll_state: string | null;
   orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.marketplace_connection_file */
+export interface FinanceMarketplaceConnectionFileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  marketplace_connection_id: ColumnType<string, string, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

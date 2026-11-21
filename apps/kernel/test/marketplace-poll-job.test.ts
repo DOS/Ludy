@@ -25,7 +25,7 @@ function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee'
     query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null }),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
-      return name === 'kernel.file.ingest' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
+      return name === 'finance.marketplace_connection.ingest_page' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
     },
   } as unknown as Runtime;
   const store = {
@@ -38,7 +38,7 @@ function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee'
   const deps = { runtime, broker: {} as CredentialBroker, store, providers: { sandbox: provider } };
   const run = () => runMarketplacePoll(deps, { orgId: ORG, connectionId: CONNECTION });
   const polls = () => executed.filter((e) => e.name === 'finance.marketplace_connection.record_poll').map((e) => e.input);
-  const ingests = () => executed.filter((e) => e.name === 'kernel.file.ingest');
+  const ingests = () => executed.filter((e) => e.name === 'finance.marketplace_connection.ingest_page');
   return { run, polls, ingests, puts };
 }
 

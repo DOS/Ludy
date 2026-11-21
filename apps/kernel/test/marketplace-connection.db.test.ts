@@ -318,6 +318,53 @@ suite('marketplace connections (#2519)', () => {
     expect(stored).not.toMatch(/example\.com|Người Mua|Số điện thoại/);
   });
 
+  // #4250 (step 2 of the link table of #2840 point 3): the file a poll ingests is linked to its connection in the same step, and what waits is counted from the link.
+  it('links the file a poll ingested to its connection once, and a file named after the connection inflates nothing', async () => {
+    const entry = await connection('shopee');
+    const system = { actor: { type: 'system' as const, component: 'marketplace-poll' }, orgId };
+    const ours = (await files()).filter((f) => f.filename.startsWith(`don-hang-shopee-${entry.id}`));
+    const filed = only(ours);
+    const links = () => rows<{ marketplace_connection_id: string; file_id: string }>('SELECT marketplace_connection_id, file_id FROM crove_finance.marketplace_connection_file WHERE org_id = $1 AND marketplace_connection_id = $2', [orgId, entry.id]);
+    // The poll's page is linked to the connection that polled it, and to that one only.
+    expect(await links()).toEqual([{ marketplace_connection_id: entry.id, file_id: filed.id }]);
+    // The same page read again (the cursor lost) is the same file and the same link: no second row.
+    await rows('UPDATE crove_finance.marketplace_connection SET poll_cursor = NULL WHERE org_id = $1 AND id = $2', [orgId, entry.id]);
+    expect(await poll(entry.id)).toEqual({ state: 'ok', orders: 0, staged: false });
+    expect(await links()).toHaveLength(1);
+
+    // A file named after the connection's id, as a member could upload one, is no link and counts for nothing, staged or not.
+    const before = (await connection('shopee')).ordersWaiting;
+    const sha256 = randomBytes(32).toString('hex');
+    const planted = randomUUID();
+    await rows("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, 'text/csv', 1, 'upload')", [orgId, planted, sha256, `org/${orgId}/${sha256}`, `don-hang-shopee-${entry.id}-up-tay.csv`]);
+    await rows(
+      "INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', $3::jsonb, '[]')",
+      [orgId, planted, JSON.stringify({ kind: 'marketplace_orders', summary: { state: 'staged', platform: 'shopee', orders: 99 } })],
+    );
+    expect((await connection('shopee')).ordersWaiting).toBe(before);
+    expect(await count('SELECT 1 FROM crove_finance.marketplace_connection_file WHERE org_id = $1 AND file_id = $2', [orgId, planted])).toBe(0);
+
+    // The command is the system's alone, takes only a connection of the org, and files nothing when it refuses.
+    const filesBefore = (await files()).length;
+    const input = { marketplaceConnectionId: entry.id, filename: 'don-hang-x.csv', contentType: 'text/csv', sizeBytes: 1, sha256: 'a'.repeat(64), storageKey: `org/${orgId}/${'a'.repeat(64)}`, generation: 'g' };
+    await expect(rt.execute('finance.marketplace_connection.ingest_page', input, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(worker.execute('finance.marketplace_connection.ingest_page', { ...input, marketplaceConnectionId: randomUUID() }, system)).rejects.toMatchObject({ code: 'MARKETPLACE_CONNECTION_NOT_FOUND' });
+    // A caller cannot name an entity, a source or another content type: the shape is closed.
+    await expect(worker.execute('finance.marketplace_connection.ingest_page', { ...input, legalEntityId: randomUUID() }, system)).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(worker.execute('finance.marketplace_connection.ingest_page', { ...input, contentType: 'application/pdf' }, system)).rejects.toMatchObject({ code: 'VALIDATION' });
+    expect((await files()).length).toBe(filesBefore);
+
+    // The file's own deletion takes its link with it, with no DELETE for a tenant role to do it.
+    await rows('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [orgId, planted]);
+    const linked = randomUUID();
+    const linkedSha = randomBytes(32).toString('hex');
+    await rows("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'link-erased.csv', 'text/csv', 1, 'upload')", [orgId, linked, linkedSha, `org/${orgId}/${linkedSha}`]);
+    await rows('INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id) VALUES ($1, $2, $3)', [orgId, entry.id, linked]);
+    expect(await count('SELECT 1 FROM crove_finance.marketplace_connection_file WHERE org_id = $1 AND file_id = $2', [orgId, linked])).toBe(1);
+    await rows('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [orgId, linked]);
+    expect(await count('SELECT 1 FROM crove_finance.marketplace_connection_file WHERE org_id = $1 AND file_id = $2', [orgId, linked])).toBe(0);
+  });
+
   it('reads a platform in pages: the cursor follows each page, and moves only after the ingest succeeded', async () => {
     const entry = await connection('tiktok_shop');
     const paged = { sandbox: createSandboxMarketplaceProvider({ pageSize: 2 }) };

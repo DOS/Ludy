@@ -59,6 +59,24 @@ export const zMarketplaceConnectionRecordTest = z.strictObject({ id: zId, state:
 export const zMarketplaceConnectionTested = z.object({ state: zMarketplaceConnectionState });
 export type MarketplaceConnectionTested = z.infer<typeof zMarketplaceConnectionTested>;
 
+// The command the poll files a page of orders with (#4250, step 2 of the link table of #2840 point 3): the file of the page, as the same intake as an upload takes it, and the connection that polled it. The
+// entity and the source are the connection's and fixed, never the caller's: the command reads the entity from the connection row and the file is always an upload of text/csv.
+export const zMarketplaceIngestPage = z.strictObject({
+  marketplaceConnectionId: zId,
+  filename: z.string().min(1).max(255),
+  contentType: z.literal('text/csv'),
+  sizeBytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  storageKey: z.string().min(1).max(500),
+  // The content generation the store answered (the intake checks its form).
+  generation: z.string().min(1).max(200),
+});
+export type MarketplaceIngestPage = z.infer<typeof zMarketplaceIngestPage>;
+export interface MarketplacePageIngested {
+  fileId: string;
+  duplicate: boolean;
+}
+
 // The command that records a poll: the cursor the next poll resumes from (moved only after the page was ingested) and how it ended. What waits in the Inbox is counted when the list is read.
 export const zMarketplaceConnectionRecordPoll = z.strictObject({
   id: zId,
