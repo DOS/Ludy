@@ -5703,6 +5703,7 @@ export const vi = {
     authorize: 'Cấp quyền',
     authorizeAgain: 'Cấp quyền lại',
     reauthorizeBy: 'cần cấp quyền lại trước {when}',
+    authorizeStatesLazada: { failed: 'Chưa hoàn tất được việc cấp quyền. Hãy bấm Cấp quyền lại; nếu vẫn lỗi, báo người quản trị hệ thống.' },
     reauthorizeSoon: 'Quyền cấp cho sàn sẽ hết hạn ngày {when}. Chủ sở hữu hoặc quản trị viên hãy bấm Cấp quyền lại trước ngày đó để Ludy tiếp tục lấy đơn.',
     reauthorizeEnded: 'Quyền cấp cho sàn đã hết hạn từ {when}, Ludy không lấy được đơn mới. Chủ sở hữu hoặc quản trị viên hãy bấm Cấp quyền lại.',
     reauthorizeReconnect: 'Quyền cấp cho sàn đã hết hạn hoặc sắp hết hạn ({when}) và kết nối này không cấp quyền lại ngay được. Hãy nhập lại App Key và Secret, rồi cấp quyền lại: kết nối, đơn và mốc lấy đơn được giữ nguyên, không cần ngắt kết nối.',
@@ -5734,7 +5735,7 @@ export const vi = {
     neverPolled: 'Chưa lấy đơn lần nào',
     polledAt: 'Lấy đơn lần cuối {when}',
     ordersWaiting: 'Có {count, plural, other {# đơn}} đang chờ xác nhận ở Hộp thư.',
-    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
+    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', serviceId: 'Mã dịch vụ của ứng dụng (Service ID)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy kết nối lại',
@@ -5751,6 +5752,14 @@ export const vi = {
     testStatesLazada: {
       wrong_credentials: 'Lazada từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key và App Secret rồi kết nối lại.',
       api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn. Hãy bấm Cấp quyền và đăng nhập tài khoản người bán trên Lazada.',
+    },
+    testStatesTiktok: {
+      wrong_credentials: 'TikTok Shop từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key, App Secret và Service ID rồi kết nối lại.',
+      api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên TikTok Shop nên chưa lấy được đơn. Hãy bấm Cấp quyền và đăng nhập tài khoản người bán trên TikTok Shop.',
+    },
+    pollStatesTiktok: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên TikTok Shop nên chưa lấy được đơn' },
+    authorizeStatesTiktok: {
+      failed: 'Chưa hoàn tất được việc cấp quyền. Có thể do TikTok đang trục trặc nhất thời, hãy bấm Cấp quyền lại; nếu vẫn lỗi, kiểm tra ứng dụng có gắn với đúng một gian hàng tại Việt Nam của người bán trong nước không (không có, nhiều gian hàng hoặc gian hàng xuyên biên giới thì không nhận). Nếu vẫn lỗi, báo người quản trị hệ thống.',
     },
     pollStatesLazada: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn' },
     pollStates: {
