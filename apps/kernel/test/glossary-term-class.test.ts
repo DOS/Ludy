@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pin the glossary term's invisible-character class (#4137 point 2b): the SQL regex in 20270130170000_crove_meetings_glossary_invisible_chars.sql (glossary_term_ok, scrub_glossary_term, and the
+// Pin the glossary term's invisible-character class (#4137 point 2b): the SQL regex in 20270201180000_crove_meetings_glossary_invisible_chars.sql (glossary_term_ok, scrub_glossary_term, and the
 // scrub WHERE clause) must match the widened class from 20270122120000 and equal INVISIBLE_PATTERN (for all non-NUL code points: PostgreSQL text cannot store U+0000). Pure file and function checks.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +29,7 @@ function members(cls: string): Set<number> {
 
 describe('the character class of a glossary term (#4137 point 2b)', () => {
   const templateWidened = classesOf(read('20270122120000_crove_meetings_invisible_chars_widen.sql'));
-  const glossaryWidened = classesOf(read('20270130170000_crove_meetings_glossary_invisible_chars.sql'));
+  const glossaryWidened = classesOf(read('20270201180000_crove_meetings_glossary_invisible_chars.sql'));
 
   it('spells the exact same widened class everywhere in the glossary migration as 20270122120000', () => {
     expect(glossaryWidened.length).toBeGreaterThanOrEqual(3);
