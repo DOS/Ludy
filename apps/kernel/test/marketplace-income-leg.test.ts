@@ -77,13 +77,15 @@ describe('one closed payment day', () => {
     expect(page).toEqual({ lines: [line({ paidAt: '2026-10-22' })], nextCursor: 'd:2026-10-23', more: true });
   });
 
-  it('never reads a day that is not over in Vietnam, and keeps the cursor where it is', async () => {
+  it('never reads a day until it has been over for a whole day in Vietnam, and keeps the cursor where it is', async () => {
     reads.length = 0;
     expect(await make('d:2026-11-21')).toEqual({ lines: [], nextCursor: 'd:2026-11-21' });
     expect(await make('d:2026-11-22')).toEqual({ lines: [], nextCursor: 'd:2026-11-22' });
+    // Yesterday (the 20th) is still inside the grace.
+    expect(await make('d:2026-11-20')).toEqual({ lines: [], nextCursor: 'd:2026-11-20' });
     expect(reads).toEqual([]);
-    // The 20th is the last closed day: it is read, and nothing waits behind it.
-    expect(await make('d:2026-11-20')).toEqual({ lines: [], nextCursor: 'd:2026-11-21', more: false });
+    // The 19th is the last readable day: it is read, and nothing waits behind it.
+    expect(await make('d:2026-11-19')).toEqual({ lines: [], nextCursor: 'd:2026-11-20', more: false });
   });
 
   it('gives only the lines paid on the day: a line of another day in the window is dropped, never filed under this one', async () => {

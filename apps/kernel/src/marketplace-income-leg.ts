@@ -3,7 +3,7 @@
 // rule that makes every file the leg writes cover whole payment days that no other file covers (the confirm step refuses an income report whose period overlaps a stored one, and the table has an
 // exclusion constraint on it).
 //
-// THE UNIT IS ONE CLOSED PAYMENT DAY. The income cursor is `d:<YYYY-MM-DD>`, the next day to read; a day that is not over in Vietnam is never read; a read gives the lines whose payment day IS that
+// THE UNIT IS ONE CLOSED PAYMENT DAY. The income cursor is `d:<YYYY-MM-DD>`, the next day to read; a day is read only once it has been over for a whole day in Vietnam; a read gives the lines whose payment day IS that
 // day and nothing else, so two files never share a day. The first read starts INCOME_FIRST_DAYS back. What each platform's day means:
 // - Shopee: the day an order's escrow was released, which is the payment day of its line; one day is the whole window.
 // - Lazada: a line's date is its transaction date and the line is income only once its statement is paid (the reader leaves unpaid lines out and counts them). A day with unpaid lines is NOT passed: the
@@ -89,12 +89,13 @@ export async function readIncomeDay(options: IncomeDayOptions): Promise<Marketpl
   // A cursor that is not ours is not guessed at: the poll records `not_recognized` and the cursor stays where it was.
   if (options.since !== null && (held === null || !isoDay(held[1] as string))) throw notRecognized();
   const day = held ? (held[1] as string) : addDays(today, -INCOME_FIRST_DAYS);
-  // Only a day that is over is read; the cursor is anchored on the first day so the start does not drift with the calendar.
-  if (day >= today) return { lines: [], nextCursor: `d:${day}` };
+  // Only a day that has been over for a whole day is read (a grace of one day: a platform may mark a release or a statement paid a little after midnight, and the cursor never goes back); the cursor
+  // is anchored on the first day so the start does not drift with the calendar.
+  if (day >= addDays(today, -1)) return { lines: [], nextCursor: `d:${day}` };
   const read = await options.read({ startDay: addDays(day, -options.lookbackDays), endDay: day });
   if (options.waitPending && read.pending > 0 && day > addDays(today, -INCOME_PENDING_WAIT_DAYS)) return { lines: [], nextCursor: `d:${day}` };
   const next = addDays(day, 1);
-  return { lines: read.lines.filter((line) => line.paidAt === day), nextCursor: `d:${next}`, more: next < today };
+  return { lines: read.lines.filter((line) => line.paidAt === day), nextCursor: `d:${next}`, more: next < addDays(today, -1) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
