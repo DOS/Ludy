@@ -234,7 +234,8 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const tt99 = await org('tt99');
     expect((await worklist(tt99)).postingConfirmed).toBe(false);
     expect((await worklist(o, rt, o.entity)).postingConfirmed).toBe(true);
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // Closed on the shipped map though its sales path is applied (#4303 S3b): the payout and fee accrual rows are still commentary, and the gate reads all three.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });
 
   it('lists the settlements to post with the net their entry would post, and drops one once it is posted', async () => {

@@ -20,14 +20,22 @@ const code = (fn: () => unknown) => {
 };
 
 describe('marketplace posting map and gate', () => {
-  it('ships as commentary and refuses until confirmed', () => {
+  it('ships with the sales path confirmed (#4303 S3b) and every other path commentary, refused until confirmed', () => {
     const map = MARKETPLACE_POSTING_MAPS.tt133!;
-    expect(map.status).toBe('commentary');
-    for (const r of [map.receivable, map.revenue, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity]) expect(r.status).toBe('commentary');
+    expect(map.status).toBe('confirmed');
+    // The sales path (131, 5111, the refund on 5111, 33311) is applied; the rest waits for its own change.
+    for (const r of [map.receivable, map.revenue, map.salesReturn, map.outputVat]) expect(r.status).toBe('confirmed');
+    for (const r of [map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity, map.feeExpense, map.accruedExpense]) expect(r.status).toBe('commentary');
     expect([map.vatPayable.code, map.pitPayable.code, map.pitOwnerEquity.code]).toEqual(['3331', '3335', '4212']);
     expect([map.receivable.code, map.revenue.code, map.cash.code, map.feePayable.code, map.feeAwaitingInvoice.code, map.taxWithheld.code]).toEqual(['131', '5111', '112', '331', '1388', '333']);
+    // No path named asks for the original twelve rows (the retired fee clearing), which are not all confirmed; the paths that are not the sales path are refused.
     expect(code(() => requireConfirmedMarketplaceMap('tt133'))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
-    expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt133', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    // The sales path opens from the shipped map: a settlement entry posts with no test map at all.
+    expect(requireConfirmedMarketplaceMap('tt133', undefined, ['sales']).regime).toBe('tt133');
+    expect(settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])).lines.map((l) => l.account)).toEqual(['131', '5111']);
+    // A settlement that carries the household's withheld tax needs the household tax path, still closed.
+    expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0', taxWithheld: '1' }], { tax: { vatPercent: '1', pitPercent: '0.5' } })))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
   it('refuses a regime with no map, including inherited names', () => {
     expect(code(() => requireConfirmedMarketplaceMap('tt200'))).toEqual({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
@@ -35,7 +43,9 @@ describe('marketplace posting map and gate', () => {
   });
   it('passes a map the test confirmed for itself, leaving the shipped one alone', () => {
     expect(requireConfirmedMarketplaceMap('tt133', confirmed()).status).toBe('confirmed');
-    expect(MARKETPLACE_POSTING_MAPS.tt133!.status).toBe('commentary');
+    // The shipped map confirms the sales path only: a test's own map does not change it, and the other rows stay as shipped.
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.cash.status).toBe('commentary');
+    expect(confirmed().tt133!.cash.status).toBe('confirmed');
   });
 });
 
@@ -69,8 +79,9 @@ describe('settlement proposal', () => {
     expect(p.refund).toBe('95000');
     expect(p.total).toBe('320000');
   });
-  it('marks the refund rule commentary beside the map', () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '5111', status: 'commentary' });
+  it('applies the refund rule with its uncertain points kept in the row (#4303 S3b)', () => {
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '5111', status: 'confirmed' });
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn.comment).toContain('Uncertain (#2520');
   });
   it('posts the other way when refunds and discounts exceed the sales', () => {
     const p = settlementProposal(input([{ sales: '1000', sellerDiscount: '500', refund: '8500' }], { partyId: 'party-1' }), maps);
@@ -155,11 +166,13 @@ describe('the TT99 map (#3711 slice 4)', () => {
     const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
     return { tt99: { ...tt99, status: 'confirmed', receivable: c(tt99.receivable), revenue: c(tt99.revenue), salesReturn: c(tt99.salesReturn), cash: c(tt99.cash), feePayable: c(tt99.feePayable), feeAwaitingInvoice: c(tt99.feeAwaitingInvoice), taxWithheld: c(tt99.taxWithheld), vatPayable: c(tt99.vatPayable), pitPayable: c(tt99.pitPayable), pitOwnerEquity: c(tt99.pitOwnerEquity), feeExpense: c(tt99.feeExpense), accruedExpense: c(tt99.accruedExpense), outputVat: c(tt99.outputVat) } };
   };
-  it('ships as commentary, so no path opens from it until the accountant confirms', () => {
+  it('ships with the sales path confirmed (#4303 S3b), and the payout, fee accrual and household tax paths closed until their own change', () => {
     expect(tt99.regime).toBe('tt99');
-    expect(tt99.status).toBe('commentary');
-    for (const r of [tt99.receivable, tt99.revenue, tt99.salesReturn, tt99.cash, tt99.feePayable, tt99.feeAwaitingInvoice, tt99.taxWithheld, tt99.vatPayable, tt99.pitPayable, tt99.pitOwnerEquity, tt99.feeExpense, tt99.accruedExpense]) expect(r.status).toBe('commentary');
-    for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt99', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(tt99.status).toBe('confirmed');
+    for (const r of [tt99.receivable, tt99.revenue, tt99.salesReturn, tt99.outputVat]) expect(r.status).toBe('confirmed');
+    for (const r of [tt99.cash, tt99.feePayable, tt99.feeAwaitingInvoice, tt99.taxWithheld, tt99.vatPayable, tt99.pitPayable, tt99.pitOwnerEquity, tt99.feeExpense, tt99.accruedExpense]) expect(r.status).toBe('commentary');
+    for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt99', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(requireConfirmedMarketplaceMap('tt99', undefined, ['sales']).regime).toBe('tt99');
   });
   it('books the fees on 641 (sub-account 6417, not the staff cost 6421), the accrual on 335 and a refund on 521', () => {
     expect([tt99.feePayable.code, tt99.feeExpense.code, tt99.accruedExpense.code, tt99.salesReturn.code]).toEqual(['331', '6417', '335', '521']);
@@ -290,16 +303,16 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
 describe('the rows of the researched rules (#4303 S2)', () => {
   const NEW = ['outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
   const CODES = ['33311', '1331', '1388', '1381', '632', '711', '811'];
-  it('names the same accounts in both regimes, every one still `commentary`', () => {
+  it('names the same accounts in both regimes: the output VAT row is confirmed with the sales path (#4303 S3b), the rest still `commentary`', () => {
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       expect(NEW.map((key) => map[key].code), regime).toEqual(CODES);
-      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe('commentary');
+      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe(key === 'outputVat' ? 'confirmed' : 'commentary');
     }
   });
-  it('does not open any path by itself: the rows are gated by the paths that post them (S3, S4), and the retired no-path gate still asks for the original twelve only', () => {
+  it('opens only the sales path: the rows are gated by the paths that post them (S3b flipped sales, S4 is next), and the retired no-path gate still asks for the original twelve only', () => {
     for (const regime of ['tt133', 'tt99']) {
-      for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     }
     const original = confirmed();
     expect(requireConfirmedMarketplaceMap('tt133', original).regime).toBe('tt133');
@@ -322,7 +335,7 @@ describe('output VAT of a marketplace settlement entry', () => {
     expect(MARKETPLACE_POSTING_MAPS.tt99!.outputVat.code).toBe('33311');
     const base = MARKETPLACE_POSTING_MAPS.tt133!;
     const conf = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-    const noVat = { tt133: { ...base, status: 'confirmed' as const, receivable: conf(base.receivable), revenue: conf(base.revenue), salesReturn: conf(base.salesReturn) } };
+    const noVat = { tt133: { ...base, status: 'confirmed' as const, receivable: conf(base.receivable), revenue: conf(base.revenue), salesReturn: conf(base.salesReturn), outputVat: { ...base.outputVat, status: 'commentary' as const } } };
     expect(code(() => requireConfirmedMarketplaceMap('tt133', noVat, ['sales']))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     expect(() => requireConfirmedMarketplaceMap('tt133', { tt133: { ...noVat.tt133, outputVat: conf(base.outputVat) } }, ['sales'])).not.toThrow();
   });

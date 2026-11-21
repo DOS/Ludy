@@ -627,14 +627,16 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   });
 
   it('refuses both the request and the approval with 409 while the shipped map is unconfirmed, and writes nothing', async () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary: only the sales path is applied on the shipped map (#4303 S3b).
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
     const { o, settlement, line } = await posted();
     await expect(ask(o, settlement, line, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     const { proposalId } = await ask(o, settlement, line);
     await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     expect(await payoutsOf(o, settlement)).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary: only the sales path is applied on the shipped map (#4303 S3b).
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });
 
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {

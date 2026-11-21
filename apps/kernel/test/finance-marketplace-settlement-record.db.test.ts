@@ -319,21 +319,26 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ voucherId: expect.any(String) });
   });
 
-  it('refuses both the request and the approval with 409 while the shipped map is unconfirmed, and writes nothing', async () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+  it('posts the sales path on the shipped map (#4303 S3b) and still refuses, at the request and the approval, a settlement that carries a household\'s withheld tax (that path is unconfirmed), writing nothing', async () => {
+    // The sales path is applied on the shipped map; the household tax rows are not.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('confirmed');
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.vatPayable.status).toBe('commentary');
     const o = await org();
-    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', TWO);
-    // The preparer, through the proposal path.
-    await expect(ask(o, settlement, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
-    // The recorder: a proposal that exists (made where the map is confirmed) is not posted by the shipped set.
-    const { proposalId } = await ask(o, settlement);
-    await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
-    expect(await vouchersOf(o, settlement)).toHaveLength(0);
-    expect(await parties(o, 'Shopee')).toHaveLength(0);
-    expect(await links(o, 'shopee')).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    const sales = await seed(o, 'shopee', '2026-10-01', '2026-10-15', TWO);
+    const asked = await ask(o, sales, o.admin, rtShipped);
+    await approve(o, asked.proposalId, o.owner, rtShipped);
+    expect(await vouchersOf(o, sales)).toHaveLength(1);
+    // A household with the platform's withheld tax: the request and the approval of a proposal made elsewhere are refused as unconfirmed.
+    const h = await org();
+    await household(h, ['goods']);
+    const taxed = await seed(h, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', tax: '1500' }]);
+    await expect(ask(h, taxed, h.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    const { proposalId } = await ask(h, taxed);
+    await expect(approve(h, proposalId, h.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(await vouchersOf(h, taxed)).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, proposalId]))[0]?.status).toBe('pending');
     // The shipped map is unchanged by all of it.
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.vatPayable.status).toBe('commentary');
   });
 
   it('posts a settlement as one voucher per month of delivery, all by ONE proposal: the sale in the month it was delivered, a refund in the settlement\'s own month', async () => {

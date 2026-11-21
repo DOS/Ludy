@@ -359,7 +359,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   });
 
   it('is retired in the shipped set: both the request and the approval are refused with 409 (MARKETPLACE_FEE_CLEARING_RETIRED), whatever the map, and nothing is written', async () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary (only the sales path is applied, #4303 S3b), and the retired clearing is refused whatever the map.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
     const { o, party } = await paid();
     const doc = await invoice(o, party);
     await expect(askFee(o, doc, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
@@ -368,7 +369,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
     expect(await clearingsOf(o, doc)).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary (only the sales path is applied, #4303 S3b), and the retired clearing is refused whatever the map.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });
 
   it('holds the voucher shape in the database: no other source on a clearing voucher, and a proposal', async () => {
