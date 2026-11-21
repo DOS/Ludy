@@ -167,6 +167,7 @@ import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
+import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush } from './marketplace-push-hook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import type { AmisCallbackKey } from '@ludy/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
@@ -320,6 +321,9 @@ export interface HttpDeps {
   // Requests per minute per client address, checked before the body is read, and notices per minute per hook, checked once the hook is found.
   bankFeedHookLimit?: RateLimiter;
   bankFeedHookBudget?: RateLimiter;
+  // The marketplaces whose push (webhook) the route takes (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315): POST /api/marketplace/<adapter>/webhook/<hookKey> exists for these alone, with finance installed, and only where
+  // the deployment runs the adapter (MARKETPLACE_PROVIDERS) and holds a credential broker (the worker's relay opens the connection's secret). Unset or empty: the route does not exist.
+  marketplacePush?: { adapters: readonly string[]; limit?: RateLimiter; budget?: RateLimiter };
   // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
   // The HMAC keys of the callback's signature: one ClientID (MISA AMIS's), or one per product the deployment holds (MISA AMIS and MISA ASP, #4103), tried all, never told apart.
   misaAmisCallback?: { clientId: string } | { keys: readonly AmisCallbackKey[] };
@@ -1064,6 +1068,42 @@ export function createHttpApp(deps: HttpDeps) {
           // Nothing of the error is logged: a database error's DETAIL can quote the notice's body, which is personal data. The line carries the error's name only.
           console.error('[bank-feed-hook] request failed:', error instanceof Error ? error.name : 'error');
           return c.json({ code: 'INTERNAL', message: 'Lỗi hệ thống' }, 500);
+        }
+      },
+    );
+  }
+
+  // A marketplace's signed push at the address of one connection (#4346, S2 of #4315; the verifiers and the worker relay are #4344): public like the routes above, and signed with each seller's own app secret that only the worker
+  // can open, so the address carries a hook key of the connection. In order: the adapter must be one the deployment runs (else a 404 and nothing is stored), the per-address limit (ahead of the body cap), the 16 KB cap, then
+  // acceptMarketplacePush: the key's SHA-256 is looked up (the org and the connection come from our own row, never from the body), and the RAW bytes are stored for the worker. Every answer is an empty 2xx or a bare 404, never a 429
+  // (Shopee disables a subscription below 30% success), and nothing of the key, the header, the body or a secret is logged or answered. Shopee's signed address is built from PUBLIC_URL, never from Host or X-Forwarded-*.
+  const marketplacePush = deps.marketplacePush;
+  if (marketplacePush && marketplacePush.adapters.length > 0 && runtime.installed('finance')) {
+    const pushAddressLimit = marketplacePush.limit ?? new RateLimiter({ perMinute: MARKETPLACE_PUSH_ADDRESS_PER_MINUTE });
+    const pushBudget = marketplacePush.budget ?? new RateLimiter({ perMinute: MARKETPLACE_PUSHES_PER_MINUTE });
+    app.post(
+      '/api/marketplace/:adapter/webhook/:hookKey',
+      async (c, next) => {
+        if (!marketplacePush.adapters.includes(c.req.param('adapter'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        // Over the address limit the push is dropped with an empty success: the periodic poll makes up what it would have said.
+        if (!pushAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))).allowed) return c.body(null, 200);
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MARKETPLACE_PUSH_BYTES, onError: (c) => c.body(null, 200) }),
+      async (c) => {
+        try {
+          const outcome = await acceptMarketplacePush(
+            runtime,
+            c.req.param('adapter'),
+            { key: c.req.param('hookKey'), authorization: c.req.header('authorization'), body: new Uint8Array(await c.req.arrayBuffer()) },
+            pushBudget,
+            config.PUBLIC_URL,
+          );
+          return outcome.status === 404 ? c.json({ code: 'NOT_FOUND' }, 404) : c.body(null, 200);
+        } catch (error) {
+          // Nothing of the error is logged: a database error's DETAIL can quote the push's body. The line carries the error's name only.
+          console.error('[marketplace-push] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL' }, 500);
         }
       },
     );
