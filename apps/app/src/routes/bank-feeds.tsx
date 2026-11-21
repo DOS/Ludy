@@ -17,7 +17,7 @@ import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, u
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
-import { bankAccountChoices, feedAccountRows, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
+import { bankAccountChoices, feedAccountRows, feedFromMin, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
 import type { Role } from '../lib/members.ts';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.accounts.key() });
@@ -26,6 +26,7 @@ const refreshConnections = () => queryClient.invalidateQueries({ queryKey: orpc.
 type ConnectionStatus = 'active' | 'expired' | 'revoked' | 'error';
 interface Connection {
   id: string;
+  provider: string;
   displayName: string;
   status: ConnectionStatus;
 }
@@ -201,11 +202,14 @@ function AccountRow({
   entities: readonly LegalEntity[];
 }) {
   const t = useTranslations('bankFeeds');
+  const f = useFormat();
   const mapped = row.mapped;
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [bankAccount, setBankAccount] = useState(mapped?.bankAccount ?? '');
   const [legalEntityId, setLegalEntityId] = useState(mapped?.legalEntityId ?? defaultEntity?.id ?? '');
+  const [feedFrom, setFeedFrom] = useState(mapped?.feedFrom ?? '');
   const bankId = useId();
+  const feedFromId = useId();
   const fields = useFieldErrors<'bankAccount'>(() => (bankAccount ? null : t('bankAccountNeeded')));
   const several = entities.length > 1;
   const choices = bankAccountChoices(bankAccounts, mapped?.bankAccount);
@@ -228,6 +232,7 @@ function AccountRow({
       connectionId: connection.id,
       externalAccountId: row.externalAccountId,
       bankAccount,
+      feedFrom: feedFrom || null,
       ...(several && legalEntityId ? { legalEntityId } : {}),
       idempotencyKey: crypto.randomUUID(),
     });
@@ -242,6 +247,7 @@ function AccountRow({
       {mapped && (
         <p className="text-xs text-subtle-foreground">
           {t('mappedTo', { account: mapped.bankAccount })} · <LastSynced account={mapped} />
+          {mapped.feedFrom && ` · ${t('feedFromOn', { date: f.date(mapped.feedFrom) })}`}
         </p>
       )}
       {row.gone && (
@@ -251,6 +257,15 @@ function AccountRow({
       )}
       {!row.gone && (
         <form className="mt-2 space-y-2" onSubmit={submit} aria-label={t('mapForm', { name: row.displayName })} noValidate>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
+              {t('feedFromLabel')}
+            </label>
+            <Input id={feedFromId} type="date" min={feedFromMin(connection.provider, mapped)} className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active || mapped?.feedFromEarliest === null} onChange={(e) => setFeedFrom(e.target.value)} />
+          </div>
+          <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
+            {t('feedFromHint')}
+          </p>
           <div className="flex flex-wrap gap-2">
             <NativeSelect
               {...fieldControl(bankId, { error: Boolean(fields.of('bankAccount')) })}
@@ -354,7 +369,7 @@ function ConnectionItem({
         <ul className="mt-1 divide-y">
           {rows.map((row) => (
             // Keyed by the mapping too, so the form starts from a mapping made or removed since.
-            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
+            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}:${row.mapped?.feedFrom ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
           ))}
         </ul>
       )}

@@ -12,7 +12,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -86,6 +86,7 @@ import { misaCheck } from './misa-check.ts';
 import { explainMisaAmisBlockers, misaAmisBlockerNotesAi } from './finance-misa-amis-blocker-notes-ai.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
 import { misaAmisPreview } from './misa-amis-preview.ts';
+import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -484,6 +485,7 @@ export function createRpcHandler(
   const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's first mapping for the columns of an unrecognised order report (#4036): told the masked sheet the worker recorded (header texts and the shapes of a few values) and nothing else; a budget of its own.
   const financeMarketplaceColumnsAi = marketplaceColumnsAi(conversationReader?.marketplaceColumns ? { marketplaceColumns: conversationReader.marketplaceColumns.bind(conversationReader) } : null, suggestionBudget());
+  const financeBankCandidatesLineAi = bankCandidatesLineAi(conversationReader?.bankCandidatesLineSentence ? { bankCandidatesLineSentence: conversationReader.bankCandidatesLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
@@ -1185,6 +1187,7 @@ export function createRpcHandler(
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
       get: os.notes.get.handler(notesQuery('notes.note.get')),
+      backlinks: os.notes.backlinks.handler(notesQuery('notes.note.backlinks')),
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
@@ -1193,6 +1196,8 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
+      versions: os.notes.versions.handler(notesQuery('notes.note.versions')),
+      restoreVersion: os.notes.restoreVersion.handler(notesCommand('notes.note.restore_version')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),
       unpin: os.notes.unpin.handler(notesCommand('notes.note.unpin')),
@@ -1201,6 +1206,16 @@ export function createRpcHandler(
       delete: os.notes.delete.handler(notesCommand('notes.note.delete')),
       linkAdd: os.notes.linkAdd.handler(notesCommand('notes.link.add')),
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
+      attachments: {
+        list: os.notes.attachments.list.handler(notesQuery('notes.attachment.list')),
+        delete: os.notes.attachments.delete.handler(notesCommand('notes.attachment.delete')),
+      },
+      notebooks: {
+        list: os.notes.notebooks.list.handler(notesQuery('notes.notebook.list')),
+        create: os.notes.notebooks.create.handler(notesCommand('notes.notebook.create')),
+        update: os.notes.notebooks.update.handler(notesCommand('notes.notebook.update')),
+        delete: os.notes.notebooks.delete.handler(notesCommand('notes.notebook.delete')),
+      },
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
       vyStatus: os.notes.vyStatus.handler(({ context }) =>
@@ -1220,6 +1235,12 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
       ),
       acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
+      templates: {
+        list: os.notes.templates.list.handler(notesQuery('notes.template.list')),
+        create: os.notes.templates.create.handler(notesCommand('notes.template.create')),
+        update: os.notes.templates.update.handler(notesCommand('notes.template.update')),
+        delete: os.notes.templates.delete.handler(notesCommand('notes.template.delete')),
+      },
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
@@ -3963,6 +3984,14 @@ export function createRpcHandler(
           const match = await runtime.query<BankPayrollMatch>('finance.bank.payroll_match', { bankLineId }, { actor, orgId });
           const candidate = match.candidates.find((c) => c.runId.toLowerCase() === runId.toLowerCase() && c.kind === kind) ?? null;
           return explainPayrollMatch(financePayrollMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
+        }),
+      ),
+      // The line and its candidates are read again here in the caller's own transaction, so the facts the model is told come from the matcher and the books, never from the caller; the sentence is a read and picks nothing.
+      candidatesLine: os.bank.candidatesLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, bankLineId } = input;
+          const read = await runtime.query<BankLineVoucher>('finance.bank.line_voucher', { bankLineId }, { actor, orgId });
+          return explainBankCandidatesLine(financeBankCandidatesLineAi, orgId, actor.userId, read, lang ?? 'vi');
         }),
       ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>

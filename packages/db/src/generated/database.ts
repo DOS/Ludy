@@ -227,8 +227,12 @@ export interface CroveMeetingsSchema {
 }
 
 export interface CroveNotesSchema {
+  'crove_notes.attachment': NotesAttachmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
+  'crove_notes.note_template': NotesNoteTemplateTable;
+  'crove_notes.note_version': NotesNoteVersionTable;
+  'crove_notes.notebook': NotesNotebookTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_notes.todo_list': NotesTodoListTable;
 }
@@ -912,6 +916,7 @@ export interface FinanceBankFeedAccountTable {
   last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  feed_from: string | null;
 }
 
 /** crove_finance.bank_feed_listed_account */
@@ -3509,6 +3514,23 @@ export interface MeetingsTranslationTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_notes.attachment */
+export interface NotesAttachmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  filename: ColumnType<string, string, NotGranted>;
+  content_type: ColumnType<string, string, NotGranted>;
+  size_bytes: ColumnType<number, number, NotGranted>;
+  sha256: ColumnType<string, string, NotGranted>;
+  storage_key: ColumnType<string, string, NotGranted>;
+  extracted_text: ColumnType<string | null, string | null, NotGranted>;
+  extract_status: ColumnType<string, string | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  search: ColumnType<string, string | undefined, NotGranted>;
+}
+
 /** crove_notes.link */
 export interface NotesLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3542,6 +3564,51 @@ export interface NotesNoteTable {
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   summary_run_ids: Generated<string[]>;
+  notebook_id: string | null;
+}
+
+/** crove_notes.note_template */
+export interface NotesNoteTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  title: Generated<string>;
+  body: Generated<string>;
+  tags: Generated<string[]>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_notes.note_version */
+export interface NotesNoteVersionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  revision: ColumnType<number, number, NotGranted>;
+  title: ColumnType<string, string | undefined, NotGranted>;
+  body: ColumnType<string, string | undefined, NotGranted>;
+  tags: ColumnType<string[], string[] | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_notes.notebook */
+export interface NotesNotebookTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  stack_name: string | null;
+  pinned: Generated<boolean>;
+  sort_key: Generated<string>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_notes.todo_list */

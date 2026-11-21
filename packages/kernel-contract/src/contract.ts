@@ -346,6 +346,10 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteAttachment,
+  zNoteAttachmentDeleted,
+  zNoteAttachmentRef,
+  zNoteBacklinksInput,
   zNoteClip,
   zNoteCreate,
   zNoteFromMeetingSummary,
@@ -357,6 +361,7 @@ import {
   zNotePrivateCount,
   zNoteRecordPanelView,
   zNoteRef,
+  zNoteRestoreVersion,
   zNoteSearch,
   zNoteSetVisibility,
   zNoteSuggestTodosInput,
@@ -364,10 +369,23 @@ import {
   zNoteSummarizeInput,
   zNoteSummarizeResult,
   zNoteSummary,
+  zNoteTemplate,
+  zNoteTemplateCreate,
+  zNoteTemplateDeleted,
+  zNoteTemplateRef,
+  zNoteTemplateUpdate,
+  zNoteTemplateWritten,
   zNoteUpdate,
+  zNoteVersion,
   zNoteVyResults,
   zNoteVyStatus,
   zNoteWritten,
+  zNotebookCreate,
+  zNotebookDeleted,
+  zNotebookRef,
+  zNotebookUpdate,
+  zNotebookWritten,
+  zNotebooksResponse,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
@@ -596,7 +614,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1171,6 +1189,7 @@ export const contract = {
   notes: {
     list: oc.input(zNoteList).output(z.array(zNoteSummary)),
     get: oc.input(zNoteRef).output(zNote),
+    backlinks: oc.input(zNoteBacklinksInput).output(z.array(zNoteSummary)),
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
@@ -1185,6 +1204,26 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    attachments: {
+      list: oc.input(zNoteRef).output(z.array(zNoteAttachment)),
+      delete: oc.input(zNoteAttachmentRef).output(zNoteAttachmentDeleted),
+    },
+    // Notebooks and 2-level stacks (#3559): private to their author or shared with the org.
+    notebooks: {
+      list: oc.input(z.strictObject({})).output(zNotebooksResponse),
+      create: oc.input(zNotebookCreate).output(zNotebookWritten),
+      update: oc.input(zNotebookUpdate).output(zNotebookWritten),
+      delete: oc.input(zNotebookRef).output(zNotebookDeleted),
+    },
+    // Rolling 20-snapshot version history and custom templates (#3562, Notes v2 E3).
+    versions: oc.input(zNoteRef).output(z.array(zNoteVersion)),
+    restoreVersion: oc.input(zNoteRestoreVersion).output(zNoteWritten),
+    templates: {
+      list: oc.input(z.strictObject({})).output(z.array(zNoteTemplate)),
+      create: oc.input(zNoteTemplateCreate).output(zNoteTemplateWritten),
+      update: oc.input(zNoteTemplateUpdate).output(zNoteTemplateWritten),
+      delete: oc.input(zNoteTemplateRef).output(zNoteTemplateDeleted),
+    },
     // How many private notes each member has, for an owner or admin before removing one; no text.
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.
@@ -2934,6 +2973,8 @@ export const contract = {
     supplierMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSupplierMatch),
     // The coworker's one line on why a line may be one of those payments (#2532): code decided, the model only words it; no text when AI is off, busy, over budget or refused.
     payrollExplain: oc.input(zBankPayrollExplainAsk).output(zBankPayrollExplanation),
+    // The coworker's one sentence on an open line the matcher could not settle: several candidates, or none stands out (#4219). Code listed the candidates, the model only words it; no text when AI is off, busy, over budget or refused.
+    candidatesLine: oc.input(zBankCandidatesLineAsk).output(zBankCandidatesLine),
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
     // the voucher each makes (stage 2b); the SPA asks for them one by one with inbox.request. Owners, admins and members.
     suggestions: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(z.array(zBankLineVoucher)),
