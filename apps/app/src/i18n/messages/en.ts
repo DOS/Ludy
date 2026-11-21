@@ -5653,6 +5653,7 @@ export const en = {
     test: 'Test connection',
     pollNow: 'Pull orders now',
     testQueued: 'The test was requested. The result will show here in a few seconds.',
+    testNoResult: 'No test result yet. Try again in a few minutes; if there is still none, tell the system administrator.',
     pollQueued: 'Orders were requested. New ones will wait for you to confirm them in the Inbox.',
     disconnect: 'Disconnect',
     disconnectConfirm: 'Disconnect this? The saved login is deleted; orders already imported and orders waiting for confirmation stay.',

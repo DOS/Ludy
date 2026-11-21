@@ -5650,6 +5650,7 @@ export const vi = {
     test: 'Kiểm tra kết nối',
     pollNow: 'Lấy đơn ngay',
     testQueued: 'Đã yêu cầu kiểm tra. Kết quả sẽ hiện ở đây sau ít giây.',
+    testNoResult: 'Chưa có kết quả kiểm tra. Hãy thử lại sau ít phút; nếu vẫn chưa có, báo người quản trị hệ thống.',
     pollQueued: 'Đã yêu cầu lấy đơn. Đơn mới sẽ chờ bạn xác nhận ở Hộp thư.',
     disconnect: 'Ngắt kết nối',
     disconnectConfirm: 'Ngắt kết nối này? Thông tin đăng nhập đã lưu sẽ bị xóa; đơn hàng đã nhập và đơn đang chờ xác nhận vẫn còn.',

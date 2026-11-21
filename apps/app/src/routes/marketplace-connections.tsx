@@ -33,12 +33,17 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
   const t = useTranslations('marketplaceConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
+  // Each queued answer starts a new window (`round`), so a second click is watched for the full time; `silent` is a window that ended with no answer.
   const [watching, setWatching] = useState(false);
+  const [round, setRound] = useState(0);
+  const [silent, setSilent] = useState(false);
   const test = useMutation(
     orpc.marketplace.connections.test.mutationOptions({
       onSuccess: async (answer) => {
         // `queued`: the worker tests it and records the state; the answer of the offline adapter is the state itself.
+        setSilent(false);
         setWatching('queued' in answer);
+        if ('queued' in answer) setRound((n) => n + 1);
         await refresh();
       },
     }),
@@ -49,14 +54,18 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
     const timer = setInterval(() => {
       times += 1;
       void refresh();
-      if (times >= TEST_WATCH_TIMES) setWatching(false);
+      if (times >= TEST_WATCH_TIMES) {
+        setWatching(false);
+        setSilent(true);
+      }
     }, TEST_WATCH_MS);
     return () => clearInterval(timer);
-  }, [watching]);
+  }, [watching, round]);
   const testedAtStart = connection.lastTestedAt;
   useEffect(() => {
     // A new test time on the row is the worker's answer: stop reading.
     setWatching(false);
+    setSilent(false);
   }, [testedAtStart]);
   const pull = useMutation(orpc.marketplace.connections.pollNow.mutationOptions({ onSuccess: refresh }));
   const disconnect = useMutation(orpc.marketplace.connections.disconnect.mutationOptions({ onSuccess: refresh }));
@@ -109,6 +118,11 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
       {watching && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
           {t('testQueued')}
+        </p>
+      )}
+      {silent && !watching && (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          {t('testNoResult')}
         </p>
       )}
       {pull.isSuccess && (
