@@ -128,7 +128,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     expect(first.found).toBe(1);
     expect(first.lines).toEqual([expect.stringMatching(new RegExp(`^\\[security\\] ALERT actor_many_orgs: user ${probe} acted in 3 orgs within 5 min`))]);
     expect(first.posted).toHaveLength(1);
-    expect(first.posted[0]?.text).toMatch(/^\[Ludy\] Security alert from books\.example\.test: user /);
+    expect(first.posted[0]?.text).toMatch(/^\[Crove\] Security alert from books\.example\.test: user /);
     const expected = { kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 };
     expect(first.posted[0]?.ludy).toMatchObject(expected);
     expect(first.posted[0]?.crove).toMatchObject(expected);

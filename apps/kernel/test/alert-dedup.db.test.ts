@@ -185,13 +185,13 @@ suite('prober alert state on PostgreSQL', () => {
     try {
       expect(await Promise.all([probe(workerDown), probe(workerDown)])).toEqual([EXIT.unhealthy, EXIT.unhealthy]);
       expect(received).toHaveLength(1);
-      expect(received[0]).toMatch(/^\[Crove\] ALERT on dedup-test: 1 health check\(s\) failed\./);
+      expect(received[0]).toMatch(/^\[Ludy\] ALERT on dedup-test: 1 health check\(s\) failed\./);
       // Later probes of the same problem stay quiet, then it resolves once.
       expect(await Promise.all([probe(workerDown), probe(workerDown)])).toEqual([EXIT.unhealthy, EXIT.unhealthy]);
       expect(received).toHaveLength(1);
       expect(await Promise.all([probe(healthy), probe(healthy)])).toEqual([EXIT.ok, EXIT.ok]);
       expect(received).toHaveLength(2);
-      expect(received[1]).toMatch(/^\[Crove\] RESOLVED on dedup-test: the failing health checks pass again after \d+ s \(heartbeat\)\.$/);
+      expect(received[1]).toMatch(/^\[Ludy\] RESOLVED on dedup-test: the failing health checks pass again after \d+ s \(heartbeat\)\.$/);
     } finally {
       hookDelayMs = 0;
     }
