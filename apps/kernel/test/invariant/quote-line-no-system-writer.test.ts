@@ -4,7 +4,9 @@
 // with the same text stays tainted. That is safe only while the system context deletes lines and never inserts a replacement: the org purge deletes every line of an org and writes none. The insert policy of
 // `crove_crm.quote_line` still lets the system in, so the guarantee rests on the code: this file pins it. It fails when
 //   - any source outside modules/crm/src/quotes.ts writes `crove_crm.quote_line` (an insert, update or delete in the query builder or in raw SQL), or any migration inserts into or updates it;
-//   - a command of quotes.ts that writes lines declares `access: 'system'` (or an access list naming it).
+//   - a command of quotes.ts that writes lines declares `access: 'system'` (or an access list naming it), or its handler does not call `userOf(ctx.actor)` before its first write.
+// What keeps the system out is `userOf(ctx.actor)`, not the access list: the runtime lets the system actor through a role list (runtime.ts), and `userOf` refuses every actor that is not a person (403) before the
+// handler writes anything. The access checks below only keep the declaration honest; the `userOf` check is the guard.
 // A change that needs a system writer must first narrow the exemption of the trigger to the org purge, and says so in the PR. No database needed.
 // Keep this file self-contained: it reads sources and migrations from disk and imports nothing from outside test/invariant/.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -63,7 +65,7 @@ describe('no system-context code writes a quote line (the taint-key exemption of
     expect(offenders).toEqual([]);
   });
 
-  it('every command of the quote writer that writes lines is reachable by people only, never `access: \'system\'`', () => {
+  it('every command of the quote writer that writes lines refuses a non-person actor with `userOf(ctx.actor)` before its first write, and does not declare `access: \'system\'`', () => {
     const text = read(join(ROOT, WRITER));
     // A block runs from one top-level declaration to the next, so a helper is not read as part of the command before it.
     const blocks = text.split(/^(?=(?:export )?(?:async )?(?:const|function) )/m).filter((b) => /^export const \w+ = define(?:Command|Query)\(/.test(b));
@@ -79,12 +81,19 @@ describe('no system-context code writes a quote line (the taint-key exemption of
       const constant = /^[A-Z_]+$/.test(access.trim()) ? new RegExp(String.raw`const\s+${access.trim()}\b[^;]*;`).exec(text)?.[0] : undefined;
       if (/^[A-Z_]+$/.test(access.trim())) expect(constant, `${name}: the definition of ${access.trim()}`).toBeDefined();
       expect(constant ?? '', `${name}: ${access.trim()} must not name the system`).not.toMatch(/system/i);
+      // The guard: the runtime lets the system actor pass a role list, so the handler itself must refuse an actor that is not a person (userOf throws 403 unless the actor is a user) before it writes.
+      const guard = block.search(/\buserOf\(ctx\.actor\)/);
+      const firstWrite = Math.min(...[block.search(/\binsertLines\(/), block.search(BUILDER_WRITE), block.search(SQL_WRITE)].filter((i) => i >= 0));
+      expect(guard, `${name} calls userOf(ctx.actor)`).toBeGreaterThanOrEqual(0);
+      expect(guard, `${name} calls userOf(ctx.actor) before its first write`).toBeLessThan(firstWrite);
     }
+    // userOf is the person-only guard: it refuses every actor whose type is not 'user'.
+    expect(/function userOf\(actor[^)]*\)[^{]*\{\s*if \(actor\.type !== 'user'\) throw new DomainError\('FORBIDDEN', 403/.test(text)).toBe(true);
     // The helper that inserts lines is called only from those commands: it is not exported, so nothing else can reach it.
     expect(/export\s+(?:async\s+)?function\s+insertLines|export\s*\{[^}]*\binsertLines\b/.test(text)).toBe(false);
   });
 
-  it('the commands that write lines are reused only by the known twin builder, whose access is people only: a handler lent to a system command would run as the system', () => {
+  it('the commands that write lines are reused only by the known twin builder, whose access is owner and admin: a handler lent to a system command is still refused by userOf, and this keeps the lending visible', () => {
     // quoteSave and quoteRevise are exported, so another file could wrap their handler in a command with `access: 'system'`; the files that name them are known, and the one that wraps them gives its own access.
     const users = productionSources().filter((f) => f.file !== WRITER && /\b(?:quoteSave|quoteRevise)\b/.test(f.text)).map((f) => f.file).sort();
     expect(users).toEqual(['modules/crm/src/index.ts', 'modules/crm/src/mcp-write.ts']);
