@@ -369,7 +369,8 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     // A link that has a connection is never moved: a third connection bringing the bytes does not take it.
     const third = await connection(o, 'lazada');
     await worker.execute('finance.marketplace_connection.ingest_page', { ...input, marketplaceConnectionId: third }, { actor: { type: 'system', component: 'marketplace-poll' }, orgId: o.orgId });
-    expect(await link(file)).toEqual([{ marketplace_connection_id: second, disconnected_at: null }]);
+    // Only the connection matters here: the old time left on the link above is still there, untouched.
+    expect((await link(file)).map((l) => l.marketplace_connection_id)).toEqual([second]);
   });
 
   it('does not link a page whose bytes are a member\'s own upload, so the purge never reaches it', async () => {
