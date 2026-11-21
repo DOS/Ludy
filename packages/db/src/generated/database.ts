@@ -249,6 +249,8 @@ export interface CroveSignSchema {
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.field': SignFieldTable;
+  'crove_sign.member_signature': SignMemberSignatureTable;
+  'crove_sign.org_stamp': SignOrgStampTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;
@@ -3816,6 +3818,41 @@ export interface SignFieldTable {
   value_checked: boolean | null;
   signature_png_base64: string | null;
   filled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.member_signature */
+export interface SignMemberSignatureTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  kind: string;
+  signature_kind: string;
+  signature_typed_text: string | null;
+  signature_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.org_stamp */
+export interface SignOrgStampTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  stamp_kind: Generated<string>;
+  file_id: string | null;
+  stamp_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  status: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }

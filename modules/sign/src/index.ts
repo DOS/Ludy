@@ -39,6 +39,10 @@ export {
 } from './public-commands.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
+  signProfileCommands,
+  signProfileQueries,
+} from './profiles.ts';
+export {
   signTemplateCommands,
   signTemplateQueries,
   type SignTemplateInspectJobData,

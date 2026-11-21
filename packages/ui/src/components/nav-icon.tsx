@@ -44,6 +44,7 @@ import {
   SettingsIcon,
   ShieldCheckIcon,
   SparklesIcon,
+  StampIcon,
   TargetIcon,
   TruckIcon,
   WarehouseIcon,
@@ -110,6 +111,7 @@ const ICONS = {
   signEnvelopes: FileSignatureIcon,
   signTemplates: LayoutTemplateIcon,
   signVerify: ShieldCheckIcon,
+  signSettings: StampIcon,
   aiUsage: CoinsIcon,
   aiConnections: PlugIcon,
 } as const

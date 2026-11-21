@@ -105,6 +105,43 @@ export const SIGN_FIELD_TABLE = columns(
   { signature_png_base64: 'pii' },
 );
 
+export const SIGN_MEMBER_SIGNATURE_TABLE = columns(
+  [
+    'org_id',
+    'id',
+    'user_id',
+    'kind',
+    'signature_kind',
+    'image_sha256',
+    'width_px',
+    'height_px',
+    'created_at',
+    'updated_at',
+  ],
+  {
+    signature_typed_text: 'pii',
+    signature_png_base64: 'pii',
+  },
+);
+
+export const SIGN_ORG_STAMP_TABLE = columns([
+  'org_id',
+  'id',
+  'name',
+  'stamp_kind',
+  'file_id',
+  'stamp_png_base64',
+  'image_sha256',
+  'width_px',
+  'height_px',
+  'status',
+  'archived_at',
+  'archived_by',
+  'created_by',
+  'created_at',
+  'updated_at',
+]);
+
 export const SIGN_EVENT_TABLE = columns(
   [
     'org_id',
@@ -149,6 +186,8 @@ export const signManifest = defineModule({
       ]),
       envelope: SIGN_ENVELOPE_TABLE,
       field: SIGN_FIELD_TABLE,
+      member_signature: SIGN_MEMBER_SIGNATURE_TABLE,
+      org_stamp: SIGN_ORG_STAMP_TABLE,
       signer: SIGN_SIGNER_TABLE,
       signing_event: SIGN_EVENT_TABLE,
       signing_otp: columns(
@@ -252,6 +291,8 @@ export const signManifest = defineModule({
   permissions: [],
   entities: [
     { type: 'sign.envelope', table: 'envelope', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.member_signature', table: 'member_signature', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.org_stamp', table: 'org_stamp', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.template', table: 'template', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.sign,

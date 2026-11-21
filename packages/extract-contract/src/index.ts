@@ -520,7 +520,7 @@ const MAX_OCSP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsOcspBytes / 3) *
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
 const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
 
-export const PDF_DETECTED_TAG_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const PDF_DETECTED_TAG_FIELD_TYPES = ['signature', 'initials', 'stamp', 'date', 'text', 'checkbox'] as const;
 export type PdfDetectedTagFieldType = (typeof PDF_DETECTED_TAG_FIELD_TYPES)[number];
 
 function hasLoneSurrogate(value: string): boolean {
@@ -615,7 +615,7 @@ export const zPdfInspectResult = z
   });
 export type PdfInspectResult = z.infer<typeof zPdfInspectResult>;
 
-export const PDF_SEAL_FIELD_TYPES = ['signature', 'initial', 'date', 'text', 'checkbox'] as const;
+export const PDF_SEAL_FIELD_TYPES = ['signature', 'initial', 'stamp', 'date', 'text', 'checkbox'] as const;
 export type PdfSealFieldType = (typeof PDF_SEAL_FIELD_TYPES)[number];
 
 const zNormalizedBox = {
@@ -629,6 +629,11 @@ const zNormalizedBox = {
 const zPdfSealFieldVariant = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('signature'),
+    ...zNormalizedBox,
+    imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS),
+  }),
+  z.strictObject({
+    type: z.literal('stamp'),
     ...zNormalizedBox,
     imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS),
   }),

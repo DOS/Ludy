@@ -16,7 +16,7 @@ export const SIGN_RISK_CLAUSES_MAX = 12;
 export const SIGN_SUMMARY_MAX_CHARS = 4_000;
 export const SIGN_FIELD_MIN_SPAN = 0.001;
 
-export const SIGN_AI_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_AI_FIELD_TYPES = ['signature', 'initials', 'stamp', 'date', 'text', 'checkbox'] as const;
 export type SignAiFieldType = (typeof SIGN_AI_FIELD_TYPES)[number];
 
 export const SIGN_CLAUSE_SEVERITIES = ['low', 'medium', 'high'] as const;
@@ -1080,7 +1080,7 @@ export function signFieldProposeInstructions(): string {
     `- Use ONLY these field types: ${SIGN_AI_FIELD_TYPES.join(', ')}.`,
     '- Use ONLY a `signerRoleKey` from the declared signer role list provided below; never invent a role key, email, or recipient.',
     '- Propose normalized coordinates in [0, 1] relative to the top-left of the chosen `pageNumber` (1..pageCount), keeping xNorm + wNorm <= 1 and yNorm + hNorm <= 1.',
-    '- Prefer signature blocks, witness/date lines, and initial boxes visible in the page text. If none are clear, return an empty `fields` list.',
+    '- Prefer signature blocks, corporate/title stamp blocks, witness/date lines, and initial boxes visible in the page text. If none are clear, return an empty `fields` list.',
   ].join('\n');
 }
 

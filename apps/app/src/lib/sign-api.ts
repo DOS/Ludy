@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
-import { client, fetchFile, uploadFiles } from './api.ts';
+import { client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
+import { accessToken } from './auth.ts';
 import type {
   SignDeliveryMode,
   SignDetectedTag,
@@ -454,7 +455,132 @@ export const signApi = {
     maxUses?: number | null;
     expiresAt?: string | null;
   }) => client.sign.template.direct_link_rotate(input),
+  listMemberSignatures: () => client.sign.member_signature.list({}),
+  upsertMemberSignature: (input: {
+    kind: 'signature' | 'initials';
+    signatureKind: 'draw' | 'type';
+    signatureTypedText?: string | null;
+    signaturePngBase64: string;
+  }) => client.sign.member_signature.upsert({ ...input, idempotencyKey: crypto.randomUUID() }),
+  deleteMemberSignature: (kind: 'signature' | 'initials') =>
+    client.sign.member_signature.delete({ kind, idempotencyKey: crypto.randomUUID() }),
+  listStamps: (status?: 'active' | 'archived') =>
+    client.sign.stamp.list(status ? { status } : {}),
+  createStamp: (input: {
+    name: string;
+    stampKind: 'company' | 'title' | 'custom';
+    fileId?: string | null;
+    stampPngBase64: string;
+  }) => client.sign.stamp.create({ ...input, idempotencyKey: crypto.randomUUID() }),
+  archiveStamp: (stampId: string) =>
+    client.sign.stamp.archive({ stampId, idempotencyKey: crypto.randomUUID() }),
 };
+
+export interface SignMemberSignatureItem {
+  id: string;
+  kind: 'signature' | 'initials';
+  signatureKind: 'draw' | 'type';
+  signatureTypedText: string | null;
+  signaturePngBase64: string;
+  imageSha256: string;
+  widthPx: number;
+  heightPx: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignOrgStampItem {
+  id: string;
+  name: string;
+  stampKind: 'company' | 'title' | 'custom';
+  fileId: string | null;
+  stampPngBase64: string;
+  imageSha256: string;
+  widthPx: number;
+  heightPx: number;
+  status: 'active' | 'archived';
+  archivedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Loads a signed-in workspace member's saved signatures and active org stamps on public /-/sign ceremony pages (#3817).
+// Returns null silently when the signer is unauthenticated or not a member of any workspace.
+export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null): Promise<{
+  orgSlug: string;
+  signatures: SignMemberSignatureItem[];
+  stamps: SignOrgStampItem[];
+} | null> {
+  try {
+    const tok = await accessToken();
+    if (!tok) return null;
+    const me = await orglessClient.me.get();
+    if (!me.orgs.length) return null;
+
+    const normalizedHint = orgNameHint?.trim().toLowerCase() ?? '';
+    const currentSlug = getCurrentOrg();
+    const candidates: string[] = [];
+    const pushCandidate = (slug: string | null | undefined) => {
+      if (slug && !candidates.includes(slug)) candidates.push(slug);
+    };
+
+    if (normalizedHint) {
+      for (const org of me.orgs) {
+        if (org.name.trim().toLowerCase() === normalizedHint) {
+          pushCandidate(org.slug);
+        }
+      }
+    }
+    if (currentSlug && me.orgs.some((org) => org.slug === currentSlug)) {
+      pushCandidate(currentSlug);
+    }
+    for (const org of me.orgs) {
+      pushCandidate(org.slug);
+    }
+
+    for (const slug of candidates) {
+      try {
+        const scoped = clientForOrg(slug);
+        const [sigRes, stampRes] = await Promise.all([
+          scoped.sign.member_signature.list({}),
+          scoped.sign.stamp.list({ status: 'active' }),
+        ]);
+        return {
+          orgSlug: slug,
+          signatures: sigRes.items,
+          stamps: stampRes.items,
+        };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCeremonyMemberSignature(
+  orgSlug: string,
+  input: {
+    kind: 'signature' | 'initials';
+    signatureKind: 'draw' | 'type';
+    signatureTypedText?: string | null;
+    signaturePngBase64: string;
+  },
+): Promise<boolean> {
+  try {
+    const scoped = clientForOrg(orgSlug);
+    await scoped.sign.member_signature.upsert({
+      ...input,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type SignTemplateStatus = 'draft' | 'active' | 'archived';
 
