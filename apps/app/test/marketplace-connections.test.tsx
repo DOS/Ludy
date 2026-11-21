@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LegalEntity, MarketplaceConnection, MarketplaceProviders } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, marketplaceCardShown, pollStateKey, REAUTHORIZE_NOTICE_DAYS, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../src/lib/marketplace-connections.ts';
+import { adapterIdOf, authorizeStateKey, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, marketplaceCardShown, pollStateKey, REAUTHORIZE_NOTICE_DAYS, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../src/lib/marketplace-connections.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -254,6 +254,30 @@ describe('MarketplaceConnectionsCard', () => {
     expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'refused' })], locale: 'vi' })).toContain('Cấp quyền lại');
   });
 
+  it('words TikTok Shop on its own: not authorized yet, refused, the shop failure, and the Service ID as plain text (#4269)', () => {
+    const tiktok: MarketplaceProviders = { adapters: [{ id: 'tiktok_shop', offline: false, connectFields: ['appKey', 'appSecret', 'serviceId'], platforms: ['tiktok_shop'] }], platforms: [{ platform: 'tiktok_shop', adapter: true, adapters: ['tiktok_shop'] }] };
+    const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_tiktok_shop', platform: 'tiktok_shop', displayName: 'tiktok_shop (tiktok_shop)', ...over });
+    const notYet = card('owner', { providers: tiktok, connections: [mine({ lastTestState: 'api_not_enabled', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(notYet).toContain(esc(en.marketplaceConnections.testStatesTiktok.api_not_enabled));
+    expect(notYet).toContain(esc(en.marketplaceConnections.pollStatesTiktok.not_authorized));
+    expect(notYet).toContain(`>${en.marketplaceConnections.authorize}<`);
+    const refused = card('owner', { providers: tiktok, connections: [mine({ lastTestState: 'wrong_credentials', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(refused).toContain(esc(en.marketplaceConnections.testStatesTiktok.wrong_credentials));
+    expect(refused).toContain(esc(en.marketplaceConnections.pollStates.credentials));
+    expect(refused).not.toContain(esc(en.marketplaceConnections.pollStatesTiktok.not_authorized));
+    // A failed authorization names the shops (the app must be bound to one); Lazada's failure does not.
+    const failed = card('owner', { providers: tiktok, connections: [mine({ authorizeState: 'failed' })] });
+    expect(failed).toContain(esc(en.marketplaceConnections.authorizeStatesTiktok.failed));
+    expect(authorizeStateKey('lazada', 'failed')).toBe('authorizeStatesLazada.failed');
+    expect(authorizeStateKey('tiktok_shop', 'failed')).toBe('authorizeStatesTiktok.failed');
+    expect(authorizeStateKey('tiktok_shop', 'refused')).toBe('authorizeStates.refused');
+    expect(testStateKey('tiktok_shop', 'unreachable')).toBe('testStates.unreachable');
+    expect(canAuthorize(mine({}), tiktok.adapters)).toBe(true);
+    const form = card('owner', { providers: tiktok, connections: [], locale: 'vi' });
+    expect(form).toMatch(/type="text"[^>]*aria-label="Mã dịch vụ của ứng dụng \(Service ID\)"|aria-label="Mã dịch vụ của ứng dụng \(Service ID\)"[^>]*type="text"/);
+    expect(form).toMatch(/type="password"[^>]*aria-label="Mã bí mật ứng dụng \(App Secret\)"|aria-label="Mã bí mật ứng dụng \(App Secret\)"[^>]*type="password"/);
+  });
+
   it('is in Vietnamese with the same keys', () => {
     const html = card('owner', { locale: 'vi', connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
     expect(html).toContain('Kết nối dùng được');
@@ -279,7 +303,7 @@ describe('the helpers of the card', () => {
     expect(connectablePlatforms(partial.platforms).map((p) => p.platform)).toEqual(['shopee']);
   });
   it('hides what is typed unless the field is a plain identifier', () => {
-    for (const name of ['user', 'username', 'appId', 'appKey', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
+    for (const name of ['user', 'username', 'appId', 'appKey', 'serviceId', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
     for (const name of ['password', 'secret', 'appSecret', 'partnerKey', 'token']) expect(fieldIsSecret(name)).toBe(true);
   });
 });

@@ -21,13 +21,28 @@ export const POLL_STATE_KEYS = {
 } as const satisfies Record<MarketplacePollState, string>;
 
 // The words for a test state of a connection: an adapter may have its own for a state (Lazada tells "not authorized yet" from "refused"), else the generic ones.
-const OWN_TEST_WORDS: Readonly<Record<string, readonly MarketplaceConnectionState[]>> = { lazada: ['wrong_credentials', 'api_not_enabled'] };
-export const testStateKey = (adapterId: string, state: MarketplaceConnectionState): string =>
-  OWN_TEST_WORDS[adapterId]?.includes(state) ? `testStatesLazada.${state}` : TEST_STATE_KEYS[state];
+// The message groups of each adapter that is authorized on the platform's page: its own words for the two states the authorize step turns on, for "not authorized yet" after a refused poll and for a failed authorization.
+const OWN_WORDS: Readonly<Record<string, { test: string; poll: string; authorize: string }>> = {
+  lazada: { test: 'testStatesLazada', poll: 'pollStatesLazada', authorize: 'authorizeStatesLazada' },
+  tiktok_shop: { test: 'testStatesTiktok', poll: 'pollStatesTiktok', authorize: 'authorizeStatesTiktok' },
+};
+const OWN_TEST_STATES: readonly MarketplaceConnectionState[] = ['wrong_credentials', 'api_not_enabled'];
+export const testStateKey = (adapterId: string, state: MarketplaceConnectionState): string => {
+  const own = OWN_WORDS[adapterId];
+  return own && OWN_TEST_STATES.includes(state) ? `${own.test}.${state}` : TEST_STATE_KEYS[state];
+};
 
-// The words for how a poll ended. A Lazada poll refused as `credentials` whose last test said the app is not authorized yet reads as that (not as a refused login); everything else is generic.
-export const pollStateKey = (connection: Pick<MarketplaceConnection, 'provider' | 'lastTestState'>, state: MarketplacePollState): string =>
-  state === 'credentials' && adapterIdOf(connection) === 'lazada' && connection.lastTestState === 'api_not_enabled' ? 'pollStatesLazada.not_authorized' : POLL_STATE_KEYS[state];
+// The words for where an authorization stands: the generic ones, or the adapter's own where it has them (TikTok's failure names the shops).
+export const authorizeStateKey = (adapterId: string, state: 'pending' | 'authorized' | 'refused' | 'failed'): string => {
+  const own = OWN_WORDS[adapterId];
+  return own && state === 'failed' ? `${own.authorize}.failed` : `authorizeStates.${state}`;
+};
+
+// The words for how a poll ended. A poll of an authorized adapter refused as `credentials` whose last test said the app is not authorized yet reads as that (not as a refused login); everything else is generic.
+export const pollStateKey = (connection: Pick<MarketplaceConnection, 'provider' | 'lastTestState'>, state: MarketplacePollState): string => {
+  const own = OWN_WORDS[adapterIdOf(connection)];
+  return state === 'credentials' && own && connection.lastTestState === 'api_not_enabled' ? `${own.poll}.not_authorized` : POLL_STATE_KEYS[state];
+};
 
 export const PLATFORM_KEYS = { shopee: 'platforms.shopee', tiktok_shop: 'platforms.tiktok_shop', lazada: 'platforms.lazada' } as const;
 
@@ -44,7 +59,7 @@ export const canPollNow = (connection: Pick<MarketplaceConnection, 'provider' | 
 
 // Whether the screen offers "Authorize": the connection is live and its adapter is authorized on the platform's own page (Lazada). The adapter list does not say so, so the one adapter that has the step is named here;
 // the server refuses the start for any other (MARKETPLACE_AUTHORIZE_UNSUPPORTED).
-export const AUTHORIZED_ADAPTERS: readonly string[] = ['lazada'];
+export const AUTHORIZED_ADAPTERS: readonly string[] = ['lazada', 'tiktok_shop'];
 export const canAuthorize = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
   connection.status === 'active' && AUTHORIZED_ADAPTERS.includes(adapterIdOf(connection)) && adapters.some((a) => a.id === adapterIdOf(connection) && !a.offline);
 
@@ -75,4 +90,4 @@ export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo
 export const fieldLabelKey = (name: string, known: (key: string) => boolean): string | null => (known(`fieldLabels.${name}`) ? `fieldLabels.${name}` : null);
 
 // A field the org types to connect is a secret unless its name says it is a plain identifier: the input hides what is typed.
-export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|appKey|clientId|shopId)$/i.test(name);
+export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|appKey|serviceId|clientId|shopId)$/i.test(name);

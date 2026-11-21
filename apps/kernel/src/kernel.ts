@@ -134,6 +134,9 @@ import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
 import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from './marketplace-shopee-token.ts';
 import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from './marketplace-tiktok-token.ts';
+import { TIKTOK_HOSTS, tiktokCaller } from './marketplace-tiktok.ts';
+import { tiktokMarketplace } from './marketplace-tiktok-orders.ts';
+import { withTiktokAuthorize } from './marketplace-tiktok-authorize.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -490,6 +493,13 @@ export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDE
     const id = raw.trim();
     if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
     // Lazada (#2524, S2 = #4238): named by the deployment, never on its own. Its calls are bound to the hosts the adapter names; the seller's own App Key and Secret are sealed per connection.
+    // TikTok Shop (#2524, S2 = #4269): named by the deployment, never on its own. The provider and the shop-list call share one signed caller bound to the API host; the token calls go through a fetch bound to
+    // the token host, inside the wrapper (the token URL carries the app secret and never leaves the token module).
+    if (id === 'tiktok_shop' && isMarketplaceAdapter(id)) {
+      const options = { fetch: hostBoundFetch(TIKTOK_HOSTS) };
+      const caller = tiktokCaller(options);
+      out[id] = withTiktokAuthorize(tiktokMarketplace(options, caller), { tokenFetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS), caller });
+    }
     if (id === 'lazada' && isMarketplaceAdapter(id)) out[id] = withLazadaAuthorize(lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS) }), { tokenFetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
   }
   return out;

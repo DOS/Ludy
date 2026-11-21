@@ -18,7 +18,13 @@ import { MarketplaceProviderError, createSandboxMarketplaceProvider, marketplace
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { runMarketplacePoll, runMarketplaceTest } from '../src/marketplace-poll-job.ts';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest } from '../src/marketplace-poll-job.ts';
+import { withTiktokAuthorize } from '../src/marketplace-tiktok-authorize.ts';
+import { TIKTOK_HOSTS, tiktokCaller } from '../src/marketplace-tiktok.ts';
+import { tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';
+import { TIKTOK_TOKEN_HOSTS } from '../src/marketplace-tiktok-token.ts';
+import { fakeShop, fakeTiktok } from './fake-tiktok.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -83,6 +89,9 @@ suite('marketplace connections (#2519)', () => {
   let offApp: ReturnType<typeof createHttpApp>;
   let realApp: ReturnType<typeof createHttpApp>;
   let lazadaApp: ReturnType<typeof createHttpApp>;
+  let tiktokApp: ReturnType<typeof createHttpApp>;
+  let tiktokProvider: MarketplaceProvider;
+  const tiktokFake = fakeTiktok({ appKey: 'tt-app-key', appSecret: 'tt-app-secret', accessToken: 'TTP_access', codes: ['TT-CODE-1'], refreshToken: 'TTP_R0', shops: [fakeShop()] });
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-conn.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@marketplace-conn.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@marketplace-conn.test', session: randomUUID(), userId: '' };
@@ -180,6 +189,10 @@ suite('marketplace connections (#2519)', () => {
     app = createHttpApp({ ...deps, channels: channels({ sandbox: offline }) });
     offApp = createHttpApp({ ...deps, channels: channels({}) });
     lazadaApp = createHttpApp({ ...deps, channels: channels({ lazada: { ...offline, id: 'lazada', hosts: ['api.lazada.vn'], connectFields: ['appKey', 'appSecret'] } as unknown as MarketplaceProvider }) });
+    const ttOptions = { fetch: hostBoundFetch(TIKTOK_HOSTS, tiktokFake.fetch) };
+    const ttCaller = tiktokCaller(ttOptions);
+    tiktokProvider = withTiktokAuthorize(tiktokMarketplace(ttOptions, ttCaller), { tokenFetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS, tiktokFake.fetch), caller: ttCaller });
+    tiktokApp = createHttpApp({ ...deps, channels: { ...channels({ tiktok_shop: tiktokProvider }), publicUrl: 'https://ludy.example.test' } });
     realApp = createHttpApp({ ...deps, channels: channels({ sandbox: { ...offline, hosts: ['marketplace.example.test'], connectFields: ['user', 'password'] } }) });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
@@ -819,6 +832,47 @@ suite('marketplace connections (#2519)', () => {
     await expect(exec('finance.marketplace_connection.authorize_begin', { id, stateHash: hashOf() }, owner)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
     await rows("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, id]);
     expect((await call('connections/disconnect', owner, { id })).body).toEqual({ removed: true });
+  });
+
+  it('connects TikTok Shop with the Service ID in the clear and authorizes it end to end (#4269): the address carries the Service ID and a state only, the worker trades the code and keeps the one shop', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh TikTok', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const input = connectInput({ adapter: 'tiktok_shop', platform: 'tiktok_shop', legalEntityId: entity, fields: { appKey: 'tt-app-key', appSecret: 'tt-app-secret', serviceId: '7000000000001' } });
+    // A member cannot connect; the owner can, and the app asks for a Service ID like the others ask for their own fields.
+    expect((await call('connections/connect', member, input, tiktokApp)).status).toBe(403);
+    expect((await call('connections/connect', owner, { ...input, fields: { appKey: 'tt-app-key', appSecret: 'tt-app-secret' } }, tiktokApp)).status).toBeGreaterThanOrEqual(400);
+    const connected = await call('connections/connect', owner, input, tiktokApp);
+    expect(connected.status).toBe(200);
+    const id = String(connected.body.id);
+    // The public id kept in the clear is the Service ID (what the consent page needs), never the App Key or the secret.
+    expect(await rows('SELECT app_key FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ app_key: '7000000000001' }]);
+    const view = async () => ((await call('connections/list', owner, undefined, tiktokApp)).body as Array<{ id: string; lastTestState: string | null; authorizeState: string | null }>).find((c) => c.id === id);
+    expect((await view())?.lastTestState).toBe('api_not_enabled');
+    // Authorize: the address is TikTok's consent page with the Service ID and the state, and no secret.
+    expect((await call('connections/authorizeStart', member, { id }, tiktokApp)).status).toBe(403);
+    const started = await call('connections/authorizeStart', owner, { id }, tiktokApp);
+    expect(started.status).toBe(200);
+    const url = new URL(String(started.body.authorizeUrl));
+    expect(`${url.origin}${url.pathname}`).toBe('https://services.tiktokshop.com/open/authorize');
+    expect([...url.searchParams.keys()].sort()).toEqual(['service_id', 'state']);
+    expect(url.searchParams.get('service_id')).toBe('7000000000001');
+    expect(started.text).not.toContain('tt-app-secret');
+    const state = String(url.searchParams.get('state'));
+    // The return: the code is sealed at the edge, a second use of the state is refused.
+    expect((await call('connections/authorizeFinish', owner, { state, code: 'TT-CODE-1' }, tiktokApp)).status).toBe(200);
+    expect((await call('connections/authorizeFinish', owner, { state, code: 'TT-CODE-1' }, tiktokApp)).status).toBeGreaterThanOrEqual(400);
+    expect((await view())?.authorizeState).toBe('pending');
+    // The worker trades the code and stores the pair and the shop in one command.
+    const done = await runMarketplaceAuthorize({ runtime: worker, broker: vault, store, providers: { tiktok_shop: tiktokProvider } }, { orgId, connectionId: id, kind: 'authorize' });
+    expect(done).toEqual({ state: 'authorized' });
+    expect(await view()).toMatchObject({ authorizeState: 'authorized', lastTestState: null });
+    const stored = await worker.query<{ keyId: string; envelope: string }>('kernel.channel.credential', { connectionId: String((await rows<{ c: string }>('SELECT channel_connection_id AS c FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.c) }, { actor: { type: 'system', component: 'finance.marketplace' }, orgId });
+    const secret = JSON.parse(vault.open({ keyId: stored.keyId, envelope: Buffer.from(stored.envelope, 'base64') }, { orgId, provider: 'marketplace_tiktok_shop', externalAccountId: `${entity}:tiktok_shop` })) as Record<string, unknown>;
+    expect(secret).toMatchObject({ appKey: 'tt-app-key', serviceId: '7000000000001', shopCipher: fakeShop().cipher, shopId: fakeShop().id });
+    expect(typeof secret.accessToken).toBe('string');
+    // Nothing readable holds the code, the state or a secret.
+    const dump = JSON.stringify({ audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]), outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]), list: (await call('connections/list', owner, undefined, tiktokApp)).text });
+    for (const word of ['TT-CODE-1', 'tt-app-secret', state, String(secret.accessToken), String(secret.refreshToken), fakeShop().cipher, fakeShop().id]) expect(dump).not.toContain(word);
+    expect((await call('connections/disconnect', owner, { id }, tiktokApp)).body).toEqual({ removed: true });
   });
 
   it('closes the connection: the credential is dropped, the row is gone, what was staged stays, and a second disconnect finds nothing', async () => {
