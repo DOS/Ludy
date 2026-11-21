@@ -252,7 +252,7 @@ export const SIGN_NORM_SCALE = 1_000_000;
 
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
-export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract'] as const;
+export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract', 'project_acceptance'] as const;
 export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
 export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
 export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
@@ -357,9 +357,11 @@ export const zSignEnvelopeSummary = z.strictObject({
   sealStatus: zSignSealStatus.nullable(),
   certificateCode: z.string().nullable(),
   pageCount: z.number().int().nullable(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.string().nullable(),
   sentAt: z.string().nullable(),
   completedAt: z.string().nullable(),
+  declineAcknowledgedAt: z.string().nullable().optional(),
   voidedAt: z.string().nullable(),
   expiredAt: z.string().nullable(),
   version: z.number().int(),
@@ -426,10 +428,12 @@ export const zSignEnvelopeDetail = z.strictObject({
     certificateFileId: zId.nullable(),
     certificateSha256: z.string().nullable(),
     certificateCode: z.string().nullable(),
+    autoRemindBeforeExpiry: z.boolean().optional(),
     expiresAt: z.string().nullable(),
     sentAt: z.string().nullable(),
     completedAt: z.string().nullable(),
     declinedAt: z.string().nullable(),
+    declineAcknowledgedAt: z.string().nullable().optional(),
     voidedAt: z.string().nullable(),
     voidedBy: zId.nullable(),
     voidReason: z.string().nullable(),
@@ -453,6 +457,11 @@ export const zSignEnvelopeDetail = z.strictObject({
       requireEmailOtp: z.boolean(),
       status: zSignSignerStatus,
       tokenLastRemindedAt: z.string().nullable(),
+      preExpiryRemindedAt: z.string().nullable().optional(),
+      preExpiryRemindStatus: z
+        .enum(['queued', 'sending', 'sent', 'delivered', 'bounced', 'complained', 'suppressed', 'failed', 'ambiguous'])
+        .nullable()
+        .optional(),
       viewedAt: z.string().nullable(),
       signedAt: z.string().nullable(),
       declinedAt: z.string().nullable(),
@@ -536,6 +545,7 @@ export const zSignEnvelopeCreateInput = z.strictObject({
   sourceKind: zSignSourceKind.default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
 });
@@ -553,6 +563,7 @@ export const zSignEnvelopeUpdateInput = z.strictObject({
   subject: z.string().trim().min(1).max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: zSignRoutingMode.optional(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
 });
@@ -592,6 +603,16 @@ export const zSignEnvelopeVoidResult = z.strictObject({
   envelopeId: zId,
   status: z.literal('voided'),
   revokedTokens: z.number().int(),
+  version: z.number().int(),
+});
+
+export const zSignEnvelopeAcknowledgeDeclineInput = z.strictObject({
+  envelopeId: zId,
+  idempotencyKey: zId.optional(),
+});
+export const zSignEnvelopeAcknowledgeDeclineResult = z.strictObject({
+  envelopeId: zId,
+  declineAcknowledgedAt: z.string(),
   version: z.number().int(),
 });
 
@@ -1012,3 +1033,27 @@ export const zSignTemplateDirectLinkResult = z.strictObject({
   token: z.string().nullable(),
   lastRotatedAt: z.string().nullable(),
 });
+
+// eSign Slice 3b (#3812): Vy deliverable summary draft for Ludy Du an project acceptance minutes.
+export const SIGN_ACCEPTANCE_DRAFT_STATUSES = ['used', 'off', 'budget', 'busy', 'no_tasks', 'failed'] as const;
+export const zSignAcceptanceDraftStatus = z.enum(SIGN_ACCEPTANCE_DRAFT_STATUSES);
+export type SignAcceptanceDraftStatus = z.infer<typeof zSignAcceptanceDraftStatus>;
+
+export const zSignAcceptanceDraftBullet = z.strictObject({
+  text: z.string(),
+  taskIds: z.array(zId).min(1),
+  proposedByAi: z.literal(true),
+});
+export type SignAcceptanceDraftBullet = z.infer<typeof zSignAcceptanceDraftBullet>;
+
+export const zSignAcceptanceDraftInput = z.strictObject({
+  projectId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type SignAcceptanceDraftInput = z.infer<typeof zSignAcceptanceDraftInput>;
+
+export const zSignAcceptanceDraftResult = z.strictObject({
+  status: zSignAcceptanceDraftStatus,
+  bullets: z.array(zSignAcceptanceDraftBullet),
+});
+export type SignAcceptanceDraftResult = z.infer<typeof zSignAcceptanceDraftResult>;

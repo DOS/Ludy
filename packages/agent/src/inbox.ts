@@ -82,6 +82,13 @@ import {
   type ProjectWeeklyStatusFacts,
   type ProjectWeeklyStatusResult,
 } from './project-weekly-status.ts';
+import {
+  createSignAcceptanceDraftGenerator,
+  draftSignAcceptanceSummary,
+  type SignAcceptanceDraftGenerator,
+  type SignAcceptanceDraftOutcome,
+  type SignAcceptanceDraftRequest,
+} from './sign-acceptance.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -314,13 +321,15 @@ export class InboxReader {
   private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
+  private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
+    this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -625,6 +634,9 @@ export class InboxReader {
   }
   recruitingBrief(input: RecruitingBriefInput, options?: Omit<ReviewCandidateProfileOptions, 'generate'>): Promise<RecruitingBriefResult> {
     return reviewCandidateProfile(input, { ...options, generate: this.generateRecruitingBrief });
+  }
+  signAcceptanceDraft(request: SignAcceptanceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<SignAcceptanceDraftOutcome> {
+    return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
   }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,

@@ -26,6 +26,7 @@ import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
 import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
+import { formatSalesInvoicePrefillDescription, type SalesInvoiceHandoffSearch } from '../lib/project-acceptance-pdf.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
@@ -308,7 +309,7 @@ export function LateSaleNotice({ id, reason, error, onChange }: { id: string; re
   );
 }
 
-function DraftForm({ initial, series, legalEntityId, originalNumber, onClose }: { initial: FormState; originalNumber: string | null; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
+function DraftForm({ initial, series, legalEntityId, originalNumber, handoffPrefill, onClose }: { initial: FormState; originalNumber: string | null; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; handoffPrefill?: { active: boolean; reference: string | null }; onClose: () => void }) {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const [form, setForm] = useState(initial);
@@ -341,6 +342,13 @@ function DraftForm({ initial, series, legalEntityId, originalNumber, onClose }: 
   return (
     <Card className="mb-6 block p-4" aria-label={t('formTitle')} data-testid="invoice-form">
       <h2 className="text-base font-medium text-foreground">{form.draftId ? t('editTitle') : t('newTitle')}</h2>
+      {handoffPrefill?.active && (
+        <p className="mt-1 text-xs text-muted-foreground" data-testid="invoice-acceptance-prefill-note">
+          {handoffPrefill.reference
+            ? t('acceptancePrefillNote', { reference: handoffPrefill.reference })
+            : t('acceptancePrefillNoteNoRef')}
+        </p>
+      )}
       {form.correction && <div className="mt-2"><CorrectionBanner correction={form.correction} originalNumber={originalNumber} /></div>}
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1">
@@ -1003,7 +1011,7 @@ function DraftNote({ draft }: { draft: EInvoiceDraftSummary }) {
   );
 }
 
-export function SalesInvoicesPage() {
+export function SalesInvoicesPage({ prefill }: { prefill?: SalesInvoiceHandoffSearch } = {}) {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const entity = useChosenEntity();
@@ -1024,12 +1032,35 @@ export function SalesInvoicesPage() {
     refetchInterval: (query) => (query.state.data?.some((d) => d.state === 'submitting' || d.state === 'pending' || (d.state === 'issued' && !d.evidenceStored)) ? 3000 : false),
   });
   const [editing, setEditing] = useState<FormState | null>(null);
+  const [prefillDismissedKey, setPrefillDismissedKey] = useState<string | null>(null);
   const sync = useMutation({ mutationFn: () => client.einvoice.series.sync({ legalEntityId: entity.legalEntityId ?? null, provider: 'sandbox' }), onSuccess: refresh });
   const remove = useMutation({ mutationFn: (draftId: string) => client.einvoice.drafts.delete({ draftId }), onSuccess: refresh });
   // The series of the entity on screen; an entity with none yet sees none (a series belongs to one entity).
   const series = (seriesQuery.data ?? []).filter((s) => entity.legalEntityId === undefined || s.legalEntityId === entity.legalEntityId);
   const defaultSeries = series.find((s) => s.isDefault) ?? series[0];
+
+  const prefillDescription = prefill ? formatSalesInvoicePrefillDescription(prefill) : '';
+  const activePrefillKey = prefillDescription ? `${slug}:${prefillDescription}` : null;
+  const prefillActive =
+    editing === null &&
+    canWrite &&
+    activePrefillKey !== null &&
+    prefillDismissedKey !== activePrefillKey &&
+    !seriesQuery.isPending;
+  const activeForm: FormState | null =
+    editing ??
+    (prefillActive
+      ? {
+          ...blankForm(defaultSeries?.id ?? ''),
+          lines: [{ ...blankLine(), description: prefillDescription }],
+        }
+      : null);
+  const activeFormKey = editing
+    ? (editing.draftId ?? 'new')
+    : `prefill:${activePrefillKey}:${defaultSeries?.id ?? ''}`;
+
   const open = async (draftId: string | null) => {
+    if (activePrefillKey) setPrefillDismissedKey(activePrefillKey);
     if (draftId === null) {
       setEditing(blankForm(defaultSeries?.id ?? ''));
       return;
@@ -1044,7 +1075,7 @@ export function SalesInvoicesPage() {
         subtitle={t('subtitle')}
         actions={
           canWrite ? (
-            <Button disabled={editing !== null} onClick={() => void open(null)} data-testid="invoice-new">
+            <Button disabled={activeForm !== null} onClick={() => void open(null)} data-testid="invoice-new">
               {t('new')}
             </Button>
           ) : undefined
@@ -1073,14 +1104,18 @@ export function SalesInvoicesPage() {
           {sync.error && <ErrorText>{errorMessage(sync.error)}</ErrorText>}
         </Card>
       )}
-      {editing && (
+      {activeForm && (
         <DraftForm
-          key={editing.draftId ?? 'new'}
-          initial={editing}
+          key={activeFormKey}
+          initial={activeForm}
           series={series}
           legalEntityId={entity.legalEntityId}
-          originalNumber={editing.correction ? (drafts.data?.find((d) => d.id === editing.correction?.originalDraftId)?.issuedNumber ?? null) : null}
-          onClose={() => setEditing(null)}
+          originalNumber={activeForm.correction ? (drafts.data?.find((d) => d.id === activeForm.correction?.originalDraftId)?.issuedNumber ?? null) : null}
+          {...(prefillActive ? { handoffPrefill: { active: true, reference: prefill?.reference?.trim() || null } } : {})}
+          onClose={() => {
+            setEditing(null);
+            if (activePrefillKey) setPrefillDismissedKey(activePrefillKey);
+          }}
         />
       )}
       {drafts.isPending ? (
@@ -1108,15 +1143,15 @@ export function SalesInvoicesPage() {
                 )}
                 {d.replaced && <span className="ml-2 text-xs text-subtle-foreground" data-testid="invoice-replaced">{t('correction.replacedNote')}</span>}
                 <DraftNote draft={d} />
-                {canWrite && d.state === 'issued' && d.evidenceStored && editing === null && !d.replaced && <NoticeAction key={`notice-${d.id}`} draft={d} />}
-                {canWrite && d.state === 'issued' && d.evidenceStored && editing === null && <CorrectionAction key={`${d.id}:${d.updatedAt}`} draft={d} onStarted={(draftId) => void open(draftId)} />}
+                {canWrite && d.state === 'issued' && d.evidenceStored && activeForm === null && !d.replaced && <NoticeAction key={`notice-${d.id}`} draft={d} />}
+                {canWrite && d.state === 'issued' && d.evidenceStored && activeForm === null && <CorrectionAction key={`${d.id}:${d.updatedAt}`} draft={d} onStarted={(draftId) => void open(draftId)} />}
                 {/* Issuing needs a provider this deployment has switched on: with none, the request would be approved and nothing would send it. */}
                 {canWrite && d.state === 'draft' && d.issueCount === 0 && status.data?.sandbox && <IssueAction key={`${d.id}:${d.updatedAt}`} draft={d} canApprove={canApprove} />}
               </TableCell>
               <TableCell className="px-4 py-3 text-right">
                 {canWrite && d.state === 'draft' && (
                   <span className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" disabled={editing !== null} onClick={() => void open(d.id)} data-testid="invoice-edit">
+                    <Button variant="ghost" size="sm" disabled={activeForm !== null} onClick={() => void open(d.id)} data-testid="invoice-edit">
                       {t('edit')}
                     </Button>
                     <Button variant="ghost" size="sm" loading={remove.isPending && remove.variables === d.id} onClick={() => remove.mutate(d.id)} data-testid="invoice-delete">

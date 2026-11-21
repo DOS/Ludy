@@ -21,6 +21,7 @@ import {
   isHrPrivilegedRole,
 } from './hr-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
+import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
 import { parseDetectedTags } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -65,8 +66,10 @@ export const envelopeList = defineQuery({
         'certificate_code',
         'page_count',
         'expires_at',
+        'auto_remind_before_expiry',
         'sent_at',
         'completed_at',
+        'decline_acknowledged_at',
         'voided_at',
         'expired_at',
         'version',
@@ -142,8 +145,10 @@ export const envelopeList = defineQuery({
           certificateCode: r.certificate_code,
           pageCount: r.page_count,
           expiresAt: isoOrNull(r.expires_at),
+          autoRemindBeforeExpiry: r.auto_remind_before_expiry,
           sentAt: isoOrNull(r.sent_at),
           completedAt: isoOrNull(r.completed_at),
+          declineAcknowledgedAt: isoOrNull(r.decline_acknowledged_at),
           voidedAt: isoOrNull(r.voided_at),
           expiredAt: isoOrNull(r.expired_at),
           version: r.version,
@@ -337,6 +342,7 @@ export const envelopeGet = defineQuery({
         'require_email_otp',
         'status',
         'token_last_reminded_at',
+        'pre_expiry_reminded_at',
         'viewed_at',
         'signed_at',
         'declined_at',
@@ -353,6 +359,27 @@ export const envelopeGet = defineQuery({
       .orderBy('created_at', 'asc')
       .orderBy('id', 'asc')
       .execute();
+
+    const remindedSignerIds = signers
+      .filter((s) => s.pre_expiry_reminded_at !== null)
+      .map((s) => s.id);
+    const preExpiryMailStatusBySigner = new Map<string, string>();
+    if (remindedSignerIds.length > 0) {
+      const mailRows = await ctx.trx
+        .selectFrom('crove_kernel.mail_message')
+        .select(['source_id', 'status'])
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE)
+        .where('source_id', 'in', remindedSignerIds)
+        .orderBy('created_at', 'desc')
+        .orderBy('id', 'desc')
+        .execute();
+      for (const m of mailRows) {
+        if (m.source_id && !preExpiryMailStatusBySigner.has(m.source_id)) {
+          preExpiryMailStatusBySigner.set(m.source_id, m.status);
+        }
+      }
+    }
 
     const fields = await ctx.trx
       .selectFrom('crove_sign.field')
@@ -407,9 +434,11 @@ export const envelopeGet = defineQuery({
         certificateSha256: env.certificate_sha256,
         certificateCode: env.certificate_code,
         expiresAt: isoOrNull(env.expires_at),
+        autoRemindBeforeExpiry: env.auto_remind_before_expiry,
         sentAt: isoOrNull(env.sent_at),
         completedAt: isoOrNull(env.completed_at),
         declinedAt: isoOrNull(env.declined_at),
+        declineAcknowledgedAt: isoOrNull(env.decline_acknowledged_at),
         voidedAt: isoOrNull(env.voided_at),
         voidedBy: env.voided_by,
         voidReason: env.void_reason,
@@ -432,6 +461,19 @@ export const envelopeGet = defineQuery({
         requireEmailOtp: s.require_email_otp,
         status: s.status,
         tokenLastRemindedAt: isoOrNull(s.token_last_reminded_at),
+        preExpiryRemindedAt: isoOrNull(s.pre_expiry_reminded_at),
+        preExpiryRemindStatus:
+          (preExpiryMailStatusBySigner.get(s.id) as
+            | 'queued'
+            | 'sending'
+            | 'sent'
+            | 'delivered'
+            | 'bounced'
+            | 'complained'
+            | 'suppressed'
+            | 'failed'
+            | 'ambiguous'
+            | undefined) ?? null,
         viewedAt: isoOrNull(s.viewed_at),
         signedAt: isoOrNull(s.signed_at),
         declinedAt: isoOrNull(s.declined_at),
@@ -777,7 +819,9 @@ export const envelopeSealJobData = defineQuery({
   },
 });
 
+import { signAcceptanceQueries } from './acceptance.ts';
 import { signTemplateQueries } from './templates.ts';
+import { signToday } from './today-and-reminders.ts';
 
 export const signQueries = [
   envelopeList,
@@ -787,5 +831,7 @@ export const signQueries = [
   envelopeVerify,
   envelopeInspectJobData,
   envelopeSealJobData,
+  signToday,
   ...signTemplateQueries,
+  ...signAcceptanceQueries,
 ];
