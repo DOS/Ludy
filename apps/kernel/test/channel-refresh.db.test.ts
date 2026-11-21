@@ -12,6 +12,13 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type SealedChannelCredential } from '@crove/kernel';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { refreshChannels } from '../src/channel-refresh.ts';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from '../src/marketplace-lazada-token.ts';
+import { fakeLazadaToken } from './fake-lazada-token.ts';
+import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from '../src/marketplace-tiktok-token.ts';
+import { fakeTiktok } from './fake-tiktok.ts';
+import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from '../src/marketplace-shopee-token.ts';
+import { fakeShopee } from './fake-shopee.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -169,6 +176,241 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     const flaky = await connect(o, HOUR);
     expect((await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: fakeRefresher('failed') } })).failed).toBeGreaterThanOrEqual(1);
     expect((await row(flaky))?.status).toBe('active');
+  });
+
+  // The Lazada refresher (#2524, S3a = #4240) through the real sweep: its provider is the marketplace connection's (`marketplace_lazada`), its secret holds the seller's own app and the OAuth result.
+  describe('a Lazada connection', () => {
+    const DAY = 24 * HOUR;
+    const APP = { appKey: '123456', appSecret: 'test-only-app-secret' };
+    const lazadaSecret = (refreshExpiresAt: number) =>
+      JSON.stringify({ ...APP, accessToken: 'access-token-0', refreshToken: 'refresh-token-0', accessExpiresAt: new Date(Date.now() + 2 * DAY).toISOString(), refreshExpiresAt: new Date(refreshExpiresAt).toISOString(), sellerId: '1000100', country: 'vn' });
+    const lazada = (refreshExpiresAtMs: number, intercept?: Parameters<typeof fakeLazadaToken>[0]['intercept']) => {
+      const fake = fakeLazadaToken({ ...APP, refreshToken: 'refresh-token-0', refreshExpiresAtMs, ...(intercept ? { intercept } : {}) });
+      return { fake, refreshers: { marketplace_lazada: new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS, fake.fetch) }) } };
+    };
+    const sweep = (refreshers: Record<string, Refresher>) => refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers });
+
+    it('renews a token with under five days left, keeps the rotated pair whole, and never extends the refresh life', async () => {
+      const o = await org();
+      const end = Date.now() + 150 * DAY;
+      const due = await connect(o, 2 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const quiet = await connect(o, 20 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const { fake, refreshers } = lazada(end);
+      expect(await sweep(refreshers)).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
+      const next = JSON.parse(await secretOf(o.orgId, due)) as Record<string, string>;
+      expect(next).toMatchObject({ accessToken: 'access-token-1', refreshToken: 'refresh-token-1', sellerId: '1000100', ...APP });
+      // Not extended: it is the date it was, or a moment sooner (Lazada's countdown is in whole seconds and the clock is the real one), never later.
+      const kept = Date.parse(next.refreshExpiresAt ?? '');
+      expect(kept).toBeLessThanOrEqual(end);
+      expect(end - kept).toBeLessThan(5000);
+      expect((await row(due))?.expires_at.getTime()).toBeGreaterThan(Date.now() + 29 * DAY);
+      expect((await row(due))?.status).toBe('active');
+      // The one outside the window is untouched, and the renewed one is no longer due.
+      expect(JSON.parse(await secretOf(o.orgId, quiet)).accessToken).toBe('access-token-0');
+      expect((await sweep(refreshers)).refreshed).toBe(0);
+      expect(fake.calls).toHaveLength(1);
+      // No token or secret of it is in an audit row or an event.
+      const dump = await admin(async (c) => {
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
+      });
+      for (const word of ['access-token-1', 'refresh-token-1', 'refresh-token-0', APP.appSecret]) expect(dump).not.toContain(word);
+    });
+
+    it('does not lose the rotated refresh token when two sweeps run at once: one call is made and the stored pair is the new one', async () => {
+      const o = await org();
+      const end = Date.now() + 150 * DAY;
+      const id = await connect(o, 2 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const { fake, refreshers } = lazada(end);
+      const [a, b] = await Promise.all([sweep(refreshers), sweep(refreshers)]);
+      expect(a.refreshed + b.refreshed).toBe(1);
+      expect(fake.calls).toHaveLength(1);
+      expect(JSON.parse(await secretOf(o.orgId, id))).toMatchObject({ accessToken: 'access-token-1', refreshToken: 'refresh-token-1' });
+      expect(fake.currentRefreshToken()).toBe('refresh-token-1');
+    });
+
+    it('marks the connection expired when its refresh token is past its end (no call is made), or when Lazada refuses it, and never tries again', async () => {
+      const o = await org();
+      const past = await connect(o, 2 * DAY, lazadaSecret(Date.now() - DAY), 'marketplace_lazada');
+      const dead = lazada(Date.now() - DAY);
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(past))?.status).toBe('expired');
+      expect(dead.fake.calls).toHaveLength(0);
+      // Lazada's own refusal of a token that looked alive: expired as well.
+      const refused = await connect(o, 2 * DAY, lazadaSecret(Date.now() + 150 * DAY), 'marketplace_lazada');
+      const no = lazada(Date.now() + 150 * DAY, () => new Response(JSON.stringify({ code: 'IllegalRefreshToken', message: 'The refresh token is invalid' }), { status: 200 }));
+      expect(await sweep(no.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(refused))?.status).toBe('expired');
+      expect(no.fake.calls).toHaveLength(1);
+      // An expired connection is not picked again: no loop, no second call.
+      expect(await sweep(no.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      expect(no.fake.calls).toHaveLength(1);
+    });
+
+    it('keeps the connection active and tries again on the next sweep after an outage', async () => {
+      const o = await org();
+      const id = await connect(o, 2 * DAY, lazadaSecret(Date.now() + 150 * DAY), 'marketplace_lazada');
+      const down = lazada(Date.now() + 150 * DAY, () => new Response('upstream', { status: 503 }));
+      expect(await sweep(down.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect((await row(id))?.status).toBe('active');
+      expect(JSON.parse(await secretOf(o.orgId, id)).refreshToken).toBe('refresh-token-0');
+      const up = lazada(Date.now() + 150 * DAY);
+      expect(await sweep(up.refreshers)).toMatchObject({ refreshed: 1 });
+    });
+  });
+
+  // The TikTok Shop refresher (#2524, T1 = #4256) through the real sweep: provider `marketplace_tiktok_shop`, the seller's own app in the sealed secret, an access token of seven days renewed a day ahead.
+  describe('a TikTok Shop connection', () => {
+    const DAY = 24 * HOUR;
+    const APP = { appKey: '123abc', appSecret: 'test-only-app-secret' };
+    const tiktokSecret = (authorizationEnd: number) =>
+      JSON.stringify({ ...APP, accessToken: 'TTP_access_0', refreshToken: 'TTP_R0', accessExpiresAt: new Date(Date.now() + 12 * HOUR).toISOString(), refreshExpiresAt: new Date(authorizationEnd).toISOString(), openId: 'open-1', region: 'VN' });
+    const tiktok = (authorizationEndsAtMs: number, intercept?: Parameters<typeof fakeTiktok>[0]['intercept']) => {
+      const fake = fakeTiktok({ ...APP, accessToken: 'TTP_access', refreshToken: 'TTP_R0', authorizationEndsAtMs, ...(intercept ? { intercept } : {}) });
+      return { fake, refreshers: { marketplace_tiktok_shop: new TiktokRefresher({ fetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS, fake.fetch) }) } };
+    };
+    const sweep = (refreshers: Record<string, Refresher>) => refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers });
+
+    it('renews a token with under a day left, keeps the rotated pair whole, and never extends the end of the authorization', async () => {
+      const o = await org();
+      const end = Date.now() + 90 * DAY;
+      const due = await connect(o, 12 * HOUR, tiktokSecret(end), 'marketplace_tiktok_shop');
+      const quiet = await connect(o, 5 * DAY, tiktokSecret(end), 'marketplace_tiktok_shop');
+      const { fake, refreshers } = tiktok(end);
+      expect(await sweep(refreshers)).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
+      const next = JSON.parse(await secretOf(o.orgId, due)) as Record<string, string>;
+      expect(next).toMatchObject({ accessToken: 'TTP_access_1', refreshToken: 'TTP_R1', openId: 'open-1', ...APP });
+      // Not extended: the date it was, or a moment sooner (the countdown is in whole seconds and the clock is the real one), never later.
+      const kept = Date.parse(next.refreshExpiresAt ?? '');
+      expect(kept).toBeLessThanOrEqual(end);
+      expect(end - kept).toBeLessThan(5000);
+      expect((await row(due))?.expires_at.getTime()).toBeGreaterThan(Date.now() + 6 * DAY);
+      expect((await row(due))?.status).toBe('active');
+      // The one outside the window is untouched, and the renewed one is no longer due.
+      expect(JSON.parse(await secretOf(o.orgId, quiet)).accessToken).toBe('TTP_access_0');
+      expect((await sweep(refreshers)).refreshed).toBe(0);
+      expect(fake.calls).toHaveLength(1);
+      // The address of the call carries the app secret; nothing of it, or of a token, is in an audit row or an event.
+      const dump = await admin(async (c) => {
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
+      });
+      for (const word of ['TTP_access_1', 'TTP_R1', 'TTP_R0', APP.appSecret, 'app_secret']) expect(dump).not.toContain(word);
+    });
+
+    it('does not lose the rotated refresh token when two sweeps run at once: one call is made and the stored pair is the new one', async () => {
+      const o = await org();
+      const end = Date.now() + 90 * DAY;
+      const id = await connect(o, 12 * HOUR, tiktokSecret(end), 'marketplace_tiktok_shop');
+      const { fake, refreshers } = tiktok(end);
+      const [a, b] = await Promise.all([sweep(refreshers), sweep(refreshers)]);
+      expect(a.refreshed + b.refreshed).toBe(1);
+      expect(fake.calls).toHaveLength(1);
+      expect(JSON.parse(await secretOf(o.orgId, id))).toMatchObject({ accessToken: 'TTP_access_1', refreshToken: 'TTP_R1' });
+      expect(fake.state().refreshToken).toBe('TTP_R1');
+    });
+
+    it('marks the connection expired when the authorization has ended (no call is made) and never tries again', async () => {
+      const o = await org();
+      const past = await connect(o, 12 * HOUR, tiktokSecret(Date.now() - DAY), 'marketplace_tiktok_shop');
+      const dead = tiktok(Date.now() - DAY);
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(past))?.status).toBe('expired');
+      expect(dead.fake.calls).toHaveLength(0);
+      // An expired connection is not picked again: no loop, no second call.
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      expect(dead.fake.calls).toHaveLength(0);
+    });
+
+    it('keeps the connection active and tries again on the next sweep after an outage or an answer whose code is not a documented refusal', async () => {
+      const o = await org();
+      const id = await connect(o, 12 * HOUR, tiktokSecret(Date.now() + 90 * DAY), 'marketplace_tiktok_shop');
+      const down = tiktok(Date.now() + 90 * DAY, () => new Response('upstream', { status: 503 }));
+      expect(await sweep(down.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      const odd = tiktok(Date.now() + 90 * DAY, () => new Response(JSON.stringify({ code: 99999, message: 'unknown' }), { status: 200 }));
+      expect(await sweep(odd.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect((await row(id))?.status).toBe('active');
+      expect(JSON.parse(await secretOf(o.orgId, id)).refreshToken).toBe('TTP_R0');
+      const up = tiktok(Date.now() + 90 * DAY);
+      expect(await sweep(up.refreshers)).toMatchObject({ refreshed: 1 });
+    });
+  });
+
+  // The Shopee refresher (#2524, S1 = #4274) through the real sweep: provider `marketplace_shopee`, the partner in the sealed secret, an access token of four hours renewed half an hour ahead, and a refresh token
+  // that WORKS ONCE: two sweeps at once must make one call and keep the new pair.
+  describe('a Shopee connection', () => {
+    const DAY = 24 * HOUR;
+    const PARTNER = { partnerId: '1000012', partnerKey: 'test-only-partner-key' };
+    const SHOP = '77777';
+    const shopeeSecret = (authorizationEnd: number) =>
+      JSON.stringify({ ...PARTNER, shopId: SHOP, accessToken: 'SHP_access_0', refreshToken: 'SHP_R0', accessExpiresAt: new Date(Date.now() + 20 * 60_000).toISOString(), refreshExpiresAt: new Date(Date.now() + 20 * DAY).toISOString(), authorizationEndsAt: new Date(authorizationEnd).toISOString() });
+    const shopee = (authorizationEndsAtMs: number, intercept?: Parameters<typeof fakeShopee>[0]['intercept']) => {
+      const fake = fakeShopee({ ...PARTNER, shopId: SHOP, accessToken: 'SHP_access', refreshToken: 'SHP_R0', authorizationEndsAtMs, ...(intercept ? { intercept } : {}) });
+      return { fake, refreshers: { marketplace_shopee: new ShopeeRefresher({ fetch: hostBoundFetch(SHOPEE_TOKEN_HOSTS, fake.fetch) }) } };
+    };
+    const sweep = (refreshers: Record<string, Refresher>) => refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers });
+
+    it('renews a token with under half an hour left, keeps the rotated pair whole, and never moves the authorization end', async () => {
+      const o = await org();
+      const end = Date.now() + 200 * DAY;
+      const due = await connect(o, 20 * 60_000, shopeeSecret(end), 'marketplace_shopee');
+      const quiet = await connect(o, 2 * HOUR, shopeeSecret(end), 'marketplace_shopee');
+      const { fake, refreshers } = shopee(end);
+      expect(await sweep(refreshers)).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
+      const next = JSON.parse(await secretOf(o.orgId, due)) as Record<string, string>;
+      expect(next).toMatchObject({ accessToken: 'SHP_access_1', refreshToken: 'SHP_R1', shopId: SHOP, ...PARTNER });
+      // Not moved: the date it was (the sealed secret keeps it as written).
+      expect(Date.parse(next.authorizationEndsAt ?? '')).toBe(end);
+      expect((await row(due))?.expires_at.getTime()).toBeGreaterThan(Date.now() + 3 * HOUR);
+      expect((await row(due))?.status).toBe('active');
+      // The one outside the window is untouched, and the renewed one is no longer due.
+      expect(JSON.parse(await secretOf(o.orgId, quiet)).accessToken).toBe('SHP_access_0');
+      expect((await sweep(refreshers)).refreshed).toBe(0);
+      expect(fake.calls).toHaveLength(1);
+      // The refresh carries no token in its address, and nothing of a key or a token is in an audit row or an event.
+      const dump = await admin(async (c) => {
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
+      });
+      for (const word of ['SHP_access_1', 'SHP_R1', 'SHP_R0', PARTNER.partnerKey]) expect(dump).not.toContain(word);
+    });
+
+    it('does not lose the rotated refresh token when two sweeps run at once: one call is made and the stored pair is the new one', async () => {
+      const o = await org();
+      const end = Date.now() + 200 * DAY;
+      const id = await connect(o, 20 * 60_000, shopeeSecret(end), 'marketplace_shopee');
+      const { fake, refreshers } = shopee(end);
+      const [a, b] = await Promise.all([sweep(refreshers), sweep(refreshers)]);
+      expect(a.refreshed + b.refreshed).toBe(1);
+      expect(fake.calls).toHaveLength(1);
+      expect(JSON.parse(await secretOf(o.orgId, id))).toMatchObject({ accessToken: 'SHP_access_1', refreshToken: 'SHP_R1' });
+      expect(fake.state().refreshToken).toBe('SHP_R1');
+    });
+
+    it('marks the connection expired when the authorization has ended (no call is made) and never tries again', async () => {
+      const o = await org();
+      const past = await connect(o, 20 * 60_000, shopeeSecret(Date.now() - DAY), 'marketplace_shopee');
+      const dead = shopee(Date.now() - DAY);
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(past))?.status).toBe('expired');
+      expect(dead.fake.calls).toHaveLength(0);
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      expect(dead.fake.calls).toHaveLength(0);
+    });
+
+    it('keeps the connection active and tries again on the next sweep after an outage', async () => {
+      const o = await org();
+      const id = await connect(o, 20 * 60_000, shopeeSecret(Date.now() + 200 * DAY), 'marketplace_shopee');
+      const down = shopee(Date.now() + 200 * DAY, () => new Response('upstream', { status: 503 }));
+      expect(await sweep(down.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect((await row(id))?.status).toBe('active');
+      expect(JSON.parse(await secretOf(o.orgId, id)).refreshToken).toBe('SHP_R0');
+      const up = shopee(Date.now() + 200 * DAY);
+      expect(await sweep(up.refreshers)).toMatchObject({ refreshed: 1 });
+    });
   });
 
   it('drops tokens for a connection that changed during the refresh', async () => {

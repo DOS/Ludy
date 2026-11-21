@@ -13,6 +13,9 @@ import { z } from 'zod';
 import { plainLine, zLocalDate } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { mcpOpenBalances } from './mcp-open-balances.ts';
+import { mcpPaymentReminder } from './mcp-payment-reminder.ts';
+import { mcpOverview } from './mcp-overview.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 export const MCP_INVOICES_DEFAULT = 25;
@@ -136,4 +139,4 @@ export const mcpInvoices = defineQuery({
   },
 });
 
-export const mcpFinanceQueries = [mcpInvoices];
+export const mcpFinanceQueries = [mcpInvoices, mcpOverview, mcpOpenBalances, mcpPaymentReminder];

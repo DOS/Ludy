@@ -510,7 +510,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     // An individual buyer's identity: kept, masked in the list, whole in the draft, cleared for a business, refused when it is the wrong shape.
     const individual = (identity: unknown) => ({ kind: 'individual', partyId: null, taxCode: null, name: 'Nguyễn Văn Thử', address: null, email: null, identity });
     const saved = await execute<Draft & { buyer: { identity: { kind: string; value: string } | null } }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'cccd', value: ' 012345678901 ' }) }));
-    expect(saved.buyer.identity).toEqual({ kind: 'cccd', value: '012345678901' });
+    expect(saved.buyer.identity).toEqual({ kind: 'cccd', value: '012345678901', nationality: null });
     expect(saved.issues.map((i) => i.code)).not.toContain('BUYER_IDENTITY_INVALID');
     const listed = (await query<Array<{ id: string; buyerIdentity: { kind: string; masked: string } | null }>>(o, 'finance.einvoice_draft.list', {})).find((d) => d.id === saved.id);
     expect(listed?.buyerIdentity).toEqual({ kind: 'cccd', masked: '•••••••••901' });
@@ -521,6 +521,50 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(wrong.issues.map((i) => `${i.field}:${i.code}`)).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
     const stored = await admin(async (c) => (await c.query<{ buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT buyer_identity_kind, buyer_identity FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, business.id])).rows[0]);
     expect(stored).toEqual({ buyer_identity_kind: null, buyer_identity: null });
+  });
+
+  it('asks a passport for the buyer\'s nationality, keeps it with the identity, drops it from any other kind and says "Bán cho người tiêu dùng" for a consumer in the list (#3709)', async () => {
+    const o = await org();
+    const [series] = (await sync(o)).series;
+    const refusal = (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
+    const individual = (identity: unknown) => ({ kind: 'individual', partyId: null, taxCode: null, name: 'John Smith', address: null, email: null, identity });
+    type Saved = Draft & { buyer: { identity: { kind: string; value: string; nationality: string | null } | null } };
+    const stored = async (id: string) => (await admin(async (c) => (await c.query<{ buyer_nationality: string | null }>('SELECT buyer_nationality FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows))[0]?.buyer_nationality;
+
+    // A passport with no nationality, or with one that is not two letters, cannot be saved.
+    expect(await refusal(execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'B1234567', nationality: null }) })))).toBe('EINVOICE_BUYER_NATIONALITY_REQUIRED');
+    expect(await refusal(execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'B1234567', nationality: '  ' }) })))).toBe('EINVOICE_BUYER_NATIONALITY_REQUIRED');
+    expect(await refusal(execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'B1234567', nationality: 'USA' }) })))).toBe('EINVOICE_BUYER_NATIONALITY_INVALID');
+    // The form's live check shows the same as an issue on its field while the person types.
+    const { draftId: _draftId, legalEntityId: _entity, ...live } = form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'B1234567', nationality: null }) }) as Record<string, unknown>;
+    expect((await query<{ issues: Array<{ field: string; code: string }> }>(o, 'finance.einvoice_draft.check', live)).issues.map((i) => `${i.field}:${i.code}`)).toContain('buyer.nationality:BUYER_NATIONALITY_REQUIRED');
+
+    // With one it is kept, written in capitals, returned with the identity and stored in its own column.
+    const saved = await execute<Saved>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'b1234567', nationality: ' us ' }) }));
+    expect(saved.buyer.identity).toEqual({ kind: 'passport', value: 'B1234567', nationality: 'US' });
+    expect(saved.issues.map((i) => i.code)).not.toContain('BUYER_NATIONALITY_REQUIRED');
+    expect(await stored(saved.id)).toBe('US');
+    // The list shows the identity masked and never the nationality.
+    const listed = (await query<Array<Record<string, unknown> & { id: string }>>(o, 'finance.einvoice_draft.list', {})).find((d) => d.id === saved.id);
+    expect(JSON.stringify(listed)).not.toContain('"US"');
+
+    // Any other kind drops one that was typed, and so does a business.
+    const cccd = await execute<Saved>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'cccd', value: '012345678901', nationality: 'US' }) }));
+    expect(cccd.buyer.identity).toEqual({ kind: 'cccd', value: '012345678901', nationality: null });
+    expect(await stored(cccd.id)).toBeNull();
+    const business = await execute<Saved>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { ...individual({ kind: 'passport', value: 'B1234567', nationality: 'US' }), kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử' } }));
+    expect(business.buyer.identity).toBeNull();
+    expect(await stored(business.id)).toBeNull();
+
+    // The database holds the other half: a nationality only with a passport, in two capital letters.
+    const direct = (set: string) => admin((c) => c.query(`UPDATE crove_finance.einvoice_draft SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, cccd.id]));
+    await expect(direct("buyer_nationality = 'US'")).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET buyer_nationality = 'usa' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]))).rejects.toMatchObject({ code: '23514' });
+
+    // A consumer gave nothing: the list says what the invoice will say.
+    const consumer = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'consumer', partyId: null, taxCode: null, name: 'Left over', address: null, email: null, identity: null } }));
+    const consumerRow = (await query<Array<{ id: string; buyerName: string | null }>>(o, 'finance.einvoice_draft.list', {})).find((d) => d.id === consumer.id);
+    expect(consumerRow?.buyerName).toBe('Bán cho người tiêu dùng');
   });
 
   it('audits ids and counts only, never the buyer', async () => {

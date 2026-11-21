@@ -3,12 +3,14 @@
 // tests the connection and sees the series read in words, makes the second the default, and disconnects. Nothing is issued and nothing leaves the server.
 import { expect, test } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 test('connects the offline e-invoice provider from Settings, tests it, picks the default series and disconnects', async ({ page }) => {
   await page.goto('/');
   await signUp(page, newEmail('einvoice-connect'));
   await createOrg(page, 'Công ty Kết nối E2E');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'connections');
   const card = page.getByLabel('Hóa đơn điện tử: nhà cung cấp của bạn');
 
   await test.step('the card is there, with nothing connected and a form that asks for the tax code', async () => {
@@ -17,7 +19,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
     await expect(page.getByText('Kết nối Ludy với ngân hàng và đơn vị phát hành hóa đơn của công ty.')).toBeVisible();
     await expect(card).toBeVisible();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();
-    await expect(card.getByText('Nhà cung cấp thử nghiệm chạy ngay trên máy chủ này')).toBeVisible();
+    await expect(card.getByText('Nhà cung cấp thử chạy ngay trong hệ thống này')).toBeVisible();
     await expect(card.getByLabel('Mã số thuế người bán')).toBeVisible();
   });
 
@@ -61,6 +63,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
 
   await test.step('disconnecting asks first, then drops the connection and keeps the series', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'connections');
     await card.getByRole('button', { name: 'Ngắt kết nối' }).click();
     await card.getByRole('button', { name: 'Ngắt kết nối' }).last().click();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();

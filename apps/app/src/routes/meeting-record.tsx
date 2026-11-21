@@ -17,11 +17,11 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useConsentPolicy } from '../components/consent-policy.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
+import { TOUCH_BUTTON } from '../lib/touch.ts';
 import { createIndexedDbChunkStore, formatClock, startBlocker, type ChunkStore, type RecordingMeta } from '@crove/meeting-recorder';
 import {
   clearRecorderError,
@@ -174,6 +174,18 @@ export function MeetingRecordPage() {
   };
 
   const recording = phase === 'recording' || phase === 'paused';
+  // Pressing "Bắt đầu ghi" removes the form that held the focus: it goes to the recording status, so the next Tab reaches Tạm dừng and Dừng (WCAG 2.4.3). Only when this screen was
+  // showing the form and the focus was lost with it; arriving on a recording that already runs is the shell's to announce.
+  const statusRef = useRef<HTMLDivElement | null>(null);
+  const wasIdle = useRef(phase === 'idle');
+  useEffect(() => {
+    if (phase === 'idle') {
+      wasIdle.current = true;
+      return;
+    }
+    if (wasIdle.current && (document.activeElement === null || document.activeElement === document.body)) statusRef.current?.focus();
+    wasIdle.current = false;
+  }, [phase]);
   const startDisabled = blocker !== null || unsupported || phase !== 'idle';
 
   return (
@@ -187,7 +199,6 @@ export function MeetingRecordPage() {
           </Link>
         }
       />
-      <NotesSubnav slug={slug} active="meetings" />
       {/* An import the member started (C1, #3173): its copied audio is claimed here too */}
       <ImportAutoClaim />
 
@@ -197,22 +208,22 @@ export function MeetingRecordPage() {
       {recoverable.length > 0 && phase === 'idle' && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">{t('record.recoverTitle')}</CardTitle>
+            <CardTitle role="heading" aria-level={2} className="text-sm font-medium">{t('record.recoverTitle')}</CardTitle>
             <CardDescription>{t('record.recoverHint')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {recoverable.map((meta) => (
               <div key={meta.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3 text-sm">
                 <div>
-                  <div className="font-medium">{meta.title}</div>
+                  <div id={`recover-title-${meta.id}`} className="font-medium">{meta.title}</div>
                   <div className="text-xs text-muted-foreground">{t('record.recoverLength', { length: formatClock(meta.elapsedMs) })}</div>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => void uploadAndClear(meta)} disabled={busyId !== null} loading={busyId === meta.id}>
+                  <Button size="sm" aria-describedby={`recover-title-${meta.id}`} onClick={() => void uploadAndClear(meta)} disabled={busyId !== null} loading={busyId === meta.id}>
                     {t('record.recoverUpload')}
                   </Button>
                   <ConfirmDialog
-                    render={<Button size="sm" variant="outline" disabled={busyId !== null} />}
+                    render={<Button size="sm" variant="outline" aria-describedby={`recover-title-${meta.id}`} disabled={busyId !== null} />}
                     title={t('record.discardTitle')}
                     description={t('record.discardBody')}
                     confirm={t('record.discardConfirm')}
@@ -231,22 +242,27 @@ export function MeetingRecordPage() {
       {recording || phase === 'uploading' || phase === 'starting' ? (
         <Card>
           <CardContent className="space-y-4 pt-6">
-            <div className="flex items-center gap-3" role="status" aria-live="polite">
-              <span className={`inline-block size-3 rounded-full ${phase === 'recording' ? 'animate-pulse bg-destructive' : 'bg-muted-foreground'}`} aria-hidden="true" />
-              <span className="text-sm font-medium">
-                {phase === 'recording' ? t('record.recording') : phase === 'paused' ? t('record.paused') : phase === 'starting' ? t('record.starting') : t('record.uploading')}
+            <div className="flex items-center gap-3">
+              {/* The state is announced when it changes (starting, recording, paused, uploading); the clock is not part of the live region, or it would be read every half second. */}
+              <div ref={statusRef} tabIndex={-1} className="flex items-center gap-3" role="status" aria-live="polite">
+                <span className={`inline-block size-3 rounded-full ${phase === 'recording' ? 'animate-pulse bg-destructive' : 'bg-muted-foreground'}`} aria-hidden="true" />
+                <span className="text-sm font-medium">
+                  {phase === 'recording' ? t('record.recording') : phase === 'paused' ? t('record.paused') : phase === 'starting' ? t('record.starting') : t('record.uploading')}
+                </span>
+              </div>
+              <span role="timer" className="font-mono text-2xl tabular-nums" aria-label={t('record.timer')}>
+                {formatClock(phase === 'starting' ? 0 : elapsed)}
               </span>
-              <span className="font-mono text-2xl tabular-nums" aria-label={t('record.timer')}>{formatClock(phase === 'starting' ? 0 : elapsed)}</span>
             </div>
-            {recorder.withVideo && <video ref={previewRef} autoPlay muted playsInline className="aspect-video w-full max-w-md rounded bg-muted" />}
+            {recorder.withVideo && <video ref={previewRef} autoPlay muted playsInline aria-label={t('record.videoPreview')} className="aspect-video w-full max-w-md rounded bg-muted" />}
             <p className="text-xs text-muted-foreground">{t('record.keepScreenOn')}</p>
             <p className="text-xs text-muted-foreground">{t('record.keepsGoing')}</p>
             {recording && (
               <div className="flex gap-2">
-                <Button variant="outline" onClick={pauseOrResume}>
+                <Button variant="outline" className={TOUCH_BUTTON} onClick={pauseOrResume}>
                   {phase === 'paused' ? t('record.resume') : t('record.pause')}
                 </Button>
-                <Button variant="destructive" onClick={stop}>
+                <Button variant="destructive" className={TOUCH_BUTTON} onClick={stop}>
                   {t('record.stop')}
                 </Button>
               </div>
@@ -317,10 +333,10 @@ export function MeetingRecordPage() {
                 <Label htmlFor="record-consent-agreed" className="cursor-pointer text-xs font-medium leading-snug">{t('form.consentConfirmCheckbox')}</Label>
               </div>
             </div>
-            <Button onClick={() => void start()} disabled={startDisabled}>
+            <Button onClick={() => void start()} disabled={startDisabled} aria-describedby="record-hint">
               {t('record.start')}
             </Button>
-            <p className="text-xs text-muted-foreground">{t('record.hint')}</p>
+            <p id="record-hint" className="text-xs text-muted-foreground">{t('record.hint')}</p>
           </CardContent>
         </Card>
       )}

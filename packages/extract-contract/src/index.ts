@@ -13,7 +13,10 @@ import { z } from 'zod';
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
+// docx_text: text from a .docx Word document attached to a note (#3561).
+// marketplace_columns: the same kind of file when no platform profile fits its headers (#4035, #3850 slice 1b). The request is a JSON envelope (the file as base64, and with it the platform the person
+// picked and the column mapping to check); the answer is the masked sheet (header texts and the SHAPES of a few values, never a value, buyer columns blanked) or the result of checking the mapping on the real file.
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'docx_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income', 'marketplace_columns'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -76,6 +79,13 @@ export const EXTRACT_LIMITS = {
   maxOrderLines: 20_000,
   // Rows of the report that were not read as lines of an order, reported by number.
   maxOrderSkipped: 1000,
+  // The envelope of marketplace_columns (#4035): the report as base64 (a third larger than maxOrderReportBytes) plus the platform and at most one assignment per standard field.
+  maxColumnsRequestBytes: Math.ceil((10 * MiB) / 3) * 4 + 16 * 1024,
+  // The masked sheet (#4035): at most this many columns, a header text cut at maxColumnHeaderChars, at most maxColumnSamples values of maxColumnSampleChars characters each.
+  maxSheetColumns: 60,
+  maxColumnHeaderChars: 80,
+  maxColumnSamples: 3,
+  maxColumnSampleChars: 12,
   // A marketplace income report (#2516): the same file size, with one line per order paid (at most this many) in the first few sheets of the workbook.
   maxIncomeLines: 20_000,
   maxIncomeSheets: 8,
@@ -112,6 +122,7 @@ export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
   if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
   if (kind === 'marketplace_orders' || kind === 'marketplace_income') return EXTRACT_LIMITS.maxOrderReportBytes;
+  if (kind === 'marketplace_columns') return EXTRACT_LIMITS.maxColumnsRequestBytes;
   if (kind === 'html_meta') return EXTRACT_LIMITS.maxHtmlBytes;
   if (kind === 'feed') return EXTRACT_LIMITS.maxFeedBytes;
   return EXTRACT_LIMITS.maxFileBytes;
@@ -719,7 +730,7 @@ function formatZodIssues(issues: readonly z.core.$ZodIssue[]): string {
 }
 
 function encodeJsonContractInput<T>(
-  kind: 'pdf_seal' | 'pdf_embed_cms',
+  kind: 'pdf_seal' | 'pdf_embed_cms' | 'marketplace_columns',
   schema: z.ZodType<T>,
   input: T,
   createError: (message: string) => Error,
@@ -734,7 +745,7 @@ function encodeJsonContractInput<T>(
 }
 
 function decodeJsonContractInput<T>(
-  kind: 'pdf_seal' | 'pdf_embed_cms',
+  kind: 'pdf_seal' | 'pdf_embed_cms' | 'marketplace_columns',
   schema: z.ZodType<T>,
   bytes: Uint8Array,
   createError: (message: string) => Error,
@@ -827,6 +838,75 @@ export const zExtractFailure = z.strictObject({
 });
 export type ExtractFailure = z.infer<typeof zExtractFailure>;
 
+// marketplace_columns (#4035): the masked sheet of a report no platform profile fits, and the check of a column mapping on the real file. Nothing a buyer typed can be in the answer: a column
+// the headers mark as the buyer's is returned as an empty shell (no header, no samples), and the samples of every other column are SHAPES (a digit is 9, any other character that is not on the short
+// list below is a), which the schema enforces, so a value can not pass for one.
+export const COLUMN_REFUSAL_REASONS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
+const MAX_COLUMN_INDEX = 16_383;
+const zColumnIndex = z.number().int().min(0).max(MAX_COLUMN_INDEX);
+const zSampleShape = z
+  .string()
+  .max(EXTRACT_LIMITS.maxColumnSampleChars)
+  .regex(/^[9a \-/.,:;@#()+%_]*$/, 'a masked shape');
+export const zExtractedMarketplaceColumns = z.strictObject({
+  sheet: z
+    .strictObject({
+      headerRow: z.number().int().min(0).max(1_048_576),
+      // sha-256 (hex) of the header row's text (@crove/l10n-vn headerRowText), the key a saved column mapping is found by (#4037); the sandbox always sets it, and a sheet without one (an older sandbox) simply cannot be saved. A hash of header words: no value, no buyer text can be read back from it.
+      headerDigest: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
+      columns: z
+        .array(
+          z
+            .strictObject({
+              index: zColumnIndex,
+              header: z.string().max(EXTRACT_LIMITS.maxColumnHeaderChars),
+              samples: z.array(zSampleShape).max(EXTRACT_LIMITS.maxColumnSamples),
+              buyer: z.boolean(),
+            })
+            .refine((c) => !c.buyer || (c.header === '' && c.samples.length === 0), 'a buyer column carries nothing'),
+        )
+        .max(EXTRACT_LIMITS.maxSheetColumns),
+    })
+    .nullable(),
+  // null when the request carried no mapping. A mapping that reads the file comes back with the lines and the summary of marketplace_orders; one that does not, with the check's reason.
+  check: z
+    .union([z.strictObject({ ok: z.literal(true), orders: zExtractedMarketplaceOrders }), z.strictObject({ ok: z.literal(false), reason: z.enum(COLUMN_REFUSAL_REASONS) })])
+    .nullable(),
+});
+export type ExtractedMarketplaceColumns = z.infer<typeof zExtractedMarketplaceColumns>;
+
+// The request: the report as base64 (the sandbox refuses a decoded file over maxOrderReportBytes) and, to check a mapping, the platform the person picked and one assignment of a column to a standard
+// field per field at most. The mapping travels in the envelope as the eSign kinds' input does, so the sandbox reads one body and the request has no query string a mapping could leak into.
+const MAX_REPORT_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxOrderReportBytes / 3) * 4;
+export const zMarketplaceColumnsInput = z.strictObject({
+  fileBase64: z.base64().min(1).max(MAX_REPORT_BASE64_CHARS),
+  mapping: z
+    .strictObject({
+      platform: z.enum(MARKETPLACE_PLATFORMS),
+      assignments: z.array(z.strictObject({ index: zColumnIndex, field: z.enum(MARKETPLACE_ORDER_FIELDS) })).min(1).max(MARKETPLACE_ORDER_FIELDS.length),
+    })
+    .optional(),
+});
+export type MarketplaceColumnsInput = z.infer<typeof zMarketplaceColumnsInput>;
+
+export class MarketplaceColumnsInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MarketplaceColumnsInputError';
+  }
+}
+
+export function encodeMarketplaceColumnsInput(input: MarketplaceColumnsInput): Uint8Array {
+  return encodeJsonContractInput('marketplace_columns', zMarketplaceColumnsInput, input, (msg) => new MarketplaceColumnsInputError(msg));
+}
+
+export function decodeMarketplaceColumnsInput(bytes: Uint8Array): MarketplaceColumnsInput {
+  return decodeJsonContractInput('marketplace_columns', zMarketplaceColumnsInput, bytes, (msg) => new MarketplaceColumnsInputError(msg));
+}
+
 export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('einvoice_xml'), invoice: zExtractedInvoice }),
   z.strictObject({
@@ -834,6 +914,11 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
     kind: z.literal('pdf_text'),
     text: z.string().max(EXTRACT_LIMITS.maxTextChars),
     pages: z.number().int().min(0).max(EXTRACT_LIMITS.maxPages),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('docx_text'),
+    text: z.string().max(EXTRACT_LIMITS.maxTextChars),
   }),
   zPdfInspectResult,
   zPdfSealResult,
@@ -847,6 +932,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('bank_statement'), statement: zExtractedBankStatement }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_orders'), orders: zExtractedMarketplaceOrders }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_income'), income: zExtractedMarketplaceIncome }),
+  z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_columns'), columns: zExtractedMarketplaceColumns }),
 ]);
 export type ExtractSuccess = z.infer<typeof zExtractSuccess>;
 

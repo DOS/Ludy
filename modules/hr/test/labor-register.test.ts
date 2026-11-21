@@ -994,4 +994,143 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
     expect(check.forbidden).not.toContain('Giám đốc Bí Mật');
     expect(check.forbidden).not.toContain('Phòng Đã Xóa Bí Mật');
   });
+
+  it('uses tenant address only for the default legal entity, adds missing-month notes on D02-LT/03-TNCN, and validates nationalId fallback (#2748)', async () => {
+    const funds = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'].map((fund) => ({
+      fund,
+      wage: '12000000',
+      employee: '0',
+      employer: '0',
+    }));
+    const breakdown = {
+      insurance: { suspended: null, funds },
+      tax: {
+        mode: 'progressive',
+        exemptMealCash: '0',
+        exemptOvertime: '0',
+        exemptNightWork: '0',
+        personalDeduction: '15500000',
+        dependentDeduction: '0',
+        pensionDeduction: '0',
+        assessableIncome: '10000000',
+      },
+    };
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      'crove_kernel.tenant': [{ org_id: 'org-1', address: '123 Lê Lợi, Quận 1, TP. Hồ Chí Minh' }],
+      'crove_kernel.legal_entity': [
+        { id: 'entity-default', org_id: 'org-1', name: 'Công ty Mặc Định', tax_code: '0100000001', is_default: true },
+        { id: 'entity-branch', org_id: 'org-1', name: 'Chi nhánh Hai', tax_code: '0100000001-002', is_default: false },
+      ],
+      'crove_hr.department': [],
+      'crove_hr.payroll_employee': [
+        {
+          id: 'emp-spaced',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-default',
+          display_name: 'Nguyễn CCCD Cách',
+          address: null,
+          birth_date: '1991-01-01',
+          department_id: null,
+          job_title: null,
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '079 111 222 333',
+          tax_code_sealed: null,
+          insurance_number_sealed: null,
+          finalization_authorized_years: [],
+        },
+        {
+          id: 'emp-passport',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-default',
+          display_name: 'Trần Hộ Chiếu',
+          address: null,
+          birth_date: '1992-02-02',
+          department_id: null,
+          job_title: null,
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: 'B1234567',
+          tax_code_sealed: null,
+          insurance_number_sealed: null,
+          finalization_authorized_years: [],
+        },
+        {
+          id: 'emp-branch',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-branch',
+          display_name: 'Lê Chi Nhánh',
+          address: null,
+          birth_date: '1993-03-03',
+          department_id: null,
+          job_title: null,
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '001093000111',
+          tax_code_sealed: null,
+          insurance_number_sealed: null,
+          finalization_authorized_years: [],
+        },
+      ],
+      'crove_hr.payroll_employment': [
+        { id: 'emp1', org_id: 'org-1', legal_entity_id: 'entity-default', employee_id: 'emp-spaced', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
+        { id: 'emp2', org_id: 'org-1', legal_entity_id: 'entity-default', employee_id: 'emp-passport', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
+        { id: 'emp3', org_id: 'org-1', legal_entity_id: 'entity-branch', employee_id: 'emp-branch', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
+      ],
+      'crove_hr.payroll_run': [
+        { id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-default', status: 'approved', month: '2026-07' },
+        { id: 'run-aug-draft', org_id: 'org-1', legal_entity_id: 'entity-default', status: 'draft', month: '2026-08' },
+      ],
+      'crove_hr.payroll_line': [
+        {
+          run_id: 'run-jul',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-default',
+          employee_id: 'emp-spaced',
+          employment_id: 'emp1',
+          kind: 'pay',
+          status: 'calculated',
+          gross: '30000000',
+          employee_insurance: '0',
+          employer_insurance: '0',
+          union_fee: '0',
+          taxable_income: '30000000',
+          pit: '1000000',
+          breakdown,
+          inputs: {},
+        },
+        {
+          run_id: 'run-jul',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-default',
+          employee_id: 'emp-passport',
+          employment_id: 'emp2',
+          kind: 'pay',
+          status: 'calculated',
+          gross: '30000000',
+          employee_insurance: '0',
+          employer_insurance: '0',
+          union_fee: '0',
+          taxable_income: '30000000',
+          pit: '1000000',
+          breakdown,
+          inputs: {},
+        },
+      ],
+    };
+
+    const certDefault = await declarationGet.handler(makeCtx(tables), { kind: 'certificate', period: '2026' });
+    expect(certDefault.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('123 Lê Lợi, Quận 1, TP. Hồ Chí Minh');
+    expect(certDefault.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng');
+    const certRows = certDefault.sheets[0]?.rows ?? [];
+    expect(certRows.find((r) => r.name === 'Nguyễn CCCD Cách')?.taxCode).toBe('079111222333');
+    expect(certRows.find((r) => r.name === 'Trần Hộ Chiếu')).toMatchObject({ taxCode: '', identityNumber: 'B1234567', note: 'Thiếu mã số thuế' });
+    expect(certDefault.notes.join(' ')).toContain('1 người chưa có mã số thuế riêng');
+
+    const d02Draft = await declarationGet.handler(makeCtx(tables), { kind: 'd02lt', period: '2026-08' });
+    expect(d02Draft.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng 2026-08');
+
+    const branchReg = await declarationGet.handler(makeCtx(tables), { kind: 'labor_register', period: '2026-08-01', legalEntityId: 'entity-branch' });
+    expect(branchReg.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('');
+  });
 });

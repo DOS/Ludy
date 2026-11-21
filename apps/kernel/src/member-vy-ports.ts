@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, generateMeetingBriefText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError } from '@crove/agent';
+import { AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments } from '@crove/agent/member-vy';
+import { ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -111,8 +111,20 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
   // A question about meetings counts under meetings.ask (#3161) for the same reason.
   return {
     generate: (_who, prompt) =>
-      prompt.feature === 'meetings.brief'
+      prompt.feature === 'meetings.adherence'
+        ? generateMeetingAdherenceText(config, prompt, Math.min(timeoutMs, ADHERENCE_TIMEOUT_MS))
+        : prompt.feature === 'meetings.digest'
+        ? generateMeetingDigestText(config, prompt, Math.min(timeoutMs, DIGEST_TIMEOUT_MS))
+        : prompt.feature === 'meetings.assignee'
+        ? generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS))
+        : prompt.feature === 'meetings.brief'
         ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
+        : prompt.feature === 'meetings.chapters'
+        ? generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS))
+        : prompt.feature === 'meetings.title'
+        ? generateMeetingTitleText(config, prompt, Math.min(timeoutMs, TITLE_TIMEOUT_MS))
+        : prompt.feature === 'meetings.commitments'
+        ? generateMeetingCommitmentsText(config, prompt, Math.min(timeoutMs, COMMITMENTS_TIMEOUT_MS))
         : prompt.feature === 'meetings.translate'
         ? generateMeetingTranslationText(config, prompt, timeoutMs)
         : prompt.feature === 'meetings.ask'
@@ -139,6 +151,12 @@ function codeOf(error: unknown): string {
   if (error instanceof TranslationModelError) return error.kind === 'timeout' ? 'TRANSLATE_TIMEOUT' : 'TRANSLATE_FAILED';
   if (error instanceof AskError) return error.code;
   if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
+  if (error instanceof ChaptersError) return error.code;
+  if (error instanceof ChaptersModelError) return error.kind === 'timeout' ? 'CHAPTERS_TIMEOUT' : 'CHAPTERS_FAILED';
+  if (error instanceof TitleError) return error.code;
+  if (error instanceof TitleModelError) return error.kind === 'timeout' ? 'TITLE_TIMEOUT' : 'TITLE_FAILED';
+  if (error instanceof CommitmentsError) return error.code;
+  if (error instanceof CommitmentsModelError) return error.kind === 'timeout' ? 'COMMITMENTS_TIMEOUT' : 'COMMITMENTS_FAILED';
   if (error instanceof TasksFromNoteError) return error.code;
   if (error instanceof TasksFromSourceError) return error.code;
   if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
@@ -158,6 +176,22 @@ function briefCodeOf(error: unknown): string {
   if (error instanceof BriefModelError) return error.kind === 'timeout' ? 'BRIEF_TIMEOUT' : 'BRIEF_FAILED';
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'BRIEF_FAILED' : code;
+}
+
+// A title run's failure: its own checks and model errors, the meter's codes, and "failed" or "timeout" (never the summary's words) for anything else, the deadline's included.
+function titleCodeOf(error: unknown): string {
+  if (error instanceof TitleError || error instanceof TitleModelError) return codeOf(error);
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'TITLE_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'TITLE_FAILED' : code;
+}
+
+// A commitments run's failure: its own checks and model errors, the meter's codes, and "failed" or "timeout" (never the summary's words) for anything else, the deadline's included.
+function commitmentsCodeOf(error: unknown): string {
+  if (error instanceof CommitmentsError || error instanceof CommitmentsModelError) return codeOf(error);
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'COMMITMENTS_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'COMMITMENTS_FAILED' : code;
 }
 
 function tasksFromNoteCodeOf(error: unknown): string {
@@ -277,6 +311,253 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
   }
 }
 
+// The recorder's Vy writing the table of contents of one meeting (#3844, ADR-0049 stage A): the summary's run in a smaller form. The checks come first (meetings.chapters.status: the deployment's switch,
+// the recorder; then a draft-budget ticket; then meetings.chapters.start, which makes the member's Vy run under the kernel's vy.use, kill-switch and budget checks), the transcript is read as the
+// recorder, the one model call runs outside any transaction through the member's own meter under meetings.chapters, and the checked chapters are stored as the recorder's private, tainted result.
+// The recorder then copies the result into their draft (meetings.chapters.copy_result). A failure at any step is a fixed code stored as the run's failed result.
+export function runMeetingChapters(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  return runChapters(deps, orgId, actor, meetingId);
+}
+
+// The fixed code of a failure of a chapters run: the codes of its own checks, and its own words (never the summary's) for a timeout and for anything unexpected.
+function chaptersCodeOf(error: unknown): string {
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' ? 'CHAPTERS_FAILED' : code === 'SUMMARY_TIMEOUT' ? 'CHAPTERS_TIMEOUT' : code;
+}
+
+async function runChapters(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+  const allowed = await deps.runtime.query<{ enabled: boolean; reason: 'off' | 'not_recorder' | null }>('meetings.chapters.status', { meetingId }, as);
+  if (!allowed.enabled) {
+    if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for its chapters');
+    throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.chapters.start', { meetingId }, as);
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<Summarized> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[meetings-chapters] failed result not stored: ${chaptersCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-chapters] run failed: ${errorCode}`);
+      return { meetingId, runId, state: 'failed', errorCode };
+    };
+    let body: string;
+    try {
+      const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
+      const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      const result = await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, async () => ({ body: (await chapterMeeting({ segments, language: meeting.language }, bound)).body })), timeoutMs);
+      body = revealPrivateText(result.body);
+    } catch (error: unknown) {
+      return await fail(chaptersCodeOf(error));
+    }
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
+      return await fail(chaptersCodeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-chapters] run failed: AI_STOPPED');
+      return { meetingId, runId, state: 'failed', errorCode: 'AI_STOPPED' };
+    }
+    return { meetingId, runId, state: 'ready', errorCode: null };
+  } finally {
+    ticket.release();
+  }
+}
+
+// The recorder's Vy suggesting a title for one meeting from its transcript (#3947, ADR-0049 stage A): the chapters' run for one meeting with the brief's answer, which goes to the browser and nowhere else:
+//   1. meetings.title.status, as the recorder: the deployment's switch and the recorder; a refusal here has made no run and spent nothing;
+//   2. a draft-budget ticket, then meetings.title.start, whose run.start checks vy.use, the kill switches and the budget before any call (a spent budget is refused here, with no call made);
+//   3. the transcript, read as the recorder, and the one model call outside any transaction under the member's own meter (meetings.title), with a hard timeout. The model has no tools: the checks in code
+//      (packages/agent member-vy/meeting-title.ts) decide what shows, and an empty or unusable answer is "no suggestion";
+//   4. the run's result row is stored with COUNTS ONLY (candidates, dropped), never a title, with kernel.member_vy.result.store in the member's own session.
+// The candidates go back to the browser and nowhere else: no result row, task, mail, search hit or export holds one, and neither the transcript nor a candidate is ever logged (a failure is named by a
+// fixed code). The recorder's pick is the rename command, a click of its own.
+export async function runMeetingTitle(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<TitleAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the title by hand');
+  const none = (dropped = 0): TitleAnswer => ({ state: 'none', errorCode: null, titles: [], dropped });
+  const failed = (errorCode: string): TitleAnswer => ({ state: 'failed', errorCode, titles: [], dropped: 0 });
+  const allowed = await deps.runtime.query<{ enabled: boolean; reason: 'off' | 'not_recorder' | null }>('meetings.title.status', { meetingId }, as);
+  if (!allowed.enabled) {
+    if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for a title');
+    throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the title by hand');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('TITLE_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    // The checks come first: the switch, vy.use, the kill switches (the member's own Vy's included) and the budget. A refusal here has made no run and no call.
+    let started: { meetingId: string; runId: string };
+    try {
+      started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.title.start', { meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'TITLE_BUSY' : error.code;
+        console.error(`[meetings-title] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<TitleAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-title] failed result not stored: ${titleCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-title] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let answer: { titles: string[]; dropped: number };
+    try {
+      const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
+      const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      answer = (await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, () => suggestMeetingTitles({ segments, language: meeting.language }, bound)), timeoutMs)).answer;
+    } catch (error: unknown) {
+      // An answer with no candidate left, or none that could be read, is "no suggestion", not a failure of the service; the run's result still says which.
+      if (error instanceof TitleError && error.code === 'TITLE_UNPARSABLE') {
+        await fail('TITLE_UNPARSABLE');
+        return none();
+      }
+      if (error instanceof TitleError && error.code === 'TITLE_EMPTY') {
+        try {
+          await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: JSON.stringify({ v: 1, titles: 0, dropped: 0 }) } }, as);
+        } catch (storeError: unknown) {
+          console.error(`[meetings-title] result not stored: ${titleCodeOf(storeError)}`);
+        }
+        return none();
+      }
+      return await fail(titleCodeOf(error));
+    }
+    // Counts only: never a candidate.
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: JSON.stringify({ v: 1, titles: answer.titles.length, dropped: answer.dropped }) } }, as);
+    } catch (error: unknown) {
+      // The run ended while the model was answering (the member cancelled it, a switch stopped it): the text is not shown.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(titleCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: its answer is the state, and nothing of the model's text is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-title] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    return { state: 'suggested', errorCode: null, titles: answer.titles, dropped: answer.dropped };
+  } finally {
+    ticket.release();
+  }
+}
+
+// The recorder's Vy listing what each speaker of one meeting committed to or decided (#3954, ADR-0049 stage A): the title's run, with an answer that goes to the browser and nowhere else:
+//   1. meetings.commitments.status, as the recorder: the deployment's switch and the recorder; a refusal here has made no run and spent nothing;
+//   2. a draft-budget ticket, then meetings.commitments.start, whose run.start checks vy.use, the kill switches and the budget before any call (a spent budget is refused here, with no call made);
+//   3. the transcript, read as the recorder, and the one model call outside any transaction under the member's own meter (meetings.commitments), with a hard timeout. The model has no tools: the checks in code
+//      (packages/agent member-vy/meeting-commitments.ts) decide what shows, and an empty or unusable answer is "no suggestion";
+//   4. the run's result row is stored with COUNTS ONLY (speakers, lines, dropped), never a line, with kernel.member_vy.result.store in the member's own session.
+// The lines go back to the browser and nowhere else: no result row, task, mail, search hit or export holds one, and neither the transcript nor a line is ever logged (a failure is named by a
+// fixed code). Nothing is published and no task is made from here.
+export async function runMeetingCommitments(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<CommitmentsAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
+  const none = (dropped = 0): CommitmentsAnswer => ({ state: 'none', errorCode: null, speakers: [], dropped });
+  const failed = (errorCode: string): CommitmentsAnswer => ({ state: 'failed', errorCode, speakers: [], dropped: 0 });
+  const allowed = await deps.runtime.query<{ enabled: boolean; reason: 'off' | 'not_recorder' | null }>('meetings.commitments.status', { meetingId }, as);
+  if (!allowed.enabled) {
+    if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy what each speaker committed to');
+    throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('COMMITMENTS_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    // The checks come first: the switch, vy.use, the kill switches (the member's own Vy's included) and the budget. A refusal here has made no run and no call.
+    let started: { meetingId: string; runId: string };
+    try {
+      started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.commitments.start', { meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'COMMITMENTS_BUSY' : error.code;
+        console.error(`[meetings-commitments] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<CommitmentsAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-commitments] failed result not stored: ${commitmentsCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-commitments] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let answer: { speakers: CommitmentsAnswer['speakers']; dropped: number };
+    try {
+      const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
+      const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      answer = (await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, () => listCommitments({ segments, language: meeting.language }, bound)), timeoutMs)).answer;
+    } catch (error: unknown) {
+      // An answer with no line left, or none that could be read, is "no suggestion", not a failure of the service; the run's result still says which.
+      if (error instanceof CommitmentsError && error.code === 'COMMITMENTS_UNPARSABLE') {
+        await fail('COMMITMENTS_UNPARSABLE');
+        return none();
+      }
+      if (error instanceof CommitmentsError && error.code === 'COMMITMENTS_EMPTY') {
+        try {
+          await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: JSON.stringify({ v: 1, speakers: 0, lines: 0, dropped: 0 }) } }, as);
+        } catch (storeError: unknown) {
+          console.error(`[meetings-commitments] result not stored: ${commitmentsCodeOf(storeError)}`);
+        }
+        return none();
+      }
+      return await fail(commitmentsCodeOf(error));
+    }
+    // Counts only: never a speaker or a line.
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: JSON.stringify({ v: 1, speakers: answer.speakers.length, lines: answer.speakers.reduce((n, s) => n + s.lines.length, 0), dropped: answer.dropped }) } }, as);
+    } catch (error: unknown) {
+      // The run ended while the model was answering (the member cancelled it, a switch stopped it): the text is not shown.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(commitmentsCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: its answer is the state, and nothing of the model's text is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-commitments] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    return { state: 'listed', errorCode: null, speakers: answer.speakers, dropped: answer.dropped };
+  } finally {
+    ticket.release();
+  }
+}
+
 // One outbox event for a finished run, written by the recorder's own command; the worker turns it into the notice (the API's role cannot write a notification). Only the code of a failure is logged.
 async function notifySummaryReady(runtime: Runtime, as: { actor: UserActor; orgId: string }, input: { meetingId: string; runId: string }): Promise<void> {
   try {
@@ -375,20 +656,23 @@ export interface MeetingTranslationDeps extends MeetingSummaryDeps {
 
 // What a translation is expected to use, before the click: the text sent (UTF-8 bytes over a rough 2.5 per token, Vietnamese text weighs more than English) plus the fixed instruction, and
 // an answer about as long as the text (the JSON around it adds a little). An estimate, not a promise: the meter records what the provider reports.
-export function translationEstimate(bytes: number, price: MeetingTranslationDeps['price']): NonNullable<TranslationStatus['estimate']> {
+export function translationEstimate(bytes: number, price: MeetingTranslationDeps['price'], to?: TranslationTarget): NonNullable<TranslationStatus['estimate']> {
   const inputTokens = Math.ceil(bytes / 2.5) + 250;
-  const outputTokens = Math.ceil(bytes / 2.5) + 50;
+  // Chinese, Japanese and Korean weigh about half as much again in tokens for the same meaning (#3186).
+  const outputTokens = Math.ceil((bytes / 2.5) * (to === 'zh' || to === 'ja' || to === 'ko' ? 1.5 : 1)) + 50;
   const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
   return { inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], price) : null };
 }
 
 // The button of a stage: the module's status (switch, text to translate, language pair, the size of the text) plus the expected cost. The text itself is not read here: the module says its size.
-export async function translationStatusOf(deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'>, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published'): Promise<TranslationStatus> {
-  const { bytes, ...status } = await deps.runtime.query<TranslationStatus & { bytes: number }>('meetings.translation.status', { meetingId, stage }, { actor, orgId });
-  return status.enabled ? { ...status, estimate: translationEstimate(bytes, deps.price) } : status;
+export async function translationStatusOf(deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'>, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published', to?: TranslationTarget): Promise<TranslationStatus> {
+  const { bytes, ...status } = await deps.runtime.query<TranslationStatus & { bytes: number }>('meetings.translation.status', { meetingId, stage, ...(to ? { to } : {}) }, { actor, orgId });
+  return status.enabled ? { ...status, estimate: translationEstimate(bytes, deps.price, status.to) } : status;
 }
 
-export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published'): Promise<Translated> {
+export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published', to?: TranslationTarget): Promise<Translated> {
+  // The language asked for goes with every step below; absent, the module takes the other language of the pair (a target the deployment has not switched on is refused by the module's own status read).
+  const target = to ? { to } : {};
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -396,7 +680,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   if (!model || !meter) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
   // A member who cannot translate this (the switch is off, no text, a stage they do not read) is refused here with the precise answer, before a ticket is taken (so a member cannot use up the org's
   // few translations a minute by asking about meetings they do not read).
-  const allowed = await deps.runtime.query<TranslationStatus>('meetings.translation.status', { meetingId, stage }, as);
+  const allowed = await deps.runtime.query<TranslationStatus>('meetings.translation.status', { meetingId, stage, ...target }, as);
   if (!allowed.enabled) {
     if (allowed.reason === 'nothing') throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no summary to translate');
     throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
@@ -405,7 +689,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
     // 1. The checks come first: the switch, a stage the member reads, vy.use, the kill switches and the budget. A refusal here has made no run.
-    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.translate.start', { meetingId, stage }, as);
+    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.translate.start', { meetingId, stage, ...target }, as);
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<Translated> => {
       try {
@@ -420,7 +704,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
     let body: string;
     try {
       // 2. The text the member reads, in their own context.
-      const source = await deps.runtime.query<TranslationSource>('meetings.translation.source', { meetingId, stage }, as);
+      const source = await deps.runtime.query<TranslationSource>('meetings.translation.source', { meetingId, stage, ...target }, as);
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const result = await withDeadline(
@@ -692,6 +976,315 @@ export async function runMeetingBrief(deps: MeetingBriefDeps, orgId: string, act
 }
 
 
+// The member's Vy naming who an action item belongs to, when code found nobody (#3921, step 2, ADR-0049 stage A). Step 1 works with AI off; this is the member's click on one item. In order:
+//   1. meetings.assignee.status, as the member: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.assignee.facts: the said name and the people the member may give the work to, read as the member (row security), with their seats. Not eligible (the item has a person or a task, code finds a
+//      person, the text is not a name, nobody to pick): no run and no call;
+//   3. meetings.assignee.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.assignee (the scope carries the run), with a hard timeout. The model is given the said name and the numbered
+//      names, no id, no title and no address, and has no tools; the answer is {"n": number} or {"n": null}, checked by code (a number off the list or a pick the said text does not support is dropped);
+//   5. the result row holds counts only; the answer is the person the number named, with the seats they hold now. Nothing is stored: a person picks the seat and makes the task.
+// The answer goes back to the browser and nowhere else. A name is never logged: a failure is named by a fixed code.
+export async function assigneeStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'model' | 'meter'>, orgId: string, actor: UserActor): Promise<AssigneeStatus> {
+  if (!deps.model || !deps.meter(actor)) return { enabled: false, reason: 'off', estimate: null };
+  return deps.runtime.query<AssigneeStatus>('meetings.assignee.status', {}, { actor, orgId });
+}
+
+function assigneeCodeOf(error: unknown): string {
+  if (error instanceof AssigneeError) return error.code;
+  if (error instanceof AssigneeModelError) return error.kind === 'timeout' ? 'ASSIGNEE_TIMEOUT' : 'ASSIGNEE_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'ASSIGNEE_FAILED' : code;
+}
+
+export async function runMeetingAssignee(deps: MeetingBriefDeps, orgId: string, actor: UserActor, ask: AssigneeAsk): Promise<AssigneeAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('ASSIGNEE_OFF', 422, 'Vy naming who an action item belongs to is not turned on here');
+  const none = (): AssigneeAnswer => ({ state: 'none', errorCode: null, suggestion: null });
+  const failed = (errorCode: string): AssigneeAnswer => ({ state: 'failed', errorCode, suggestion: null });
+  const status = await deps.runtime.query<AssigneeStatus>('meetings.assignee.status', {}, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('ASSIGNEE_OFF', 422, 'Vy naming who an action item belongs to is not turned on here');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('ASSIGNEE_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const facts = await deps.runtime.query<AssigneeFacts>('meetings.assignee.facts', ask, as);
+    if (!facts.eligible || facts.people.length === 0) return none();
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.assignee.start', {}, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'ASSIGNEE_BUSY' : error.code;
+        console.error(`[meetings-assignee] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<AssigneeAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-assignee] failed result not stored: ${assigneeCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-assignee] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let checked: Awaited<ReturnType<typeof pickAssignee>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => pickAssignee({ said: facts.said, people: facts.people.map((p) => p.name) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      return await fail(error instanceof SummaryModelError ? 'ASSIGNEE_TIMEOUT' : assigneeCodeOf(error));
+    }
+    // Counts only: never a name.
+    const body = JSON.stringify({ v: 1, people: facts.people.length, picked: checked.pick === null ? 0 : 1, dropped: checked.dropped ? 1 : 0 });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(assigneeCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: nothing of the model's answer is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-assignee] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    const person = checked.pick === null ? undefined : facts.people[checked.pick - 1];
+    return person ? { state: 'suggested', errorCode: null, suggestion: person } : none();
+  } finally {
+    ticket.release();
+  }
+}
+
+// The member's Vy writing the few sentences of the weekly digest across meetings (#3949, ADR-0049 stage A). The facts do not need Vy and work with AI off (meetings.digest.facts); this is the member's click. In order:
+//   1. meetings.digest.status, as the member: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.digest.facts: the published decisions and open action items of the meetings the member reads in the window, all read as the member (row security). Nothing to say: no run and no call;
+//   3. meetings.digest.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.digest (the scope carries the run), with a hard timeout. The model is given only the numbered facts and has no
+//      tools; the answer is checked by code (cited facts, quotes, figures and dates written in a cited fact, no link or address);
+//   5. the result row holds counts only; the answer goes back to the browser and nowhere else.
+// Neither the facts nor the sentences are ever logged: a failure is named by a fixed code.
+export function digestEstimate(price: MeetingBriefDeps['price']): NonNullable<DigestStatus['estimate']> {
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
+  return { ...DIGEST_ESTIMATE, cost: priced ? aiCost([DIGEST_ESTIMATE], price) : null };
+}
+
+export async function digestStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'price' | 'model' | 'meter'>, orgId: string, actor: UserActor): Promise<DigestStatus> {
+  if (!deps.model || !deps.meter(actor)) return { enabled: false, reason: 'off', estimate: null };
+  const status = await deps.runtime.query<DigestStatus>('meetings.digest.status', {}, { actor, orgId });
+  return status.enabled ? { ...status, estimate: digestEstimate(deps.price) } : status;
+}
+
+function digestCodeOf(error: unknown): string {
+  if (error instanceof DigestError) return error.code;
+  if (error instanceof DigestModelError) return error.kind === 'timeout' ? 'DIGEST_TIMEOUT' : 'DIGEST_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'DIGEST_FAILED' : code;
+}
+
+export async function runMeetingDigest(deps: MeetingBriefDeps, orgId: string, actor: UserActor, ask: DigestAsk): Promise<DigestAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('DIGEST_OFF', 422, 'Vy writing the weekly recap is not turned on here');
+  // `count` is how many numbered facts the answer rests on, so the card can tell when its own numbering has gone stale.
+  let count = 0;
+  const none = (dropped = 0): DigestAnswer => ({ state: 'none', errorCode: null, sentences: [], dropped, lines: count });
+  const failed = (errorCode: string): DigestAnswer => ({ state: 'failed', errorCode, sentences: [], dropped: 0, lines: count });
+  const status = await deps.runtime.query<DigestStatus>('meetings.digest.status', {}, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('DIGEST_OFF', 422, 'Vy writing the weekly recap is not turned on here');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('DIGEST_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const facts = await deps.runtime.query<DigestFacts>('meetings.digest.facts', ask, as);
+    const lines = digestLines(facts);
+    count = lines.length;
+    if (facts.empty || lines.length === 0) return none();
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.digest.start', {}, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'DIGEST_BUSY' : error.code;
+        console.error(`[meetings-digest] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<DigestAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-digest] failed result not stored: ${digestCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-digest] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let checked: Awaited<ReturnType<typeof writeDigest>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => writeDigest({ facts: lines.map((l) => ({ kind: l.kind, text: l.text, meeting: l.meeting, date: l.date })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      return await fail(error instanceof SummaryModelError ? 'DIGEST_TIMEOUT' : digestCodeOf(error));
+    }
+    const sentences = checked.sentences.map((s) => ({ text: s.text, facts: s.cites }));
+    // Counts only: never a fact or a sentence.
+    const body = JSON.stringify({ v: 1, facts: lines.length, sentences: sentences.length, dropped: checked.dropped });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      // The run ended while the model was answering (the member cancelled it, a switch stopped it): the text is not shown, and the member keeps the facts lists.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(digestCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: nothing of the model's text is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-digest] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    return sentences.length === 0 ? none(checked.dropped) : { state: 'written', errorCode: null, sentences, dropped: checked.dropped, lines: count };
+  } finally {
+    ticket.release();
+  }
+}
+
+// The recorder's Vy checking whether a meeting covered its agenda (#3959, ADR-0049 stage A). The agenda is the series' open items plus up to eight lines the recorder typed; the transcript is the one the recorder
+// reads. In order:
+//   1. meetings.adherence.status, as the recorder: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.adherence.facts: the agenda lines and the numbered transcript lines, read as the recorder (row security). Nothing to ask (no agenda line, no transcript, a transcript longer than the model is
+//      given): no run and no call, and the answer says why;
+//   3. meetings.adherence.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.adherence (the scope carries the run), with a hard timeout. The model has no tools and answers numbers only;
+//      code keeps a "covered" claim only when it cites one to three transcript lines that were given (see member-vy/meetings-adherence.ts);
+//   5. the result row holds counts only; the answer is the agenda lines as given and, for a covered one, the transcript lines it cites, as the recorder reads them. Nothing is stored and nothing of the model's words
+//      is shown.
+// The answer goes back to the browser and nowhere else. An agenda or transcript line is never logged: a failure is named by a fixed code.
+function adherenceEstimate(price: MeetingBriefDeps['price']): NonNullable<AdherenceStatus['estimate']> {
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
+  return { ...ADHERENCE_ESTIMATE, cost: priced ? aiCost([ADHERENCE_ESTIMATE], price) : null };
+}
+
+export async function adherenceStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'price' | 'model' | 'meter'>, orgId: string, actor: UserActor, meetingId: string): Promise<AdherenceStatus> {
+  if (!deps.model || !deps.meter(actor)) return { meetingId, enabled: false, reason: 'off', estimate: null };
+  const status = await deps.runtime.query<AdherenceStatus>('meetings.adherence.status', { meetingId }, { actor, orgId });
+  return status.enabled ? { ...status, estimate: adherenceEstimate(deps.price) } : status;
+}
+
+function adherenceCodeOf(error: unknown): string {
+  if (error instanceof AdherenceError) return error.code;
+  if (error instanceof AdherenceModelError) return error.kind === 'timeout' ? 'ADHERENCE_TIMEOUT' : 'ADHERENCE_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'ADHERENCE_FAILED' : code;
+}
+
+export async function runMeetingAdherence(deps: MeetingBriefDeps, orgId: string, actor: UserActor, ask: AdherenceAsk): Promise<AdherenceAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('ADHERENCE_OFF', 422, 'Vy checking an agenda is not turned on here');
+  const failed = (errorCode: string): AdherenceAnswer => ({ state: 'failed', errorCode, reason: null, items: [], dropped: 0 });
+  const status = await deps.runtime.query<AdherenceStatus>('meetings.adherence.status', { meetingId: ask.meetingId }, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('ADHERENCE_OFF', 422, 'Vy checking an agenda is not turned on here');
+    if (status.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to check its agenda');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('ADHERENCE_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const facts = await deps.runtime.query<AdherenceFacts>('meetings.adherence.facts', ask, as);
+    if (!facts.eligible) return { state: 'none', errorCode: null, reason: facts.reason, items: [], dropped: 0 };
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.adherence.start', { meetingId: ask.meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'ADHERENCE_BUSY' : error.code;
+        console.error(`[meetings-adherence] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<AdherenceAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-adherence] failed result not stored: ${adherenceCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-adherence] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let checked: Awaited<ReturnType<typeof checkAgenda>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          checkAgenda({ agenda: facts.agenda.map((a) => a.text), transcript: facts.transcript.map((l) => ({ startSeconds: l.startSeconds, text: l.text })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports)),
+        ),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      return await fail(error instanceof SummaryModelError ? 'ADHERENCE_TIMEOUT' : adherenceCodeOf(error));
+    }
+    // Counts only: never an agenda line or a transcript line.
+    const body = JSON.stringify({ v: 1, agenda: facts.agenda.length, transcript: facts.transcript.length, covered: checked.items.filter((i) => i.covered).length, dropped: checked.dropped });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(adherenceCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: nothing of the model's answer is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-adherence] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    const items: AdherenceAnswer['items'] = facts.agenda.map((line) => {
+      const found = checked.items[line.n - 1];
+      const cites = (found?.covered ? found.lines : []).flatMap((n) => {
+        const cited = facts.transcript[n - 1];
+        return cited ? [{ n, startSeconds: cited.startSeconds, text: cited.text }] : [];
+      });
+      return { n: line.n, text: line.text, source: line.source, covered: cites.length > 0, cites };
+    });
+    return { state: 'checked', errorCode: null, reason: null, items, dropped: checked.dropped };
+  } finally {
+    ticket.release();
+  }
+}
+
 // The button and the progress of the transcript translation (E2, #3185): the module's status plus the cost expected for the lines still to translate (their size, priced; one call a
 // chunk, each with the fixed instruction around it). The text itself is not read here. With no model in the deployment the button says why (as when the module's own switch is off).
 export async function transcriptTranslationStatusOf(
@@ -699,13 +1292,14 @@ export async function transcriptTranslationStatusOf(
   orgId: string,
   actor: UserActor,
   meetingId: string,
+  to?: TranslationTarget,
 ): Promise<TranscriptTranslationStatus> {
-  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, { actor, orgId });
+  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...(to ? { to } : {}) }, { actor, orgId });
   if (!deps.hasModel && status.enabled) return { ...status, enabled: false, reason: 'off', estimate: null };
   if (!status.enabled || status.remaining === 0) return status;
   const calls = Math.max(1, status.chunksTotal - status.chunksDone);
   // The same figure a chunk is admitted on before its call, for as many chunks as are left (each is a call of its own, with the fixed instruction around it).
-  const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls));
+  const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls), status.to);
   const inputTokens = perChunk.inputTokens * calls;
   const outputTokens = perChunk.outputTokens * calls;
   const priced = deps.price !== undefined && (isPositivePrice(deps.price.inputPerMTok) || isPositivePrice(deps.price.outputPerMTok));
@@ -724,7 +1318,8 @@ export async function transcriptTranslationStatusOf(
 // Neither the text nor the answer is ever logged: a failure is named by a fixed code. A translation creates no task, mail, post, webhook, search hit or export.
 export type TranscriptTranslationDeps = MeetingTranslationDeps;
 
-export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string): Promise<TranscriptTranslated> {
+export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string, to?: TranslationTarget): Promise<TranscriptTranslated> {
+  const target = to ? { to } : {};
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -732,7 +1327,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
   if (!model || !meter) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
   // A member who cannot translate this (the switch is off, no transcript they read) is refused with the precise answer before a ticket is taken (so a member cannot use up the org's few
   // requests a minute by asking about meetings they do not read).
-  const allowed = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+  const allowed = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...target }, as);
   if (!allowed.enabled) {
     if (allowed.reason === 'nothing') throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no transcript to translate');
     throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
@@ -741,7 +1336,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
     // 1. The checks come first. A refusal here has made no run.
-    const started = await deps.runtime.execute<TranscriptStarted>('meetings.translation.transcript_start', { meetingId }, as);
+    const started = await deps.runtime.execute<TranscriptStarted>('meetings.translation.transcript_start', { meetingId, ...target }, as);
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<TranscriptTranslated> => {
       try {
@@ -808,7 +1403,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
       if (error instanceof DomainError && error.code === 'TRANSLATION_STALE') return { meetingId, runId, state: 'failed', errorCode: 'TRANSLATION_STALE', translated: 0, remaining: started.remaining };
       throw error;
     }
-    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...target }, as);
     return { meetingId, runId, state: 'ready', errorCode: null, translated: kept, remaining: after.remaining };
   } finally {
     ticket.release();

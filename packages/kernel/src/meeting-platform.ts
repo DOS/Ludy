@@ -13,8 +13,12 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  meetingOverlapWindow,
+  vietnamToday,
   zId,
   zMeetingPlatformConnectionRef,
+  MEETING_PLATFORM_OAUTH_NAME,
+  zMeetingPlatformConnectProvider,
   zMeetingPlatformErrorCode,
   zMeetingPlatformListed,
   zMeetingPlatformProvider,
@@ -23,7 +27,8 @@ import {
   type MeetingPlatformRecordingView,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { offAppsOf } from './org-apps.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 // A member demoted to viewer after connecting still sees and removes their own connection, as for calendars.
@@ -72,6 +77,68 @@ function platformError(error: unknown): never {
       throw error;
   }
 }
+
+const zStateHash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const OAUTH_ATTEMPT_SECONDS = 600;
+
+// The errors the meeting_platform_oauth_* definers raise, as domain errors (the same codes as the calendar's pair, which the app already words).
+function oauthError(error: unknown): never {
+  const message = (error as { message?: unknown } | null)?.message;
+  switch (message) {
+    case 'OAUTH_FORBIDDEN':
+      throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+    case 'OAUTH_TOO_MANY':
+      throw new DomainError('OAUTH_TOO_MANY', 429, 'Bạn đã mở quá nhiều lượt kết nối chưa hoàn tất, hãy thử lại sau ít phút');
+    case 'OAUTH_STATE_INVALID':
+      throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
+    case 'OAUTH_STATE_USED':
+      throw new DomainError('OAUTH_STATE_USED', 409, 'Lượt kết nối này đã được dùng, hãy bắt đầu lại');
+    case 'OAUTH_STATE_EXPIRED':
+      throw new DomainError('OAUTH_STATE_EXPIRED', 409, 'Lượt kết nối đã hết hạn, hãy bắt đầu lại');
+    default:
+      throw error;
+  }
+}
+
+// Starts a connect: only the hash of the state and the PKCE verifier reach the database (the state itself is the browser's). The attempt is the member's own and single use.
+export const meetingPlatformOAuthBegin = defineCommand({
+  name: 'kernel.meeting_platform.oauth_begin',
+  input: z.strictObject({ provider: zMeetingPlatformConnectProvider, stateHash: zStateHash, codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/).nullable() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const { rows } = await sql<{ id: string }>`
+      SELECT crove_kernel.meeting_platform_oauth_begin(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
+      .execute(ctx.trx)
+      .catch(oauthError);
+    const attemptId = rows[0]?.id;
+    if (!attemptId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    // The audit row names the attempt and provider only: never the hash or the verifier.
+    ctx.audit({ attempt_id: attemptId, provider: input.provider });
+    return { attemptId, expiresAt: new Date(ctx.now.getTime() + OAUTH_ATTEMPT_SECONDS * 1000).toISOString() };
+  },
+});
+
+// Uses the attempt up before the code is exchanged, so a code and state work once even if the exchange fails.
+export const meetingPlatformOAuthConsume = defineCommand({
+  name: 'kernel.meeting_platform.oauth_consume',
+  input: z.strictObject({ provider: zMeetingPlatformConnectProvider, stateHash: zStateHash }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const { rows } = await sql<{ code_verifier: string | null }>`
+      SELECT code_verifier FROM crove_kernel.meeting_platform_oauth_consume(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash})`
+      .execute(ctx.trx)
+      .catch(oauthError);
+    if (rows.length !== 1) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    ctx.audit({ provider: input.provider });
+    return { codeVerifier: rows[0]?.code_verifier ?? null };
+  },
+});
 
 export const zMeetingPlatformConnect = z.strictObject({
   provider: zMeetingPlatformProvider,
@@ -475,43 +542,121 @@ export const meetingPlatformConnections = defineQuery({
   },
 });
 
-// The member's own recordings, newest first: the suggestions and what became of the ones they imported. A dismissed one is hidden.
+// How big a platform video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (crove-media is not configured). Set once at start by the kernel; every recording the member lists
+// carries it, so the app offers "Nhập" for a video-only recording only when the import can work. The module's import command checks the on/off fact with its own copy.
+let videoImportMaxBytes: number | null = null;
+export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
+  videoImportMaxBytes = maxBytes;
+}
+
+// Finds the single Ludy meeting overlapping each suggested recording within the B1 15-minute window (#4123 Step 3).
+// Runs in the caller's transaction so PostgreSQL RLS (meeting_read) enforces org scope, role and reader visibility;
+// zero or two-plus visible candidates return no match so hidden or ambiguous meetings are never exposed.
+async function matchedMeetingsForSuggestions(
+  ctx: QueryContext,
+  rows: ReadonlyArray<{ id: string; status: string; started_at: Date; length_seconds: number | null }>,
+): Promise<ReadonlyMap<string, string>> {
+  const suggested = rows.filter((r) => r.status === 'suggested');
+  if (suggested.length === 0 || !ctx.installed('meetings')) return new Map();
+  if ((await offAppsOf(ctx.trx, ctx.orgId)).includes('meetings')) return new Map();
+
+  const recIds: string[] = [];
+  const winStarts: string[] = [];
+  const winEnds: string[] = [];
+  for (const r of suggested) {
+    const window = meetingOverlapWindow({ startedAt: r.started_at, lengthSeconds: r.length_seconds });
+    recIds.push(r.id);
+    winStarts.push(window.windowStart.toISOString());
+    winEnds.push(window.windowEnd.toISOString());
+  }
+
+  const today = vietnamToday();
+  const { rows: candidates } = await sql<{ recording_id: string; meeting_id: string }>`
+    SELECT rec.id AS recording_id, cand.meeting_id
+    FROM ROWS FROM (
+      pg_catalog.unnest(${recIds}::uuid[]),
+      pg_catalog.unnest(${winStarts}::timestamptz[]),
+      pg_catalog.unnest(${winEnds}::timestamptz[])
+    ) AS rec(id, win_start, win_end)
+    CROSS JOIN LATERAL (
+      SELECT m.id AS meeting_id
+      FROM crove_meetings.meeting m
+      WHERE m.org_id = ${ctx.orgId}::uuid
+        AND m.started_at IS NOT NULL
+        AND m.started_at < rec.win_end
+        AND GREATEST(
+          m.started_at,
+          COALESCE(m.ended_at, m.started_at + (GREATEST(COALESCE(m.length_seconds, 0), 0) * interval '1 second'))
+        ) > rec.win_start
+        AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
+        AND NOT EXISTS (
+          SELECT 1 FROM crove_kernel.meeting_platform_recording pr
+          WHERE pr.org_id = m.org_id AND pr.meeting_id = m.id AND pr.status IN ('failed', 'dismissed')
+        )
+      ORDER BY m.started_at DESC
+      LIMIT 2
+    ) AS cand`.execute(ctx.trx);
+
+  const counts = new Map<string, { first: string; count: number }>();
+  for (const cand of candidates) {
+    const entry = counts.get(cand.recording_id);
+    if (entry === undefined) counts.set(cand.recording_id, { first: cand.meeting_id, count: 1 });
+    else entry.count += 1;
+  }
+
+  const matched = new Map<string, string>();
+  for (const [recId, entry] of counts) {
+    if (entry.count === 1) matched.set(recId, entry.first);
+  }
+  return matched;
+}
+
+// The member's own recordings, newest first: the suggestions and what became of the ones they imported. A dismissed one is hidden. With `recordingId` it is that one row (or none), found by its id
+// whatever its age, so a caller that needs one row does not depend on it being among the newest RECORDINGS_LIMIT; that lookup neither sorts nor limits (one row at most).
 export const meetingPlatformRecordings = defineQuery({
   name: 'kernel.meeting_platform.recordings',
-  input: z.strictObject({}),
+  input: z.strictObject({ recordingId: zId.optional() }),
   access: OWN,
-  handler: async (ctx): Promise<MeetingPlatformRecordingView[]> => {
+  handler: async (ctx, input): Promise<MeetingPlatformRecordingView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được bản ghi từ nền tảng họp');
-    const rows = await ctx.trx
+    const only = input.recordingId;
+    let query = ctx.trx
       .selectFrom('crove_kernel.meeting_platform_recording as r')
       .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
       .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
-      .where('r.status', '<>', 'dismissed')
-      .orderBy('r.started_at', 'desc')
-      .orderBy('r.id', 'desc')
-      .limit(RECORDINGS_LIMIT)
-      .execute();
-    return rows.map((r) => ({
-      id: r.id,
-      connectionId: r.connection_id,
-      provider: r.provider,
-      title: r.title,
-      startedAt: r.started_at.toISOString(),
-      lengthSeconds: r.length_seconds,
-      sizeBytes: r.size_bytes === null ? null : Number(r.size_bytes),
-      hasAudio: r.has_audio,
-      hasVideo: r.has_video,
-      hasTranscript: r.has_transcript,
-      status: r.status,
-      meetingId: r.meeting_id,
-      errorCode: r.error_code,
-    }));
+      .where('r.status', '<>', 'dismissed');
+    // One row by its id: the primary key finds it, so there is nothing to order or to cap. The list is newest first and capped.
+    query = only === undefined ? query.orderBy('r.started_at', 'desc').orderBy('r.id', 'desc').limit(RECORDINGS_LIMIT) : query.where('r.id', '=', only);
+    const rows = await query.execute();
+    const matchedByRecordingId = only === undefined ? await matchedMeetingsForSuggestions(ctx, rows) : new Map<string, string>();
+    return rows.map((r) => {
+      const matchedId = matchedByRecordingId.get(r.id);
+      return {
+        id: r.id,
+        connectionId: r.connection_id,
+        provider: r.provider,
+        title: r.title,
+        startedAt: r.started_at.toISOString(),
+        lengthSeconds: r.length_seconds,
+        sizeBytes: r.size_bytes === null ? null : Number(r.size_bytes),
+        hasAudio: r.has_audio,
+        hasVideo: r.has_video,
+        hasTranscript: r.has_transcript,
+        videoImportMaxBytes,
+        status: r.status,
+        meetingId: r.meeting_id,
+        errorCode: r.error_code,
+        matchedMeeting: matchedId === undefined ? null : { meetingId: matchedId },
+      };
+    });
   },
 });
 
 export const meetingPlatformCommands = [
+  meetingPlatformOAuthBegin,
+  meetingPlatformOAuthConsume,
   meetingPlatformConnect,
   meetingPlatformDisconnect,
   meetingPlatformRefresh,

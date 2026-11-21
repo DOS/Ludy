@@ -139,7 +139,7 @@ The defaults are for local use. Before anyone else can reach your instance, copy
 
 Not yet checked on a real company's books by an accountant, nor filed through HTKK or eTax: that is the pilot's job (see the roadmap).
 
-**Social** (module `social`, part of Ludy Engage): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
+**Engage: Inbox & Posts** (module `social`, part of Ludy Engage): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
 
 **Bookings** (module `crm`): booking pages, event types, working hours and days off.
 
@@ -323,9 +323,15 @@ apps/extract       crove-extract: the file parsing sandbox and every parser, e-i
 packages/extract-contract  limits, schemas and the worker's client for crove-extract
 packages/l10n-vn   Vietnamese invoice checks, tax codes, TT133 accounting rules (no parser)
 packages/agent     AI extraction (only package that talks to a model)
-modules/finance    purchase invoices, journal entries, export
-modules/social     compose, approve, schedule and publish posts
-modules/crm        booking pages: event types hosted by members (calendar plan)
+modules/finance    accounting, AI Inbox, invoices, vouchers, bank matching, tax & ledger reports
+modules/social     Engage Inbox & Posts: compose, approve, schedule and publish posts
+modules/crm        Engage CRM: contacts, companies, deals, quotes and booking pages
+modules/ads        Engage Marketing ads spend, results and cost metrics
+modules/notes      Teamwork personal and shared notes linked to business records
+modules/projects   Teamwork project and task boards
+modules/meetings   Teamwork AI meeting notes, recordings and transcripts
+modules/hr         HR & payroll: employees, contracts, leave, runs and declarations
+modules/sign       eSign PDF envelopes, templates, Zalo/email signing and offline verify
 supabase/migrations  the only place for schema changes
 ```
 

@@ -11,7 +11,7 @@ export const kernelManifest = defineModule({
   dependsOn: [],
   tables: {
     crove_kernel: {
-      activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id'], { summary: 'pii' }),
+      activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id', 'actor_origin'], { summary: 'pii' }),
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
@@ -49,9 +49,9 @@ export const kernelManifest = defineModule({
       ),
       conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'contact', display_name: 'pii' }),
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted', 'sender_verified'], { external_message_id: 'pii', body: 'pii', email_refs: 'pii' }),
-      conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
+      conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at', 'actor_origin', 'tainted'], { body: 'pii' }),
       conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
-      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'set_by', 'created_at', 'updated_at']),
+      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'wake_unanswered_hours', 'wake_reply_window_hours', 'wake_quote_days', 'set_by', 'created_at', 'updated_at']),
       credential: columns(['org_id', 'connection_id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       currency: columns(['code', 'minor_units']),
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
@@ -73,6 +73,8 @@ export const kernelManifest = defineModule({
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       mcp_member_table: columns(['table_name', 'mode', 'adr']),
+      mcp_proposal_command: columns(['command', 'scope', 'kind', 'adr']),
+      mcp_wake_event_type: columns(['type', 'scope', 'fields', 'adr']),
       // Meeting platforms a member connects (meetings integrations C1, #3173): the account is contact data, the sealed tokens sensitive, the recording's title is the platform's words (pii) and the
       // staging key is the random address of the bytes waiting for the member's own request (sensitive).
       meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
@@ -99,12 +101,12 @@ export const kernelManifest = defineModule({
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_held: columns(['org_id', 'id', 'event_id', 'module', 'held_at']),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
-      party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
+      party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id', 'actor_origin', 'tainted'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
       permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
       permission_default: columns(['base_role', 'permission']),
       position: columns(['org_id', 'id', 'title', 'module', 'role_key', 'reports_to', 'holder_user_id', 'holder_agent_id', 'le_scope', 'flags', 'job_description', 'status', 'created_at', 'updated_at']),
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),
-      proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
+      proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host', 'approvers_told_at'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
       proposal_policy: columns(['org_id', 'id', 'remind_after_days', 'escalate_after_days', 'updated_by', 'created_at', 'updated_at', 'expire_after_days']),
       record_le: columns(['org_id', 'id', 'record_type', 'record_id', 'legal_entity_id', 'created_by', 'created_at']),
       refusal_tally: columns(['org_id', 'window_start', 'actor_key', 'command', 'code', 'refusals', 'audited', 'first_at', 'last_at']),

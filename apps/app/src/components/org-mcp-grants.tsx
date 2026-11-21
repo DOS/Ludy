@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
+import { MCP_WRITE_SCOPE_IDS } from '@crove/kernel-contract';
 import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -15,10 +16,19 @@ import { OrgMcpWake } from './org-mcp-wake.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Message keys cannot hold a dot, so a scope id has its own key.
-const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read', 'ludy.social.draft': 'ludy_social_draft' } as const;
-// A connection that may write a draft is not "read only": it gets one badge that says both (the draft scope always comes with the read scope), never a "read only" one beside the write.
-const badgeKeys = (scopes: readonly (keyof typeof SCOPE_KEY)[]): Array<(typeof SCOPE_KEY)[keyof typeof SCOPE_KEY] | 'ludy_read_draft'> =>
-  scopes.includes('ludy.social.draft') ? ['ludy_read_draft', ...scopes.filter((s) => s !== 'ludy.read' && s !== 'ludy.social.draft').map((s) => SCOPE_KEY[s])] : scopes.map((s) => SCOPE_KEY[s]);
+const SCOPE_KEY = {
+  'ludy.read': 'ludy_read',
+  'ludy.member.read': 'ludy_member_read',
+  'ludy.social.draft': 'ludy_social_draft',
+  'ludy.engage.write': 'ludy_engage_write',
+  'ludy.ads.draft': 'ludy_ads_draft',
+} as const;
+// A connection that may write is not "read only": it gets one badge that says it reads and writes, then one badge per write scope (a write scope always comes with the read scope), never a "read only"
+// one beside a write.
+const badgeKeys = (scopes: readonly (keyof typeof SCOPE_KEY)[]): Array<(typeof SCOPE_KEY)[keyof typeof SCOPE_KEY] | 'ludy_reads_writes'> => {
+  const writes = scopes.filter((s) => (MCP_WRITE_SCOPE_IDS as readonly string[]).includes(s));
+  return writes.length > 0 ? ['ludy_reads_writes', ...scopes.filter((s) => s !== 'ludy.read').map((s) => SCOPE_KEY[s])] : scopes.map((s) => SCOPE_KEY[s]);
+};
 
 export interface GrantMember {
   userId: string;

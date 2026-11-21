@@ -3,6 +3,7 @@
 import { expect, test } from '@playwright/test';
 import { authLink } from '../lib/mail.ts';
 import { PASSWORD, claims, createOrg, newEmail, signIn, signOut, signUp, storedSession } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
 test('the confirmation link signs the new user in, and a used link shows why it failed', async ({ page }) => {
@@ -23,6 +24,31 @@ test('the confirmation link signs the new user in, and a used link shows why it 
   await page.goto('/login?error=access_denied&error_code=made_up&error_description=Call+0900+000+000+to+unlock');
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('alert')).toHaveText('Liên kết không hợp lệ hoặc đã hết hạn. Hãy yêu cầu liên kết mới.');
+});
+
+test('the sign-up form states the password rule and can show the password (#3593)', async ({ page }) => {
+  await page.goto('/login');
+  // One line for the suite, not the accounting screen (AU-1).
+  await expect(page.getByText('sổ sách, công việc và khách hàng')).toBeVisible();
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await expect(page.getByText('Ít nhất 8 ký tự.')).toBeVisible();
+  const password = page.getByLabel('Mật khẩu');
+  await password.fill('abc-0123');
+  await expect(password).toHaveAttribute('type', 'password');
+  await page.getByRole('button', { name: 'Hiện', exact: true }).click();
+  await expect(password).toHaveAttribute('type', 'text');
+  await page.getByRole('button', { name: 'Ẩn', exact: true }).click();
+  await expect(password).toHaveAttribute('type', 'password');
+});
+
+test('a server that cannot be reached shows the network message, not the browser text (#3593)', async ({ page }) => {
+  await page.route('**/auth/v1/signup**', (route) => route.abort('failed'));
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await page.getByLabel('Email').fill(newEmail('offline'));
+  await page.getByLabel('Mật khẩu').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Không kết nối được máy chủ. Thử lại sau ít phút.');
 });
 
 test('password recovery sets a new password through the emailed link', async ({ page }) => {
@@ -56,6 +82,7 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   const slug = await createOrg(page, 'Công ty MFA');
 
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   expect(secret).toMatch(/^[A-Z2-7]+=*$/);
@@ -140,21 +167,22 @@ test('managing members asks for two-factor first, then works once it is on', asy
   await signUp(page, owner);
   const slug = await createOrg(page, 'Công ty thành viên');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'members');
 
   // Inviting is R3, and the owner has no second factor yet.
   const member = newEmail('member');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
   await expect(page.getByText(`Đang chờ: mời ${member} với vai trò Thành viên.`)).toBeVisible();
-  await expect(page.getByText('Bật xác thực hai lớp ở ô bên cạnh rồi thử lại.')).toBeVisible();
+  // The members tab has no two-factor card, so the prompt carries the enrollment itself and repeats the invite once the code is confirmed.
+  await expect(page.getByText('Việc này cần xác thực hai lớp. Bật xác thực hai lớp cho tài khoản', { exact: false })).toBeVisible();
 
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận' }).click();
-  await expect(page.getByText('Đang bật')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Mời', exact: true }).click();
   const created = page.getByRole('status').filter({ hasText: `Đã tạo lời mời cho ${member}` });
   const link = (await created.getByText(/\/-\/invite#/).textContent())?.trim() ?? '';
   expect(link).toMatch(/\/-\/invite#/);
@@ -176,7 +204,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
   await expect(role).toHaveValue('owner');
 
   // The new co-owner has no second factor: changing the first owner's role asks for one first.
-  await memberPage.goto(`/o/${slug}/settings`);
+  await memberPage.goto(`/o/${slug}/settings/members`);
   const first = memberPage.getByRole('listitem').filter({ hasText: owner });
   const firstRole = first.getByLabel(`Vai trò của ${owner}`, { exact: true });
   await firstRole.selectOption('admin');
@@ -186,10 +214,8 @@ test('managing members asks for two-factor first, then works once it is on', asy
   const memberSecret = (await memberPage.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await memberPage.getByLabel('Mã xác thực').fill((await nextTotp(memberSecret)).code);
   await memberPage.getByRole('button', { name: 'Xác nhận', exact: true }).click();
-  await expect(memberPage.getByText('Đang bật')).toBeVisible();
 
-  // With the second factor fresh, the confirmed change goes through, then the removal.
-  await first.getByRole('button', { name: 'Xác nhận đổi vai trò' }).click();
+  // With the second factor fresh, the confirmed change repeats by itself, then the removal.
   await expect(firstRole).toHaveValue('admin');
   await first.getByRole('button', { name: 'Xóa', exact: true }).click();
   await first.getByRole('button', { name: 'Xác nhận xóa' }).click();
@@ -201,6 +227,7 @@ test('rotating the inbound address asks for two-factor first', async ({ page }) 
   await signUp(page, newEmail('rotate'));
   await createOrg(page, 'Công ty đổi địa chỉ');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  // The organization tab has no two-factor card, so the step-up prompt carries the enrollment and repeats the rotation.
   const before = (await page.getByText(/@in\.e2e\.test$/).first().textContent())?.trim() ?? '';
   expect(before).toMatch(/@in\.e2e\.test$/);
 
@@ -212,9 +239,7 @@ test('rotating the inbound address asks for two-factor first', async ({ page }) 
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận', exact: true }).click();
-  await expect(page.getByText('Đang bật')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Xác nhận đổi địa chỉ' }).click();
   const rotated = page.getByRole('status').filter({ hasText: 'Đã đổi địa chỉ' });
   await expect(rotated).toContainText(/@in\.e2e\.test/);
   await expect(rotated).not.toContainText(before);
@@ -224,6 +249,7 @@ test('closing the organization asks for two-factor first', async ({ page }) => {
   await signUp(page, newEmail('offboard'));
   const slug = await createOrg(page, 'Công ty đóng cửa');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'data');
 
   // Offboarding is R3 (#212): without a second factor the confirmation turns into the step-up prompt.
   await page.getByRole('button', { name: 'Bắt đầu đóng tổ chức' }).click();
@@ -234,8 +260,6 @@ test('closing the organization asks for two-factor first', async ({ page }) => {
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận', exact: true }).click();
-  await expect(page.getByText('Đang bật')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Xác nhận đóng tổ chức' }).click();
   await expect(page.getByText('Tổ chức đang được đóng. Chỉ chủ sở hữu còn truy cập được.')).toBeVisible();
 });

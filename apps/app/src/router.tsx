@@ -39,7 +39,8 @@ import { OnboardingPage } from './routes/onboarding.tsx';
 import { OpeningBalancePage } from './routes/opening-balance.tsx';
 import { OrgLayout } from './routes/org-layout.tsx';
 import { ResetPasswordPage } from './routes/reset-password.tsx';
-import { SettingsPage } from './routes/settings.tsx';
+import { SettingsAccountingPage, SettingsAppsPage, SettingsBookingsPage, SettingsConnectionsPage, SettingsDataPage, SettingsMembersPage, SettingsNotificationsPage, SettingsOrgPage, SettingsQuotesPage, SettingsSalesPage, SettingsSecurityPage } from './routes/settings/pages.tsx';
+import { legacySettingsTab, SETTINGS_CARD, SETTINGS_TAB_TO } from './routes/settings/tabs.ts';
 import { SocialPage } from './routes/social.tsx';
 import { SocialImportPage } from './routes/social-import.tsx';
 import { SocialSnippetsPage } from './routes/social-snippets.tsx';
@@ -73,6 +74,8 @@ import { parseVouchersSearch } from './lib/vouchers.ts';
 import { SocialChannelsPage } from './routes/social-channels.tsx';
 import { OAuthCallbackPage } from './routes/social-oauth.tsx';
 import { CalendarOAuthCallbackPage } from './routes/calendar-oauth.tsx';
+import { MeetingPlatformOAuthCallbackPage } from './routes/meeting-platform-oauth.tsx';
+import { MarketplaceOAuthCallbackPage } from './routes/marketplace-oauth.tsx';
 import { SocialComposePage, SocialPostPage } from './routes/social-post.tsx';
 import { SocialSharePage } from './routes/social-share.tsx';
 import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg, rememberShare } from './lib/social-share.ts';
@@ -395,6 +398,28 @@ const calendarOAuthCallbackRoute = createRoute({
   component: CalendarOAuthCallbackPage,
 });
 
+// Where a meeting platform's OAuth dialog sends the browser back (Zoom, C3, #3175); the attempt remembers its org the same way.
+const meetingPlatformOAuthCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/meetings/oauth/$provider/callback',
+  beforeLoad: async ({ matches }) => {
+    requireInstalledOutside(matches);
+    await requireAuth();
+  },
+  component: MeetingPlatformOAuthCallbackPage,
+});
+
+// Where a marketplace's consent page sends the seller back (Lazada, #4238); the authorization remembers its org the same way.
+const marketplaceOAuthCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/marketplace/oauth/$provider/callback',
+  beforeLoad: async ({ matches }) => {
+    requireInstalledOutside(matches);
+    await requireAuth();
+  },
+  component: MarketplaceOAuthCallbackPage,
+});
+
 const onboardingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/onboarding',
@@ -590,20 +615,47 @@ const socialPlanPrintRoute = createRoute({
   validateSearch: parsePlanSearch,
   component: SocialPlanPrintPage,
 });
-// ?invite=<email> fills the invite form: onboarding sends a firm here to invite the new client's contact (issue #324).
+// Settings is eleven tabs, each its own screen (#3589); the first keeps the address `settings`. ?invite=<email> fills the invite form: onboarding sends a firm here to invite the new client's
+// contact (issue #324), and the form is on the members tab. An old link to a card of the single page (`settings#quote-settings`, `settings#integrations`...) goes to the tab that holds it, with its #fragment.
+const parseSettingsSearch = (search: Record<string, unknown>): { invite?: string } => (typeof search.invite === 'string' ? { invite: search.invite.slice(0, 320) } : {});
+// `?todayMail=off` on the notifications tab shows the one-click turn-off of the daily brief (#2406).
+const parseTodayMailSearch = (search: Record<string, unknown>): { todayMail?: 'off' } => (search.todayMail === 'off' ? { todayMail: 'off' } : {});
 const settingsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'settings',
-  validateSearch: (search: Record<string, unknown>): { invite?: string } => (typeof search.invite === 'string' ? { invite: search.invite.slice(0, 320) } : {}),
-  component: SettingsPage,
+  validateSearch: parseSettingsSearch,
+  beforeLoad: ({ params, search, location }) => {
+    const tab = legacySettingsTab(location.hash, search);
+    if (tab) throw redirect({ to: SETTINGS_TAB_TO[tab], params: { slug: (params as { slug: string }).slug }, search, hash: location.hash.replace(/^#/, ''), replace: true });
+  },
+  component: SettingsOrgPage,
 });
+const settingsMembersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/members', validateSearch: parseSettingsSearch, component: SettingsMembersPage });
+const settingsAppsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/apps', component: SettingsAppsPage });
+const settingsBookingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/bookings', component: SettingsBookingsPage });
+const settingsSalesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/sales', component: SettingsSalesPage });
+const settingsQuotesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/quotes', component: SettingsQuotesPage });
+const settingsAccountingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/accounting', component: SettingsAccountingPage });
+const settingsConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/connections', component: SettingsConnectionsPage });
+const settingsNotificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/notifications', validateSearch: parseTodayMailSearch, component: SettingsNotificationsPage });
+const settingsSecurityRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/security', component: SettingsSecurityPage });
+const settingsDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/data', component: SettingsDataPage });
 // The audit log (#672): owners and admins only, which the page checks and the server enforces.
 // ?targetType=&targetId= (and the other filters) open it filtered: a decided proposal links here (#1445).
 const auditRoute = createRoute({ getParentRoute: () => orgRoute, path: 'audit', validateSearch: parseAuditSearch, component: AuditPage });
 const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'personal-data', component: PersonalDataPage });
 // AI agents and tasks (ADR-0029) belong to the kernel, so every deployment has them.
 // In-app notifications of the kernel and finance (#671).
-const notificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notifications', component: NotificationsPage });
+// The daily brief mail's turn-off link opens `notifications?todayMail=off` (the kernel writes it); the preferences are the Settings tab "Thông báo của tôi" now (#3592), so that link goes to its daily-brief card with its search.
+const notificationsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'notifications',
+  validateSearch: parseTodayMailSearch,
+  beforeLoad: ({ params, search }) => {
+    if (search.todayMail === 'off') throw redirect({ to: SETTINGS_TAB_TO.notifications, params: { slug: (params as { slug: string }).slug }, search: { todayMail: 'off' as const }, hash: SETTINGS_CARD.todayMail, replace: true });
+  },
+  component: NotificationsPage,
+});
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents', component: AgentsPage });
 // The AI use and budgets and the AI apps connected over MCP: screens of the Ludy AI app (#3225), moved off the org chart screen and Settings.
 const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-usage', component: AiUsagePage });
@@ -710,7 +762,9 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  meetingPlatformOAuthCallbackRoute,
+  marketplaceOAuthCallbackRoute,
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsQuotesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsNotificationsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

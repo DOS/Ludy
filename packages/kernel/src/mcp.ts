@@ -11,11 +11,20 @@
 // - kernel.mcp.about: `ludy_about`: the org's name, the grant and its scope. It holds no business data.
 // - kernel.mcp.parties: `ludy_parties_list` (slice 1b), the party register as the contacts screen shows it to an owner or admin; its comment is its privacy review.
 // No command of the kernel declares `mcp`. The one command an MCP grant may run, the Social draft (#3227), is declared in modules/social, and a test pins that it is the only one.
+// - kernel.mcp.propose: what an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d): a pending proposal, never an execution.
+// - kernel.mcp.proposal_notify: the worker's step after it (E5, #4180): the people who may approve that proposal are told, once, in their notifications.
+// - kernel.mcp.engage_reads_notify: the worker's one-time notice (#4069) to a person who connected an AI app before the Engage reads (Hộp thư, bookings, ads) existed, naming what the app can now read.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { hasApprovalPolicy } from './approval.ts';
+import { uploaderEntity } from './extraction.ts';
+import { APPROVAL_WAITING, MCP_ENGAGE_READS_NOTICE, notifyMembers } from './notifications.ts';
+import { approversNow } from './proposal-reminders.ts';
+import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
+import { mcpConversationQueries } from './mcp-conversations.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
@@ -288,5 +297,145 @@ export const mcpMemberGrantsGet = defineQuery({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, ...mcpWakeCommands];
-export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpWakeQueries];
+// The proposal an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d). The runtime runs this command in place of the command the call named, for an MCP actor and for nobody else:
+// a person calling it is refused. It never runs the command: it writes one pending proposal of the command and the (already parsed) input, in the sealed proposal context of the call's scope, which the database
+// lets insert that one row of that one shape. The client and its host, the grant's id and the taint are stamped from the grant of the call, never from the input; the author is the grant, an agent entry that
+// never counts as an approver or for four-eyes, so the person who consented can approve it. A person approves it in Ludy through kernel.proposal.approve, with the policy's approvers, four-eyes and step-up;
+// the command then runs under the approver's authority and the usual checks, once. A cap of pending proposals per grant and per org is the database's (crove_kernel.mcp_proposal_cap).
+const PROPOSAL_PAYLOAD_MAX_BYTES = 64 * 1024;
+export const mcpPropose = defineCommand({
+  name: MCP_PROPOSE_COMMAND,
+  input: z.strictObject({ command: z.string().min(1).max(200), payload: z.record(z.string(), z.unknown()) }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: GRANTORS,
+  handler: async (ctx, input) => {
+    const actor = ctx.actor;
+    const mcp = actor.type === 'user' ? actor.mcp : undefined;
+    if (actor.type !== 'user' || !mcp || mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới tạo được đề xuất này', { rule: 'mcp_scope' });
+    const info = ctx.command(input.command);
+    // The command must be reachable by a grant as a proposal under a scope this grant holds (the runtime checked the scope against the command's own declaration; this checks it is that command), run
+    // through a proposal, and have an approval policy that names an approver. R3 without one is refused (the database refuses the same row).
+    // A command that has a preparer (the deterministic step that builds the payload the approver signs from the books: payees, amounts, checks) is not proposable by a client's raw payload: the call would skip it
+    // (review of slice d, B2). Such a command reaches MCP only through its preparer, in a later slice that builds that path; every other command is listed by a migration (crove_kernel.mcp_proposal_command) first.
+    // The purchase invoice's payload is the extraction's (its checks, its lines), so it is no client's either.
+    if (Object.hasOwn(PROPOSAL_PREPARERS, input.command) || input.command === 'finance.purchase.record') throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+    if (!info || info.mcp?.mode !== 'proposal' || info.access !== 'proposal' || !mcp.scopes.includes(info.mcp.scope) || !hasApprovalPolicy(input.command)) {
+      throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+    }
+    if (Buffer.byteLength(JSON.stringify(input.payload), 'utf8') > PROPOSAL_PAYLOAD_MAX_BYTES) throw new DomainError('INVALID', 422, 'Nội dung đề xuất quá lớn');
+    const kind = info.proposalKind;
+    // The Inbox renders a proposal by its kind and a title built here from the client's self-declared name (marked as such), never from text the call supplied.
+    const title = `Ứng dụng AI “${plainLine(mcp.clientName, 120)}” đề xuất: ${kind}`.slice(0, 300);
+    let proposalId: string;
+    try {
+      const row = await ctx.trx
+        .insertInto('crove_kernel.proposal')
+        .values({
+          org_id: ctx.orgId,
+          kind,
+          command: input.command,
+          title,
+          payload: JSON.stringify(input.payload),
+          // The approver snapshot and the title are the database's (the guard stamps eligible_approvers from approval_eligible_now, the trigger the title from the catalog's kind): placeholders here.
+          eligible_approvers: [],
+          // The grant (an agent entry, never an approver) and the person who connected it (a user entry): the grantor stands for what their AI app asks, so with two or more eligible approvers someone else approves
+          // when the policy asks for four-eyes (P10), as for a proposal a person asked for or one an org-chart agent's human chain stands behind.
+          authors: JSON.stringify([{ type: 'agent', id: mcp.grantId, run: mcp.grantId }, { type: 'user', id: actor.userId }]),
+          tainted: true,
+          requested_by_grant: mcp.grantId,
+          mcp_client_name: mcp.clientName.slice(0, 120),
+          // Placeholders the database overwrites from the grant's own record (crove_kernel.mcp_proposal_cap), so what the Inbox card names is never what a caller passed.
+          mcp_client_host: '-',
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      proposalId = row.id;
+    } catch (error) {
+      const message = (error as { message?: unknown } | null)?.message;
+      // The database keeps a grant's scope to its own line's commands (crove_kernel.mcp_proposal_command): a command the catalog does not list under this scope is refused as any out-of-scope call is.
+      if (message === 'AGENT_FORBIDDEN') throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      if (message === 'MCP_PROPOSAL_CAP') throw new DomainError('MCP_PROPOSAL_CAP', 409, 'Có quá nhiều đề xuất của ứng dụng AI này đang chờ duyệt, hãy duyệt hoặc từ chối bớt rồi thử lại');
+      throw error;
+    }
+    // Ids only: the proposal, the command it is for, the grant and the client (the runtime adds them); never the payload.
+    ctx.audit({ proposal_id: proposalId, proposal_command: input.command, mcp_proposal: true });
+    return { proposalId, status: 'pending' as const };
+  },
+});
+
+// Telling the approvers (E5, #4180, owner decision 2026-11-19, "Cho làm, việc lớn chờ duyệt"): a proposal of an AI coworker waits for an owner or an admin, and nothing else would tell them it is there.
+// kernel.mcp.propose cannot do it itself: it runs in the sealed proposal context, which writes that one proposal row and no event and no notification. The worker's sweep (mcp-proposal-notice.ts, every
+// 30 seconds) finds the pending proposals of a grant that were not told yet (crove_kernel.mcp_proposals_to_tell) and runs this, under the proposal's lock: the people who could approve it now (the snapshot at
+// the ask, still holding an approving role, and not held back by four-eyes: with two owners the person who connected the AI app is not told, a sole owner is) get one kernel.approval_waiting notification
+// each, the one a person's or an org-chart agent's proposal already makes, so it turns on and off with that kind, opens the Inbox card and reads as settled once the proposal is decided (the list reads
+// the proposal's state). It holds no text: the card's title, which the database built from the client's name and the kind (marked as an AI app's), is read when it is shown, and nothing the call
+// supplied (a customer-facing reply, a payload) is ever read here. One per proposal: the notification's key is the proposal's, and the proposal is stamped (approvers_told_at) even when nobody had to
+// be told, so a second pass, a retry and a replay write nothing. A proposal decided or expired before the sweep got to it is left alone.
+export const mcpProposalNotify = defineCommand({
+  name: 'kernel.mcp.proposal_notify',
+  input: z.strictObject({ proposalId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.proposal', id: input.proposalId }),
+  handler: async (ctx, input) => {
+    const proposal = await ctx.trx
+      .selectFrom('crove_kernel.proposal')
+      .select(['id', 'command', 'status', 'eligible_approvers', 'authors', 'co_authors', 'legal_entity_id', 'requested_by_grant', 'approvers_told_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.proposalId)
+      .forUpdate()
+      .executeTakeFirst();
+    // Only the pending proposal of a grant that was not told yet; a person's or an agent's proposal has its own event.
+    if (!proposal || proposal.status !== 'pending' || proposal.requested_by_grant === null || proposal.approvers_told_at !== null) return { sent: 0 };
+    const approvers = await approversNow(ctx, proposal);
+    const sent = await notifyMembers(ctx, {
+      kind: APPROVAL_WAITING,
+      users: approvers,
+      key: `proposal:${proposal.id}`,
+      subject: { type: 'kernel.proposal', id: proposal.id },
+      legalEntityId: proposal.legal_entity_id,
+      detail: {},
+    });
+    await ctx.trx.updateTable('crove_kernel.proposal').set({ approvers_told_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', proposal.id).execute();
+    // Counts only: who was told is the notification table's, and the proposal's content is never read here.
+    ctx.audit({ approvers: approvers.length, sent });
+    return { sent };
+  },
+});
+
+// The one-time notice of the Engage reads (#4069, follow-up of #4068). A grant made before the consent screen named them holds `ludy.read`, which since #4068 also reads the Hộp thư conversations, the
+// bookings and the ads results; its owner never saw that. This tells the person, once, in their notifications, and links to the AI connections screen where they can disconnect. It changes no grant, scope or
+// check. The definer stamps every untold live grant of that person in this org (`engage_reads_told_at`) and answers how many of them are company and member grants, so the notice says which reads apply
+// (a member grant reads what its person reads, and no bookings or ads). Required: a person who turned notifications off is told anyway, because it is a notice about their own consent. It holds no text of
+// a client (a self-declared name is not copied into a notice): the screen it opens names each connection. A second pass, a retry and a replay write nothing.
+export const mcpEngageReadsNotify = defineCommand({
+  name: 'kernel.mcp.engage_reads_notify',
+  input: z.strictObject({ userId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.user', id: input.userId }),
+  handler: async (ctx, input) => {
+    const { rows } = await sql<{ company: number; member: number }>`SELECT company, member FROM crove_kernel.mcp_engage_reads_claim(${input.userId}::uuid)`.execute(ctx.trx);
+    const company = rows[0]?.company ?? 0;
+    const member = rows[0]?.member ?? 0;
+    if (company + member === 0) return { sent: 0 };
+    const sent = await notifyMembers(ctx, {
+      kind: MCP_ENGAGE_READS_NOTICE,
+      users: [input.userId],
+      key: 'mcp_engage_reads',
+      // Under an entity the person sees (the notification's le_scope policy, #1280), as the personal-data notice is: a member limited to other entities would otherwise be stamped told and never see the row.
+      legalEntityId: await uploaderEntity(ctx, input.userId),
+      required: true,
+      detail: { grants: company > 0 && member > 0 ? 'both' : company > 0 ? 'company' : 'member' },
+    });
+    // Counts only: who was told is the notification table's.
+    ctx.audit({ company, member, sent });
+    return { sent };
+  },
+});
+
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, mcpEngageReadsNotify, ...mcpWakeCommands];
+export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpConversationQueries, ...mcpWakeQueries];

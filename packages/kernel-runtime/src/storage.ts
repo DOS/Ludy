@@ -317,6 +317,12 @@ export function newConversationBlobId(): string {
   return randomBytes(32).toString('hex');
 }
 
+// Isolated note attachment (Notes v2 E2, #3561, owner decision A3): bound to one note attachment id under notes/<org_id>/<attachment_id>,
+// never content-addressed and never stored in crove_kernel.file, so deleting a note or attachment removes its own bytes with zero sha256 oracle.
+export function noteAttachmentKey(orgId: string, attachmentId: string): string {
+  return `notes/${orgId}/${attachmentId}`;
+}
+
 // Raw inbound email, stored by the API before any org is known, under a random id per delivery so the
 // worker can delete it once handled without counting references. Only the worker reads it.
 export function inboundKey(blobId: string): string {
@@ -341,7 +347,7 @@ export function isStagingKey(key: string): boolean {
   return /^staging\/[0-9a-f]{64}$/.test(key);
 }
 
-const KEY_PATTERN = /^(?:(?:org|export|conversation|tmp)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
+const KEY_PATTERN = /^(?:(?:(?:org|export|conversation|tmp)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}|notes\/[0-9a-f-]{36}\/[0-9a-f-]{36})$/;
 // The keys a listing of each sweepable prefix returns.
 const LISTED_KEY: Record<ListPrefix, RegExp> = {
   'inbound/': /^inbound\/[0-9a-f]{64}$/,
@@ -410,8 +416,8 @@ const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV', 'ENOSY
 // A directory fsync is not available everywhere (Windows, some network filesystems). Skipping it there only loses
 // the guarantee that the new name survives a power cut, never the bytes behind it.
 const NO_DIRECTORY_SYNC = new Set(['EISDIR', 'EPERM', 'EACCES', 'EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EBADF']);
-// <64 hex>.<pid>.<uuid>.tmp, the names put gives its temporary files.
-const TEMP_FILE = /^[0-9a-f]{64}\.\d+\.[0-9a-f-]{36}\.tmp$/;
+// <64 hex or 36-char uuid>.<pid>.<uuid>.tmp, the names put gives its temporary files.
+const TEMP_FILE = /^(?:[0-9a-f]{64}|[0-9a-f-]{36})\.\d+\.[0-9a-f-]{36}\.tmp$/;
 const UUID_DIR = /^[0-9a-f-]{36}$/;
 export const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
 
@@ -642,7 +648,7 @@ export class LocalDiskStore implements BlobStore {
   async sweepTempFiles(maxAgeMs: number = STALE_TEMP_AGE_MS): Promise<number> {
     const cutoff = Date.now() - maxAgeMs;
     const dirs = [join(this.root, 'inbound')];
-    for (const top of ['org', 'export', 'conversation', 'tmp']) {
+    for (const top of ['org', 'export', 'conversation', 'notes', 'tmp']) {
       for (const org of await entries(join(this.root, top))) {
         if (org.isDirectory() && UUID_DIR.test(org.name)) dirs.push(join(this.root, top, org.name));
       }

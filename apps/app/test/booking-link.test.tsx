@@ -47,11 +47,21 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: node([]), queryClient: client.current, errorMessage: (e: unknown) => String(e), apiFetch: () => Promise.reject(new Error('not fetched')) };
 });
 
+// The panel portals to the body, which the server does not render: this stand-in draws its form in place so the fields can be read.
+vi.mock('../src/components/form-panel.tsx', async (importOriginal) => {
+  const { createElement } = await import('react');
+  return {
+    ...(await importOriginal<object>()),
+    FormPanel: (p: { title: string; footer: ReactNode | ((close: () => void) => ReactNode); children: ReactNode }) =>
+      createElement('form', { 'aria-label': p.title }, p.children, typeof p.footer === 'function' ? p.footer(() => undefined) : p.footer),
+  };
+});
+
 // Which apps are on comes from the deployment's config, which a render here has none of: none of the optional apps (notes, meetings) is on.
 vi.mock('../src/lib/org-modules.ts', async (importOriginal) => ({ ...(await importOriginal<object>()), installedModules: () => [] }));
 
 const { BookingsPage } = await import('../src/routes/bookings.tsx');
-const { EventTypesCard } = await import('../src/routes/event-types.tsx');
+const { EventTypesCard, EventTypeForm } = await import('../src/routes/event-types.tsx');
 
 const ME = '00000000-0000-7000-8000-000000000001';
 const at = '2026-10-24T00:00:00.000Z';
@@ -130,8 +140,8 @@ describe('Lịch hẹn: the booking link', () => {
     expect(count(html, `>${en.bookings.link.copy}<`)).toBe(1);
     expect(html).toContain(`href="/-/b/acme/tu-van-thue"`);
     expect(html).toContain(`>${en.bookings.link.open}<`);
-    expect(html).toContain(`href="/o/acme/settings#booking-settings">${en.bookings.emptyLink.settings}<`);
-    expect(html).toContain(`href="/o/acme/settings#booking-settings">${en.bookings.settingsLink}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-settings">${en.bookings.emptyLink.settings}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-settings">${en.bookings.settingsLink}<`);
     // The archived type is not offered.
     expect(html).not.toContain('Loại cũ');
     expect(html).not.toContain('<select');
@@ -141,7 +151,7 @@ describe('Lịch hẹn: the booking link', () => {
     const html = page('owner', [archived], []);
     expect(html).toContain(en.bookings.emptyNoType.title);
     // Creating the first type goes to the event types card; the hours link goes to the card above it.
-    expect(html).toContain(`href="/o/acme/settings#booking-event-types">${en.bookings.emptyNoType.action}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-event-types">${en.bookings.emptyNoType.action}<`);
     expect(html).not.toContain(`>${en.bookings.link.copy}<`);
   });
 
@@ -217,7 +227,18 @@ describe('Settings: event types and their link', () => {
   });
 
   it('opens the add form with a name, length, format and place, each labelled, and the rest under "More options"', () => {
-    const html = card([]);
+    // The card holds a button; the form is in the panel behind it (#3608), drawn here by the stand-in above.
+    expect(card([])).not.toContain('<form');
+    const qc = client.current;
+    qc.clear();
+    qc.setQueryData(['calendar', 'connections'], []);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <EventTypeForm slug="acme" type={null} members={orgOf('owner').members.map((m) => ({ ...m, role: 'owner' as const }))} me={ME} manager pending={false} submitLabel={en.eventTypes.add} onSubmit={() => undefined} onCancel={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
     const form = html.slice(html.indexOf('<form'));
     for (const field of ['title', 'durationMin', 'locationKind', 'locationValue'] as const) {
       expect(form).toMatch(new RegExp(`<label[^>]*>${escaped(en.eventTypes.fields[field])}<`));

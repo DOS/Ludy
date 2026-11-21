@@ -10,8 +10,8 @@
 // refuse the whole proposal). Then the code, not the model, fills in the rest:
 // - the buyer's name, address, email and tax code come from the customer's own record, by the number the model answered; a tax code that fails its checksum is left out, so the form's own
 //   check asks for it;
-// - a line whose VAT rate the text did not state gets the rate of the earlier drafts to that customer, else of the org (the most used rate that the invoice date allows), and where there
-//   is none the form's default stands;
+// - a line whose VAT rate the text did not state gets the rate of the earlier drafts to the customer the form already names (#2713), else to the customer the model picked, else of the org (the
+//   most used rate that the invoice date allows), and where there is none the form's default stands;
 // - amounts are not here at all: the draft's own check computes them from the quantities and prices a person saves.
 // When the model is off, the AI budget is spent, the member's calls are too frequent, the call fails or its answer is refused, the answer names the state (`ai`) and gives nothing to fill in,
 // so the form works as it does with AI off. A failure is named, never quoted: neither the text nor the model's answer is logged.
@@ -80,8 +80,9 @@ export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId
     }
     const party = result.buyerIndex === null ? undefined : source.parties[result.buyerIndex];
     const allowed = salesVatRatesOn(input.date);
-    // The rate to give a line that did not state one: the customer's usual, else the org's.
-    const fallback = usualRate(party?.rates ?? [], allowed) ?? usualRate(source.orgRates, allowed);
+    // The rate to give a line that did not state one: the usual rate of the customer the form already names (#2713: the form keeps that buyer, so its history is the one that counts, not the history of
+    // another customer the model picked from the text), else of the customer the model picked, else the org's.
+    const fallback = usualRate(source.formBuyerRates ?? party?.rates ?? [], allowed) ?? usualRate(source.orgRates, allowed);
     const lines = result.lines.map((line) => {
       const vatRate = line.vatRate ?? fallback ?? '10%';
       return { description: line.description, unit: line.unit, quantity: line.quantity, unitPrice: line.unitPrice, vatRate, vatFrom: line.vatRate !== null ? ('text' as const) : fallback !== null ? ('earlier' as const) : ('default' as const) };

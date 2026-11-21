@@ -4,7 +4,7 @@
 // approved or sent from here: batch approval stays in the owning app's screen.
 import { useQuery } from '@tanstack/react-query';
 import { useState, type MouseEvent } from 'react';
-import { useRouter } from '@tanstack/react-router';
+import { Link, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -15,6 +15,7 @@ import { TodayBrief } from './today-brief.tsx';
 import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { installedModules } from '../lib/org-modules.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { QUEUE_ROWS, TODAY_ICON, groupToday, limitGroups, proposalChips, queueRows, todayPath, todayTotal } from '../lib/today.ts';
 
@@ -113,7 +114,18 @@ export function TodayList({ slug }: { slug: string }) {
         ) : today.isError ? (
           <ErrorText>{errorMessage(today.error)}</ErrorText>
         ) : groups.length === 0 ? (
-          <Empty title={t('empty')} hint={t('emptyHint')} />
+          // Nothing waits: a new owner is pointed to the quick guide (#3596), where the accounting app is on.
+          <Empty
+            title={t('empty')}
+            hint={t('emptyHint')}
+            action={
+              installedModules().includes('finance') ? (
+                <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
+                  {t('guideLink')}
+                </Link>
+              ) : undefined
+            }
+          />
         ) : (
           <div className="space-y-5">
             <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />

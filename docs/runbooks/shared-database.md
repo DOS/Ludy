@@ -28,7 +28,7 @@ This runbook covers what the mode changes, what it needs from the database, and 
 | pg-boss | Schema `crove_jobs`; `ALTER DEFAULT PRIVILEGES IN SCHEMA crove_jobs` | Unchanged: in-schema only. |
 | The advisory lock `hashtext('crove_migrate')` | Takes it | Takes it. Advisory locks share one key space per database; a collision with another system's key is improbable and only delays a migrate run. |
 
-**Schema names.** Ludy keeps its `crove_*` names in a shared database (`crove_kernel`, `crove_finance`, `crove_social`, `crove_crm`, `crove_notes`, `crove_ads`, `crove_jobs`, `crove_meta`); renaming them belongs to the rebrand (#1682). They do not collide with another system's names as long as it has none starting with `crove_`: check it before the first run (the query is below). Nothing else is created in the database.
+**Schema names.** Until Phase 3 migrations ([#3970](https://github.com/DOS/Ludy/issues/3970), [#3971](https://github.com/DOS/Ludy/issues/3971), [ADR-0054](../adr/0054-rebrand-internal-crove-identifiers-to-ludy.md)) land, Ludy uses `crove_*` names in a shared database (`crove_kernel`, `crove_finance`, `crove_social`, `crove_crm`, `crove_notes`, `crove_ads`, `crove_hr`, `crove_meetings`, `crove_projects`, `crove_sign`, `crove_jobs`, `crove_meta`), after which they move forward to `ludy_*` via [#1682](https://github.com/DOS/Ludy/issues/1682). They do not collide with another system's names as long as it has none starting with `crove_` (or `ludy_` post-cutover): check it before the first run (the query is below). Nothing else is created in the database.
 
 ## Who can read Ludy's data in a shared database
 

@@ -66,6 +66,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/agents.ts': {
     'proposal_command <- info.name': 'the name of the command a proposal runs',
     'title <- before.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
+    // `reason` is also the name of crove_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015); none of these facts carries it.
+    'reason <- reason': 'why a run did not start, a code of the run-start result (a closed set)',
+    "reason <- ' '": "why a proposal was not created or approved, a code written out at the call (a closed set)",
+    'decision <- decision.reason': "the approval policy's decision code (a closed set), not free text",
   },
   'modules/social/src/review-links.ts': {
     'cleared <- body === null': 'whether the reply was cleared, a boolean',
@@ -86,7 +90,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/finance/src/categorization.ts': { 'matchText <- text = keywordRuleText(input.keyword)': "the keyword of a categorization rule of the org's chart (crove_finance.categorization_rule, internal)" },
   // The posting date of a sale or purchase recorded late: `late` is why it was posted late, the word `opening` or `locked`, not the free text of crove_finance.einvoice_draft.late_reason that shares the name (#3535).
   'modules/finance/src/record.ts': { 'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (crove_finance.purchase_document.late_reason, a closed set)' },
-  'modules/finance/src/bank.ts': { 'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number' },
+  'modules/finance/src/bank.ts': {
+    'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number',
+    'filename <- input.filename': 'the filename of a bank statement import (internal, not personal data)',
+  },
   'modules/finance/src/bank-account-number.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) a bank account number is recorded on, not the number',
     'bankAccount <- removed.bank_account': 'the chart account code (112x) the removed number was recorded on, not the number',
@@ -97,8 +104,31 @@ const ALLOWED: Record<string, Record<string, string>> = {
   },
   'modules/finance/src/missing-invoices.ts': { 'skipped <- skipped': 'the periods too large to reconcile' },
   'modules/finance/src/portal-list.ts': { 'skipped <- input.skippedCount': "the count of the portal list's skipped rows, not the rows" },
-  'modules/social/src/archive.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
-  'modules/social/src/bulk-edit.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
+  // `reason` below is the name that crove_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015) shares; no fact of these files carries that column.
+  'modules/social/src/archive.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the archive result (a closed set)",
+  },
+  'modules/social/src/bulk-edit.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the bulk edit result (a closed set)",
+  },
+  'modules/social/src/evergreen.ts': { "reason <- ' '": 'why evergreen was switched off, a code written out at the call' },
+  'modules/social/src/publish-hold.ts': {
+    'reason <- input.reason': "the hold's own reason, a member's free text (crove_social.publish_hold.reason), in the audit log as before and not in the personal-data registry: #4109",
+    'reason <- live.reason': "the released hold's own reason, a member's free text (crove_social.publish_hold.reason), in the audit log as before and not in the personal-data registry: #4109",
+  },
+  'modules/social/src/recurring.ts': { 'reason <- reason': 'why a recurrence was switched off, a code of the caller (a closed set)' },
+  'modules/social/src/remove.ts': { 'reason <- reason = input.reason ? input.reason : null': "why a variant removal was asked, a member's free text (crove_social.post_variant.remove_reason), in the audit log as before and not in the personal-data registry: #4109" },
+  'packages/kernel/src/calendar-connections.ts': { 'reason <- input.reason': "why a calendar connection was revoked or marked, the command's own input, in the audit log as before; free text not in the personal-data registry: #4109" },
+  'packages/kernel/src/commands.ts': { 'signature_reason <- signature.reason': "the reason of an inbound mail's signature check, a code of the verifier (a closed set)" },
+  'packages/kernel/src/numbering.ts': { 'reason <- input.reason': "the reason a document number was voided, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
+  'modules/ads/src/launch-run.ts': { 'reason <- reason': "why a launch step was dropped, 'stale' or 'settled'" },
+  'modules/crm/src/sales-orders.ts': { 'hasReason <- reason !== null': 'whether a decline gave a reason, a boolean' },
+  'modules/finance/src/period-lock.ts': { 'reason <- input.reason': "why a period was locked, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
+  'modules/meetings/src/links.ts': { "reason <- ' '": 'the code DEAL_DELETED written out at the call' },
+  'modules/meetings/src/meetings.ts': { 'reason <- input.reason': "why a recording was stopped, the command's own input, in the audit log as before; free text not in the personal-data registry: #4109" },
+  'apps/kernel/src/org-purge.ts': { 'reason <- input.reason': "why an owner purged an org, the owner's free text, in the audit log as before and not in the personal-data registry: #4109" },
   'modules/social/src/digest.ts': { 'skipped <- skipped = 0': 'the count of digest mails that failed' },
   'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (crove_social.report_branding.display_name, internal)" },
   'modules/social/src/report-schedules.ts': { 'recipients <- recipients.length': 'the count of recipients, never their addresses' },
@@ -139,7 +169,7 @@ interface Fn {
 }
 
 // A function that passes one of its parameters on to ctx.audit: as the facts (`...facts`, `ctx.audit(facts)`), or as a
-// fact's value (`{ reason }`).
+// fact's value (`{ outcome }`).
 interface Wrapper {
   fn: Fn;
   param: number;
@@ -907,7 +937,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     expect(check(`${wrapper}\naudit(ctx, result, { email: input.email });`)).toEqual(['email: the key names a classified column and its value is not auditValue(...)']);
     expect(check(`${wrapper}\naudit(ctx, result, someFacts);`)).toEqual(['audit(...): audit passes its argument to ctx.audit; write the facts out as an object literal at the call']);
     // A helper that passes a parameter on as a fact's value: each call's argument is read as that value.
-    const done = 'const done = (reason: string) => {\n  ctx.audit({ agent: agent.id, reason });\n  return null;\n};';
+    const done = 'const done = (outcome: string) => {\n  ctx.audit({ agent: agent.id, outcome });\n  return null;\n};';
     expect(check(`${done}\nif (x) return done('not_runnable');`)).toEqual([]);
     expect(check(`${done}\nif (x) return done(party.email);`)).toEqual(['done(...): the value reads the classified column email outside auditValue(...)']);
     // A parameter the helper masks itself does not make it a wrapper; one with no call in its file cannot be read.

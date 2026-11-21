@@ -1,0 +1,14 @@
+{
+  "name": "@crove/misa-amis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "The MISA AMIS Kế toán API adapter (#3854): token, catalogues, vouchers pushed as requests to generate a voucher, and the signed callback. No network of its own: the caller injects a guarded transport",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

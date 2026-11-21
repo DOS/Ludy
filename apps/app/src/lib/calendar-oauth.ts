@@ -11,7 +11,8 @@ export function oauthProviderOf(provider: string): CalendarOAuthProvider | null 
 // The error a Microsoft tenant sends back to the redirect address when its administrator has not allowed the app: consent_required, or an AADSTS65001 (not consented) or AADSTS90094 (the grant
 // requires admin permission) or AADSTS90095 (admin approval is required, a tenant with an admin-consent workflow) in the description. A member's own "no" (access_denied with AADSTS65004) is not this.
 export function needsAdminConsent(provider: string, params: URLSearchParams): boolean {
-  if (provider !== 'microsoft_calendar') return false;
+  // The calendar's OAuth provider id and the Teams recording import's connect provider (C4, #3176): both go through a Microsoft tenant's administrator consent.
+  if (provider !== 'microsoft_calendar' && provider !== 'microsoft_teams') return false;
   const description = params.get('error_description') ?? '';
   return params.get('error') === 'consent_required' || /AADSTS(?:65001|90094|90095)\b/.test(description);
 }

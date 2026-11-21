@@ -186,6 +186,11 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
                 </Alert>
               )}
+              {data.feed && data.feed.leftOut > 0 && (
+                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
+                  <AlertDescription className="text-warning">{t('feedSkipped', { count: data.feed.leftOut, from: f.date(data.feed.from) })}</AlertDescription>
+                </Alert>
+              )}
               {data.breaks.length > 0 && (
                 <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                   <AlertDescription className="text-warning">
@@ -332,9 +337,17 @@ export function BankPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Link to="/o/$slug/bank/matched" params={{ slug }} className="text-sm text-link hover:underline">
-            {t('matchedLink')}
-          </Link>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            <Link to="/o/$slug/bank/matched" params={{ slug }} className="text-link hover:underline">
+              {t('matchedLink')}
+            </Link>
+            {/* The numbers that let a statement file find its account live in Settings (#3589). */}
+            {canManageAccounts && (
+              <Link to="/o/$slug/settings/connections" params={{ slug }} hash="bank-account-numbers" className="text-link hover:underline">
+                {t('accountNumbersLink')}
+              </Link>
+            )}
+          </div>
         }
       />
       {accounts.isLoading ? (
@@ -347,7 +360,7 @@ export function BankPage() {
           hint={t('noAccountsHint')}
           action={
             canManageAccounts ? (
-              <Link to="/o/$slug/settings" params={{ slug }} className={buttonVariants({ variant: 'outline' })}>
+              <Link to="/o/$slug/settings/connections" params={{ slug }} hash="bank-account-numbers" className={buttonVariants({ variant: 'outline' })}>
                 {t('openSettings')}
               </Link>
             ) : undefined

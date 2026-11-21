@@ -8,6 +8,7 @@
 import { expect, test } from '@playwright/test';
 import { authLink } from '../lib/mail.ts';
 import { createOrg, newEmail, signIn, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
 test('an invited address signs up only from its accept link, and the invitee joins with their own password', async ({ page, browser, request }) => {
@@ -18,13 +19,17 @@ test('an invited address signs up only from its accept link, and the invitee joi
   await signUp(page, owner);
   const slug = await createOrg(page, 'Công ty lời mời');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  // Inviting is R3: turn on the second factor first (Security tab), then invite from the members tab.
+  await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận' }).click();
   await expect(page.getByText('Đang bật')).toBeVisible();
+  await openSettingsTab(page, 'members');
 
   const member = newEmail('preclaim-member');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
   const created = page.getByRole('status').filter({ hasText: `Đã tạo lời mời cho ${member}` });

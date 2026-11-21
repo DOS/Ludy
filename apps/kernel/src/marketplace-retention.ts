@@ -11,7 +11,7 @@
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
-import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
 import { opsAlert } from './ops-alert.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'finance.marketplace_retention' };
@@ -75,4 +75,13 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
   log.log(`${TAG} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
   if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
   return run;
+}
+
+/** The checks of a column mapping on an unrecognised report that finished more than a week ago, deleted with their masked sheet and their preview of parsed lines (#4036; personal data kept seven days at most).
+ * One call to the database's own worker-only function; it logs the count and nothing else. */
+export async function pruneMarketplaceColumnChecks(deps: { workerDb: Db; log?: Log }): Promise<number> {
+  const { rows } = await sql<{ n: number }>`SELECT crove_finance.marketplace_column_check_prune(${MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS}::int) AS n`.execute(deps.workerDb);
+  const n = Number(rows[0]?.n ?? 0);
+  (deps.log ?? console).log(`${TAG} column checks=${n}`);
+  return n;
 }

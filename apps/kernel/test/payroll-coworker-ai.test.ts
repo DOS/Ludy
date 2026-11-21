@@ -160,14 +160,25 @@ describe('prepareMonth and flagMonth', () => {
     expect(flagged.items.map((i) => [i.kind, i.text !== null])).toEqual([['pay_moved', false], ['rule_blocks', true]]);
   });
 
-  it('names its state when the member is too fast or the AI budget is spent or the call fails, never throws, and lists the findings in each', async () => {
+  it('names its state when the member is too fast or the AI budget is spent or the call fails, never throws, and triggers zero audited reads when rate-limited', async () => {
     const budget = new DraftBudget({ perUserPerMinute: 1 });
     const requests: string[] = [];
-    const { ai } = setup({ flag: echoFlag(requests) }, budget);
+    const { ai } = setup({ flag: echoFlag(requests), prepare: echoPrepare(requests) }, budget);
     expect((await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('used');
-    const busy = await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi');
-    expect(busy.ai).toBe('busy');
-    expect(busy.items).toHaveLength(2);
+    const spyReads: PayrollReads = {
+      authorize: vi.fn(async () => ({ ok: true })),
+      sheet: vi.fn(reads().sheet),
+      runs: vi.fn(reads().runs),
+      payslip: vi.fn(reads().payslip),
+    };
+    const busyFlag = await flagMonth(ai, spyReads, ORG, USER, 'nov', 'vi');
+    expect(busyFlag).toEqual({ ai: 'busy', items: [] });
+    const busyPrepare = await prepareMonth(ai, spyReads, ORG, USER, 'nov', 'vi');
+    expect(busyPrepare).toEqual({ ai: 'busy', items: [] });
+    expect(spyReads.authorize).toHaveBeenCalledTimes(2);
+    expect(spyReads.sheet).not.toHaveBeenCalled();
+    expect(spyReads.runs).not.toHaveBeenCalled();
+    expect(spyReads.payslip).not.toHaveBeenCalled();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const spent = setup({
       flag: async () => {
@@ -187,13 +198,71 @@ describe('prepareMonth and flagMonth', () => {
     expect(failed.items).toHaveLength(2);
   });
 
-  it('does not ask the model when nothing was found by code', async () => {
+  it('checks caller authorization before taking a rate ticket, so a forbidden member neither reads sensitive data nor burns org tickets', async () => {
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
     const requests: string[] = [];
-    const { ai } = setup({ flag: echoFlag(requests) });
+    const { ai } = setup({ prepare: echoPrepare(requests), flag: echoFlag(requests) }, budget);
+    const forbiddenReads: PayrollReads = {
+      authorize: vi.fn(async () => {
+        throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ hoặc quản trị viên mới thực hiện được việc này');
+      }),
+      sheet: vi.fn(reads().sheet),
+      runs: vi.fn(reads().runs),
+      payslip: vi.fn(reads().payslip),
+    };
+    await expect(prepareMonth(ai, forbiddenReads, ORG, 'member-1', 'nov', 'vi')).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await expect(flagMonth(ai, forbiddenReads, ORG, 'member-1', 'nov', 'vi')).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    expect(forbiddenReads.sheet).not.toHaveBeenCalled();
+    expect(forbiddenReads.runs).not.toHaveBeenCalled();
+    // The org's single rate ticket is still intact for the authorized owner.
+    expect((await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('used');
+  });
+
+  it('does not ask the model or consume a rate ticket when nothing was found by code (QUIET)', async () => {
+    const requests: string[] = [];
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
+    const { ai } = setup({ prepare: echoPrepare(requests), flag: echoFlag(requests) }, budget);
     const calm: HrRunSheet = sheetOf('calm', '2026-08', [line(EMP_B, NAME_B, '8950000')]);
-    const r: PayrollReads = { ...reads(), sheet: async () => calm, runs: async () => [summary('calm', '2026-08')] };
+    const r: PayrollReads = { ...reads(), sheet: async (id) => (id === 'calm' ? calm : (SHEETS[id] as HrRunSheet)), runs: async () => [summary('calm', '2026-08'), summary('nov', '2026-11'), summary('oct', '2026-10'), summary('sep', '2026-09')] };
+    expect(await prepareMonth(ai, r, ORG, USER, 'calm', 'vi')).toEqual({ ai: 'quiet', items: [] });
     expect(await flagMonth(ai, r, ORG, USER, 'calm', 'vi')).toEqual({ ai: 'quiet', items: [] });
     expect(requests).toEqual([]);
+    // Neither QUIET call consumed the 1/minute budget: an immediate non-quiet call still gets `used`.
+    expect((await flagMonth(ai, r, ORG, USER, 'nov', 'vi')).ai).toBe('used');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('scopes reads.runs to the target run legalEntityId and allows concurrent prepareMonth + flagMonth with separate budgets', async () => {
+    const otherEntity = '00000000-0000-7000-8000-000000000099';
+    const seenEntities: string[] = [];
+    const multiEntityReads: PayrollReads = {
+      ...reads(),
+      runs: async (legalEntityId) => {
+        seenEntities.push(legalEntityId);
+        // Simulate 120 other-entity runs hiding ENTITY's prior months unless filtered by legalEntityId.
+        if (legalEntityId !== ENTITY) {
+          return Array.from({ length: 120 }, (_, i) => ({ ...summary(`other-${i}`, '2026-11'), legalEntityId: otherEntity }));
+        }
+        return [summary('nov', '2026-11'), summary('oct', '2026-10'), summary('sep', '2026-09')];
+      },
+    };
+    const requests: string[] = [];
+    const reader = new InboxReader({ baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' }, { payroll: { prepare: echoPrepare(requests), flag: echoFlag(requests) } });
+    const ai: PayrollAi = {
+      reader,
+      budget: new DraftBudget({ perUserPerMinute: 1 }),
+      prepareBudget: new DraftBudget({ perUserPerMinute: 1 }),
+      flagBudget: new DraftBudget({ perUserPerMinute: 1 }),
+    };
+    const [prepared, flagged] = await Promise.all([
+      prepareMonth(ai, multiEntityReads, ORG, USER, 'nov', 'vi'),
+      flagMonth(ai, multiEntityReads, ORG, USER, 'nov', 'vi'),
+    ]);
+    expect(seenEntities).toEqual([ENTITY, ENTITY]);
+    expect(prepared.ai).toBe('used');
+    expect(flagged.ai).toBe('used');
+    expect(flagged.items.some((i) => i.kind === 'pay_moved')).toBe(true);
+    expect(prepared.items.some((i) => i.kind === 'recurring_overtime')).toBe(true);
   });
 
   it('surfaces overtime_cap check failures as overtime_over_cap anomalies with AI off and AI on, without leaking names', async () => {
@@ -346,5 +415,24 @@ describe('explainPayslip', () => {
       code: 'FORBIDDEN',
       status: 403,
     });
+
+    // When AI is on, a rate-limited caller gets `busy` before `reads.payslip` is called, and a forbidden caller fails before spending the rate ticket.
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
+    const { ai } = setup({ explain: async () => ({ output: { text: 'Tổng thu nhập 10.000.000 đồng, trừ bảo hiểm 1.050.000 đồng nên thực nhận 8.950.000 đồng.' } }) }, budget);
+    const gatedForbidden: PayrollReads = {
+      ...baseReads,
+      authorize: vi.fn(async () => {
+        throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ hoặc quản trị viên mới xem được phiếu lương');
+      }),
+      payslip: vi.fn(baseReads.payslip),
+    };
+    await expect(explainPayslip(ai, gatedForbidden, ORG, 'member-1', lineId, 'vi')).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    expect(gatedForbidden.payslip).not.toHaveBeenCalled();
+
+    const trackedReads: PayrollReads = { ...baseReads, payslip: vi.fn(baseReads.payslip) };
+    expect((await explainPayslip(ai, trackedReads, ORG, USER, lineId, 'vi')).ai).toBe('used');
+    expect(trackedReads.payslip).toHaveBeenCalledTimes(1);
+    expect(await explainPayslip(ai, trackedReads, ORG, USER, lineId, 'vi')).toEqual({ ai: 'busy', text: null });
+    expect(trackedReads.payslip).toHaveBeenCalledTimes(1);
   });
 });

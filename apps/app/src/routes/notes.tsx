@@ -1,5 +1,6 @@
-// The notes screen (issue #1671, plan docs/plan/notes.md §3.10): the lists on the left (Của tôi, Dùng chung, Đã ghim,
-// Lưu trữ, Thùng rác) with a search, the open note on the right; on a narrow screen the list and the note take turns.
+// SPDX-License-Identifier: AGPL-3.0-only
+// The notes screen (issue #1671, #3559, plan docs/plan/notes.md §3.10, docs/plan/notes-v2.md V2-4): the lists on the left (Của tôi, Dùng chung, Đã ghim,
+// Lưu trữ, Thùng rác) with notebooks/stacks and a search, the open note on the right; on a narrow screen the list and the note take turns.
 // The author edits the title, Markdown body and tags, which save by themselves a pause after the last keystroke against
 // the revision they read (lib/note-autosave.ts; a note changed elsewhere asks to reload), and makes it private or
 // shared. The lock and the word "Riêng tư" or "Dùng chung" are always beside the title. Owners and admins may pin,
@@ -7,30 +8,50 @@
 // hides what can never succeed.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { NOTE_BODY_MAX, NOTE_LIST_VIEWS, type Note, type NoteLinkTargetInput, type NoteListView } from '@crove/kernel-contract';
+import {
+  NOTE_BODY_MAX,
+  NOTE_LIST_VIEWS,
+  type Note,
+  type NoteLinkTargetInput,
+  type NoteListView,
+  type NoteSummary,
+  type NotebookSummary,
+} from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
+import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-attachments.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
+import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
+import { NewFromTemplateButton, NoteVersionHistoryButton, SaveAsTemplateButton } from '../components/note-templates-history.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { Markdown } from '../lib/markdown.tsx';
+import { Markdown, toggleMarkdownTaskLine, type WikiLinkResolver } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { projectsInstalled } from '../lib/projects.ts';
 import { toast } from '../lib/toast.ts';
-import { extractNoteTodoTitle, listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
+import {
+  extractNoteTodoTitle,
+  findActiveWikiAutocomplete,
+  insertWikiLinkAt,
+  listOfNote,
+  looksLikePassword,
+  normalizeWikiTitle,
+  parseTags,
+  tagCounts,
+  type NotesSearch,
+} from '../lib/notes.ts';
 
 const SAVE_AFTER_MS = 800;
 const isConflict = (error: unknown) => (error as { code?: string } | null)?.code === 'NOTE_REVISION_CONFLICT';
@@ -70,6 +91,8 @@ function Editor({
   back,
   focusTitle,
   onTag,
+  notebooks = [],
+  linkableNotes = [],
 }: {
   note: Note;
   slug: string;
@@ -77,6 +100,8 @@ function Editor({
   back: NotesSearch;
   focusTitle: boolean;
   onTag: (tag: string) => void;
+  notebooks?: readonly NotebookSummary[];
+  linkableNotes?: readonly NoteSummary[];
 }) {
   const t = useTranslations('notes');
   const common = useTranslations('common');
@@ -91,8 +116,12 @@ function Editor({
   const [todoLineError, setTodoLineError] = useState<string | null>(null);
   const [applyingSummary, setApplyingSummary] = useState(false);
   const [summarySyncError, setSummarySyncError] = useState(false);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [wikiDismissedAt, setWikiDismissedAt] = useState<number | null>(null);
+  const [wikiIndex, setWikiIndex] = useState(0);
   const locked = applyingSummary || summarySyncError;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const wikiListboxId = `note-wiki-listbox-${note.id}`;
   // Bound to the note's org: a save that runs as the editor closes, after the user switched org, still goes to its own.
   const api = useRef(clientForOrg(slug)).current;
   const saver = useRef(
@@ -114,6 +143,7 @@ function Editor({
   const inTrash = note.deletedAt !== null;
   const editable = note.mine && writer && !inTrash;
   const canMakeTodo = writer && !inTrash;
+  const attachmentUploader = useNoteAttachmentUploader({ noteId: note.id, slug, enabled: editable && !locked });
 
   // A change made elsewhere (another tab, the stream's refetch) replaces the text while nothing waits to save.
   useEffect(() => {
@@ -213,6 +243,107 @@ function Editor({
     },
   });
   const blocked = act.isPending || state === 'saving' || locked;
+  const notebookAssign = useMutation({
+    mutationFn: async (nextNotebookId: string | null) => {
+      await saver.settle();
+      if (saver.dirty()) throw new Error(t('conflict'));
+      return api.notes.update({ noteId: note.id, revision: saver.revision(), notebookId: nextNotebookId });
+    },
+    onSuccess: (done) => {
+      saver.setRevision(done.revision);
+      void refreshNotes();
+    },
+  });
+  const assignedNotebook = note.notebookId ? notebooks.find((b) => b.id === note.notebookId) : undefined;
+  const inPrivateNotebook = note.visibility === 'private' && assignedNotebook?.visibility === 'private';
+
+  const toggleTask = (lineIndex: number, nextChecked: boolean) => {
+    if (locked || state === 'conflict') return;
+    const nextBody = toggleMarkdownTaskLine(values.body, lineIndex, nextChecked);
+    if (nextBody === null) return;
+    const next = { ...values, body: nextBody };
+    setValues(next);
+    saver.edit(next);
+    void saver.flush();
+  };
+
+  const autocompletePool = useMemo(
+    () => linkableNotes.filter((n) => n.id !== note.id && n.deletedAt === null),
+    [linkableNotes, note.id],
+  );
+  // Counts the open note too: a title it shares with the picked note needs the [[id|Title]] form to resolve.
+  const wikiTitleCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of [note, ...autocompletePool]) {
+      const k = normalizeWikiTitle(c.title);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return counts;
+  }, [autocompletePool, note]);
+  const wikiMatch = editable && !preview && !locked ? findActiveWikiAutocomplete(values.body, cursorPos) : null;
+  const wikiOpen = wikiMatch !== null && wikiDismissedAt !== wikiMatch.from ? wikiMatch : null;
+  const wikiFiltered = useMemo(() => {
+    if (!wikiOpen) return [];
+    const query = normalizeWikiTitle(wikiOpen.query);
+    const items = query === '' ? [...autocompletePool] : autocompletePool.filter((n) => normalizeWikiTitle(n.title).includes(query));
+    return items.slice(0, 8);
+  }, [autocompletePool, wikiOpen]);
+  const safeWikiIndex = wikiFiltered.length === 0 ? 0 : Math.min(wikiIndex, wikiFiltered.length - 1);
+
+  const pickWikiNote = (target: NoteSummary, duplicateTitle: boolean) => {
+    if (!wikiOpen || locked) return;
+    const dup = duplicateTitle || (wikiTitleCounts.get(normalizeWikiTitle(target.title)) ?? 0) > 1;
+    const next = insertWikiLinkAt(values.body, wikiOpen.from, cursorPos, target, dup);
+    if (next.value.length > NOTE_BODY_MAX) return;
+    edit({ body: next.value });
+    setCursorPos(next.caret);
+    setWikiDismissedAt(null);
+    setWikiIndex(0);
+    requestAnimationFrame(() => {
+      const el = bodyRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const resolveWikiLink: WikiLinkResolver = (target) => {
+    const pool = note.deletedAt === null ? [note, ...linkableNotes.filter((n) => n.id !== note.id)] : linkableNotes;
+    let found:
+      | { id: string; title: string; mine: boolean; visibility: 'private' | 'org'; pinned: boolean; archivedAt: string | null; deletedAt: string | null }
+      | undefined;
+    if (target.noteId) {
+      const noteId = target.noteId;
+      found = pool.find((n) => n.deletedAt === null && n.id.toLowerCase() === noteId);
+      // Not in the loaded lists (archived, or past their limit): open it by id. The note view reads it under the
+      // caller's row policies and answers "not found" alike for a missing or an unreadable note.
+      if (!found) {
+        const fallbackList: NoteListView = back.list ?? 'mine';
+        return {
+          href: `/o/${encodeURIComponent(slug)}/notes?list=${encodeURIComponent(fallbackList)}&note=${encodeURIComponent(noteId)}`,
+          label: target.title || noteId,
+          available: true,
+          onClick: () => void navigate({ to: '/o/$slug/notes', params: { slug }, search: { list: fallbackList, note: noteId } }),
+        };
+      }
+    } else {
+      const norm = normalizeWikiTitle(target.title);
+      const matches = pool.filter((n) => n.deletedAt === null && normalizeWikiTitle(n.title) === norm);
+      // Prefer another note over the open one, which a title-only link to a shared title would otherwise reopen.
+      const others = matches.filter((n) => n.id !== note.id);
+      found = others.find((n) => n.mine) ?? others[0] ?? matches[0];
+    }
+    if (!found) return null;
+    const targetList = listOfNote(found, back.list);
+    const href = `/o/${encodeURIComponent(slug)}/notes?list=${encodeURIComponent(targetList)}&note=${encodeURIComponent(found.id)}`;
+    return {
+      href,
+      label: target.title || found.title,
+      available: true,
+      onClick: () => void navigate({ to: '/o/$slug/notes', params: { slug }, search: { list: targetList, note: found.id } }),
+    };
+  };
+
   const linkAdd = useMutation({
     mutationFn: (target: NoteLinkTargetInput) => api.notes.linkAdd({ noteId: note.id, ...target }),
     onSuccess: () => void refreshNotes(),
@@ -268,6 +399,16 @@ function Editor({
         </span>
       </div>
 
+      <NoteNotebookPicker
+        noteVisibility={note.visibility}
+        notebookId={note.notebookId}
+        notebooks={notebooks}
+        editable={mayManage && !inTrash}
+        disabled={blocked || notebookAssign.isPending || state === 'conflict'}
+        onChangeNotebook={(nextId) => notebookAssign.mutate(nextId)}
+      />
+      {notebookAssign.error && <ErrorText>{errorMessage(notebookAssign.error)}</ErrorText>}
+
       {note.tainted && (
         <p role="note" data-testid="note-tainted-hint" className="rounded-md border border-proposal/30 bg-proposal/5 px-3 py-2 text-xs text-foreground">
           {t('taintedHint')}
@@ -299,6 +440,9 @@ function Editor({
                   makeTodoLabel={t('makeTodo')}
                   makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
                   makeTodoDisabled={makeTodo.isPending}
+                  onToggleTask={toggleTask}
+                  toggleTaskDisabled={locked || state === 'conflict'}
+                  resolveWikiLink={resolveWikiLink}
                 />
               )}
             </div>
@@ -346,9 +490,45 @@ function Editor({
                 rows={14}
                 maxLength={NOTE_BODY_MAX}
                 disabled={locked}
-                onChange={(e) => edit({ body: e.target.value })}
+                aria-controls={wikiOpen !== null ? wikiListboxId : undefined}
+                aria-expanded={wikiOpen !== null ? true : undefined}
+                aria-activedescendant={wikiOpen !== null && wikiFiltered.length > 0 ? `${wikiListboxId}-opt-${safeWikiIndex}` : undefined}
+                onPaste={attachmentUploader.onEditorPaste}
+                onChange={(e) => {
+                  const nextPos = e.target.selectionStart ?? e.target.value.length;
+                  setCursorPos(nextPos);
+                  setWikiDismissedAt(null);
+                  setWikiIndex(0);
+                  edit({ body: e.target.value });
+                }}
+                onSelect={(e) => setCursorPos(e.currentTarget.selectionStart ?? 0)}
+                onClick={(e) => setCursorPos(e.currentTarget.selectionStart ?? 0)}
                 onKeyDown={(e) => {
                   if (locked) return;
+                  if (wikiOpen !== null && !e.nativeEvent.isComposing) {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setWikiDismissedAt(wikiOpen.from);
+                      return;
+                    }
+                    if (wikiFiltered.length > 0 && e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setWikiIndex((safeWikiIndex + 1) % wikiFiltered.length);
+                      return;
+                    }
+                    if (wikiFiltered.length > 0 && e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setWikiIndex((safeWikiIndex - 1 + wikiFiltered.length) % wikiFiltered.length);
+                      return;
+                    }
+                    if (wikiFiltered.length > 0 && (e.key === 'Enter' || e.key === 'Tab')) {
+                      e.preventDefault();
+                      const chosen = wikiFiltered[safeWikiIndex]!;
+                      const dup = (wikiTitleCounts.get(normalizeWikiTitle(chosen.title)) ?? 0) > 1;
+                      pickWikiNote(chosen, dup);
+                      return;
+                    }
+                  }
                   const kind = shortcutFormat({ ...e, code: e.code, isComposing: e.nativeEvent.isComposing });
                   if (!kind) return;
                   e.preventDefault();
@@ -359,6 +539,15 @@ function Editor({
                 placeholder={t('bodyPlaceholder')}
                 className="font-mono text-sm"
               />
+              {wikiOpen !== null && (
+                <NoteWikiAutocomplete
+                  listboxId={wikiListboxId}
+                  query={wikiOpen.query}
+                  candidates={autocompletePool}
+                  activeIndex={safeWikiIndex}
+                  onPick={pickWikiNote}
+                />
+              )}
             </>
           )}
           {looksLikePassword(`${values.title}\n${values.body}`) && (
@@ -388,6 +577,7 @@ function Editor({
               makeTodoLabel={t('makeTodo')}
               makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
               makeTodoDisabled={makeTodo.isPending}
+              resolveWikiLink={resolveWikiLink}
             />
           )}
           <TagChips tags={note.tags} onTag={onTag} />
@@ -406,6 +596,16 @@ function Editor({
       {todoLineError && <ErrorText>{todoLineError}</ErrorText>}
       {makeTodo.error && <ErrorText>{errorMessage(makeTodo.error)}</ErrorText>}
 
+      {!inTrash && (
+        <NoteAttachments
+          attachments={note.attachments ?? []}
+          slug={slug}
+          canUpload={editable && !locked}
+          canDelete={mayManage && !locked}
+          uploader={attachmentUploader}
+        />
+      )}
+
       <NoteLinks
         links={note.links}
         slug={slug}
@@ -422,6 +622,8 @@ function Editor({
           onClearError={() => linkAdd.reset()}
         />
       )}
+
+      {!inTrash && <NoteBacklinks noteId={note.id} slug={slug} currentList={back.list} />}
 
       {role !== undefined && !inTrash && (
         <NoteVyPanel
@@ -503,32 +705,85 @@ function Editor({
         </div>
       )}
 
-      {mayManage && (
+      {(mayManage || (!inTrash && role !== undefined)) && (
         <div className="flex flex-wrap gap-2 border-t pt-3">
           {inTrash ? (
-            <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
-              {t('restore')}
-            </Button>
+            mayManage && (
+              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
+                {t('restore')}
+              </Button>
+            )
           ) : (
             <>
-              {note.mine && !confirmShare && (
-                <Button size="sm" variant="outline" disabled={blocked} onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}>
-                  {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
-                </Button>
+              {role !== undefined && (
+                <NoteVersionHistoryButton
+                  slug={slug}
+                  note={note}
+                  currentTitle={editable ? values.title : note.title}
+                  currentBody={editable ? values.body : note.body}
+                  currentTags={editable ? parseTags(values.tags) : note.tags}
+                  canRestore={editable && !locked && state !== 'conflict' && state !== 'error'}
+                  disabled={blocked}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                  prepareRestore={
+                    editable
+                      ? async () => {
+                          await saver.settle();
+                          return !saver.dirty();
+                        }
+                      : undefined
+                  }
+                  getCurrentRevision={editable ? () => saver.revision() : undefined}
+                  onRestored={async () => {
+                    await reload();
+                    await refreshNotes();
+                  }}
+                />
               )}
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
-                {note.pinned ? t('unpin') : t('pin')}
-              </Button>
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
-                {note.archivedAt ? t('restore') : t('archive')}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
-                {t('delete')}
-              </Button>
+              {writer && (
+                <SaveAsTemplateButton
+                  slug={slug}
+                  title={editable ? values.title : note.title}
+                  body={editable ? values.body : note.body}
+                  tags={editable ? parseTags(values.tags) : note.tags}
+                  defaultVisibility={note.visibility}
+                  disabled={blocked || note.tainted}
+                  disabledHint={note.tainted ? t('templates.taintedBlocked') : undefined}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                />
+              )}
+              {mayManage && (
+                <>
+                  {note.mine && !confirmShare && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={blocked || inPrivateNotebook}
+                      onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}
+                    >
+                      {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
+                    {note.pinned ? t('unpin') : t('pin')}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
+                    {note.archivedAt ? t('restore') : t('archive')}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
+                    {t('delete')}
+                  </Button>
+                </>
+              )}
             </>
           )}
           {act.isPending && <Spinner />}
         </div>
+      )}
+      {note.mine && !inTrash && inPrivateNotebook && (
+        <p className="text-xs text-subtle-foreground" data-testid="note-private-notebook-share-hint">
+          {t('notebooks.privateNotebookShareHint')}
+        </p>
       )}
       {act.error && <ErrorText>{errorMessage(act.error)}</ErrorText>}
       {inTrash && <p className="text-xs text-subtle-foreground">{t('trashHint')}</p>}
@@ -548,27 +803,53 @@ export function NotesPage() {
   useEffect(() => setQ(search.q ?? ''), [search.q]);
   const [created, setCreated] = useState<string | null>(null);
   const go = (next: NotesSearch) => void navigate({ to: '/o/$slug/notes', params: { slug }, search: next });
-  // A tag filters the lists, not a search.
+  // A tag, notebook or stack filters the lists, not a search.
   const tag = search.q ? undefined : search.tag;
-  const back: NotesSearch = search.q ? { q: search.q } : { list: view, ...(tag ? { tag } : {}) };
+  const notebookFilter = search.q
+    ? {}
+    : search.notebook
+      ? { notebookId: search.notebook }
+      : search.stack
+        ? { stackName: search.stack }
+        : {};
+  const backScope: Pick<NotesSearch, 'notebook' | 'stack'> = search.notebook
+    ? { notebook: search.notebook }
+    : search.stack
+      ? { stack: search.stack }
+      : {};
+  const back: NotesSearch = search.q ? { q: search.q } : { list: view, ...backScope, ...(tag ? { tag } : {}) };
 
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const writer = role !== undefined && role !== 'viewer';
+  const notebooksQuery = useQuery({ ...orpc.notes.notebooks.list.queryOptions({ input: {} }), enabled: role !== undefined });
+  const notebooksList = notebooksQuery.data?.notebooks ?? [];
   // The whole list gives the tag chips; with a tag chosen, the filtered list is the one shown.
-  const all = useQuery({ ...orpc.notes.list.queryOptions({ input: { view } }), enabled: !search.q });
-  const tagged = useQuery({ ...orpc.notes.list.queryOptions({ input: { view, tag: tag ?? '' } }), enabled: !search.q && tag !== undefined });
+  const all = useQuery({ ...orpc.notes.list.queryOptions({ input: { view, ...notebookFilter } }), enabled: !search.q });
+  const tagged = useQuery({ ...orpc.notes.list.queryOptions({ input: { view, ...notebookFilter, tag: tag ?? '' } }), enabled: !search.q && tag !== undefined });
   const list = tag ? tagged : all;
   const chips = tagCounts(all.data ?? []);
   const found = useQuery({ ...orpc.notes.search.queryOptions({ input: { q: search.q ?? '' } }), enabled: Boolean(search.q) });
   const notes = search.q ? found : list;
   const open = useQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: search.note ?? '' } }), enabled: Boolean(search.note) });
+  const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: Boolean(search.note) && role !== undefined });
+  const sharedLinkable = useQuery({
+    ...orpc.notes.list.queryOptions({ input: { view: 'shared' } }),
+    enabled: Boolean(search.note) && role !== undefined,
+  });
+  const linkableNotes = useMemo(() => {
+    const byId = new Map<string, NoteSummary>();
+    for (const item of mineLinkable.data ?? []) byId.set(item.id, item);
+    for (const item of sharedLinkable.data ?? []) if (!byId.has(item.id)) byId.set(item.id, item);
+    return [...byId.values()];
+  }, [mineLinkable.data, sharedLinkable.data]);
+  const selectedNotebookObj = search.notebook && search.notebook !== 'unfiled' ? notebooksList.find((b) => b.id === search.notebook) : undefined;
   const create = useMutation({
-    mutationFn: () => client.notes.create({ title: t('newTitle') }),
+    mutationFn: () => client.notes.create({ title: t('newTitle'), ...(selectedNotebookObj ? { notebookId: selectedNotebookObj.id } : {}) }),
     onSuccess: (done) => {
       void refreshNotes();
       setCreated(done.noteId);
-      go({ list: 'mine', note: done.noteId });
+      go({ list: 'mine', ...(selectedNotebookObj ? { notebook: selectedNotebookObj.id } : {}), note: done.noteId });
     },
   });
   const newButton = writer ? (
@@ -596,8 +877,13 @@ export function NotesPage() {
       heading: t('export.heading'),
       exportedAt: t('export.exportedAt'),
       notes: t('export.notes'),
+      notebooks: t('export.notebooks'),
+      notebook: t('export.notebook'),
+      stack: t('export.stack'),
       todos: t('export.todos'),
       todoLists: t('export.todoLists'),
+      templates: t('export.templates'),
+      templateTitle: t('templates.titleLabel'),
       private: t('export.private'),
       shared: t('export.shared'),
       tags: t('export.tags'),
@@ -627,6 +913,14 @@ export function NotesPage() {
         <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
+        <NewFromTemplateButton
+          slug={slug}
+          role={role}
+          onCreated={(noteId) => {
+            setCreated(noteId);
+            go({ list: 'mine', note: noteId });
+          }}
+        />
         {newButton}
       </div>
     ) : undefined;
@@ -634,7 +928,6 @@ export function NotesPage() {
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} actions={actions} />
-      <NotesSubnav slug={slug} active="notes" />
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {exportMine.error && <ErrorText>{errorMessage(exportMine.error)}</ErrorText>}
       <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
@@ -652,7 +945,7 @@ export function NotesPage() {
             <Input id="notes-search" type="search" value={q} placeholder={t('search')} onChange={(e) => setQ(e.target.value)} />
           </form>
           {!search.q && (
-            <Tabs value={view} onValueChange={(v) => go({ list: v as NoteListView, ...(tag ? { tag } : {}) })} className="mt-3">
+            <Tabs value={view} onValueChange={(v) => go({ list: v as NoteListView, ...backScope, ...(tag ? { tag } : {}) })} className="mt-3">
               {/* Five lists wrap in the narrow column: the list grows with them (the variant's own h-8 would let the
                   second row cover the tag chips below). */}
               <TabsList className="flex flex-wrap group-data-horizontal/tabs:h-auto">
@@ -664,6 +957,18 @@ export function NotesPage() {
               </TabsList>
             </Tabs>
           )}
+          {!search.q && role !== undefined && (
+            <NotebooksSidebar
+              slug={slug}
+              canWrite={writer}
+              notebooks={notebooksList}
+              allCount={notebooksQuery.data?.allCount ?? (all.data?.length ?? 0)}
+              unfiledCount={notebooksQuery.data?.unfiledCount ?? 0}
+              selectedNotebook={search.notebook}
+              selectedStack={search.stack}
+              onSelectFilter={(filter) => go({ list: view, ...filter, ...(tag ? { tag } : {}) })}
+            />
+          )}
           {!search.q && (chips.length > 0 || tag) && (
             <div role="group" aria-label={t('tagFilter')} className="mt-3 flex flex-wrap gap-1">
               {(tag && !chips.some((c) => c.tag === tag) ? [{ tag, count: 0 }, ...chips] : chips).map((c) => (
@@ -673,7 +978,7 @@ export function NotesPage() {
                   size="sm"
                   className="h-auto rounded-full px-2 py-0.5 text-xs"
                   aria-pressed={c.tag === tag}
-                  onClick={() => go({ list: view, ...(c.tag === tag ? {} : { tag: c.tag }) })}
+                  onClick={() => go({ list: view, ...backScope, ...(c.tag === tag ? {} : { tag: c.tag }) })}
                 >
                   {c.tag}
                 </Button>
@@ -731,7 +1036,17 @@ export function NotesPage() {
           ) : open.error ? (
             <ErrorText>{errorMessage(open.error)}</ErrorText>
           ) : open.data ? (
-            <Editor key={open.data.id} note={open.data} slug={slug} role={role} back={back} focusTitle={created === open.data.id} onTag={(t) => go({ list: listOfNote(open.data, search.q ? undefined : search.list), tag: t })} />
+            <Editor
+              key={open.data.id}
+              note={open.data}
+              slug={slug}
+              role={role}
+              back={back}
+              focusTitle={created === open.data.id}
+              onTag={(t) => go({ list: listOfNote(open.data, search.q ? undefined : search.list), ...backScope, tag: t })}
+              notebooks={notebooksList}
+              linkableNotes={linkableNotes}
+            />
           ) : (
             <ListSkeleton />
           )}

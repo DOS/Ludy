@@ -37,7 +37,9 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
+import { attendeeNames, cleanName } from './speaker.ts';
+import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -283,6 +285,9 @@ export const resultPublish = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'share its summary');
+    // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
+    // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
       .selectFrom('crove_meetings.meeting_result')
@@ -293,7 +298,9 @@ export const resultPublish = defineCommand({
       .where('tainted', '=', true)
       .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
       .executeTakeFirst();
-    if (unread) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+    // The same for the draft chapters (#3844); the database refuses a tainted draft chapter too.
+    const unreadChapter = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
+    if (unread || unreadChapter) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
     // case none is found here and the summary published before it is not replaced by nothing.
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
@@ -321,7 +328,27 @@ export const resultPublish = defineCommand({
       .where('status', '=', 'suggested')
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
-    if (results === 0 && items.length === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    // The draft chapters (#3844) replace the chapters published before them, as the summary does.
+    const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
+    let chapters = 0;
+    if (draftChapters.length > 0) {
+      // Each chapter must still start at a line of the transcript: a re-transcription since the save may have replaced the lines (#3881). Refused as a whole, and nothing of this publish is kept (the same
+      // transaction), so the recorder saves the chapters again and publishes once.
+      if ((await missingAnchors(ctx, input.meetingId, draftChapters.map((c) => c.start_seconds))).length > 0) {
+        throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
+      }
+      await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      const flipped = await ctx.trx
+        .updateTable('crove_meetings.meeting_chapter')
+        .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('stage', '=', 'draft')
+        .returning('id')
+        .execute();
+      chapters = flipped.length;
+    }
+    if (results === 0 && items.length === 0 && chapters === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
     await enqueueMinutesHook(ctx, {
       meetingId: input.meetingId,
@@ -330,8 +357,8 @@ export const resultPublish = defineCommand({
       decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
       items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
     });
-    ctx.audit({ meetingId: input.meetingId, results, items: items.length });
-    return { meetingId: input.meetingId, results, items: items.length };
+    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters });
+    return { meetingId: input.meetingId, results, items: items.length, chapters };
   },
 });
 
@@ -374,8 +401,20 @@ export const actionItemAccept = defineCommand({
   },
 });
 
+// The people of the org a said name may be matched with when no attendee answers to it (#3921): the members, by the display name the org knows them by (member_profiles answers for members only; a
+// member with no display name has no name to match, and an email address is never one). Above 500 members none are offered: a cut list could make a name that two people share look like it is one person's.
+export async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
+  const ids = (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(501).execute()).map((r) => r.user_id);
+  if (ids.length === 0 || ids.length > 500) return [];
+  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+  return rows.flatMap((r) => {
+    const name = cleanName(r.display_name);
+    return name === '' ? [] : [{ userId: r.user_id, name }];
+  });
+}
+
 // The seats an attendee holds now: active positions whose holder they are.
-async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
+export async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
   const seats = new Map<string, Array<{ id: string; title: string }>>();
   if (userIds.length === 0) return seats;
   const rows = await trx.selectFrom('crove_kernel.position').select(['id', 'title', 'holder_user_id']).where('org_id', '=', orgId).where('status', '=', 'active').where('holder_user_id', 'in', [...userIds]).execute();
@@ -445,7 +484,18 @@ export const meetingResultGet = defineQuery({
       .orderBy('created_at')
       .orderBy('id')
       .execute();
-    const seats = await seatsOf(ctx.trx, ctx.orgId, items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])));
+    // A suggestion for an open item that names nobody yet (#3921): by code, from the said name; read here and never stored.
+    const unnamed = items.filter((i) => i.status === 'suggested' && i.who_parsed === null && i.who_drafted.trim() !== '');
+    const suggestions = new Map<string, Suggested>();
+    if (unnamed.length > 0) {
+      const attendees = await attendeeNames(ctx, input.meetingId, meeting.recorder_user_id);
+      const members = await memberNames(ctx);
+      for (const i of unnamed) {
+        const found = suggestAssignee(i.who_drafted, attendees, members);
+        if (found) suggestions.set(i.id, found);
+      }
+    }
+    const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
@@ -473,6 +523,10 @@ export const meetingResultGet = defineQuery({
           taskId: i.task_id,
           positions: held,
           clean: i.status === 'suggested' && itemIsClean({ flags, whoUserId: i.who_parsed, whenDate: i.when_parsed }, held.length),
+          suggestion: ((): ActionItemView['suggestion'] => {
+            const s = suggestions.get(i.id);
+            return s ? { userId: s.userId, name: s.name, source: s.source, positions: seats.get(s.userId) ?? [] } : null;
+          })(),
         };
       }),
     };

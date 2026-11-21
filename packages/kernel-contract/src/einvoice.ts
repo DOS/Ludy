@@ -16,6 +16,14 @@ export type BuyerIdentityKind = (typeof BUYER_IDENTITY_KINDS)[number];
 // The most lines a draft holds (the providers' own limits are 400 or fewer).
 export const EINVOICE_DRAFT_MAX_LINES = 200;
 
+// What a person says a correction is about (#3709, research E row 7): it decides which VAT rate the correcting invoice keeps. A correction that changes no amount, a return and a trade discount set
+// later keep the rate of the original ("original" basis); an error in quantity or price that changes the amount and the VAT uses the rate in force on the correction date.
+export const EINVOICE_RATE_NATURES = ['no_amount_change', 'return', 'trade_discount', 'amount_change'] as const;
+export type EInvoiceRateNature = (typeof EINVOICE_RATE_NATURES)[number];
+// The day the 8% of a correction's lines is judged on: the original's date, or the correction's own (the draft's sale or invoice date).
+export const EINVOICE_RATE_BASES = ['original', 'correction_date'] as const;
+export type EInvoiceRateBasis = (typeof EINVOICE_RATE_BASES)[number];
+
 // What a check can say about a draft; `field` names the place on the form: 'date', 'series', 'buyer.taxCode', 'lines.2.quantity' (the line's position from 1).
 export const DRAFT_ISSUE_CODES = [
   'DATE_REQUIRED',
@@ -33,6 +41,9 @@ export const DRAFT_ISSUE_CODES = [
   'BUYER_ADDRESS_REQUIRED',
   'BUYER_EMAIL_INVALID',
   'BUYER_IDENTITY_INVALID',
+  // A passport carries the buyer's nationality (Decree 254 Appendix point 4.b; #3709): required with it, two capital letters (ISO 3166-1 alpha-2).
+  'BUYER_NATIONALITY_REQUIRED',
+  'BUYER_NATIONALITY_INVALID',
   'LINES_REQUIRED',
   'LINE_DESCRIPTION_REQUIRED',
   'LINE_QUANTITY_INVALID',
@@ -52,7 +63,9 @@ const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 // A unit price may be signed: the difference of an adjusting invoice is a decrease with a minus (the checks refuse a minus on any other invoice).
 const zSignedDecimal = z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/);
 
-export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20) });
+// `nationality` (#3709): the ISO 3166-1 alpha-2 code of a foreign buyer, two capital letters (the limit here is wider so a wrong length is answered by the check, not a bare 422). A passport carries one and nothing else does (the server drops it from any other kind); it is checked as a
+// field of the draft, so a draft that still lacks it is shown with the issue and the save refuses it with EINVOICE_BUYER_NATIONALITY_REQUIRED (422) or EINVOICE_BUYER_NATIONALITY_INVALID (422).
+export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20), nationality: zText(10).nullable().default(null) });
 export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
 
 export const zEInvoiceBuyerInput = z.strictObject({
@@ -93,7 +106,8 @@ export type EInvoiceDraftForm = z.infer<typeof zEInvoiceDraftForm>;
 export const zEInvoiceDraftCheckInput = zEInvoiceDraftForm.extend({
   lines: z.array(zEInvoiceLineInput.extend({ quantity: z.string().max(40), unitPrice: z.string().max(40) })).max(EINVOICE_DRAFT_MAX_LINES),
   // The form of an adjusting or a replacing invoice (#2504): an adjustment may carry a negative price, and the VAT rate of a correction is judged on its original's date. Omitted for any other draft.
-  correction: z.strictObject({ kind: z.enum(['adjustment', 'replacement']), originalDraftId: zId }).nullable().default(null),
+  // `rateBasis` is the basis the person confirmed for the VAT rate (#3709): the 8% is judged on the original's date ('original', and when absent) or on the draft's own ('correction_date').
+  correction: z.strictObject({ kind: z.enum(['adjustment', 'replacement']), originalDraftId: zId, rateBasis: z.enum(EINVOICE_RATE_BASES).nullable().default(null) }).nullable().default(null),
 });
 
 export const zEInvoiceDraftSave = zEInvoiceDraftForm.extend({
@@ -134,18 +148,23 @@ export const zEInvoiceCorrection = z.object({
   originalDraftId: zId,
   reasonCode: z.string(),
   agreementFileId: zId.nullable(),
+  // The basis the person confirmed for the VAT rate (#3709); null on a correction made before it existed, which is judged on the original's date as it always was.
+  rateBasis: z.enum(EINVOICE_RATE_BASES).nullable().default(null),
 });
 export type EInvoiceCorrection = z.infer<typeof zEInvoiceCorrection>;
 
 // Starts a correcting draft from an issued invoice (#2504): "Điều chỉnh" or "Thay thế". The original's series, number and date are read from its stored row. The reason code is one of
 // Appendix XVII (refused while the list is empty); a buyer with a tax code needs the signed agreement file, an individual buyer none. EINVOICE_DRAFT_NOT_FOUND (404),
 // EINVOICE_ORIGINAL_NOT_ISSUED, EINVOICE_ORIGINAL_REPLACED, EINVOICE_CORRECTION_METHOD, EINVOICE_CORRECTION_OPEN (409), EINVOICE_REASON_CODE_INVALID, EINVOICE_AGREEMENT_REQUIRED (422),
-// EINVOICE_AGREEMENT_FILE_NOT_FOUND (404).
+// EINVOICE_AGREEMENT_FILE_NOT_FOUND (404). `rateNature` is what the person says the correction is about and `rateBasis` the basis the screen proposed and they confirmed (#3709): the command works the
+// basis out from the nature itself and refuses a different one with EINVOICE_RATE_BASIS_MISMATCH (422), so a stale screen cannot confirm a wrong rate.
 export const zEInvoiceStartCorrection = z.strictObject({
   originalDraftId: zId,
   kind: z.enum(EINVOICE_CORRECTION_KINDS),
   reasonCode: z.string().trim().min(1).max(50),
   agreementFileId: zId.nullable().default(null),
+  rateNature: z.enum(EINVOICE_RATE_NATURES),
+  rateBasis: z.enum(EINVOICE_RATE_BASES),
 });
 export type EInvoiceStartCorrection = z.infer<typeof zEInvoiceStartCorrection>;
 
@@ -155,6 +174,63 @@ export const zEInvoiceCorrectionOptions = z.object({
   reasonCodes: z.array(z.object({ code: z.string(), label: z.string() })),
 });
 export type EInvoiceCorrectionOptions = z.infer<typeof zEInvoiceCorrectionOptions>;
+
+// The VAT rate a correction proposes for the nature a person picked (#3709), worked out by code (modules/finance domain/einvoice-correction-rate.ts), never by a model. `changes` lists each rate of the
+// original's lines that the proposal moves (8% to 10%); empty when every rate is kept. `reason` is the fixed Vietnamese sentence the screen shows when no coworker explains it, and `precedentNote`
+// names Official Letter 2121/TCT-CS while no guidance for the 2026 to 2027 changeover exists (null when the rate is simply kept). `correctionDate` is the day the proposal was worked out on.
+export const EINVOICE_RATE_REASONS = ['kept_no_change', 'kept_return', 'kept_trade_discount', 'amount_change_no_reduced', 'amount_change_still_reduced', 'amount_change_standard'] as const;
+export type EInvoiceRateReason = (typeof EINVOICE_RATE_REASONS)[number];
+export const zEInvoiceCorrectionRateInput = z.strictObject({ originalDraftId: zId, nature: z.enum(EINVOICE_RATE_NATURES) });
+export type EInvoiceCorrectionRateInput = z.infer<typeof zEInvoiceCorrectionRateInput>;
+export const zEInvoiceCorrectionRate = z.object({
+  nature: z.enum(EINVOICE_RATE_NATURES),
+  basis: z.enum(EINVOICE_RATE_BASES),
+  originalDate: z.string(),
+  correctionDate: z.string(),
+  reasonCode: z.enum(EINVOICE_RATE_REASONS),
+  changes: z.array(z.strictObject({ from: z.string(), to: z.string() })),
+  // The distinct rates of the original's lines that the proposal keeps, and the last day the 8% rate applied (the explanation is told both).
+  kept: z.array(z.string()),
+  reducedUntil: z.string(),
+  reason: z.string(),
+  precedentNote: z.string().nullable(),
+});
+export type EInvoiceCorrectionRate = z.infer<typeof zEInvoiceCorrectionRate>;
+
+// The same proposal for the screen: `explanation` is the accounting coworker's plain Vietnamese explanation of it (packages/agent, through the AI budget meter), or null; `ai` says why there is none
+// ('off': no model on this deployment; 'busy': the member asks too often; 'budget': the AI budget is spent; 'failed': the call failed; 'refused': the answer named something the facts do not).
+// The rate and the basis are the code's whatever `ai` says, and the person confirms by starting the correction.
+export const EINVOICE_RATE_EXPLAIN_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export const zEInvoiceCorrectionRateExplained = zEInvoiceCorrectionRate.extend({
+  ai: z.enum(EINVOICE_RATE_EXPLAIN_STATES),
+  explanation: z.string().nullable(),
+});
+export type EInvoiceCorrectionRateExplained = z.infer<typeof zEInvoiceCorrectionRateExplained>;
+
+// The accounting coworker's proposal of the reason code of an adjusting or a replacing invoice (#3690, the AI part of #2504). The person describes the error (`note`, never stored or logged); the code
+// the coworker proposes is one of Appendix XVII's list (packages/einvoice reason-codes.ts) by number, checked in code, and the person confirms it by starting the correction, which checks it again.
+// `ai` says why there is no proposal: 'no_list' (the list of codes is empty, nothing to propose), 'no_note' (nothing was described), 'off' (no model on this deployment), 'busy' (the member asks too often),
+// 'budget' (the AI budget is spent), 'failed' (the call failed) or 'refused' (the answer was not one of the list or stated what the facts do not hold). With any of them the form works as it does with AI off.
+export const zEInvoiceReasonInput = z.strictObject({ originalDraftId: zId, kind: z.enum(['adjustment', 'replacement']), note: z.string().trim().max(600) });
+export type EInvoiceReasonInput = z.infer<typeof zEInvoiceReasonInput>;
+// What the model may see of the original, read in the member's own transaction (finance.einvoice.reason_source): the list, the buyer's kind and the lines without a price or an amount. No name, address,
+// tax code, email or ID of the buyer.
+export const zEInvoiceReasonSourceInput = z.strictObject({ originalDraftId: zId });
+export const zEInvoiceReasonSource = z.object({
+  codes: z.array(z.object({ code: z.string(), label: z.string() })),
+  buyerKind: z.enum(BUYER_KINDS),
+  originalDate: z.string(),
+  lines: z.array(z.object({ description: z.string(), unit: z.string().nullable(), quantity: z.string(), vatRate: z.string() })),
+});
+export type EInvoiceReasonSource = z.infer<typeof zEInvoiceReasonSource>;
+export const EINVOICE_REASON_STATES = ['used', 'no_list', 'no_note', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export const zEInvoiceReasonSuggested = z.object({
+  ai: z.enum(EINVOICE_REASON_STATES),
+  code: z.string().nullable(),
+  label: z.string().nullable(),
+  why: z.string().nullable(),
+});
+export type EInvoiceReasonSuggested = z.infer<typeof zEInvoiceReasonSuggested>;
 
 export const zEInvoiceDraft = z.object({
   id: zId,
@@ -349,6 +425,10 @@ export const zEInvoiceSuggestInput = z
     invoiceDraftId: zId.optional(),
     // The buyer the form is for, with `invoiceDraftId`.
     buyerPartyId: zId.optional(),
+    // The customer the form already names (#2713): a line the text states no VAT rate for takes the usual rate of THIS customer's earlier drafts (else the org's), whichever customer the coworker picked from
+    // the text, so the rate history is the one of the buyer the form keeps. Not the previous-invoice source above (`buyerPartyId`, which may be another customer). Unknown, another org's or a merged
+    // (duplicate) customer is the same as none.
+    formBuyerPartyId: zId.optional(),
     // The legal entity of the form, as in zLegalEntityChoice: the default (or only visible) one when omitted.
     legalEntityId: zId.optional(),
   })

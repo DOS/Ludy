@@ -373,17 +373,16 @@ suite('payments to a supplier (#3113 S2)', () => {
     await expect(rows("UPDATE crove_finance.supplier_payment SET confirmed_at = now() - interval '2 days' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
   });
 
-  it('lists the suppliers with a payment waiting, as ids and days only, and refuses to erase their bank data meanwhile', async () => {
+  it('counts the suppliers with a payment waiting (a request not yet decided, then an approved one), as ids, a count and an amount only, and refuses to erase their bank data meanwhile', async () => {
     const o = await org(false);
     await addAccount(o);
     const doc = await invoice(o);
     const { proposalId } = await request(o, doc);
-    const waiting = await query<Array<{ partyId: string; state: string; since: string }>>(o, 'finance.signals.supplier_payments_waiting', {}, o.member);
-    expect(waiting.map((w) => [w.partyId, w.state])).toEqual([[o.supplier, 'pending']]);
-    expect(waiting[0]?.since).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+    const waiting = await query<Array<{ partyId: string; count: number; amount: string }>>(o, 'finance.signals.supplier_payments_waiting', { partyIds: [o.supplier] }, o.member);
+    expect(waiting).toEqual([{ partyId: o.supplier, count: 1, amount: '110' }]);
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }))).toBe('SUPPLIER_PAYMENT_WAITING');
     await approve(o, proposalId);
-    expect((await query<Array<{ state: string }>>(o, 'finance.signals.supplier_payments_waiting', {}, o.member)).map((w) => w.state)).toEqual(['approved']);
+    expect(await query(o, 'finance.signals.supplier_payments_waiting', { partyIds: [o.supplier] }, o.member)).toEqual([{ partyId: o.supplier, count: 1, amount: '110' }]);
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }))).toBe('SUPPLIER_PAYMENT_WAITING');
     expect(JSON.stringify(waiting)).not.toContain('012345678901');
   });

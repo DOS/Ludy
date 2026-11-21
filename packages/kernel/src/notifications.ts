@@ -41,6 +41,8 @@ export const TASK_REROUTED = 'kernel.task_rerouted';
 // An owner's notice before a personal-data erasure (#1678, ADR-0037 section 5): how many of my private notes and
 // to-dos mention a person who asked to be erased. Not one a member can turn off: the erasure waits on it.
 export const PERSONAL_DATA_NOTICE = 'kernel.personal_data_notice';
+// A person who connected an AI app before its Engage reads existed (#4069): the app can now read the Hộp thư, bookings and ads results. Told once, and not one a member can turn off: it is about their own consent.
+export const MCP_ENGAGE_READS_NOTICE = 'kernel.mcp_engage_reads';
 export const PROJECTS_WEEKLY_STATUS = 'projects.weekly_status';
 // An ad platform refused a connection's token, or the member who connected it left (#2219): the account's sync is paused
 // until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { normalizeStatementAmount, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { normalizeStatementAmount, vietnamToday, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -21,7 +21,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { runBankFeedSync } from '../src/bank-feed-sync.ts';
-import { bankFeedProviders, signSandboxWebhook } from '@crove/bank-feed';
+import { TINGEE_HOSTS, TingeeError, bankFeedProviders, parseTingeeSecret, signSandboxWebhook, vietnamStamp, type BankFeedProvider, type BankFeedTransaction } from '@crove/bank-feed';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -56,6 +56,9 @@ interface Account {
 
 const suite = ADMIN ? describe : describe.skip;
 const WEBHOOK_SECRET = 'bank-feed-webhook-secret-0123456789-abcdef';
+const TINGEE_CLIENT = 'tingee-client-id-for-the-test';
+const TINGEE_SECRET = 'tingee-secret-token-for-the-test-0123456789';
+const TINGEE_VA = '8888000001';
 
 suite('bank statement import (#326)', () => {
   const dbName = `crove_test_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -67,6 +70,11 @@ suite('bank statement import (#326)', () => {
   // The same, with a tight limit on signed notices per address.
   let limitedApp: ReturnType<typeof createHttpApp>;
   let vault: CredentialVault;
+  // The Tingee bank feed (#2045): a stand-in provider that reads the sealed credential the way the adapter does (parseTingeeSecret) and answers like a Tingee that knows one Client ID (the adapter's own
+  // behaviour against a fake Tingee is tested in packages/bank-feed), the calls it was asked for, and an app that offers it.
+  let tingeeApp: ReturnType<typeof createHttpApp>;
+  let tingeeAdapter: BankFeedProvider;
+  const tingeeCalls: string[] = [];
   // The API's runtime, and the worker's, which runs feed jobs as the system.
   let api: Runtime;
   let worker: Runtime;
@@ -174,6 +182,35 @@ suite('bank statement import (#326)', () => {
     const feedDeps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, bankFeedSandbox: true } };
     feedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices });
     limitedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices, bankFeedWebhookLimit: new RateLimiter({ perMinute: 2 }) });
+    // A stand-in that knows one Client ID, with a linked account and two transactions in the last days.
+    const day = (back: number) => vietnamStamp(new Date(Date.now() - back * 86_400_000)).slice(0, 8);
+    const tingeeLines = (): BankFeedTransaction[] => [
+      { date: `${day(3).slice(0, 4)}-${day(3).slice(4, 6)}-${day(3).slice(6, 8)}`, description: 'HD 0000123 thanh toan', amount: '1500000', balance: null, reference: 'FT26000001' },
+      { date: `${day(2).slice(0, 4)}-${day(2).slice(4, 6)}-${day(2).slice(6, 8)}`, description: 'Phi dich vu', amount: '-250000', balance: null, reference: 'FT26000002' },
+    ];
+    const known = (secret: string, call: string) => {
+      const credential = parseTingeeSecret(secret);
+      if (credential.clientId !== TINGEE_CLIENT || credential.secretToken !== TINGEE_SECRET) throw new TingeeError('credentials', 'tingee refused the credential (code 97)', '97');
+      tingeeCalls.push(call);
+    };
+    tingeeAdapter = {
+      id: 'bank_tingee',
+      hosts: TINGEE_HOSTS,
+      async check(secret) {
+        known(secret, 'check');
+      },
+      async accounts(secret) {
+        known(secret, 'accounts');
+        return [{ externalAccountId: TINGEE_VA, displayName: `BIDV ${TINGEE_VA} - CONG TY ABC` }];
+      },
+      // The same lines every time (an overlapping pull), at a cursor that does not move.
+      async pull(secret, externalAccountId) {
+        known(secret, 'pull');
+        if (externalAccountId !== TINGEE_VA) throw new TingeeError('config', 'tingee: unknown account');
+        return { transactions: tingeeLines(), cursor: `${day(2)}000000`, more: false };
+      },
+    };
+    tingeeApp = createHttpApp({ ...feedDeps, channels: { broker: vault, sandbox: false, bankFeedHosted: { bank_tingee: tingeeAdapter } } });
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
     workerUrl.password = 'test-worker-pw';
@@ -440,8 +477,9 @@ suite('bank statement import (#326)', () => {
     runBankFeedSync({ runtime: worker, broker: vault, providers: bankFeedProviders({ sandbox: true, now: SYNC_NOW }) }, { orgId: org, connectionId });
 
   it('offers the sandbox bank feed only where the deployment turns it on', async () => {
-    expect(((await (await feedApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: true });
-    expect(((await (await app.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false });
+    expect(((await (await feedApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: true, tingee: false });
+    expect(((await (await app.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false, tingee: false });
+    expect(((await (await tingeeApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false, tingee: true });
     expect(await rpc('bankFeeds/connectSandbox', await tokenFor(owner), { displayName: 'Ngân hàng thử' })).toMatchObject({ status: 404, body: { code: 'BANK_FEED_DISABLED' } });
   });
 
@@ -506,6 +544,96 @@ suite('bank statement import (#326)', () => {
     expect(await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).toMatchObject({ status: 404, body: { code: 'BANK_FEED_ACCOUNT_NOT_FOUND' } });
   });
 
+  it('skips the statement lines on or after the day a feed takes over, with a warning, and keeps the earlier ones (#4218)', async () => {
+    expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.CUT', name: 'Cut-over' })).status).toBe(200);
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng cut-over' })).body.connectionId);
+    await sync(connectionId);
+    const map = (input: Record<string, unknown>) => feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121.CUT', idempotencyKey: randomUUID(), ...input });
+    // Days relative to today in Vietnam: the sandbox's first pull reaches back 7 days, so a cut-over may be set from today minus 7.
+    const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+    const cut = dayOf(-3);
+    // Not a day: refused by the contract; a day before the feed's reach: refused, as the feed would never fetch what the import skips.
+    expect((await map({ feedFrom: '15/10/2026' })).status).toBe(400);
+    expect(await map({ feedFrom: dayOf(-8) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_TOO_EARLY' } });
+    expect((await map({ feedFrom: dayOf(-7) })).status).toBe(200);
+    const mapped = await map({ feedFrom: cut });
+    expect(mapped.status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    // Before the feed has pulled, nothing it supplies is in the books: a file keeps all its lines (the first pull may start later than the day set and the day then moves up).
+    const early = [row(dayOf(-6), '100000', '', '', 'EARLY-A'), row(dayOf(-1), '100000', '', '', 'EARLY-B')];
+    expect((await preview(early, '1121.CUT')).body.feed).toBeUndefined();
+    expect((await preview(early, '1121.CUT')).body.counts).toMatchObject({ new: 2, duplicate: 0 });
+    // Pulled once (the cursor is set; the sandbox's pull is not run here so the account holds only the file's lines): from the day on the feed supplies.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-4)]));
+    const rows = [row(dayOf(-6), '100000', '', '', 'CUT-A'), row(dayOf(-4), '200000', '', '', 'CUT-B'), row(cut, '300000', '', '', 'CUT-C'), row(dayOf(-1), '400000', '', '', 'CUT-D')];
+    const shown = await preview(rows, '1121.CUT');
+    expect(shown.status).toBe(200);
+    expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    expect(shown.body.feed).toEqual({ from: cut, leftOut: 2 });
+    expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
+    // Imported, only the days before the cut-over are stored; the same file again stores nothing.
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
+    expect((await stored('1121.CUT')).map((l) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 0, duplicate: 4 } } });
+    // Another bank account has no cut-over and takes the same lines; clearing the day on this one lifts the skip.
+    expect(await importFile(rows, '1121.VCB')).toMatchObject({ status: 200, body: { counts: { new: 4 } } });
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    const cleared = await preview(rows, '1121.CUT');
+    expect(cleared.body.feed).toBeUndefined();
+    expect(cleared.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    // A remap with no feedFrom leaves the day as it is.
+    expect((await map({ feedFrom: cut })).status).toBe(200);
+    expect((await map({})).status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    // A feed that stopped supplies nothing, so it must not keep file lines out: an expired connection lifts the skip.
+    const setStatus = (status: string) => admin((c) => c.query('UPDATE crove_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
+    await setStatus('expired');
+    expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
+    await setStatus('active');
+    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, leftOut: 2 });
+    // A first pull that runs later than the day set (here: the day is set in SQL to before the pull's window, as a delay across midnight would leave it) moves the day up to where the pull really starts.
+    const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
+    await sync(connectionId);
+    expect(await feedFromOf()).toBe(dayOf(-7));
+    // The move-up is on the trail, with the day it was and the day it became.
+    const moved = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ? 'feedFromMovedTo' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
+    expect(moved.rows[0]?.detail).toMatchObject({ feedFromMovedTo: dayOf(-7), feedFromWas: dayOf(-9) });
+    // The pull leaves out the lines the feed brings from before the day: nothing it stored is dated before it.
+    const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
+    expect(fed.every((l) => l.value_date >= (dayOf(-7)))).toBe(true);
+    // Once the account has synced, the day cannot move earlier (the lines the feed left out are not fetched again); later, or cleared, it can.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    // Clearing the day does not open a way round the rule: with none set, a new day may not be earlier than the day the cursor has reached.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    // The sandbox cursor is the last day pulled, so the first day still fetched is the next one: the cursor's day itself is refused.
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    // A cursor that cannot be read gives no day to vouch for: the day is refused and the view says so.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
+    expect(await map({ feedFrom: dayOf(-1) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_UNKNOWN' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
+    // A Tingee connection writes its cursor as yyyyMMddHHmmss: the floor is the day after, or the day itself at midnight.
+    const stampOf = (day: string, time: string) => `${day.replaceAll('-', '')}${time}`;
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
+    // Back to the sandbox provider: the connection is only a stand-in for Tingee's cursor here, and other tests count Tingee connections.
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
+  });
+
   it('maps only a bank feed connection, and only an active one', async () => {
     const social = await admin(
       async (c) =>
@@ -558,6 +686,55 @@ suite('bank statement import (#326)', () => {
       worker.execute('finance.bank_feed.record_pull', { feedAccountId: mapped.body.feedAccountId, fromCursor: '2026-01-01', lines: [], cursor: '2026-01-31' }, { actor: SYSTEM, orgId }),
     ).rejects.toMatchObject({ code: 'BANK_FEED_CURSOR_MOVED' });
     expect((await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor))).toBe(at);
+  });
+
+  // #4244: why the last pull stopped is a closed kind (and a line position for a page with a line it cannot store), kept
+  // on the mapped account, and the next good pull clears it in the same transaction as the cursor move.
+  it('records why a pull stopped per kind on the mapped account, and clears it after a good pull', async () => {
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng lý do' })).body.connectionId);
+    await sync(connectionId);
+    const first = await feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
+    const second = await feed('map', owner, { connectionId, externalAccountId: 'SBX-002', bankAccount: '1121', idempotencyKey: randomUUID() });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const view = async (id: string) => (await feed('accounts', owner)).body.find((a: { id: string }) => a.id === id);
+    const stored = async (id: string) =>
+      admin(async (c) => (await c.query<{ cursor: string | null }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]?.cursor ?? null);
+    const system = { actor: SYSTEM, orgId };
+    expect((await view(first.body.feedAccountId)).lastPull).toBeNull();
+
+    // Every kind lands on the account, as the kind alone; a line position only for bad_page.
+    for (const kind of ['credentials', 'clock', 'rate_limited', 'upstream', 'config', 'too_many_lines'] as const) {
+      await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, kind }, system);
+      expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: kind, item: null });
+    }
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, kind: 'bad_page', item: 2 }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'bad_page', item: 3 });
+    // The other account of the connection is untouched by an account-scoped record.
+    expect((await view(second.body.feedAccountId)).lastPull).toBeNull();
+
+    // A connection-wide record (no account) reaches every mapped account of the connection.
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'credentials' }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+    expect((await view(second.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+
+    // A late record, for a cursor the account has moved past, writes nothing.
+    const cursor = await stored(first.body.feedAccountId);
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, fromCursor: '1999-01-01', kind: 'upstream' }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+
+    // The shape is closed: no free kind, no position without bad_page, no cursor without an account, no text.
+    for (const bad of [{ kind: 'ok' }, { kind: 'whatever' }, { kind: 'clock', item: 1 }, { kind: 'upstream', fromCursor: '2026-01-01' }, { kind: 'upstream', message: 'secret' }]) {
+      await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, ...bad }, system)).rejects.toMatchObject({ code: 'VALIDATION' });
+    }
+    // Only the system records it: a person cannot, whatever their role.
+    await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'clock' }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // A good pull clears it, in the same step that moves the cursor.
+    await sync(connectionId);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'ok', item: null });
+    expect((await view(second.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'ok', item: null });
+    expect(await stored(first.body.feedAccountId)).not.toBe(cursor);
   });
 
   it('stops syncing once the member who connected the feed may no longer use it', async () => {
@@ -1362,6 +1539,117 @@ suite('bank statement import (#326)', () => {
       await expect(worker.execute('finance.bank.statement_reject', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(worker.execute('kernel.extraction.statement_state', { fileId, state: 'imported' }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(await status(fileId)).toMatchObject({ status: 'staged' });
+    });
+  });
+
+  // The Tingee bank feed (ADR-0039, #2045 S2): the org's own Client ID and Secret Token, tested once through the adapter and sealed; the worker lists and pulls.
+  describe('the Tingee bank feed', () => {
+    const connect = async (who: Account, input: Record<string, unknown>, on: ReturnType<typeof createHttpApp> = tingeeApp) => rpc('bankFeeds/connectTingee', await tokenFor(who), input, slug, on);
+    const tingeeSync = (connectionId: string) => runBankFeedSync({ runtime: worker, broker: vault, providers: { bank_tingee: tingeeAdapter } }, { orgId, connectionId });
+
+    it('is offered only where the deployment turns it on, and only to owners and admins', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      expect(await connect(owner, good, feedApp)).toMatchObject({ status: 404, body: { code: 'BANK_FEED_TINGEE_DISABLED' } });
+      expect((await connect(member, good)).status).toBe(403);
+      expect((await connect(viewer, good)).status).toBe(403);
+      // Nothing was tested or sealed for any of them.
+      expect(tingeeCalls).toEqual([]);
+    });
+
+    it('refuses a credential Tingee does not accept, with a fixed sentence, and seals nothing', async () => {
+      const before = Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)));
+      const wrongSecret = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'another-secret-token-0123456789' });
+      expect(wrongSecret).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      expect(await connect(owner, { clientId: 'nobody-by-this-id', secretToken: TINGEE_SECRET })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      // A control character is refused before any call.
+      expect((await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'a\u0000b' })).status).toBe(400);
+      expect(JSON.stringify(wrongSecret.body)).not.toContain('another-secret-token');
+      expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBe(before);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'bank_tingee'`, [orgId])).rows)).toEqual([]);
+    });
+
+    it('connects, then the worker lists the account, a mapped account is pulled once, and no secret is stored or shown in the clear', async () => {
+      const connected = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET, displayName: 'Tingee BIDV' });
+      expect(connected.status).toBe(200);
+      const connectionId = String(connected.body.connectionId);
+      expect(JSON.stringify(connected.body)).not.toContain(TINGEE_SECRET);
+      const connections = (await feed('connections', owner)).body;
+      expect(connections).toContainEqual(expect.objectContaining({ id: connectionId, provider: 'bank_tingee', displayName: 'Tingee BIDV', status: 'active' }));
+      // The API made the one test call, and nothing else.
+      expect(tingeeCalls).toEqual(['check']);
+
+      expect(await tingeeSync(connectionId)).toMatchObject({ accounts: 1, pages: 0 });
+      expect((await feed('listed', owner, { connectionId })).body.map((a: { externalAccountId: string }) => a.externalAccountId)).toEqual([TINGEE_VA]);
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: TINGEE_VA, bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const first = await tingeeSync(connectionId);
+      expect(first.pages).toBeGreaterThanOrEqual(1);
+      expect(first.stored).toBe(2);
+      const lines = await admin(async (c) =>
+        (await c.query<{ amount: string; reference: string; description: string }>(`SELECT amount::text AS amount, bank_ref AS reference, description FROM crove_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'FT26%' ORDER BY bank_ref`, [orgId])).rows,
+      );
+      expect(lines.map((l) => [l.reference, Number(l.amount)])).toEqual([['FT26000001', 1_500_000], ['FT26000002', -250_000]]);
+      // Pulled again (the last days are read again), nothing is stored twice.
+      expect((await tingeeSync(connectionId)).stored).toBe(0);
+      expect([...new Set(tingeeCalls)].sort()).toEqual(['accounts', 'check', 'pull']);
+
+      // The credential is sealed: no row of the org holds the Secret Token, and no audit row mentions it.
+      expect(
+        await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.credential cr WHERE cr.org_id = $1 AND row_to_json(cr)::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows),
+      ).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
+      expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
+    });
+
+    // #4244: a refused call or page is recorded as a closed kind on the account (or on every mapped account for a refusal of
+    // the credential, the clock or the saved connection), the job still fails as it did, and the next good pull clears it.
+    it('records why a pull stopped, still fails the job, and clears the reason after a good pull', async () => {
+      const connected = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET, displayName: 'Tingee lý do' });
+      const connectionId = String(connected.body.connectionId);
+      await tingeeSync(connectionId);
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: TINGEE_VA, bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const lastPull = async () => (await feed('accounts', owner)).body.find((a: { id: string }) => a.id === mapped.body.feedAccountId)?.lastPull;
+      const failing = (over: Partial<BankFeedProvider>) => runBankFeedSync({ runtime: worker, broker: vault, providers: { bank_tingee: { ...tingeeAdapter, ...over } } }, { orgId, connectionId });
+      const secretText = 'upstream said: 0123456789 secret detail';
+
+      await expect(failing({ pull: async () => { throw new TingeeError('bad_page', secretText, null, 1); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'bad_page', item: 2 });
+      await expect(failing({ pull: async () => { throw new TingeeError('clock', secretText, '98'); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'clock', item: null });
+      await expect(failing({ pull: async () => { throw new Error(secretText); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'upstream' });
+      // A page over the limit is recorded before it reaches the command.
+      const many = Array.from({ length: 5001 }, (_, i) => ({ date: '2026-01-01', description: 'x', amount: '1', balance: null, reference: `R${i}` }));
+      await expect(failing({ pull: async () => ({ transactions: many, cursor: '20260101000000', more: false }) })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'too_many_lines' });
+      // A refusal of the listing concerns every mapped account of the connection.
+      await expect(failing({ accounts: async () => { throw new TingeeError('credentials', secretText, '97'); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'credentials' });
+
+      // Nothing the provider said, and no line, is kept: only the kind, a time and a position.
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_feed_account WHERE org_id = $1 AND row_to_json(bank_feed_account)::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+
+      // The next good pull clears it.
+      await tingeeSync(connectionId);
+      expect(await lastPull()).toMatchObject({ outcome: 'ok', item: null });
+    });
+
+    it('limits how often an org may try a credential, before any call to Tingee', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      const before = tingeeCalls.length;
+      let refused: { status: number; body: any } | null = null;
+      for (let i = 0; i < 12 && refused === null; i++) {
+        const answer = await connect(owner, good);
+        if (answer.status === 429) refused = answer;
+      }
+      expect(refused).toMatchObject({ status: 429, body: { code: 'RATE_LIMITED' } });
+      // Each try that was let through made one call, the refused one none.
+      const calls = tingeeCalls.slice(before);
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls.length).toBeLessThanOrEqual(5);
+      expect(calls.every((c) => c === 'check')).toBe(true);
     });
   });
 });

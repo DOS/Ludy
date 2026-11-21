@@ -13,6 +13,8 @@ export const zTimelineEntry = z.object({
   actorType: z.enum(['user', 'agent', 'system']),
   // The member's or agent's name while they are in the org; null for a former member or the system.
   actorName: z.string().nullable(),
+  // 'mcp' when a connected AI app wrote the row (the actor is then the person who connected it): the screen says so (#4149).
+  actorOrigin: z.enum(['ui', 'mcp']),
 });
 export type TimelineEntry = z.infer<typeof zTimelineEntry>;
 

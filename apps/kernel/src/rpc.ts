@@ -2,8 +2,9 @@
 import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
-import { sandboxBankFeed } from '@crove/bank-feed';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank-feed';
+import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
@@ -11,10 +12,10 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
-import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
+import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -64,17 +65,28 @@ import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
+import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
+import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
+import { einvoiceReasonAi, suggestCorrectionReason } from './einvoice-reason-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
-import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
+import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
+import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
+import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
+import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
+import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
+import { misaCheck } from './misa-check.ts';
+import { explainMisaAmisBlockers, misaAmisBlockerNotesAi } from './finance-misa-amis-blocker-notes-ai.ts';
+import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
+import { misaAmisPreview } from './misa-amis-preview.ts';
+import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -89,6 +101,21 @@ import type { InviteRole, SendInviteMail } from './invite-mail.ts';
 import type { Delivery, DeliveryResult } from './mail.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
 import type { PortalSync } from './portal-sync.ts';
+
+// What a refused Tingee test call says to the owner (#2045): a fixed sentence per kind, never Tingee's own text, the Client ID or the Secret Token.
+function tingeeConnectError(error: unknown): DomainError {
+  if (!(error instanceof TingeeError)) return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  switch (error.kind) {
+    case 'credentials':
+      return new DomainError('BANK_FEED_CREDENTIALS', 422, 'Tingee không chấp nhận Client ID hoặc Secret Token này; hãy kiểm tra lại trong cổng Tingee');
+    case 'clock':
+      return new DomainError('BANK_FEED_CLOCK', 422, 'Giờ của máy chủ lệch quá xa so với Tingee; hãy chỉnh lại giờ máy chủ rồi thử lại');
+    case 'rate_limited':
+      return new DomainError('BANK_FEED_RATE_LIMITED', 429, 'Tingee báo gọi quá nhanh; hãy thử lại sau ít phút');
+    default:
+      return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  }
+}
 
 export interface RpcContext {
   user: AuthUser;
@@ -287,10 +314,20 @@ export interface RpcChannels {
   wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
+  // The real bank feed adapters this deployment offers, by provider id (BANK_FEED_TINGEE, #2045): the connect call tests a credential once through the adapter, then seals it; the worker alone opens it.
+  bankFeedHosted?: Readonly<Record<string, BankFeedProvider>>;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
   einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
   // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the offline sandbox when MARKETPLACE_PROVIDERS names it.
   marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
+  // Whether this deployment holds the integrator's ClientID for MISA AMIS (#3854): only that, never the value.
+  misaAmis?: boolean;
+  // Whether it holds the ClientID for MISA ASP too (#4111, S2 of #4103): each product is on only with its own.
+  misaAsp?: boolean;
+  // The push of vouchers to MISA AMIS is switched on too (MISA_AMIS_PUSH=on, after the sandbox check, #3902). Off: the confirm route answers 404 and the screen draws no button.
+  misaAmisPush?: boolean;
+  // The push to MISA ASP is switched on too (MISA_ASP_PUSH=on, #4113): its own switch, so AMIS's push and ASP's are on or off apart.
+  misaAspPush?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
@@ -317,6 +354,8 @@ export interface RpcChannels {
   connectors?: Readonly<Partial<Record<string, OAuthConnector>>>;
   // Outside calendars members connect (#2123) through an OAuth dialog this deployment configured, by OAuth provider id.
   calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
+  // The meeting platforms this deployment has an adapter for (Zoom: C3, only with its own OAuth app), by provider; one with a connect dialog is offered to members.
+  meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
   // The web app's address (kernel.ts hands over APP_URL, else PUBLIC_URL, #2261): the provider sends the browser back to
   // <it>/channels/oauth/:provider/callback, a page of the app that posts the code to the API. Named publicUrl for history.
   publicUrl?: string;
@@ -330,6 +369,20 @@ export interface RpcChannels {
   // Browser push for Social notifications (#1238, VAPID_*): the public key browsers subscribe with; unset: no push is
   // offered. Rides here for the same reason.
   push?: { publicKey: string };
+}
+
+// A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
+function meetingPlatformConnectFailure(error: unknown): DomainError {
+  // A Microsoft tenant whose administrator must allow the app first (Teams, C4): said plainly, and the code is used up, so nothing is retried.
+  if (error instanceof MeetingPlatformConsentError) {
+    return new DomainError('OAUTH_MEETINGS_ADMIN_CONSENT_REQUIRED', 422, 'Tổ chức Microsoft của bạn yêu cầu quản trị viên cho phép ứng dụng này trước. Hãy nhờ quản trị viên Microsoft 365 cho phép Ludy, rồi kết nối lại.');
+  }
+  if (error instanceof MeetingPlatformError && error.code === 'platform_refused') {
+    console.warn(`[meeting-platform] connect refused: ${error.message}`);
+    return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn) hoặc không cho đọc địa chỉ tài khoản, hãy kết nối lại và chấp nhận mọi quyền');
+  }
+  console.error('[meeting-platform] connect failed', error instanceof MeetingPlatformError ? error.code : error instanceof Error ? error.name : typeof error);
+  return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
 }
 
 // A provider's refusal or failure during the code exchange, as the answer the user sees. Never the provider's own
@@ -388,6 +441,10 @@ export function createRpcHandler(
   signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Connecting a Tingee account makes one signed read call from this server's address, and Tingee allows 20 calls in 10 seconds per address (#2045): an org may try a few times a minute, and the whole
+  // deployment a few more, so a loop of made-up credentials cannot use up the budget the workers' syncs share.
+  const tingeeConnectsPerOrg = new RateLimiter({ perMinute: 5 });
+  const tingeeConnectsAll = new RateLimiter({ perMinute: 30, maxKeys: 1 });
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
@@ -402,6 +459,12 @@ export function createRpcHandler(
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const meetingBriefs = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // The weekly digest (#3949) is one call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingDigests = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Naming who an action item belongs to (#3921) is one short call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
+  // Checking a meeting's agenda against its transcript (#3959) reads a whole transcript: its own budget, a few a minute, so it never makes a summary or a question wait.
+  const meetingAdherence = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
@@ -418,12 +481,25 @@ export function createRpcHandler(
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
-  // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
+  // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
+  const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's first mapping for the columns of an unrecognised order report (#4036): told the masked sheet the worker recorded (header texts and the shapes of a few values) and nothing else; a budget of its own.
+  const financeMarketplaceColumnsAi = marketplaceColumnsAi(conversationReader?.marketplaceColumns ? { marketplaceColumns: conversationReader.marketplaceColumns.bind(conversationReader) } : null, suggestionBudget());
+  const financeBankCandidatesLineAi = bankCandidatesLineAi(conversationReader?.bankCandidatesLineSentence ? { bankCandidatesLineSentence: conversationReader.bankCandidatesLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
+  const financeMisaAmisBlockerNotesAi = misaAmisBlockerNotesAi(conversationReader?.misaAmisBlockerNotes ? { misaAmisBlockerNotes: conversationReader.misaAmisBlockerNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
+  const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
       ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
       : null,
-    budget: suggestionBudget(),
+    budget: payrollPrepareBudget,
+    prepareBudget: payrollPrepareBudget,
+    flagBudget: suggestionBudget(),
+    explainBudget: suggestionBudget(),
   };
   const laborCheckAi: LaborCheckAi = {
     reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
@@ -452,6 +528,18 @@ export function createRpcHandler(
   // The finance coworker on a sales e-invoice draft (#2505): lines, the VAT rate the text states and the buyer, from a text a person typed. The same reader and model, a budget of its own. It is
   // told the text and the names of the customers that fit it, never an address, tax code, credential or provider data, and what it answers only fills the form as proposals.
   const einvoiceCoworker = einvoiceAi(conversationReader?.einvoiceDraft ? { einvoiceDraft: conversationReader.einvoiceDraft.bind(conversationReader) } : null, suggestionBudget());
+
+  // The accounting coworker's explanation of the VAT rate a correcting e-invoice proposes (#3709): the same reader and model, a budget of its own. Code decides the rate and the basis (the finance
+  // query); the model is told the nature, two dates and the rates only, and what it writes only explains. With AI off the screen shows the code's own reason.
+  const einvoiceRateCoworker = einvoiceRateAi(conversationReader?.einvoiceRateExplanation ? { einvoiceRateExplanation: conversationReader.einvoiceRateExplanation.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the same reader and model, a budget of its own. It is told the list of codes, the buyer's kind, the
+  // original's lines without a price and the person's note (never stored or logged); the code it answers is picked from the list by number and checked in code, and a person confirms it.
+  const einvoiceReasonCoworker = einvoiceReasonAi(conversationReader?.einvoiceReasonSuggestion ? { einvoiceReasonSuggestion: conversationReader.einvoiceReasonSuggestion.bind(conversationReader) } : null, suggestionBudget());
+
+  // The accounting coworker's explanation of the surplus of a confirmed count of stock (#3712 slice 2b): the same reader and model, a budget of its own. Code reads the items, the total, the supplier hint and
+  // the manual-entry flag (the finance query); the model is told the date, the items, the total and a supplier's name only, and what it writes only explains. A person chooses the account. With AI off the
+  // screen shows its own template.
+  const stockSurplusCoworker = stockSurplusAi(conversationReader?.stockSurplusNote ? { stockSurplusNote: conversationReader.stockSurplusNote.bind(conversationReader) } : null, suggestionBudget());
 
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
@@ -513,6 +601,18 @@ export function createRpcHandler(
     if (!finance) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun tài chính chưa được bật' });
     return inOrg(context, fn);
   };
+  // The catalogue check and the name proposals it makes belong to a MISA connection of one product (#4152, #4124): the connector of THAT product must be on in this deployment, or the answer is the same 404 as for a
+  // deployment without the connector. The connection is looked up here for its product; an id the org does not hold needs either product on, and the command then answers its own not found. Ids are compared without case.
+  const requireMisaConnectorOf = async (actor: UserActor, orgId: string, connectionId: string) => {
+    const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+    const wanted = connectionId.toLowerCase();
+    const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+    if (!channels || !(product === 'asp' ? channels.misaAsp : product === 'amis' ? channels.misaAmis : channels.misaAmis || channels.misaAsp)) {
+      throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+    }
+  };
+  // Whether the seller authorizes this marketplace adapter on the platform's page (it then has an App Key beside its sealed secret).
+  const isMarketplaceAuthorized = (id: string): boolean => (MARKETPLACE_AUTHORIZED_ADAPTERS as readonly string[]).includes(id);
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
@@ -605,8 +705,9 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
   const payrollReads = (orgId: string, actor: UserActor): PayrollReads => ({
+    authorize: () => runtime.query('hr.payroll.coworker.access', {}, { actor, orgId }),
     sheet: (runId) => runtime.query<HrRunSheet>('hr.payroll.run.sheet', { runId }, { actor, orgId }),
-    runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
+    runs: (legalEntityId) => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120, legalEntityId }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
   });
   const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
@@ -688,6 +789,13 @@ export function createRpcHandler(
         return { command: 'ads.launches.unblock', input: {} };
       case 'campaign_launch':
         return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
+      // What can start or raise spend on a running ad (#3835, W4): each asks through its own preparer, and the approval runs the command.
+      case 'object_resume':
+        return { command: 'ads.object.resume', input: { launchId: change.launchId, slot: change.slot } };
+      case 'budget_raise':
+        return { command: 'ads.budget.raise', input: { launchId: change.launchId, dailyBudget: change.dailyBudget } };
+      case 'schedule_extend':
+        return { command: 'ads.schedule.extend', input: { launchId: change.launchId, endOn: change.endOn } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -724,6 +832,17 @@ export function createRpcHandler(
     if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được lịch');
     const adapter = channels?.calendars?.[provider];
     if (!channels || !adapter) throw new DomainError('CALENDAR_PROVIDER_DISABLED', 404, 'Loại lịch này chưa được cấu hình trên máy chủ');
+    // Checked before an attempt is written or used up: without a key the tokens could never be sealed.
+    if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { orgId, actor: actorOf(context.user), adapter, broker: channels.broker };
+  };
+  const meetingPlatformRedirectUri = (platform: string) => `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/meetings/oauth/${platform}/callback`;
+  // The adapter of a meeting platform this deployment configured and that has a connect dialog, for a member who edits (a viewer connects nothing). The commands check the role again.
+  const meetingPlatformConnector = async (context: RpcContext, platform: string) => {
+    const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+    if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+    const adapter = channels?.meetingPlatforms?.[platform];
+    if (!channels || !hasOAuth(adapter)) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Nền tảng họp này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed.
     if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
     return { orgId, actor: actorOf(context.user), adapter, broker: channels.broker };
@@ -1070,6 +1189,7 @@ export function createRpcHandler(
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
       get: os.notes.get.handler(notesQuery('notes.note.get')),
+      backlinks: os.notes.backlinks.handler(notesQuery('notes.note.backlinks')),
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
@@ -1078,6 +1198,8 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
+      versions: os.notes.versions.handler(notesQuery('notes.note.versions')),
+      restoreVersion: os.notes.restoreVersion.handler(notesCommand('notes.note.restore_version')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),
       unpin: os.notes.unpin.handler(notesCommand('notes.note.unpin')),
@@ -1086,6 +1208,16 @@ export function createRpcHandler(
       delete: os.notes.delete.handler(notesCommand('notes.note.delete')),
       linkAdd: os.notes.linkAdd.handler(notesCommand('notes.link.add')),
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
+      attachments: {
+        list: os.notes.attachments.list.handler(notesQuery('notes.attachment.list')),
+        delete: os.notes.attachments.delete.handler(notesCommand('notes.attachment.delete')),
+      },
+      notebooks: {
+        list: os.notes.notebooks.list.handler(notesQuery('notes.notebook.list')),
+        create: os.notes.notebooks.create.handler(notesCommand('notes.notebook.create')),
+        update: os.notes.notebooks.update.handler(notesCommand('notes.notebook.update')),
+        delete: os.notes.notebooks.delete.handler(notesCommand('notes.notebook.delete')),
+      },
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
       vyStatus: os.notes.vyStatus.handler(({ context }) =>
@@ -1105,6 +1237,12 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
       ),
       acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
+      templates: {
+        list: os.notes.templates.list.handler(notesQuery('notes.template.list')),
+        create: os.notes.templates.create.handler(notesCommand('notes.template.create')),
+        update: os.notes.templates.update.handler(notesCommand('notes.template.update')),
+        delete: os.notes.templates.delete.handler(notesCommand('notes.template.delete')),
+      },
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
@@ -1142,6 +1280,7 @@ export function createRpcHandler(
       importStart: os.meetings.importStart.handler(meetingsCommand('meetings.import.start')),
       importDiscardEmpty: os.meetings.importDiscardEmpty.handler(meetingsCommand('meetings.import.discard_empty')),
       setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
+      rename: os.meetings.rename.handler(meetingsCommand('meetings.meeting.rename')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
@@ -1195,6 +1334,12 @@ export function createRpcHandler(
         create: os.meetings.template.create.handler(meetingsCommand('meetings.template.create')),
         update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
         archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
+      },
+      glossary: {
+        list: os.meetings.glossary.list.handler(meetingsQuery('meetings.glossary.list')),
+        add: os.meetings.glossary.add.handler(meetingsCommand('meetings.glossary.add')),
+        update: os.meetings.glossary.update.handler(meetingsCommand('meetings.glossary.update')),
+        remove: os.meetings.glossary.remove.handler(meetingsCommand('meetings.glossary.remove')),
       },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
@@ -1267,6 +1412,14 @@ export function createRpcHandler(
         // The recorder's rough notes and Vy's expansion of them (A5, #3163): the same run family, budget and checks as the summary; see member-vy-ports.ts.
         notesGet: os.meetings.results.notesGet.handler(meetingsQuery('meetings.notes.get')),
         notesSave: os.meetings.results.notesSave.handler(meetingsCommand('meetings.notes.save')),
+        // The table of contents of a meeting (#3844).
+        chaptersGet: os.meetings.results.chaptersGet.handler(meetingsQuery('meetings.chapters.get')),
+        chaptersSave: os.meetings.results.chaptersSave.handler(meetingsCommand('meetings.chapters.save')),
+        chaptersStatus: os.meetings.results.chaptersStatus.handler(meetingsQuery('meetings.chapters.status')),
+        chaptersCopy: os.meetings.results.chaptersCopy.handler(meetingsCommand('meetings.chapters.copy_result')),
+        chaptersRun: os.meetings.results.chaptersRun.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingChapters({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
         enhance: os.meetings.results.enhance.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
@@ -1278,18 +1431,18 @@ export function createRpcHandler(
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
         status: os.meetings.translation.status.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         translate: os.meetings.translation.translate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
         // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
         transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
         transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
@@ -1309,6 +1462,57 @@ export function createRpcHandler(
         status: os.meetings.brief.status.handler(({ context }) => inMeetings(context, (orgId, actor) => briefStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
         write: os.meetings.brief.write.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingBrief({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // The recorder's Vy suggesting a title from the transcript (#3947): `status` feeds the button, `suggest` runs the recorder's own Vy once and returns up to three checked candidates to the browser; nothing
+      // is stored. The pick is `rename`. See member-vy-ports.ts.
+      title: {
+        status: os.meetings.title.status.handler(meetingsQuery('meetings.title.status')),
+        suggest: os.meetings.title.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingTitle({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
+      // published or made a task. See member-vy-ports.ts.
+      commitments: {
+        status: os.meetings.commitments.status.handler(meetingsQuery('meetings.commitments.status')),
+        list: os.meetings.commitments.list.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingCommitments({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // This week's decisions and what is still open, across the meetings the member reads (#3949): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from
+      // them, each citing facts, and a sentence whose figure no cited fact writes is refused; nothing is stored or sent. See member-vy-ports.ts.
+      digest: {
+        facts: os.meetings.digest.facts.handler(meetingsQuery('meetings.digest.facts')),
+        status: os.meetings.digest.status.handler(({ context }) => inMeetings(context, (orgId, actor) => digestStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        recap: os.meetings.digest.recap.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingDigest({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingDigests, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): the click has the member's own Vy pick one of the people the member may give the work to from the said name, or nobody; the model
+      // sees names only and nothing is stored. See member-vy-ports.ts.
+      assignee: {
+        status: os.meetings.assignee.status.handler(({ context }) => inMeetings(context, (orgId, actor) => assigneeStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        suggest: os.meetings.assignee.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
+      today: {
+        facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
+      },
+      // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting; see modules/meetings/src/morning.ts.
+      morning: {
+        get: os.meetings.morning.get.handler(meetingsQuery('meetings.morning.get')),
+        set: os.meetings.morning.set.handler(meetingsCommand('meetings.morning.set')),
+      },
+      // Agenda adherence (#3959): `agenda` is the open-item list the recorder sees before clicking (no model), `status` the button, `check` the click that has the recorder's own Vy compare the agenda with the transcript
+      // and answer, per agenda line, covered with the transcript lines it cites, or not heard. Nothing is stored; see member-vy-ports.ts.
+      adherence: {
+        agenda: os.meetings.adherence.agenda.handler(meetingsQuery('meetings.adherence.agenda')),
+        status: os.meetings.adherence.status.handler(({ context, input }) => inMeetings(context, (orgId, actor) => adherenceStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), price: aiPrice }, orgId, actor, input.meetingId))),
+        check: os.meetings.adherence.check.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAdherence({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAdherence, price: aiPrice }, orgId, actor, input)),
         ),
       },
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
@@ -2577,6 +2781,58 @@ export function createRpcHandler(
           );
         }),
       ),
+      // The platforms a member may connect through the platform's own dialog (Zoom, C3): only those with an adapter that has one and a credential key, so the screen shows no button the server could not finish.
+      providers: os.meetingPlatform.providers.handler(({ context }) =>
+        guard(async () => {
+          await resolveMembership(runtime, context.user, context.orgSlug);
+          if (!channels || channels.broker.id === 'none') return [];
+          return MEETING_PLATFORM_CONNECT_PROVIDERS.filter((p) => hasOAuth(channels.meetingPlatforms?.[p]));
+        }),
+      ),
+      // The state and the PKCE verifier are made here; only the state's hash and the verifier reach the database. Nothing is fetched and no token exists yet.
+      connectStart: os.meetingPlatform.connectStart.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter } = await meetingPlatformConnector(context, input.provider);
+          const attempt = newOAuthAttempt(adapter.pkce);
+          const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+            'kernel.meeting_platform.oauth_begin',
+            { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
+            { actor, orgId },
+          );
+          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: meetingPlatformRedirectUri(input.provider), codeChallenge: attempt.codeChallenge });
+          return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
+        }),
+      ),
+      // The attempt is consumed before the code is exchanged, so a code and state work once even if the exchange fails. The tokens the platform returns are sealed here and dropped: only the envelope
+      // reaches the command, and no query ever returns one.
+      connectFinish: os.meetingPlatform.connectFinish.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter, broker } = await meetingPlatformConnector(context, input.provider);
+          const { codeVerifier } = await runtime.execute<{ codeVerifier: string | null }>(
+            'kernel.meeting_platform.oauth_consume',
+            { provider: input.provider, stateHash: oauthStateHash(input.state) },
+            { actor, orgId },
+          );
+          if (adapter.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
+          const account = await adapter.exchange({ code: input.code, redirectUri: meetingPlatformRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+            throw meetingPlatformConnectFailure(error);
+          });
+          const sealed = broker.seal(account.secret, meetingPlatformBinding(orgId, adapter.provider, account.externalAccount));
+          const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.meeting_platform.connect',
+            {
+              provider: adapter.provider,
+              externalAccount: account.externalAccount,
+              displayName: account.displayName,
+              scopes: account.scopes,
+              expiresAt: account.expiresAt?.toISOString() ?? null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor, orgId },
+          );
+          return { ...done, displayName: account.displayName };
+        }),
+      ),
     },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {
@@ -2828,6 +3084,9 @@ export function createRpcHandler(
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
+      // Engage's wake rules (#3862): the org's N, read by every member and set by owners and admins in Settings.
+      wakeRules: os.conversations.wakeRules.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.wake_rules', {}, { actor, orgId }))),
+      setWakeRules: os.conversations.setWakeRules.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.wake_rules_set', input, { actor, orgId }))),
       eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
       channelCounts: os.conversations.channelCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.channel_counts', input, { actor, orgId }))),
       eraseChannel: os.conversations.eraseChannel.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_channel', input)),
@@ -2897,6 +3156,56 @@ export function createRpcHandler(
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
       ),
+      // What would be sent to MISA AMIS Kế toán (#3901): a read over the same vouchers as the MISA SME export, in the caller's own context. It sends nothing and calls no one.
+      misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
+      // F4 (security review of #4013): with the push switched off the command is not reached at all, so a confirmation made while it is off can never be sent within its seven days once it is turned on.
+      // The switch is read before anything else (membership included): with it off the answer is the same 404 for everyone.
+      misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
+        // `guard` turns the DomainError into its own status (404), as inside inFinance, but nothing of the org is read before the switch is.
+        guard(async () => {
+          const disabled = () => new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA chưa được bật trên hệ thống này');
+          const amisOn = channels?.misaAmis === true && channels.misaAmisPush === true;
+          const aspOn = channels?.misaAsp === true && channels.misaAspPush === true;
+          // With both switches off nothing is read at all (F4): the same 404 for everyone.
+          if (!amisOn && !aspOn) throw disabled();
+          return inFinance(context, async (orgId, actor) => {
+            // Where only one product's push is on, a connection of the other product answers the same 404 as a deployment with that push off (the product is the connection's own, read in the caller's context).
+            if (!amisOn || !aspOn) {
+              const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+              // `zId` accepts a capital letter in a UUID, the database answers lower case: compare without the case, or a connection of the off product would pass the gate.
+              const wanted = input.connectionId.toLowerCase();
+              const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+              if (product !== undefined && !(product === 'asp' ? aspOn : amisOn)) throw disabled();
+            }
+            return runtime.execute('finance.misa_amis.push', input, { actor, orgId });
+          });
+        }),
+      ),
+      // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
+      misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const preview = await misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          // The wording follows the product of the connection of the entity the ask names (MISA ASP's catalogue cannot be changed from Ludy, so the fix reads differently, #4114); an ask that names none reads as AMIS.
+          const connections = ask.legalEntityId === undefined ? [] : await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+          const product = connections.find((c) => c.legalEntityId.toLowerCase() === ask.legalEntityId?.toLowerCase())?.product ?? 'amis';
+          return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi', product);
+        }),
+      ),
+      // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
+      misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
+      // The check is run again here, so what the model is told comes from the books, never from the caller; the sentence is a read and changes no voucher.
+      misaCheckLine: os.vouchers.misaCheckLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const check = await misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          return explainMisaCheckLine(financeMisaCheckLineAi, orgId, actor.userId, check, lang ?? 'vi');
+        }),
+      ),
     },
     openingBalance: {
       preview: os.openingBalance.preview.handler(({ context, input }) =>
@@ -2958,6 +3267,14 @@ export function createRpcHandler(
       erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
     },
     supplierPayment: {
+      payable: os.supplierPayment.payable.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.payable', input, { actor, orgId }))),
+      // The facts are summed here from the list read in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and asks for nothing.
+      payableLine: os.supplierPayment.payableLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const list = await runtime.query<SupplierPayableList>('finance.supplier_payment.payable', {}, { actor, orgId });
+          return explainSupplierPayableLine(financeSupplierPayableLineAi, orgId, actor.userId, list, input.lang ?? 'vi');
+        }),
+      ),
       list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
       confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
       cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
@@ -2997,6 +3314,8 @@ export function createRpcHandler(
       s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
       s2b: os.household.s2b.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2b', input, { actor, orgId }))),
       s2c: os.household.s2c.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2c', input, { actor, orgId }))),
+      s2d: os.household.s2d.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2d', input, { actor, orgId }))),
+      s2e: os.household.s2e.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2e', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
@@ -3105,6 +3424,20 @@ export function createRpcHandler(
         orderLines: os.einvoice.drafts.orderLines.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.order_lines', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         startCorrection: os.einvoice.drafts.startCorrection.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.start_correction', input, { actor, orgId }))),
+        // The VAT rate a correction proposes for the nature picked (#3709): the code's proposal read in the member's own transaction, then the coworker's explanation outside any transaction.
+        correctionRate: os.einvoice.drafts.correctionRate.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const proposal = await runtime.query<EInvoiceCorrectionRate>('finance.einvoice.correction_rate', input, { actor, orgId });
+            return explainCorrectionRate(einvoiceRateCoworker, orgId, actor.userId, proposal);
+          }),
+        ),
+        // The coworker's proposal of the reason code (#3690): the source is read in the member's own transaction, the model is asked outside any transaction; the note typed is not stored.
+        suggestReason: os.einvoice.drafts.suggestReason.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<EInvoiceReasonSource>('finance.einvoice.reason_source', { originalDraftId: input.originalDraftId }, { actor, orgId });
+            return suggestCorrectionReason(einvoiceReasonCoworker, orgId, actor.userId, source, input);
+          }),
+        ),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
         noticeOpen: os.einvoice.drafts.noticeOpen.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_open', input, { actor, orgId }))),
         noticeStep: os.einvoice.drafts.noticeStep.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_step', input, { actor, orgId }))),
@@ -3170,9 +3503,16 @@ export function createRpcHandler(
                 legalEntityId: target.legalEntityId,
                 displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
                 credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+                // The App Key is a public identifier, stored in the clear beside the sealed secret it belongs to (the same handler makes both, so they never disagree).
+                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields.appKey } : {}),
               },
               { actor, orgId },
             );
+            // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
+            // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
+            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+              await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
+            }
             return { id: connected.id };
           }),
         ),
@@ -3184,9 +3524,12 @@ export function createRpcHandler(
             if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
             const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
             if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
-            // The API never opens a credential: a provider reached over the network is tested by the worker (a later build, with its adapter). The offline provider reaches no host and needs
-            // no credential, so its test runs here.
-            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            // The API never opens a credential: a provider reached over the network is tested by the worker, which records the state (the card shows it on its next read). The offline provider reaches
+            // no host and needs no credential, so its test runs here.
+            if (provider.hosts.length > 0) {
+              await runtime.execute('finance.marketplace_connection.request_test', { id: row.id }, { actor, orgId });
+              return { queued: true as const };
+            }
             let state: MarketplaceTestResult;
             try {
               state = await provider.testConnection(SANDBOX_MARKETPLACE_SECRET);
@@ -3202,9 +3545,59 @@ export function createRpcHandler(
             const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // "Disconnect and discard what is waiting" (#4240 S3b): the reports of this connection still staged in the Inbox are rejected first, each by the existing member decision (nothing is posted; their
+            // originals follow the retention that already exists). It runs BEFORE the credential goes: a refusal (too many to do at once) or a failure leaves the connection live. Each report is its own
+            // decision, so the ones already discarded stay discarded when a later one fails (a second disconnect finds only what is left). A report that was decided meanwhile is skipped.
+            let discarded = 0;
+            const discardWaiting = async () => {
+              const { fileIds } = await runtime.query<{ fileIds: string[] }>('finance.marketplace_connection.staged', { id: row.id }, { actor, orgId });
+              for (const fileId of fileIds) {
+                try {
+                  await runtime.execute('finance.marketplace.reject', { fileId }, { actor, orgId });
+                  discarded += 1;
+                } catch (error) {
+                  if (!(error instanceof DomainError && error.code === 'MARKETPLACE_NOT_STAGED')) throw error;
+                }
+              }
+            };
+            if (input.deleteStaged) await discardWaiting();
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
-            return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            // A poll that was mid-ingest when the list was read may have staged one more: the channel is revoked now, so no new poll starts, and what is left is discarded before the row goes.
+            if (input.deleteStaged) await discardWaiting();
+            const unlinked = await runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            return input.deleteStaged ? { ...unlinked, discarded } : unlinked;
+          }),
+        ),
+        // The seller's authorization on the platform's own page (#4238). The API makes the state (random; only its hash is stored, with the member and the connection) and builds the address from the App Key kept in
+        // the clear; it opens no credential. The return is checked by the finance command (single use, this member, this org, 10 minutes) and the code is sealed here and traded by the worker alone.
+        authorizeStart: os.marketplace.connections.authorizeStart.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            if (!provider.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // Without the public address the return address would be a relative one that the platform refuses.
+            if (!channels?.publicUrl) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const attempt = newOAuthAttempt(false);
+            const begun = await runtime.execute<{ appKey: string; expiresAt: string }>('finance.marketplace_connection.authorize_begin', { id: row.id, stateHash: attempt.stateHash }, { actor, orgId });
+            const redirectUri = `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/marketplace/oauth/${row.provider.slice('marketplace_'.length)}/callback`;
+            return { authorizeUrl: provider.authorizeUrl({ appKey: begun.appKey, redirectUri, state: attempt.state }), expiresAt: begun.expiresAt };
+          }),
+        ),
+        authorizeFinish: os.marketplace.connections.authorizeFinish.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            if (!channels) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const stateHash = oauthStateHash(input.state);
+            const found = await runtime.query<{ id: string; provider: string; externalAccountId: string }>('finance.marketplace_connection.authorize_lookup', { stateHash }, { actor, orgId });
+            if (!marketplaceProviderOf(found.provider.slice('marketplace_'.length))?.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // The code is sealed under a binding of its own and never opened here; the worker opens it.
+            const sealed = channels.broker.seal(input.code, { orgId, provider: found.provider, externalAccountId: found.externalAccountId });
+            return runtime.execute<{ id: string }>('finance.marketplace_connection.authorize_finish', { stateHash, codeKeyId: sealed.keyId, codeEnvelope: sealed.envelope.toString('base64') }, { actor, orgId });
           }),
         ),
         pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
@@ -3234,6 +3627,38 @@ export function createRpcHandler(
           return explainMarketplaceLine(financeMarketplaceLineAi, orgId, actor.userId, facts, lang ?? 'vi');
         }),
       ),
+      // The balance is loaded again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the notes are a read and post nothing.
+      feeNotes: os.marketplace.feeNotes.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, legalEntityId } = input;
+          const balance = await runtime.query<MarketplaceBalance>('finance.marketplace.balance', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
+          return explainMarketplaceFees(financeMarketplaceFeeNoteAi, orgId, actor.userId, balance, MARKETPLACE_FEE_CYCLE_DAYS, lang ?? 'vi');
+        }),
+      ),
+      // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read by the worker through the extract sandbox, which the API cannot reach: a check is a request row and a job.
+      columnsCheck: os.marketplace.columnsCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_check', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsFiles: os.marketplace.columnsFiles.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_files', {}, { actor, orgId }))),
+      columns: os.marketplace.columns.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns', input, { actor, orgId }))),
+      // Ly's first mapping, from the masked sheet the worker recorded (read again here in the caller's own context, so the model is told what the file shows, never what the caller says); a read that stores nothing.
+      columnsProposal: os.marketplace.columnsProposal.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const status = await runtime.query<MarketplaceColumnsStatus>('finance.marketplace.columns', { fileId: input.fileId }, { actor, orgId });
+          return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
+        }),
+      ),
+      // Saves the mapping of a passed check (#4037): the command re-reads the file's check in its own transaction and refuses anything that is not the same file, platform and mapping the person saw checked.
+      columnsConfirm: os.marketplace.columnsConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsProfile: os.marketplace.columnsProfile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_profile', input, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -3253,6 +3678,14 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // The coworker's proposal of the item of unassigned lines (#2686): the source (product name and SKU text, the entity's items) is read in the member's own transaction, the model is asked outside any
+      // transaction through the same stock coworker, budget and cache. Nothing is written; the person assigns.
+      suggest: os.marketplace.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<MarketplaceSuggestSource>('finance.marketplace.suggest_source', input, { actor, orgId });
+          return suggestMarketplaceItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
         }),
       ),
       unassign: os.marketplace.unassign.handler(({ context, input }) =>
@@ -3275,6 +3708,116 @@ export function createRpcHandler(
           return runtime.execute('finance.marketplace_income.reject', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+    },
+    // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). The access code the customer made in AMIS is sealed here, once; the command gets the envelope, never the code, and only a
+    // worker may open it. The connector is on only when this deployment holds the integrator's ClientID: without it no connect is possible and the card says the connector is off.
+    misaAmis: {
+      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true, pushOffered: channels?.misaAmis === true && channels?.misaAmisPush === true, aspOffered: channels?.misaAsp === true, aspPushOffered: channels?.misaAsp === true && channels?.misaAspPush === true }))),
+      connections: {
+        list: os.misaAmis.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis_connection.list', {}, { actor, orgId }))),
+        connect: os.misaAmis.connections.connect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được MISA AMIS');
+            // Each product is on only with its own ClientID (#4111): a deployment that holds AMIS's offers no ASP connection, and the other way round.
+            if (!channels || !(input.product === 'asp' ? channels.misaAsp : channels.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, input.product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            const target = await runtime.query<{ legalEntityId: string }>('finance.misa_amis_connection.target', { legalEntityId: input.legalEntityId }, { actor, orgId });
+            // The account is the entity's, so a second connect of it is the same connection. The access code is not in the display name or the account id: the channel row stays as history after a disconnect.
+            const sealed = channels.broker.seal(input.accessCode, { orgId, provider: misaChannelProvider(input.product), externalAccountId: target.legalEntityId });
+            const connected = await runtime.execute<{ id: string }>(
+              'finance.misa_amis_connection.connect',
+              { legalEntityId: target.legalEntityId, product: input.product, displayName: input.product === 'asp' ? 'MISA ASP' : 'MISA AMIS Kế toán', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+              { actor, orgId },
+            );
+            return { id: connected.id };
+          }),
+        ),
+        disconnect: os.misaAmis.connections.disconnect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới ngắt được kết nối MISA AMIS');
+            const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) return { removed: false };
+            // Vouchers still awaiting MISA's answer refuse the disconnect before anything is revoked: the access code stays, so their results can still be read.
+            await runtime.query('finance.misa_amis_connection.can_disconnect', { id: row.id }, { actor, orgId });
+            // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live access code with no row.
+            await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
+            return runtime.execute<{ removed: boolean }>('finance.misa_amis_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+        // The test is the worker's (S2b, #3885): the command queues it and the worker opens the access code and asks AMIS. The answer here is only "queued"; the list shows the state when it lands.
+        test: os.misaAmis.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối MISA AMIS');
+            // The product of the connection decides which ClientID must be held; a connection that is not found falls through to the command's own 404.
+            const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+            const wanted = input.id.toLowerCase();
+            const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+            if (product !== undefined && !(product === 'asp' ? channels?.misaAsp : channels?.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
+          }),
+        ),
+        // The MISA name of a unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, or cleared; the next check validates it. Owner or admin; nothing is sent by it.
+        setUnitAlias: os.misaAmis.connections.setUnitAlias.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được tên đơn vị tính của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_unit_alias', input, { actor, orgId });
+          }),
+        ),
+        // The default item of a connection for service lines or sales lines (S3b, #4124): kept as typed, or cleared; the next check validates it against the catalogue. Owner or admin; no switch gates it (nothing is sent).
+        setDefaultItem: os.misaAmis.connections.setDefaultItem.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được mặt hàng mặc định của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_default_item', input, { actor, orgId });
+          }),
+        ),
+      },
+      // The check of a connection's vouchers against the firm's own catalogue is the worker's too (S3a, #4112): the command files the request and queues the job; the preview shows the result when it lands.
+      matches: {
+        check: os.misaAmis.matches.check.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA');
+            // The check job reads the catalogue with the client of the connection's product and opens only an access code sealed for that product (misa-amis-match-job.ts, #4152): the check is never queued to fail.
+            await requireMisaConnectorOf(actor, orgId, input.id);
+            return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
+          }),
+        ),
+        // The name proposals of the last check and a person's decision on one (S3b, #4124). Owner or admin; nothing is gated by the push switch (nothing is sent by a decision), only by the connector of the connection's product being there.
+        proposals: os.misaAmis.matches.proposals.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.query('finance.misa_amis_match.proposals', input, { actor, orgId });
+          }),
+        ),
+        units: os.misaAmis.matches.units.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đơn vị tính chưa khớp');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.query('finance.misa_amis_match.units', input, { actor, orgId });
+          }),
+        ),
+        confirmName: os.misaAmis.matches.confirmName.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xác nhận được đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.confirm_name', input, { actor, orgId });
+          }),
+        ),
+        rejectName: os.misaAmis.matches.rejectName.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới từ chối được đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.reject_name', input, { actor, orgId });
+          }),
+        ),
+      },
+      // The vouchers pushed through a connection (#3902, S3b-2): every role reads the rows; an owner or admin settles one MISA never answered for. Neither is gated by the push switch: rows pushed earlier stay readable
+      // and settleable while it is off (nothing is sent by either).
+      pushes: {
+        list: os.misaAmis.pushes.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis.push_list', input, { actor, orgId }))),
+        // An `ambiguous` row settled "in AMIS" while the push is off becomes `sent` and waits: the worker that reads its result is not running, so the row is settled again after the 24 hours (an edge: ambiguous rows exist only where the push was on).
+        resolve: os.misaAmis.pushes.resolve.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push_resolve', input, { actor, orgId }))),
+      },
     },
     stock: {
       items: {
@@ -3307,6 +3850,7 @@ export function createRpcHandler(
       report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
+      closeCheck: os.stock.closeCheck.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.close_check', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
       // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
       suggest: os.stock.suggest.handler(({ context, input }) =>
@@ -3324,6 +3868,13 @@ export function createRpcHandler(
       ),
       counts: {
         list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
+        // Where the surplus of a confirmed count stands (#3712 slice 2b): the books' facts read in the member's own transaction, then the coworker's words outside any transaction.
+        surplusNote: os.stock.counts.surplusNote.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<StockSurplusSource>('finance.stock_count.surplus_source', { countId: input.countId }, { actor, orgId });
+            return explainSurplus(stockSurplusCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
+          }),
+        ),
         preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),
         create: os.stock.counts.create.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.create', input, { actor, orgId }))),
         cancel: os.stock.counts.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.cancel', input, { actor, orgId }))),
@@ -3505,6 +4056,14 @@ export function createRpcHandler(
           return explainPayrollMatch(financePayrollMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
         }),
       ),
+      // The line and its candidates are read again here in the caller's own transaction, so the facts the model is told come from the matcher and the books, never from the caller; the sentence is a read and picks nothing.
+      candidatesLine: os.bank.candidatesLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, bankLineId } = input;
+          const read = await runtime.query<BankLineVoucher>('finance.bank.line_voucher', { bankLineId }, { actor, orgId });
+          return explainBankCandidatesLine(financeBankCandidatesLineAi, orgId, actor.userId, read, lang ?? 'vi');
+        }),
+      ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
       ),
@@ -3543,6 +4102,42 @@ export function createRpcHandler(
           return { connectionId };
         }),
       ),
+      connectTingee: os.bankFeeds.connectTingee.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nguồn giao dịch ngân hàng');
+          const hosted = channels?.bankFeedHosted;
+          if (!channels || !hosted || !Object.hasOwn(hosted, 'bank_tingee')) throw new DomainError('BANK_FEED_TINGEE_DISABLED', 404, 'Nguồn giao dịch Tingee chưa được bật trên máy chủ này');
+          if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          const provider = hosted.bank_tingee as BankFeedProvider;
+          // The org's own credential, as the one value the worker opens (the adapter reads it back). One read call tests it before anything is sealed; its answer is dropped, the worker lists the accounts.
+          const secret = JSON.stringify({ clientId: input.clientId, secretToken: input.secretToken });
+          // The org's ticket first: a refused org must not spend the deployment's. Both limits are per process (a deployment with several API instances allows up to that many times each).
+          const own = tingeeConnectsPerOrg.take(orgId);
+          const ticket = own.allowed ? [tingeeConnectsAll.take('all')].find((t) => !t.allowed) : own;
+          if (ticket) throw new DomainError('RATE_LIMITED', 429, 'Đã thử kết nối Tingee nhiều lần trong phút này, hãy đợi một lát rồi thử lại', { retryAfterSeconds: ticket.retryAfterSeconds });
+          try {
+            // One cheap read call (a page of one account) when the adapter has one, else its account list.
+            await (provider.check ? provider.check(secret) : provider.accounts(secret));
+          } catch (error) {
+            throw tingeeConnectError(error);
+          }
+          const sealed = channels.broker.seal(secret, { orgId, provider: provider.id, externalAccountId: input.clientId });
+          const command: ChannelConnectInput = {
+            provider: provider.id,
+            externalAccountId: input.clientId,
+            displayName: input.displayName ?? 'Tingee',
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          return { connectionId };
+        }),
+      ),
+      // The webhook hook key (#4203): no idempotency key, so a replay never hands the secret out again; the answer is the key, shown once.
+      hookSet: os.bankFeeds.hookSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.bank_feed.hook_set', input, { actor, orgId }))),
+      hook: os.bankFeeds.hook.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.hook', input, { actor, orgId }))),
       map: os.bankFeeds.map.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -3688,6 +4283,16 @@ export function createRpcHandler(
           return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Boost a published Social post (W3, #3834): the options, the newest boost of each of some posts, and drafting one (the same draft the builder makes; asking for
+      // approval is requestChange, the same approval and launch as any plan).
+      boostOptions: os.ads.boostOptions.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.options', {}, { actor, orgId }))),
+      boostStates: os.ads.boostStates.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.states', input, { actor, orgId }))),
+      draftBoost: os.ads.draftBoost.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.boost.draft', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -3709,6 +4314,40 @@ export function createRpcHandler(
           return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend: each is written here and queued, and the
+      // platform is called by the manage job afterwards (never in this request). A resume, a raise and an extension are proposals (requestChange).
+      pauseObject: os.ads.pauseObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.pause', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      archiveObject: os.ads.archiveObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.archive', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      lowerBudget: os.ads.lowerBudget.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.budget.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      shortenSchedule: os.ads.shortenSchedule.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.schedule.shorten', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      cancelChange: os.ads.cancelChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.manage.cancel', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      manageState: os.ads.manageState.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.state', input, { actor, orgId }))),
+      manageSuggestions: os.ads.manageSuggestions.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.suggestions', input, { actor, orgId }))),
       // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
       retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

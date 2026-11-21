@@ -14,7 +14,9 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { AdsRunStatus } from '../components/ads-run-status.tsx';
+import { BoostSuggestions } from '../components/ads-boost.tsx';
 import { CampaignAsk, hasWaitingRequest } from '../components/ads-campaign-ask.tsx';
+import { ManageSuggestions } from '../components/ads-manage.tsx';
 import { CampaignBuilder, type PageChoice } from '../components/ads-campaign-builder.tsx';
 import { PostPicker } from '../components/ads-post-picker.tsx';
 import { CardSkeleton, Empty, ErrorText, Field, PageHeader } from '../components/ui.tsx';
@@ -46,7 +48,14 @@ export function AdsCampaignsPage() {
   const canDraft = canManage || role === 'member';
   const accounts = useQuery(orpc.ads.accounts.queryOptions());
   // The draft open in the builder (?draft=), read on its own: its account decides the account shown.
-  const openDraft = useQuery({ ...orpc.ads.campaignDraft.queryOptions({ input: { draftId: search.draft ?? '' } }), enabled: canDraft && Boolean(search.draft) });
+  // A change of a running ad waits for the platform (W4): the screen reads again every few seconds while one is queued, so the result shows without a reload.
+  const hasQueuedChange = (drafts: ReadonlyArray<{ launch: { manage?: { changes: ReadonlyArray<{ state: string }> } | undefined } | null } | undefined> | undefined) =>
+    (drafts ?? []).some((d) => d?.launch?.manage?.changes.some((c) => c.state === 'queued') === true);
+  const openDraft = useQuery({
+    ...orpc.ads.campaignDraft.queryOptions({ input: { draftId: search.draft ?? '' } }),
+    enabled: canDraft && Boolean(search.draft),
+    refetchInterval: (query) => (hasQueuedChange([query.state.data]) ? REQUEST_POLL_MS : false),
+  });
   const list = accounts.data ?? [];
   const account = list.find((a) => a.id === (openDraft.data?.adAccountId ?? search.account)) ?? list[0];
   const accountInput = account ? { adAccountId: account.id } : {};
@@ -59,7 +68,7 @@ export function AdsCampaignsPage() {
   const drafts = useQuery({
     ...orpc.ads.campaignDrafts.queryOptions({ input: accountInput }),
     enabled: canDraft && Boolean(account),
-    refetchInterval: polling(requests.data) ? REQUEST_POLL_MS : false,
+    refetchInterval: (query) => (polling(requests.data) || hasQueuedChange(query.state.data) ? REQUEST_POLL_MS : false),
   });
   // A request that has just been answered made a draft: the list is read once more at that moment.
   const wasWaiting = useRef(false);
@@ -142,6 +151,9 @@ export function AdsCampaignsPage() {
             </Field>
           )}
           {aiOn && <CampaignAsk key={account.id} account={account} brief={brief} onBrief={setBrief} sourcePostId={start?.sourcePostId ?? null} requests={requests.data ?? []} onOpenDraft={openThe} />}
+          {/* The posts the marketing coworker suggests boosting (W3, #3834): a suggestion only. */}
+          <BoostSuggestions slug={slug} />
+          {canManage && <ManageSuggestions adAccountId={account.id} canManage={canManage} />}
           <section className="space-y-3" aria-labelledby="campaign-drafts-title">
             <h2 id="campaign-drafts-title" className="text-base font-semibold text-foreground">
               {t('campaigns.draftsTitle')}

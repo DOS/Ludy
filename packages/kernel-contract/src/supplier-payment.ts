@@ -60,10 +60,24 @@ export const zSupplierPayment = z.strictObject({
 export type SupplierPayment = z.infer<typeof zSupplierPayment>;
 export const zSupplierPaymentList = z.array(zSupplierPayment);
 
-// Rule 3's second read (V5, #3113): the suppliers with a payment waiting, ids and days only. `pending` is a request not decided yet, `approved` a payment waiting to be paid.
-export const zSupplierPaymentWaiting = z.strictObject({ partyId: z.uuid(), state: z.enum(['pending', 'approved']), since: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) });
-export type SupplierPaymentWaiting = z.infer<typeof zSupplierPaymentWaiting>;
-export const zSupplierPaymentsWaiting = z.array(zSupplierPaymentWaiting);
+// The received invoices that can be asked for payment (#3113 S4b, #3701), owners and admins. Facts only, read from the books and the supplier's accounts: the supplier's name and the invoice's number,
+// day and amount, whether the supplier has exactly one active bank account (`ready`), none or several, and the day of its latest account change when that is inside the last 30 days. Never a bank,
+// a number or a holder. At most 100, oldest invoice first; `more` says that older ones were not all shown.
+export const zSupplierPayable = z.strictObject({
+  purchaseDocumentId: z.uuid(),
+  partyId: z.uuid(),
+  partyName: z.string().max(300),
+  invoiceNumber: z.string().max(100),
+  invoiceDate: zLocalDate,
+  amount: zAmount,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  account: z.enum(['ready', 'none', 'many']),
+  accountChangedOn: zLocalDate.nullable(),
+});
+export type SupplierPayable = z.infer<typeof zSupplierPayable>;
+export const SUPPLIER_PAYABLE_MAX = 100;
+export const zSupplierPayableList = z.strictObject({ items: z.array(zSupplierPayable).max(SUPPLIER_PAYABLE_MAX), more: z.boolean() });
+export type SupplierPayableList = z.infer<typeof zSupplierPayableList>;
 
 // The bank file of approved supplier payments (#3113 S3, #3700). `finance.supplier_payment.bank_file.get` is a sensitive query in the requesting owner's or admin's own context: its audit row is
 // committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
@@ -118,3 +132,25 @@ export type BankSupplierCandidate = z.infer<typeof zBankSupplierCandidate>;
 export const zBankSupplierMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankSupplierCandidate) });
 export type BankSupplierMatch = z.infer<typeof zBankSupplierMatch>;
 
+
+// The facts behind the finance coworker's one line above the invoices to pay (#3113 S4c), summed by code from the list above and nothing else: how many invoices, their total in dong, the oldest invoice
+// date, how many are of a supplier whose bank account changed recently, and the invoice suggested first (the oldest invoice date among those a person can ask for now; null when none can be asked
+// for). They are null when there is no line to give: nothing waits, the list was cut short (`more`) or an invoice is not in dong, so a total or an "oldest" would not be the books' own.
+export const zSupplierPayableFacts = z.strictObject({
+  invoices: z.number().int().min(1).max(SUPPLIER_PAYABLE_MAX),
+  total: zAmount,
+  oldestDate: zLocalDate,
+  onChangedAccount: z.number().int().min(0).max(SUPPLIER_PAYABLE_MAX),
+  suggestedPurchaseDocumentId: z.uuid().nullable(),
+});
+export type SupplierPayableFacts = z.infer<typeof zSupplierPayableFacts>;
+// The line the screen shows: the facts always when there are any (the core works with AI off), and the coworker's sentence when there is one. `ai` says why there is no sentence: `off` (no model),
+// `busy` (too frequent), `budget` (the AI budget is spent), `failed` (the call failed or its text was refused; the reason is logged as a code, never the words) or `none` (there is nothing to say).
+export const zSupplierPayableLineAsk = z.strictObject({ lang: z.enum(['vi', 'en']).optional() });
+export type SupplierPayableLineAsk = z.infer<typeof zSupplierPayableLineAsk>;
+export const zSupplierPayableLine = z.strictObject({
+  facts: zSupplierPayableFacts.nullable(),
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  text: z.string().nullable(),
+});
+export type SupplierPayableLine = z.infer<typeof zSupplierPayableLine>;

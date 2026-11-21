@@ -23,7 +23,7 @@ const form = (lines: number, buyerPartyId: string | null = null) => ({
 
 describe('applyPrevious', () => {
   it('copies a buyer without the identity an individual gave on the invoice, and leaves the form with both identity fields as strings (#3678)', () => {
-    const individual: Invoice = { ...invoice(1), buyer: { kind: 'individual', partyId: 'p1', taxCode: null, name: 'Nguyễn Văn A', address: null, email: null, identity: { kind: 'cccd', value: '012345678901' } } };
+    const individual: Invoice = { ...invoice(1), buyer: { kind: 'individual', partyId: 'p1', taxCode: null, name: 'Nguyễn Văn A', address: null, email: null, identity: { kind: 'cccd', value: '012345678901', nationality: null } } };
     const done = applyPrevious({ ...form(0), buyer: { ...form(0).buyer, kind: 'individual' as const } }, individual, null);
     expect(done.state.buyer).toMatchObject({ kind: 'individual', name: 'Nguyễn Văn A', identityKind: '', identity: '' });
     expect(JSON.stringify(done.state)).not.toContain('012345678901');

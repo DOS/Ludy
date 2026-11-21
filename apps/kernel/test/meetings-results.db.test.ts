@@ -144,7 +144,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     // The click is the person's own: not defaulted, not false.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId }))).not.toBeNull();
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: false }))).not.toBeNull();
-    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 1, items: 1 });
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 1, items: 1, chapters: 0 });
     const seen = await results('attendee', meetingId);
     expect(seen).toMatchObject({ isRecorder: false, draft: null, published: { summary: 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ', 'Gặp khách thứ sáu'] } });
     expect(seen.items.map((i) => [i.title, i.stage, i.status])).toEqual([['Gửi báo giá cho khách', 'published', 'suggested']]);

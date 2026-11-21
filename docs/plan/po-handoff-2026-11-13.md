@@ -34,7 +34,7 @@ The cloud session's hourly check-in routine (`Platform PO check-in`) is disabled
   - sealed contexts for company grants and member grants (3e);
   - the signed wake-up webhook;
   - V4/V5 signals: rules 1 and 2 are live, both on Home and through the `ludy_signals` tool, and the worker sweep wakes Vy on signals (S1 to S6, #3075 to #3093).
-- **Rule 3 (a supplier bank account changed while a payment waits)** stays quiet and shows as `not_available` until #3113 lands.
+- **Rule 3 (a supplier bank account changed while a payment waits)** stayed quiet and showed as `not_available` until #3113; it fires since #3701 (S4).
 - **The DOS side** is DOS/DOS.AI#7053: the Ludy connector, the work.dos.ai wake-up and per-member memory. It is not started.
 - **`org_purge`:** the newest restate on `main` is `20261229030000_crove_kernel_org_purge_live_line.sql`. Every later restate must be built from it. Diff function body against function body, and check that no table drops out.
 

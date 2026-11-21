@@ -3,7 +3,7 @@
 // again. Under `accountant` only the chief accountant approves (P09), so the server refuses the switch while nobody
 // holds that role; the refusal points to the member roles on this page. The server enforces every rule.
 import { useMutation } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -26,7 +26,8 @@ function showMembers() {
   card?.focus({ preventScroll: true });
 }
 
-export function ApprovalPresetCard({ preset, isOwner }: { preset: string; isOwner: boolean }) {
+// `children` sit under the rule inside the same card: the reminders of pending proposals belong to the approval rule (ST-6, #3589).
+export function ApprovalPresetCard({ preset, isOwner, children }: { preset: string; isOwner: boolean; children?: ReactNode }) {
   const t = useTranslations('approvalPreset');
   const id = useId();
   const [chosen, setChosen] = useState(preset);
@@ -109,6 +110,7 @@ export function ApprovalPresetCard({ preset, isOwner }: { preset: string; isOwne
             )}
           </div>
         ))}
+      {children}
     </Card>
   );
 }

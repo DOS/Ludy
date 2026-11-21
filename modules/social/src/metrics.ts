@@ -333,14 +333,17 @@ interface MetricsFilter {
   days?: number | undefined;
   postId?: string | undefined;
   labelId?: string | undefined;
+  // Leave out the posts that were archived after they went out (the screens keep them in their metrics as history; an MCP read does not send them).
+  liveOnly?: boolean | undefined;
 }
 
-async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string })[]> {
+export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string })[]> {
   const days = input.days ?? 30;
   const window = input.postId ? sql`v.post_id = ${input.postId}::uuid` : sql`v.published_at > pg_catalog.now() - pg_catalog.make_interval(days => ${days}::int)`;
   const labelled = input.labelId
     ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${input.labelId}::uuid)`
     : sql``;
+  const live = input.liveOnly ? sql`AND p.archived_at IS NULL` : sql``;
   const { rows } = await sql<{
     variant_id: string;
     post_id: string;
@@ -366,7 +369,7 @@ async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limi
       -- The last real answer; an empty snapshot (a failed try, a gone post) only when there is nothing else.
       ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
     ) s ON true
-    WHERE v.org_id = ${orgId} AND v.status = 'published' AND ${window} ${labelled} AND ${connectionInScope(scope, 'v.channel_connection_id')}
+    WHERE v.org_id = ${orgId} AND v.status = 'published' AND ${window} ${labelled} ${live} AND ${connectionInScope(scope, 'v.channel_connection_id')}
     ORDER BY v.published_at DESC
     LIMIT ${limit}`.execute(trx);
   return rows.map((r) => ({

@@ -1327,13 +1327,31 @@ export const envelopeSealComplete = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .execute();
+    let isDirectLinkEnvelope = row.direct_link_id != null;
+    if (!isDirectLinkEnvelope) {
+      // Defense in depth: if a revoked template_direct_link row was pruned after retention
+      // (ON DELETE SET NULL on direct_link_id), the immutable genesis event still identifies it.
+      const originEvent = await ctx.trx
+        .selectFrom('crove_sign.signing_event')
+        .select(['actor_label'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', row.id)
+        .where('seq', '=', 1)
+        .executeTakeFirst();
+      if (originEvent?.actor_label === 'system:sign-direct-link') {
+        isDirectLinkEnvelope = true;
+      }
+    }
+    const eligibleRecipients = isDirectLinkEnvelope
+      ? recipientRows.filter((r) => r.delivery_mode === 'email')
+      : recipientRows;
     const { rows: senderProfiles } = await sql<{ email: string | null }>`
       SELECT email FROM crove_kernel.member_emails(${[row.created_by]}::uuid[])`.execute(ctx.trx);
     const signerCount = Math.max(1, recipientRows.filter((r) => r.signer_role !== 'cc').length);
     const seenEmails = new Set<string>();
     const emailRecipients = [
       ...senderProfiles.map((p) => p.email),
-      ...recipientRows.filter((r) => r.delivery_mode === 'email').map((r) => r.email),
+      ...eligibleRecipients.map((r) => r.email),
     ]
       .map((rawEmail) => rawEmail?.trim().toLowerCase() ?? '')
       .filter((addr) => {
@@ -1469,6 +1487,8 @@ export const orgCleanup = defineCommand({
     tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['id']),
     tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['id']),
     tableWrite(signManifest.tables, 'crove_sign', 'template_direct_link', ['id']),
+    // Pruning a revoked template_direct_link clears envelope.direct_link_id via ON DELETE SET NULL.
+    tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['direct_link_id']),
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);

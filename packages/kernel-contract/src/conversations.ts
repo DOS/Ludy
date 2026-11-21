@@ -87,9 +87,10 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // YouTube comments on the business's own channel (#3134, plan docs/plan/conversations-channels.md section 4.5): public comment threads, one per
   // top-level comment, no reply window. YouTube's own comment limit is 10,000 characters [U] and the core's reply is at most CONVERSATION_REPLY_MAX,
-  // so that is the rule here. `canHide` is false in v1: hiding is `comments.setModerationStatus` and acts on someone else's words, so it waits
-  // for the live check (docs/runbooks/youtube-conversations-live-check.md).
-  youtube: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
+  // so that is the rule here. `canHide` is true since #3808 (`comments.setModerationStatus`: hide is `heldForReview`, show again is `published`, so it
+  // is reversible; the official page says a rejected comment cannot be published again). It holds for a connection only while the grant has the comment
+  // scope (YOUTUBE_COMMENT_SCOPE): the kernel checks that on the connection, and the thread's `hideAllowed` tells the screen.
+  youtube: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: null },
   // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
   email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
@@ -270,7 +271,8 @@ export const zConversationMessage = z.strictObject({
 });
 export type ConversationMessage = z.infer<typeof zConversationMessage>;
 
-export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }) });
+// `actorOrigin` 'mcp' and `tainted`: a connected AI app wrote the note under the name of the person who connected it; the screen says so (#4149).
+export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }), actorOrigin: z.enum(['ui', 'mcp']), tainted: z.boolean() });
 export type ConversationNote = z.infer<typeof zConversationNote>;
 
 // Vy's draft of a reply (CV8, #2310): asked for (requested, the text is on its way) or live (the text). Always tainted: a model wrote it from a customer's
@@ -370,6 +372,9 @@ export const zConversationDetail = z.strictObject({
   parentId: zId.nullable(),
   // Whether a reply can be sent now, else why not (a code the screen turns into words).
   reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed', 'business_stopped', 'business_read_only']).nullable() }),
+  // Whether the platform lets the channel hide a comment of this thread now: the provider's rule, and for YouTube (#3808) a grant that holds the comment
+  // scope. Absent from an older answer: the screen then falls back to the provider's rule.
+  hideAllowed: z.boolean().optional(),
   // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
   // them): shown on a thread that was active after `from`.
   gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),
@@ -607,6 +612,8 @@ export const zConversationDraftRecord = z.discriminatedUnion('outcome', [
 export const YOUTUBE_COMMENT_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 export const YOUTUBE_LIST_UNITS = 1;
 export const YOUTUBE_REPLY_UNITS = 50;
+// Hiding or showing a comment (`comments.setModerationStatus`, #3808): 50 units on the official page. Counted beside the reply's, never held back by the polling budget.
+export const YOUTUBE_MODERATE_UNITS = 50;
 // What polling may spend for one connection in one Pacific day. A poll of the newest comments is a few list requests, so 150 is about one poll
 // every 15 minutes (96 a day) with room to catch up; a deployment's 10,000 units a day then hold the polling of about 60 channels with replies to spare.
 // Replies are a person's act and are never held back by this budget; their units are counted beside it and shown.

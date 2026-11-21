@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The notice of an error only in the non-core content of an issued sales e-invoice (#2504, plan einvoice-issue.md section 8; the accountant's answers of section 3a row 7 and 3b): the buyer's
-// name or address, or the amount in words. No new invoice is made and the invoice is not cancelled. The seller tells the buyer ("Gửi thông báo cho người mua") and, as the working answer of
-// #2506 question 1 (not confirmed by the accountant yet), files the form 04/SS-HĐĐT with the tax authority. Both are the seller's own steps outside Ludy: Ludy sends nothing here, it records
+// name or address, or the amount in words. No new invoice is made and the invoice is not cancelled. The seller tells the buyer ("Gửi thông báo cho người mua") and files the form
+// 04/SS-HĐĐT with the tax authority (the research of 2026-11-18, plan einvoice-issue.md section 3c: promptly and before the VAT return of the period, for non-core errors only, never with an adjusting or
+// replacing invoice, and Circular 91 sets no day count). Both are the seller's own steps outside Ludy: Ludy sends nothing here, it records
 // the error, builds the text of the notice by code (never a model) and tracks the two steps until a person ticks each.
 // - finance.einvoice.notice_open (owners, admins, members; R1): records an error on an issued invoice with the text that is right.
 // - finance.einvoice.notice_step (same roles; R1): ticks one step, once; ticking again changes nothing.

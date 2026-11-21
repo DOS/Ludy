@@ -14,8 +14,12 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingAdherence } from '../components/meeting-adherence.tsx';
 import { MeetingBrief } from '../components/meeting-brief.tsx';
 import { MeetingSeries } from '../components/meeting-series.tsx';
+import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
+import { MeetingChapters } from '../components/meeting-chapters.tsx';
+import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -25,6 +29,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
+import type { TranscriptFocus } from '../lib/transcript-focus.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
 
 const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting', in_call_chat: 'inCallChat', platform_notice: 'platformNotice' } as const;
@@ -59,6 +64,16 @@ export function MeetingDetailPage() {
   const [videoError, setVideoError] = useState<string | null>(null);
   // The player streams the video by a short-lived ticket (#2703); the element and the ticket player are kept for its error events.
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // A chapter was clicked (#3844): the transcript goes to its line, and a recording that is already loaded is set to that second (it is never started by the click).
+  const [jump, setJump] = useState<TranscriptFocus | undefined>(undefined);
+  // The page links to another meeting in place: a jump to a line of one meeting never carries over to the next.
+  useEffect(() => setJump(undefined), [id]);
+  const jumpTo = (second: number, speaker?: string) => {
+    setJump((j) => ({ second, speaker, token: (j?.token ?? 0) + 1 }));
+    if (audioRef.current) audioRef.current.currentTime = second;
+    if (videoRef.current) videoRef.current.currentTime = second;
+  };
   const videoPlayer = useRef<VideoTicketPlayer | null>(null);
 
   const meetingQuery = useQuery(
@@ -230,7 +245,7 @@ export function MeetingDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <Link to="/o/$slug/meetings" params={{ slug }} className="text-sm text-link underline">
-          &larr; {t('detail.back')}
+          <span aria-hidden="true">&larr;</span> {t('detail.back')}
         </Link>
         {meeting.isRecorder ? (
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
@@ -259,10 +274,10 @@ export function MeetingDetailPage() {
 
       <PageHeader
         title={meeting.title}
-        subtitle={t('detail.recordedBy', { user: meeting.recorderUserId, date: f.date(meeting.createdAt) })}
+        subtitle={orgQuery.data ? t('detail.recordedBy', { user: memberLabel(orgMembers, meeting.recorderUserId, t('results.unknownMember')), date: f.date(meeting.createdAt) }) : undefined}
         actions={
           <div className="flex items-center gap-2">
-            <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{meeting.status}</Badge>
+            <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{t(`status.${meeting.status}`)}</Badge>
             <Badge variant="outline">
               {meeting.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
             </Badge>
@@ -271,12 +286,14 @@ export function MeetingDetailPage() {
       />
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
+      {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
+      <MeetingTitleSuggest key={`title-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (
         <Card className="border-primary/20 bg-primary/5">
           <CardHeader>
-            <CardTitle className="text-sm font-semibold text-primary">
+            <CardTitle role="heading" aria-level={2} className="text-sm font-semibold text-primary">
               {t('detail.aiOffCardTitle')}
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground">
@@ -291,12 +308,12 @@ export function MeetingDetailPage() {
         {meeting.hasAudio && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-medium">{t('detail.audioPlayerTitle')}</CardTitle>
+              <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('detail.audioPlayerTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
-              {audioLoading && <div className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
+              {audioLoading && <div role="status" className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {audioError && <ErrorText>{audioError}</ErrorText>}
-              {audioUrl && <audio controls className="w-full" src={audioUrl} />}
+              {audioUrl && <audio ref={audioRef} controls aria-label={t('detail.audioPlayerTitle')} className="w-full" src={audioUrl} />}
             </CardContent>
           </Card>
         )}
@@ -304,15 +321,16 @@ export function MeetingDetailPage() {
         {meeting.hasVideo && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-medium">{t('detail.videoPlayerTitle')}</CardTitle>
+              <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('detail.videoPlayerTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
-              {videoLoading && <div className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
+              {videoLoading && <div role="status" className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {videoError && <ErrorText>{videoError}</ErrorText>}
               {videoUrl && (
                 <video
                   ref={videoRef}
                   controls
+                  aria-label={t('detail.videoPlayerTitle')}
                   preload="metadata"
                   className="w-full max-h-96 rounded-lg bg-muted"
                   src={videoUrl}
@@ -336,8 +354,15 @@ export function MeetingDetailPage() {
       {meeting.isRecorder && <AgendaAttach meetingId={id} />}
 
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
+      {/* Each keyed child below has a key of its own: the same key on siblings makes React duplicate or drop children on a re-render (#4066) */}
+      {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
+      <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
+      <MeetingCommitments key={`commitments-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
-      <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
+      <MeetingTranscript key={`transcript-${id}`} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
+      {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
+      <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
@@ -345,6 +370,7 @@ export function MeetingDetailPage() {
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
       <MeetingResults
+        key={`results-${id}`}
         meetingId={id}
         slug={slug}
         visibility={meeting.visibility}
@@ -373,7 +399,7 @@ export function MeetingDetailPage() {
         {/* Consent Record Card */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">{t('detail.consentRecord')}</CardTitle>
+            <CardTitle role="heading" aria-level={2} className="text-sm font-medium">{t('detail.consentRecord')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div>
@@ -405,7 +431,7 @@ export function MeetingDetailPage() {
         {meeting.visibility === 'attendees' && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">
+              <CardTitle role="heading" aria-level={2} className="text-sm font-medium">
                 {t('detail.readersTitle', { count: String(meeting.readers.length) })}
               </CardTitle>
             </CardHeader>
@@ -435,12 +461,13 @@ export function MeetingDetailPage() {
               <ul className="divide-y text-xs">
                 {meeting.readers.map((readerUserId) => (
                   <li key={readerUserId} className="flex items-center justify-between py-2">
-                    <span>{memberLabel(orgMembers, readerUserId, t('results.unknownMember'))}</span>
+                    <span id={`reader-name-${readerUserId}`}>{memberLabel(orgMembers, readerUserId, t('results.unknownMember'))}</span>
                     {meeting.isRecorder && (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-destructive hover:bg-destructive/10"
+                        aria-describedby={`reader-name-${readerUserId}`}
                         loading={removeReaderMutation.isPending && removeReaderMutation.variables === readerUserId}
                         disabled={removeReaderMutation.isPending}
                         onClick={() => removeReaderMutation.mutate(readerUserId)}

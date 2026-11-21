@@ -8,13 +8,36 @@
 // kernel.channel.credential refuses once the member who connected the account may no longer use it, or the connection
 // is no longer active: the sync then marks the connection expired, so the daily sweep skips it and an owner or admin
 // connects it again, rather than failing every day.
-import type { BankFeedProvider } from '@crove/bank-feed';
-import { BANK_FEED_MAX_ACCOUNTS } from '@crove/kernel-contract';
+// When a call or a page is refused, the sync first records why (finance.bank_feed.record_outcome, #4244): a closed kind and, for a page with a line it cannot read, that line's position, never a provider's text
+// or a line; then it raises the same error as before, so the job retries as it did. A refusal of the credential, the clock or the saved connection concerns every account of the connection and is recorded on all
+// of them; a refused page is recorded on its own account. Recording never replaces the error it reports: a failure of the record is swallowed.
+import { TingeeError, type BankFeedProvider } from '@crove/bank-feed';
+import { BANK_FEED_MAX_ACCOUNTS, BANK_FEED_MAX_LINES, type BankFeedPullOutcome } from '@crove/kernel-contract';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.bank_feed' };
+
+// What the runtime answers when a page's own lines cannot be stored: the shape check, or the stricter reading of the lines.
+const REFUSED_PAGE: ReadonlySet<string> = new Set(['VALIDATION', 'BANK_FEED_INVALID']);
+
+export interface BankFeedFailure {
+  kind: Exclude<BankFeedPullOutcome, 'ok'>;
+  // The refused line's position in the page, 0-based, only for `bad_page`.
+  item?: number;
+}
+
+// What a failed call or page is, as a closed kind: the adapter's own typed error carries it; the runtime refusing a page's input is a page with a line that cannot be stored; anything else is an answer that
+// was not understood. Only the kind and the position leave this function, never the error's message.
+export function classifyBankFeedFailure(error: unknown): BankFeedFailure {
+  if (error instanceof TingeeError) return error.kind === 'bad_page' && error.itemIndex !== null ? { kind: 'bad_page', item: error.itemIndex } : { kind: error.kind };
+  if (error instanceof DomainError && REFUSED_PAGE.has(error.code)) return { kind: 'bad_page' };
+  return { kind: 'upstream' };
+}
+
+// The kinds that say something about the whole connection (its credential, the server's clock, the saved connection), wherever they come up.
+const CONNECTION_WIDE: ReadonlySet<BankFeedFailure['kind']> = new Set(['credentials', 'clock', 'config']);
 // Pages one sync pulls per account at most; the next sync goes on from the cursor.
 const MAX_PAGES = 12;
 
@@ -64,11 +87,37 @@ export async function runBankFeedSync(deps: BankFeedSyncDeps, job: BankFeedSyncJ
   }
   if (!Object.hasOwn(deps.providers, sealed.provider)) return { accounts: 0, pages: 0, stored: 0 };
   const provider = deps.providers[sealed.provider] as BankFeedProvider;
-  const secret = deps.broker.open(
-    { keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') },
-    { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId },
-  );
-  const accounts = (await provider.accounts(secret)).slice(0, BANK_FEED_MAX_ACCOUNTS);
+  // Records why a call stopped; a failure here never replaces the error being reported.
+  const report = async (failure: BankFeedFailure, account?: { feedAccountId: string; fromCursor: string | null }): Promise<void> => {
+    try {
+      await deps.runtime.execute(
+        'finance.bank_feed.record_outcome',
+        { connectionId: job.connectionId, ...account, kind: failure.kind, ...(failure.item === undefined ? {} : { item: failure.item }) },
+        options,
+      );
+    } catch {
+      // The reason is a courtesy to the screen; the job's own error is what matters.
+    }
+  };
+  let secret: string;
+  try {
+    secret = deps.broker.open(
+      { keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') },
+      { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId },
+    );
+  } catch (error) {
+    // A stored credential this server cannot open (a retired key, a damaged envelope): the connection cannot be read.
+    await report({ kind: 'config' });
+    throw error;
+  }
+  let accounts: Awaited<ReturnType<BankFeedProvider['accounts']>>;
+  try {
+    accounts = (await provider.accounts(secret)).slice(0, BANK_FEED_MAX_ACCOUNTS);
+  } catch (error) {
+    // Before any pull: whatever it is concerns every mapped account of the connection.
+    await report(classifyBankFeedFailure(error));
+    throw error;
+  }
   await deps.runtime.execute('finance.bank_feed.record_accounts', { connectionId: job.connectionId, accounts }, options);
   const due = await deps.runtime.query<Array<{ feedAccountId: string; externalAccountId: string; cursor: string | null }>>(
     'finance.bank_feed.pull_due',
@@ -80,12 +129,37 @@ export async function runBankFeedSync(deps: BankFeedSyncDeps, job: BankFeedSyncJ
   for (const account of due) {
     let cursor = account.cursor;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const pulled = await provider.pull(secret, account.externalAccountId, cursor);
-      const result = await deps.runtime.execute<{ counts?: { new: number; ambiguous: number } }>(
-        'finance.bank_feed.record_pull',
-        { feedAccountId: account.feedAccountId, fromCursor: cursor, lines: pulled.transactions, cursor: pulled.cursor },
-        options,
-      );
+      const here = { feedAccountId: account.feedAccountId, fromCursor: cursor };
+      // A refused page is its account's; a refused credential, clock or saved connection is the connection's.
+      const refuse = async (error: unknown): Promise<never> => {
+        const failure = classifyBankFeedFailure(error);
+        await report(failure, CONNECTION_WIDE.has(failure.kind) ? undefined : here);
+        throw error;
+      };
+      let pulled: Awaited<ReturnType<BankFeedProvider['pull']>>;
+      try {
+        pulled = await provider.pull(secret, account.externalAccountId, cursor);
+      } catch (error) {
+        return refuse(error);
+      }
+      // The count is checked before the page goes to the command, so this reason does not depend on an error's text.
+      if (pulled.transactions.length > BANK_FEED_MAX_LINES) {
+        await report({ kind: 'too_many_lines' }, here);
+        throw new Error('bank feed: the page carries more lines than one pull may store');
+      }
+      let result: { counts?: { new: number; ambiguous: number } };
+      try {
+        result = await deps.runtime.execute<{ counts?: { new: number; ambiguous: number } }>(
+          'finance.bank_feed.record_pull',
+          { feedAccountId: account.feedAccountId, fromCursor: cursor, lines: pulled.transactions, cursor: pulled.cursor },
+          options,
+        );
+      } catch (error) {
+        // Only the runtime refusing the page's own lines is a refused page. A moved cursor (another sync was first), a closed
+        // connection or a fault of ours (a lost database connection, a deadlock) says nothing about the bank: rethrown unrecorded.
+        if (error instanceof DomainError && REFUSED_PAGE.has(error.code)) return refuse(error);
+        throw error;
+      }
       pages++;
       stored += (result.counts?.new ?? 0) + (result.counts?.ambiguous ?? 0);
       cursor = pulled.cursor;

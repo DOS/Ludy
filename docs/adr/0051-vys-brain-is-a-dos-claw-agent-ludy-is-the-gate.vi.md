@@ -61,6 +61,22 @@ Ludy vẫn chạy được một mình bằng `docker compose up`, không bị k
 - ADR "tìm kiếm trên văn bản" mà kế hoạch cũ gọi là ADR-0051 nay đánh số **ADR-0052** (đề xuất), chỉ cần nếu Ludy tự lập chỉ mục văn bản. Câu hỏi Q3 (chưa lập chỉ mục trên ghi chú riêng và cuộc họp) vẫn giữ.
 - Thứ tự làm: ghép nối và giấy phép, cổng MCP (đọc trước, lệnh sau, việc duyệt giữ nguyên), giấy phép theo từng người, rồi tín hiệu có chữ ký. Phần giấy phép và cổng chạm vào vùng được bảo vệ nên Platform PO duyệt bảo mật.
 
+## Bổ sung ngày 2026-11-19: giấy phép MCP được gọi lệnh nào (#3858)
+
+Anh đã quyết ngày 2026-11-18 (cuộc trò chuyện với Platform PO, chọn "Đúng, làm đi") và ngày 2026-11-19 (cuộc trò chuyện với Engage PO, chọn "Cho làm, việc lớn chờ duyệt"). Dy và Uy là **đồng nghiệp AI**, làm cả một quy trình qua công cụ như người làm, không phải nhận từng việc nhỏ. Bản ADR được sửa như sau (quyết định 10 đến 14 trong bản tiếng Anh):
+
+1. **Lệnh mức R2 và R3 mà giấy phép MCP gọi chỉ tạo ra một đề xuất, không bao giờ tự chạy.** Người duyệt trong Ludy rồi lệnh mới chạy, với đủ các kiểm tra như thường. Một lời "đã duyệt" do agent tự nói chỉ là dữ liệu. Lệnh R3 chỉ được nhận khi chính sách duyệt của nó cho phép dạng đề xuất; không thì bị từ chối. Lệnh nào chưa khai báo cho MCP vẫn bị cấm (`FORBIDDEN`). Lệnh R1 mà một mảng khai báo thì chạy thẳng trong phạm vi quyền ghi của mảng đó.
+2. **Quyền ghi theo từng mảng**: `ludy.engage.write` (Hộp thư và CRM), `ludy.ads.draft` (nháp quảng cáo), bên cạnh `ludy.social.draft`. Màn hình đồng ý hiện rõ các quyền này, và danh sách công cụ của agent được lọc theo vai trò và quyền của giấy phép: công cụ không dùng được thì không hiện.
+3. **Giấy phép được đọc hội thoại và CRM** trong "hộp kín" của nó, trong phạm vi vai trò và (nếu gắn với một người) quyền của người đó. Việc giới hạn nằm trong cơ sở dữ liệu, không chỉ trong mã. Chỉ đọc, không ghi, và không đọc được gì riêng tư của người khác (ghi chú riêng, việc riêng).
+4. **Tin đánh thức có thêm sự kiện theo từng mảng** (ví dụ hội thoại chưa trả lời), vẫn chỉ gồm mã số, loại, ngày và số tiền, không có chữ nào của khách.
+5. **Vai trò**: giấy phép vẫn là giấy phép của chủ hoặc quản trị viên, thu hẹp bằng quyền; **chưa gắn với vị trí trong sơ đồ tổ chức (ADR-0029)**. Lý do: quyền ghi theo mảng và việc "mọi thứ trên R1 phải chờ người duyệt" đã giới hạn đủ; vị trí kéo theo thêm cả bộ máy (mẫu, lượt chạy) mà quy trình này không cần; muốn agent chỉ thấy phần của một người thì dùng giấy phép gắn với người đó. Sẽ xem lại khi có công ty cần một đồng nghiệp AI thấy ít hơn người cấp quyền.
+
+Đã làm cho Engage (#3862): các luật nhắc việc không gọi mô hình nào, và mỗi luật cũng hiện trên Hôm nay khi chưa nối agent nào. Chín loại sự kiện (hội thoại mới, khách chờ quá N giờ, thời hạn trả lời của nền tảng sắp hết, báo giá đã gửi chưa có trả lời sau N ngày, lịch hẹn ngày mai, bình luận mới dưới bài đã đăng, quảng cáo vượt tốc độ chi hoặc hạn mức) chỉ mang mã số, ngày, số tiền và từ cố định; số tiền luôn kèm đơn vị tiền. Mỗi mục chỉ gửi một lần trong mỗi khoảng thời gian (khóa gồm mục và ngày), và chỉ cho giấy phép của công ty có quyền của mảng đó. N có mặc định (4 giờ, 3 giờ, 5 ngày) và chủ hoặc quản trị viên đổi trong Cài đặt, không đặt trên màn hình hộp thư.
+
+Việc làm chia thành năm bản, mỗi bản có duyệt bảo mật riêng: (a) tài liệu này, (b) hộp kín đọc hội thoại và CRM, (c) quyền ghi theo mảng, (d) đề xuất thay cho thực thi, (e) sự kiện đánh thức theo mảng.
+
+**Ghi chú đã xây (E2, #3861):** Dy và Uy giờ làm ngay được các bước R1 nhỏ (giao, đóng, ghi chú, gắn liên hệ, tạo và chuyển cơ hội, lưu báo giá nháp, đánh dấu việc tiếp theo, lưu nháp quảng cáo) trong một "hộp kín ghi" riêng, mà cơ sở dữ liệu chỉ cho ghi đúng những dòng của từng việc. Một chỗ khác với lời văn ở mục 3: các chính sách của hộp kín này hỏi qua một hàm nhỏ, không đọc khóa niêm phong trực tiếp, để các bài kiểm tra bảo vệ không bị lệch; bài kiểm tra riêng của E2 chốt hàm nào và chính sách nào nhắc tới nó.
+
 ## Khi nào xem lại
 
 - DOS không giao bộ nối hoặc giai đoạn 3 trong thời gian chạy thử: "Hỏi Vy" trong Ludy được đưa lại cho anh quyết, không tự làm.
