@@ -7,7 +7,7 @@
 // - the bank line only confirms the transfer: money in, equal to the net, not before the period, free of other vouchers and payouts, and a bank voucher is refused for a line a payout names;
 // - the entry is built again at approval: a stored proposal that differs is refused; a payout posts once and a line settles one payout (unique indexes); a closed period, another adjustment and a chart
 //   with no map are refused;
-// - the shipped set of commands (every row of the account map is `commentary`) refuses with 409 until the accountant confirms the map (#2520);
+// - the shipped set of commands (the map and the rows of the sales, payout and fee paths are `commentary`) refuses with 409 until the accountant confirms the map (#2520);
 // - the lines of a settlement the report does not explain are posted only when a person classified them (#4303 S4): an incentive (Cr 711), a carrier compensation (Cr 632 up to the stated cost, the rest Cr 711), tax
 //   withheld from a seller that is no household (Dr 1388 under the platform); a wrong amount, a negative line, an unclassified line, a household's tax and a closed gate are refused.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.

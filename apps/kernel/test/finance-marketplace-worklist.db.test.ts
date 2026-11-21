@@ -4,7 +4,7 @@
 // - the gate: `postingConfirmed` is false while the account map is `commentary` (the shipped read) and true where it is confirmed;
 // - the settlements to post: stored settlements that stand and are not posted, with the net their entry would post; a posted one leaves the list;
 // - the payouts to match: a posted settlement with no payout voucher, with the bank lines it may be (the entity's, money in, equal to the net, not before the period, free), and gone once its payout
-//   is posted; a settlement with an unexplained adjustment is not offered;
+//   is posted; a settlement with a deduction nobody can classify is not offered, one with money to classify is offered with those lines (#4303 S4);
 // - the invoices to clear: a platform's posted fee invoice while fees wait on 1388, with what a clearing would take; gone once cleared, and another supplier's or a reversed invoice is not offered;
 // - the facts count the posted settlements without a payout, and no more once the payout is posted.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.

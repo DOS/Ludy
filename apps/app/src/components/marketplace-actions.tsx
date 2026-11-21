@@ -180,6 +180,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
                         value={costs[slot(a)] ?? ''}
                         onChange={(e) => setCosts({ ...costs, [slot(a)]: e.target.value })}
                         aria-label={t('adjustCostLabel', { amount: f.money(a.amount) })}
+                        aria-invalid={(costs[slot(a)] ?? '').trim() !== '' && !WHOLE_DONG.test((costs[slot(a)] ?? '').trim())}
                         placeholder={t('adjustCost')}
                         className="w-48"
                         data-testid="marketplace-adjustment-cost"

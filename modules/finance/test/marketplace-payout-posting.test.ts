@@ -18,7 +18,7 @@ const ENTITY = '0192a000-0000-7000-8000-000000000002';
 let lineSeq = 0;
 const lineId = (n: number) => `0192a000-0000-7000-8000-${String(100000 + n).padStart(12, '0')}`;
 const line = (over: Partial<PayoutPostingLine> = {}): PayoutPostingLine => ({ id: lineId(++lineSeq), sales: '100000', sellerDiscount: '0', commission: '0', serviceFee: '0', paymentFee: '0', shipping: '0', taxWithheld: '0', refund: '0', other: '0', net: '100000', ...over });
-const input = (lines: PayoutPostingLine[], over: Partial<PayoutProposalInput> = {}): PayoutProposalInput => ({ regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', lines, taxSplit: null, ...over });
+const input = (lines: PayoutPostingLine[], over: Partial<PayoutProposalInput> = {}): PayoutProposalInput => ({ regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', lines, taxSplit: null, household: false, ...over });
 const code = (fn: () => unknown) => {
   try { fn(); } catch (e) { return e instanceof DomainError ? { code: e.code, status: e.status, reason: (e.details as { reason?: string } | undefined)?.reason } : e; }
   return null;
@@ -128,6 +128,12 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
     expect(code(() => payoutProposal(input(lines), confirmed()))).toMatchObject({ reason: 'TAX_SPLIT' });
     expect(code(() => payoutProposal(withAdj([line({ id: ids(1) })], adjustments), confirmed()))).toMatchObject({ reason: 'ADJUSTMENT_NOTHING' });
   });
+  it('posts a household\'s incentive beside the tax it credited to 3331 and 3335: the two are cleared separately and the entry balances', () => {
+    const lines = [lost(1, '5000', '2000')];
+    const p = payoutProposal(withAdj(lines, [incentive(1, '5000')], { household: true, taxSplit: { vat: '1334', pit: '666' } }), confirmed());
+    expect(accounts(p)).toEqual([['1121', '103000', '0', null], ['3331', '1334', '0', null], ['3335', '666', '0', null], ['131', '0', '100000', PARTY], ['711', '0', '5000', null]]);
+    expect(p.total).toBe('105000');
+  });
   it('posts incentive, compensation and tax withheld by mistake in one entry', () => {
     const lines = [lost(1, '1000'), lost(2, '2000', '2000')];
     const p = payoutProposal(withAdj(lines, [incentive(1, '1000'), compensation(2, '2000', '0'), { kind: 'withheld_in_error', lineId: ids(2), amount: '2000' }]), confirmed());
@@ -178,7 +184,7 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
       for (const r of ['receivable', 'cash', 'feePayable'] as const) expect(map[r].status).toBe('commentary');
       for (const r of [map.otherReceivable, map.costOfGoods, map.otherIncome]) expect(r.comment).toContain('Uncertain (#2520)');
     }
-    const shipped = { regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', taxSplit: null };
+    const shipped = { regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', taxSplit: null, household: false };
     expect(code(() => payoutProposal({ ...shipped, lines: [lost(1, '1000')], adjustments: [incentive(1, '1000')] }))).toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
 });

@@ -33,19 +33,21 @@ const MAX_SETTLEMENTS = 50;
 const MAX_CANDIDATES = 8;
 const MAX_INVOICES = 30;
 
-// The lines of a posted settlement a person must classify before its payout can be asked for (#4303 S4): `other` above zero, and the tax withheld when the seller is no household. Null when there are more than
-// the request can carry (the accountant handles that settlement, as an unexplained one was before).
-async function adjustableOf(ctx: QueryContext, settlementId: string, household: boolean): Promise<MarketplaceWorklist['payouts'][number]['adjustable'] | null> {
+// The lines of a posted settlement a person must classify before its payout can be asked for (#4303 S4): `other` above zero (only when the settlement's `other` adds up to something: an offsetting pair is no
+// adjustment), and the tax withheld when the seller is no household. A line with a fraction of a dong cannot be classified (an adjustment is whole dong) and is not offered. Null when there are more than the
+// request can carry (the accountant handles that settlement, as an unexplained one was before).
+async function adjustableOf(ctx: QueryContext, settlementId: string, household: boolean, withOther: boolean): Promise<MarketplaceWorklist['payouts'][number]['adjustable'] | null> {
   const rows = (
     await sql<{ id: string; other: string; tax_withheld: string }>`
       SELECT id, other::text, tax_withheld::text FROM crove_finance.channel_settlement_line
-      WHERE org_id = ${ctx.orgId}::uuid AND settlement_id = ${settlementId}::uuid AND (other > 0 OR (NOT ${household} AND tax_withheld > 0))
+      WHERE org_id = ${ctx.orgId}::uuid AND settlement_id = ${settlementId}::uuid
+        AND ((${withOther} AND other > 0 AND other = trunc(other)) OR (NOT ${household} AND tax_withheld > 0 AND tax_withheld = trunc(tax_withheld)))
       ORDER BY id LIMIT ${MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX + 1}`.execute(ctx.trx)
   ).rows;
   const out: MarketplaceWorklist['payouts'][number]['adjustable'] = [];
   for (const r of rows) {
-    if (money(r.other).greaterThan(0)) out.push({ lineId: r.id, source: 'other', amount: toMoney(money(r.other)) });
-    if (!household && money(r.tax_withheld).greaterThan(0)) out.push({ lineId: r.id, source: 'withheld', amount: toMoney(money(r.tax_withheld)) });
+    if (withOther && money(r.other).greaterThan(0) && money(r.other).isInteger()) out.push({ lineId: r.id, source: 'other', amount: toMoney(money(r.other)) });
+    if (!household && money(r.tax_withheld).greaterThan(0) && money(r.tax_withheld).isInteger()) out.push({ lineId: r.id, source: 'withheld', amount: toMoney(money(r.tax_withheld)) });
   }
   return out.length > MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX ? null : out;
 }
@@ -72,7 +74,7 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
   return true;
 }
 
-// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
+// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (the map and the payout rows are `commentary`, so the gate reads closed).
 // `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
 // lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
 export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
@@ -139,7 +141,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       for (const e of payable.length === 0 ? [] : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(payable.map((p) => p.legal_entity_id))]).execute()) kinds.set(e.id, e.kind);
       for (const p of payable) {
         // A settlement whose `other` adds up to something is classified line by line; an offsetting pair is no adjustment, as before.
-        const adjustable = await adjustableOf(ctx, p.id, kinds.get(p.legal_entity_id) === 'household');
+        const adjustable = await adjustableOf(ctx, p.id, kinds.get(p.legal_entity_id) === 'household', !money(p.other).isZero());
         if (adjustable === null) continue;
         const lines = (
           await sql<{ id: string; value_date: string; amount: string; bank_ref: string | null }>`
@@ -165,8 +167,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
           received: toMoney(money(p.received)),
           candidates: free,
           proposalId: await pendingOf(ctx, 'finance.marketplace_payout.record', 'settlementId', p.id),
-          // An offsetting pair (the `other` of the lines add up to zero) needs nothing classified, the command accepts it as before, so its lines are not offered; withheld tax is offered either way.
-          adjustable: money(p.other).isZero() ? adjustable.filter((a) => a.source === 'withheld') : adjustable,
+          adjustable,
         });
       }
 

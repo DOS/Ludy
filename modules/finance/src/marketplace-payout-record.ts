@@ -3,14 +3,14 @@
 // per settlement, Dr cash (the bank account of the transfer) for the money received, Dr 331 for the platform's fees, Dr 3331 and Dr 3335 for the tax the platform withheld, Cr 131 (the platform) for what the
 // settlement posted there. The entry is built by payoutProposal (marketplace-payout-posting.ts) from the stored lines of the settlement; the bank line only has to be money in, equal to the net the
 // settlement paid, and free, and nothing is built or posted until the accountant has confirmed the account map (requireConfirmedMarketplaceMap, #2520):
-// - finance.marketplace_payout.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_payout.record`. The request carries the settlement and the bank line alone.
+// - finance.marketplace_payout.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_payout.record`. The request carries the settlement and the bank line, and the lines a person classified (`adjustments`, #4303 S4: ids, kinds and exact amounts).
 //   It checks the gate, that the settlement stands (it is no reversal and has none) and its posting stands (a payout before its settlement is posted is refused: "ghi sổ kỳ đối soát trước"), that no
 //   payout is posted for it, the period of the transfer is open, the bank line follows the settlement and is free, and the accounts are usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_payout.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
 //   differs from it. Then, in the same transaction, it records the voucher with the settlement and the bank line on it (one voucher per settlement and one per line: unique indexes hold it,
 //   20261231150000) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded, 20261231160000).
-// The 131 and 331 lines name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
-// test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses. No model call is made: everything here is deterministic over stored facts.
+// The 131 and 331 lines (and the 1388 line of tax withheld by mistake) name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
+// test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose map and payout rows are `commentary` (only the three adjustment rows are `confirmed`), so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutAdjustment, type MarketplacePayoutProposal } from '@crove/kernel-contract';

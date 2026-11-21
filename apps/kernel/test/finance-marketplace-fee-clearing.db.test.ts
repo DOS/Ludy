@@ -7,7 +7,7 @@
 //   wait together; a reversed clearing frees its amount; a second invoice for the same fees clears only what waits;
 // - either order of arrival: an invoice posted before the payout clears nothing until the payout stands;
 // - a document that is not the posted, standing, purchase invoice of a platform (in dong, with a credit to 331), a closed period, a stored proposal that differs and a chart with no map are refused;
-// - the shipped set of commands (every row of the account map is `commentary`) refuses with 409 until the accountant confirms the map (#2520).
+// - the shipped set of commands (the map and the rows of the sales, payout and fee paths are `commentary`) refuses with 409 until the accountant confirms the map (#2520).
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';

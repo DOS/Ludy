@@ -47,7 +47,7 @@ export interface PayoutProposalInput {
   // What a person said the lines' unexplained money is (#4303 S4); empty keeps the rule of before: the lines' `other` must add up to zero.
   adjustments?: readonly MarketplacePayoutAdjustment[];
   // The seller is a household (its withheld tax is the settlement's 3331 and 3335, never a mistake). Tax withheld from a seller that is no household can be classified `withheld_in_error`; a household's cannot.
-  household?: boolean;
+  household: boolean;
 }
 
 export interface PayoutProposal {
@@ -114,7 +114,7 @@ function classify(input: PayoutProposalInput) {
     }
     const t = taxKind[0];
     if (!t) continue;
-    if (input.household === true) throw bad('Thuế sàn khấu trừ của hộ kinh doanh đi qua 3331 và 3335, không phải khoản khấu trừ nhầm', { reason: 'ADJUSTMENT_HOUSEHOLD', lineId: l.id });
+    if (input.household) throw bad('Thuế sàn khấu trừ của hộ kinh doanh đi qua 3331 và 3335, không phải khoản khấu trừ nhầm', { reason: 'ADJUSTMENT_HOUSEHOLD', lineId: l.id });
     if (!tax.greaterThan(0)) throw bad('Khoản điều chỉnh nêu một dòng không có thuế sàn đã khấu trừ', { reason: 'ADJUSTMENT_NOTHING', lineId: l.id });
     if (!money(t.amount).equals(tax)) throw bad('Số tiền của khoản phân loại không khớp dòng đối soát', { reason: 'ADJUSTMENT_AMOUNT', lineId: l.id, taxWithheld: toMoney(tax), amount: t.amount });
     taxInError = taxInError.plus(tax);

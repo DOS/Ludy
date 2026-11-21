@@ -253,7 +253,8 @@ export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
 export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
 
 // The posting of a platform's payout (#2516, ADR-0045 point 6, plan 8.4 "The payout"): ONE general journal voucher per settlement: Dr 112 for the money received, Dr 331 for the platform's fees,
-// Dr 3331 and Dr 3335 for the tax the platform withheld (as the settlement credited it), Cr 131 (the platform) for what the settlement posted there. A person asks for it with the settlement and the bank line of the platform's transfer
+// Dr 3331 and Dr 3335 for the tax the platform withheld (as the settlement credited it), Cr 131 (the platform) for what the settlement posted there; lines of the settlement a person classified add Cr 711 / Cr 632
+// or Dr 1388 (`adjustments`, #4303 S4, below). A person asks for it with the settlement and the bank line of the platform's transfer
 // (kernel.proposal.request with command `finance.marketplace_payout.record`); every amount comes from the stored settlement's lines, the bank line only has to be money in, equal to the net the
 // settlement paid, and free. The server builds the entry again when the proposal is approved. Nothing is requested or posted until the accountant has confirmed the account map (#2520), and a
 // payout whose settlement is not posted yet is refused: MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED (409). Other codes: MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_PAYOUT_NOT_POSTABLE (422),
