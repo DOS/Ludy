@@ -320,11 +320,15 @@ export const marketplaceConnectionIngestPage = defineCommand({
       legalEntityId: connection.legal_entity_id,
     });
     // In the same transaction as the ingest. A page read twice is the same file: its first link stays (a file belongs to one connection).
-    await ctx.trx
+    const linked = await ctx.trx
       .insertInto('crove_finance.marketplace_connection_file')
       .values({ org_id: ctx.orgId, marketplace_connection_id: connection.id, file_id: filed.fileId })
       .onConflict((conflict) => conflict.columns(['org_id', 'file_id']).doNothing())
-      .execute();
+      .returning('id')
+      .executeTakeFirst();
+    // The link already existed. When it is an orphan (an earlier connection of this org brought the same bytes and was removed) this connection takes it over, so the file is the live connection's and the
+    // purge of a removed connection's never-booked files (#4284) leaves it; a link that has a connection is not moved.
+    if (!linked) await sql`SELECT crove_finance.marketplace_link_adopt(${ctx.orgId}::uuid, ${connection.id}::uuid, ${filed.fileId}::uuid)`.execute(ctx.trx);
     ctx.audit({ duplicate: filed.duplicate });
     return filed;
   },

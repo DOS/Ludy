@@ -10,11 +10,13 @@
 // A failing file is left for the next run and never holds the others behind it. Nothing here logs a filename, an order or an amount: ids and counts.
 //
 // The same pass, with another list, is the PURGE of what a disconnected connection's poll brought in and no member ever imported (#4284, runMarketplacePurge): crove_finance.marketplace_purge_due lists
-// the files whose connection was removed more than MARKETPLACE_PURGE_GRACE_DAYS ago, and the two commands are asked with `disconnected: true` (the database re-checks that nothing a member imported is touched).
+// the files whose connection was removed or revoked more than MARKETPLACE_PURGE_GRACE_DAYS ago (or expired more than MARKETPLACE_PURGE_EXPIRED_DAYS before that), and the two commands are asked with
+// `disconnected: true` (the database re-checks that nothing a member imported is touched). The purge deletes the file row itself, so there the "marker" of the retention is the row's absence, and the
+// second object delete closes the same window.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
-import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_GRACE_DAYS } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_EXPIRED_DAYS, MARKETPLACE_PURGE_GRACE_DAYS } from '@crove/kernel-contract';
 import { opsAlert } from './ops-alert.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'finance.marketplace_retention' };
@@ -53,7 +55,7 @@ const PURGE: SweepKind = {
   component: 'finance.marketplace_purge',
   input: { disconnected: true },
   list: async (workerDb, limit) =>
-    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_purge_due(${MARKETPLACE_PURGE_GRACE_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
+    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_purge_due(${MARKETPLACE_PURGE_GRACE_DAYS}::int, ${MARKETPLACE_PURGE_EXPIRED_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
 };
 
 type SweepDeps = { runtime: Runtime; workerDb: Db; store: BlobStore; log?: Log; batch?: number };
@@ -63,7 +65,7 @@ export function runMarketplaceRetention(deps: SweepDeps): Promise<MarketplaceRet
   return sweep(deps, RETENTION);
 }
 
-/** One pass over the never-booked files of connections disconnected longer ago than the grace (#4284). */
+/** One pass over the never-booked files of connections gone longer ago than the grace (#4284). */
 export function runMarketplacePurge(deps: SweepDeps): Promise<MarketplaceRetentionRun> {
   return sweep(deps, PURGE);
 }
