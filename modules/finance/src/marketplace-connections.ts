@@ -207,6 +207,7 @@ export const marketplaceConnectionRequestPoll = defineCommand({
 
 // The test the worker runs is queued by this event (apps/kernel/src/worker.ts): the same queue as the poll, a `kind` in the job. Ids only.
 export const MARKETPLACE_TEST_REQUESTED = 'finance.marketplace_test_requested';
+export const MARKETPLACE_TEST_MIN_GAP_MS = 60_000;
 
 export const marketplaceConnectionRequestTest = defineCommand({
   name: 'finance.marketplace_connection.request_test',
@@ -220,13 +221,15 @@ export const marketplaceConnectionRequestTest = defineCommand({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.provider', 'ch.status'])
+      .select(['c.provider', 'c.last_tested_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
     if (!row) throw notFound();
     if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
     if (!marketplaceAdapterOf(row.provider)) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Kết nối này không phải của một bộ kết nối sàn mà phiên bản này hỗ trợ');
+    // The queue is a standard one (a singleton key alone dedupes nothing), so the limit is here: a connection tested less than a minute ago is not tested again, whoever asks. Each test is a call to the platform.
+    if (row.last_tested_at && ctx.now.getTime() - new Date(row.last_tested_at).getTime() < MARKETPLACE_TEST_MIN_GAP_MS) throw new DomainError('MARKETPLACE_TEST_RECENT', 429, 'Vừa kiểm tra kết nối này xong, hãy đợi một phút rồi kiểm tra lại');
     await ctx.emit(MARKETPLACE_TEST_REQUESTED, { connection_id: input.id });
     ctx.audit({ requested: true });
     return { queued: true };

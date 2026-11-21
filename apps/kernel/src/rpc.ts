@@ -3504,6 +3504,11 @@ export function createRpcHandler(
               },
               { actor, orgId },
             );
+            // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
+            // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
+            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+              await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
+            }
             return { id: connected.id };
           }),
         ),

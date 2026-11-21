@@ -1660,12 +1660,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         }
         return;
       }
-      // The payload is closed (ids and a known kind): anything else is refused without a retry and without a side effect, and its content is not logged.
+      // The payload is closed (ids and a known kind): anything else fails the job (it ends in the dead letters, where it is seen), with a fixed message: its content is neither logged nor kept.
       const parsed = zMarketplaceJob.safeParse(job.data);
-      if (!parsed.success) {
-        console.error('[marketplace] job refused: the payload is not one this worker knows');
-        return;
-      }
+      if (!parsed.success) throw new Error('marketplace job: the payload is not one this worker knows');
       const marketplaceDeps = { runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders };
       // A test only asks the provider's one cheap read and records its state: no page, no file, no cursor.
       if (marketplaceJobKind(parsed.data) === 'test') {
@@ -2988,6 +2985,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId, kind: 'test' } satisfies MarketplacePollJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `test:${connectionId}`),
+                  // The queue is a standard one, so the key alone dedupes nothing: a send under the same key within this many seconds is dropped (the command also refuses a test within a minute of the last).
+                  singletonSeconds: 60,
                   retryLimit: 0,
                 });
               }

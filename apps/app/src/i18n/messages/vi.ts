@@ -14189,6 +14189,7 @@ export const vi = {
       MISA_AMIS_PUSH_TOO_MANY: 'Kỳ này có quá nhiều chứng từ; hãy chọn khoảng ngắn hơn.',
       MISA_AMIS_PUSH_PENDING: 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
+      MARKETPLACE_TEST_RECENT: 'Vừa kiểm tra kết nối này xong; hãy đợi một phút rồi kiểm tra lại.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
       MARKETPLACE_INCOME_NOT_STAGED: 'Báo cáo thu nhập này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
