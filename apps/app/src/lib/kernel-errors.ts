@@ -540,6 +540,8 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_SETTINGS_INVALID',
   // A strict org accepts only a written consent method (A2, #3160).
   'CONSENT_METHOD_NOT_ALLOWED',
+  // A second capture of a call that is already being recorded (ADR-0055 slice 1, #4123); the recorder words it with the kind and time in its details.
+  'CAPTURE_ALREADY_RUNNING',
   // A member's own to-dos (#1673, #3558).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
@@ -738,6 +740,8 @@ export const KERNEL_ERROR_CODES = [
   'ADS_CONNECTION_NOT_FOUND',
   'ADS_CONNECTION_INACTIVE',
   'ADS_CONNECTION_STILL_OPEN',
+  // An AI coworker's ask to cancel a waiting ad change (#4181): the approval refuses a change that would not raise spend.
+  'ADS_CANCEL_NOT_OPENING',
   'ADS_SYNC_TOO_SOON',
   'ADS_SYNC_ON_HOLD',
   'ADS_RANGE_INVALID',
@@ -1432,6 +1436,11 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_CA_PROVIDER_NOT_READY',
   'SIGN_ENVELOPE_NOT_SEALED',
   'SIGN_LIVE_CA_GATED',
+  // eSign Slice 4c in-flight recipient correction & audited signer delegation (#3819).
+  'SIGN_DELEGATE_SAME_EMAIL',
+  'SIGN_DELEGATION_DISABLED',
+  'SIGN_DELEGATION_LIMIT_REACHED',
+  'SIGN_SIGNER_ALREADY_COMPLETED',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];
@@ -1474,6 +1483,7 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'NO_AUDIO_TRACK',
   'MEDIA_EXTRACT_TIMEOUT',
   'HR_CONTRACT_INVALID',
+  'CAPTURE_ALREADY_RUNNING',
 ]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {

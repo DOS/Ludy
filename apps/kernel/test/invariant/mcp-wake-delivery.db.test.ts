@@ -217,6 +217,32 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         await expect(row, name).rejects.toThrow();
       }
     }
+    // The type that may join the set (#3803: sent to a company grant when the minutes of an org-visible meeting are published): optional here so each side can land on its own. When the database accepts
+    // it, it accepts exactly two data keys, an id and an instant, with the ids of its own row; whatever it does or does not accept yet, it never stores a title, a summary, a name, the camelCase keys or
+    // another row's ids.
+    const minutes = { ...head, type: 'meetings.minutes_published' };
+    const minutesData = { meeting_id: randomUUID(), published_at: '2026-11-12T02:59:58.123Z' };
+    const insertMinutes = (body: unknown) =>
+      admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, 'meetings.minutes_published', $4::jsonb)`, [orgA, id, grant, JSON.stringify(body)]));
+    await insertMinutes({ ...minutes, data: minutesData }).then(
+      () => admin((c) => c.query(`DELETE FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id])),
+      () => undefined,
+    );
+    const hostileMinutes: Array<[string, unknown]> = [
+      ['a title beside the meeting id', { ...minutes, data: { ...minutesData, title: 'Nguyen Van A họp giá' } }],
+      ['a summary in the minutes event', { ...minutes, data: { ...minutesData, summary: 'Hai khoản cần xem' } }],
+      ['the camelCase keys', { ...minutes, data: { meetingId: minutesData.meeting_id, publishedAt: minutesData.published_at } }],
+      ['a name for the meeting id', { ...minutes, data: { meeting_id: 'Nguyen Van A', published_at: minutesData.published_at } }],
+      ['text for the published instant', { ...minutes, data: { meeting_id: minutesData.meeting_id, published_at: 'thứ hai' } }],
+      ['a date for the published instant', { ...minutes, data: { meeting_id: minutesData.meeting_id, published_at: '2026-11-12' } }],
+      ['no meeting id', { ...minutes, data: { published_at: minutesData.published_at } }],
+      ['items in the minutes event', { ...minutes, data: { items: [] } }],
+      ['a note at the top', { ...minutes, data: minutesData, note: 'gọi lại khách' }],
+      ['another org\'s id', { ...minutes, org: orgB, data: minutesData }],
+      ['another grant\'s id', { ...minutes, grant: randomUUID(), data: minutesData }],
+      ['another event id', { ...minutes, id: randomUUID(), data: minutesData }],
+    ];
+    for (const [name, body] of hostileMinutes) await expect(insertMinutes(body), name).rejects.toThrow();
     // The signal keys table holds only a rule's short name and ids.
     for (const key of ['Nguyen Van A', 'deal_without_invoice', 'deal_without_invoice:not-an-id', `Deal:${randomUUID()}`, 'x'.repeat(300)]) {
       await expect(admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_signal_seen (org_id, grant_id, key) VALUES ($1, $2, $3)`, [orgA, grant, key])), key).rejects.toThrow();

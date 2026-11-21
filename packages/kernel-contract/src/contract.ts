@@ -369,10 +369,14 @@ import {
   zNoteRestoreVersion,
   zNoteSearch,
   zNoteSetVisibility,
+  zNoteOrganizeInput,
+  zNoteOrganizeResult,
   zNoteSuggestTodosInput,
   zNoteSuggestTodosResult,
   zNoteSummarizeInput,
   zNoteSummarizeResult,
+  zTodoPlanInput,
+  zTodoPlanResult,
   zNoteSummary,
   zNoteTemplate,
   zNoteTemplateCreate,
@@ -543,6 +547,7 @@ import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
+import { zCaptureHeartbeat, zCaptureHeartbeatDone } from './meeting-capture.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -669,6 +674,8 @@ import {
   zSignFieldSetResult,
   zSignSignerAddInput,
   zSignSignerAddResult,
+  zSignSignerCorrectRecipientInput,
+  zSignSignerCorrectRecipientResult,
   zSignSignerCreateLinkInput,
   zSignSignerCreateLinkResult,
   zSignSignerRemoveInput,
@@ -1264,6 +1271,9 @@ export const contract = {
     vyStatus: oc.input(z.strictObject({})).output(zNoteVyStatus),
     summarize: oc.input(zNoteSummarizeInput).output(zNoteSummarizeResult),
     suggestTodos: oc.input(zNoteSuggestTodosInput).output(zNoteSuggestTodosResult),
+    // Notes v2 (T4b & E5b, #3563, ADR-0049): member-scoped Vy daily focus planner and unfiled inbox organizer.
+    todoPlan: oc.input(zTodoPlanInput).output(zTodoPlanResult),
+    organize: oc.input(zNoteOrganizeInput).output(zNoteOrganizeResult),
     vyResults: oc.input(zNoteRef).output(zNoteVyResults),
     acceptSummary: oc.input(zNoteAcceptSummary).output(zNoteWritten),
     // The caller's own to-dos (#1673), which nobody else reads: not another member, an owner or an admin.
@@ -1312,6 +1322,8 @@ export const contract = {
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     // The extension reports that a recording of its own token ended with no media reaching the server, so the app's recording chip lets go (#3196).
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
+    // The heartbeat of a running capture, from the extension and the app's recorder every 30 seconds, and its end when the person stops (ADR-0055 slice 1, #4123).
+    captureHeartbeat: oc.input(zCaptureHeartbeat).output(zCaptureHeartbeatDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
     // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
@@ -3364,6 +3376,7 @@ export const contract = {
       remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
       reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
       create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+      correct_recipient: oc.input(zSignSignerCorrectRecipientInput).output(zSignSignerCorrectRecipientResult),
     },
     field: {
       set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),

@@ -750,6 +750,9 @@ export const zEngageProposalAbout = z.object({
     'launchState',
     'launchBudget',
     'launchEnds',
+    'changeKind',
+    'changeState',
+    'changeTo',
   ]),
   value: z.string(),
 });

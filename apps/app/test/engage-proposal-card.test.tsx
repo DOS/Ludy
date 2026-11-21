@@ -132,6 +132,27 @@ describe('the card of an AI coworker\'s ask', () => {
     }
     expect(render('en', 'pending', withAbout([{ label: 'launchState', value: 'odd_state' }]))).toContain('odd_state');
   });
+
+  it('says in words which waiting ad change a cancel is about: its kind, its state and what it would set, in both languages (#4181)', () => {
+    const cancel = { command: 'ads.manage.cancel_approved', fields: [{ key: 'changeId', value: '7d1f', long: false }], about: [
+      { label: 'launch', value: 'Khuyến mãi Tết' },
+      { label: 'changeKind', value: 'budget_raise' },
+      { label: 'changeState', value: 'queued' },
+      { label: 'changeTo', value: '150000 VND' },
+    ] } satisfies EngageProposalView;
+    const vi = render('vi', 'pending', cancel, 'ads.manage_cancel');
+    for (const word of ['Hủy một thay đổi đang chờ', 'Loại thay đổi', 'Thay đổi đang chờ (mã)', 'Tăng ngân sách ngày', 'Trạng thái của thay đổi', 'Đang chờ chạy', 'Điều nó sẽ đặt', '150000 VND']) expect(vi, word).toContain(word);
+    const en = render('en', 'pending', cancel, 'ads.manage_cancel');
+    for (const word of ['Cancel a waiting change', 'Kind of change', 'Waiting change (reference)', 'Raise the daily budget', 'State of the change', 'Waiting to start', 'What it would set', '150000 VND']) expect(en, word).toContain(word);
+    for (const html of [vi, en]) expect(html).not.toContain('engageAbout');
+    // A resume's part of the ad is in words, never the raw slot.
+    const resume = { ...cancel, about: [{ label: 'changeKind', value: 'resume' }, { label: 'changeTo', value: 'ad_1' }] } satisfies EngageProposalView;
+    expect(render('en', 'pending', resume, 'ads.manage_cancel')).toContain('Ad 1');
+    expect(render('vi', 'pending', resume, 'ads.manage_cancel')).toContain('Quảng cáo 1');
+    expect(render('en', 'pending', resume, 'ads.manage_cancel')).not.toContain('>ad_1<');
+    // A kind the card has no words for shows as it is.
+    expect(render('en', 'pending', withAbout([{ label: 'changeKind', value: 'odd_kind' }]), 'ads.manage_cancel')).toContain('odd_kind');
+  });
 });
 
 describe('the plain card a member or a viewer sees instead (L4 of #4160)', () => {

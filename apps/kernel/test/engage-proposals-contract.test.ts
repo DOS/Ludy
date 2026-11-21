@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// What the registry says of the Engage twins (epic #3857, E4, issue #3863; Platform PO conditions of 2026-11-19): exactly the 14 of ENGAGE_PROPOSALS declare `mcp` in mode proposal, none has a preparer, each is
+// What the registry says of the Engage twins (epic #3857, E4, issue #3863; Platform PO conditions of 2026-11-19): exactly the 15 of ENGAGE_PROPOSALS declare `mcp` in mode proposal, none has a preparer, each is
 // a strict payload over its original's own input in an R2 proposal-only command with its kind and scope, each has a four-eyes approval policy of owners and admins, and the originals the twins run still carry no
 // `mcp`. The database half (the catalog rows, the audit chain) is in engage-proposals-chain.db.test.ts.
 import { describe, expect, it } from 'vitest';
@@ -19,11 +19,11 @@ const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...soci
 const byName = new Map(all.map((c) => [c.name, c]));
 
 describe('the Engage twins in the registry (#3863)', () => {
-  it('has exactly the 14 twins of ENGAGE_PROPOSALS declare mode proposal: no prefix, no pattern, none more, none fewer', () => {
+  it('has exactly the 15 twins of ENGAGE_PROPOSALS declare mode proposal: no prefix, no pattern, none more, none fewer', () => {
     const declared = all.filter((c) => (c.mcp as { mode?: string } | undefined)?.mode === 'proposal').map((c) => c.name);
     expect([...declared].sort()).toEqual(ENGAGE_PROPOSALS.map((p) => p.command).sort());
-    expect(ENGAGE_PROPOSALS.length).toBe(14);
-    expect(new Set(ENGAGE_PROPOSALS.map((p) => p.command)).size).toBe(14);
+    expect(ENGAGE_PROPOSALS.length).toBe(15);
+    expect(new Set(ENGAGE_PROPOSALS.map((p) => p.command)).size).toBe(15);
   });
 
   it('has no preparer for any twin (a client\'s raw strict payload is what is stored), and none for what a twin runs', () => {

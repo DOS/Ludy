@@ -319,12 +319,19 @@ export const marketplaceConnectionIngestPage = defineCommand({
       source: 'upload',
       legalEntityId: connection.legal_entity_id,
     });
-    // In the same transaction as the ingest. A page read twice is the same file: its first link stays (a file belongs to one connection).
-    await ctx.trx
-      .insertInto('crove_finance.marketplace_connection_file')
-      .values({ org_id: ctx.orgId, marketplace_connection_id: connection.id, file_id: filed.fileId })
-      .onConflict((conflict) => conflict.columns(['org_id', 'file_id']).doNothing())
-      .execute();
+    // In the same transaction as the ingest, and only for a file this page stored: a page whose bytes are a file the org already holds (a member's own upload, or a page an earlier connection brought) is not linked,
+    // so the purge of a gone connection's files (#4284) can never reach a file the poll did not store. A page read twice is the same file: its first link stays (a file belongs to one connection).
+    if (!filed.duplicate) {
+      await ctx.trx
+        .insertInto('crove_finance.marketplace_connection_file')
+        .values({ org_id: ctx.orgId, marketplace_connection_id: connection.id, file_id: filed.fileId })
+        .onConflict((conflict) => conflict.columns(['org_id', 'file_id']).doNothing())
+        .execute();
+    } else {
+      // The file existed. When it carries an orphan link (an earlier connection of this org brought the same bytes and was removed) this connection takes it over, so the file is the live connection's and the
+      // purge leaves it; a link that has a connection is not moved, and a file with no link (a member's upload) stays unlinked.
+      await sql`SELECT crove_finance.marketplace_link_adopt(${ctx.orgId}::uuid, ${connection.id}::uuid, ${filed.fileId}::uuid)`.execute(ctx.trx);
+    }
     ctx.audit({ duplicate: filed.duplicate });
     return filed;
   },

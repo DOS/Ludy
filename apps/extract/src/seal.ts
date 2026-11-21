@@ -7889,8 +7889,29 @@ async function appendAuditCertificatePages(
       ? ` | Chữ ký / Method: ${collapseSingleLineText(signer.signatureKind)}`
       : '';
     const ipHashDisplay = signer.ipHashPrefix ? collapseSingleLineText(signer.ipHashPrefix) : 'N/A';
+    const provenanceLines: string[] = [];
+    if (signer.delegatedFromName) {
+      const fromName = collapseSingleLineText(signer.delegatedFromName);
+      const fromEmail = signer.delegatedFromMaskedEmail ? collapseSingleLineText(signer.delegatedFromMaskedEmail) : null;
+      const viDelegated = fromEmail ? `Ủy quyền ký bởi ${fromName} (${fromEmail})` : `Ủy quyền ký bởi ${fromName}`;
+      const enDelegated = fromEmail ? `Delegated by ${fromName} (${fromEmail})` : `Delegated by ${fromName}`;
+      provenanceLines.push(
+        ...(await fonts.wrapLines(`${viDelegated} | ${enDelegated}`, 'regular', signerDetailSize, innerTextW)),
+      );
+    }
+    if (signer.recipientCorrected) {
+      provenanceLines.push(
+        ...(await fonts.wrapLines(
+          'Hiệu chỉnh người nhận / Recipient corrected in-flight by sender',
+          'regular',
+          signerDetailSize,
+          innerTextW,
+        )),
+      );
+    }
     const detailLines = [
       ...(await fonts.wrapLines(`Email: ${emailDisplay} | Kênh gửi / Delivery: ${deliveryDisplay}`, 'regular', signerDetailSize, innerTextW)),
+      ...provenanceLines,
       ...(await fonts.wrapLines(`Xác thực OTP / OTP: ${formatOtpStatus(signer.otpStatus)}${sigKindSuffix}`, 'regular', signerDetailSize, innerTextW)),
       ...(await fonts.wrapLines(
         `Thời điểm ký / Signed At: ${formatUtcPlus7(signer.signedAtIso)} | IP hash: ${ipHashDisplay}`,

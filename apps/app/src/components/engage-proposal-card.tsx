@@ -35,8 +35,9 @@ const KIND_KEYS = [
   'ads_object_archive',
   'ads_budget_lower',
   'ads_schedule_shorten',
+  'ads_manage_cancel',
 ] as const;
-const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn'] as const;
+const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn', 'changeId'] as const;
 // A time the AI wrote as an ISO instant is shown in the reader's own clock beside what was written, so 09:00Z is not read as 09:00 in Vietnam.
 const TIME_KEYS = ['startsAt', 'at', 'slotAt'] as const;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -61,11 +62,18 @@ const ABOUT_KEYS = [
   'launchState',
   'launchBudget',
   'launchEnds',
+  'changeKind',
+  'changeState',
+  'changeTo',
 ] as const satisfies readonly EngageProposalView['about'][number]['label'][];
 // A label the contract adds and this list lacks fails the typecheck here, not on a card.
 const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (typeof ABOUT_KEYS)[number] ? true : never = true;
 void ABOUT_KEYS_ARE_ALL;
-const STATE_KEYS = ['draft', 'sent', 'accepted', 'declined', 'superseded', 'queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
+const STATE_KEYS = ['draft', 'sent', 'accepted', 'declined', 'superseded', 'queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled', 'applied', 'unclear'] as const;
+const CHANGE_KINDS = ['resume', 'budget_raise', 'schedule_extend', 'pause', 'archive', 'budget_lower', 'schedule_shorten'] as const;
+const SLOT_KEYS = ['campaign', 'ad_set', 'ad_1', 'ad_2', 'ad_3'] as const;
+const isSlotKey = (value: string): value is (typeof SLOT_KEYS)[number] => (SLOT_KEYS as readonly string[]).includes(value);
+const isChangeKind = (value: string): value is (typeof CHANGE_KINDS)[number] => (CHANGE_KINDS as readonly string[]).includes(value);
 const isStateKey = (value: string): value is (typeof STATE_KEYS)[number] => (STATE_KEYS as readonly string[]).includes(value);
 const isKindKey = (key: string): key is (typeof KIND_KEYS)[number] => (KIND_KEYS as readonly string[]).includes(key);
 const isFieldKey = (key: string): key is (typeof FIELD_KEYS)[number] => (FIELD_KEYS as readonly string[]).includes(key);
@@ -78,7 +86,10 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
   // A booking's current time is shown in the reader's own clock beside the instant, like the proposed time below; a state in words.
   const aboutValue = (a: { label: string; value: string }): string => {
     if (a.label === 'bookingTime' && ISO_INSTANT.test(a.value)) return `${fmt.dateTime(a.value)} (${a.value})`;
-    if ((a.label === 'quoteStatus' || a.label === 'launchState') && isStateKey(a.value)) return t(`engageAboutValue.${a.value}`);
+    if ((a.label === 'quoteStatus' || a.label === 'launchState' || a.label === 'changeState') && isStateKey(a.value)) return t(`engageAboutValue.${a.value}`);
+    // A resume sets no number or day: the part of the ad it would start again, in words.
+    if (a.label === 'changeTo' && isSlotKey(a.value)) return t(`engageAboutValue.slot_${a.value}`);
+    if (a.label === 'changeKind' && isChangeKind(a.value)) return t(`engageAboutValue.change_${a.value}`);
     return a.value;
   };
   return (
