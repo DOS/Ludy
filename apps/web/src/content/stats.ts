@@ -7,7 +7,7 @@ export const STATS = {
   operations: 1461,
   commands: 911,
   queries: 550,
-  migrations: 781,
+  migrations: 783,
   testCases: 17000,
   invariantSuites: 200,
   adrs: 42,

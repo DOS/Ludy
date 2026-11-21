@@ -349,49 +349,58 @@ describe('deterministic PDF text tags (pdf_inspect, #3552)', () => {
       'pdf_seal',
       encodePdfSealInput({
         pdfBase64: Buffer.from(pdfBytes).toString('base64'),
-        fields: res.detectedTags.map((tag) => {
+        fields: res.detectedTags.flatMap<PdfSealInput['fields'][number]>((tag) => {
+          if (tag.fieldType === 'attachment') return [];
           if (tag.fieldType === 'signature') {
-            return {
-              type: 'signature' as const,
-              page: tag.pageNumber,
-              xNorm: tag.xNorm,
-              yNorm: tag.yNorm,
-              wNorm: tag.wNorm,
-              hNorm: tag.hNorm,
-              imagePngBase64: pngBase64,
-            };
+            return [
+              {
+                type: 'signature' as const,
+                page: tag.pageNumber,
+                xNorm: tag.xNorm,
+                yNorm: tag.yNorm,
+                wNorm: tag.wNorm,
+                hNorm: tag.hNorm,
+                imagePngBase64: pngBase64,
+              },
+            ];
           }
           if (tag.fieldType === 'initials') {
-            return {
-              type: 'initial' as const,
-              page: tag.pageNumber,
-              xNorm: tag.xNorm,
-              yNorm: tag.yNorm,
-              wNorm: tag.wNorm,
-              hNorm: tag.hNorm,
-              text: 'NMQ',
-            };
+            return [
+              {
+                type: 'initial' as const,
+                page: tag.pageNumber,
+                xNorm: tag.xNorm,
+                yNorm: tag.yNorm,
+                wNorm: tag.wNorm,
+                hNorm: tag.hNorm,
+                text: 'NMQ',
+              },
+            ];
           }
           if (tag.fieldType === 'checkbox') {
-            return {
-              type: 'checkbox' as const,
+            return [
+              {
+                type: 'checkbox' as const,
+                page: tag.pageNumber,
+                xNorm: tag.xNorm,
+                yNorm: tag.yNorm,
+                wNorm: tag.wNorm,
+                hNorm: tag.hNorm,
+                checked: true,
+              },
+            ];
+          }
+          return [
+            {
+              type: tag.fieldType,
               page: tag.pageNumber,
               xNorm: tag.xNorm,
               yNorm: tag.yNorm,
               wNorm: tag.wNorm,
               hNorm: tag.hNorm,
-              checked: true,
-            };
-          }
-          return {
-            type: tag.fieldType,
-            page: tag.pageNumber,
-            xNorm: tag.xNorm,
-            yNorm: tag.yNorm,
-            wNorm: tag.wNorm,
-            hNorm: tag.hNorm,
-            text: tag.fieldType === 'date' ? '17/11/2026' : 'Giám đốc điều hành',
-          };
+              text: tag.fieldType === 'date' ? '17/11/2026' : 'Giám đốc điều hành',
+            },
+          ];
         }),
         certificate: makeCertificate({ sourceSha256: createHash('sha256').update(pdfBytes).digest('hex') }),
       }),
@@ -742,4 +751,129 @@ describe('Audit Certificate summary page size matching (pdf_seal, #3552)', () =>
     expect(certText).toContain('Hiệu chỉnh người nhận');
     expect(certText).toContain('Recipient corrected');
   });
+
+  it('parses dropdown, radio, and attachment tags and flattens Vietnamese choices plus supporting attachment SHA-256 on the audit certificate (#3818)', async () => {
+    expect(parseDeterministicTagToken('dropdown, r1:Chuyển khoản ngân hàng|Tiền mặt|Thẻ tín dụng')).toEqual({
+      fieldType: 'dropdown',
+      roleOrder: 1,
+      roleKey: 'r1',
+      required: true,
+      label: null,
+      options: ['Chuyển khoản ngân hàng', 'Tiền mặt', 'Thẻ tín dụng'],
+    });
+    expect(parseDeterministicTagToken('dropdown, r2, optional, Hình thức thanh toán:Chuyển khoản|Tiền mặt')).toEqual({
+      fieldType: 'dropdown',
+      roleOrder: 2,
+      roleKey: 'r2',
+      required: false,
+      label: 'Hình thức thanh toán',
+      options: ['Chuyển khoản', 'Tiền mặt'],
+    });
+    expect(parseDeterministicTagToken('radio, r1:Đồng ý điều khoản|Cần đàm phán thêm')).toEqual({
+      fieldType: 'radio',
+      roleOrder: 1,
+      roleKey: 'r1',
+      required: true,
+      label: null,
+      options: ['Đồng ý điều khoản', 'Cần đàm phán thêm'],
+    });
+    expect(parseDeterministicTagToken('attachment, r1:CCCD mặt trước')).toEqual({
+      fieldType: 'attachment',
+      roleOrder: 1,
+      roleKey: 'r1',
+      required: true,
+      label: 'CCCD mặt trước',
+    });
+    // Reject choice tags with 0 options or > 50 options.
+    expect(parseDeterministicTagToken('dropdown, r1')).toBeNull();
+    expect(parseDeterministicTagToken(`dropdown, r1:${Array.from({ length: 51 }, (_, i) => `Opt ${i + 1}`).join('|')}`)).toBeNull();
+
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const page = doc.addPage([595, 842]);
+    page.drawText('Payment: {{dropdown, r1, Payment:Bank Transfer|Cash}}', { x: 48, y: 720, size: 11, font });
+    page.drawText('Entity: {{radio, r1:Company|Household}}', { x: 48, y: 680, size: 11, font });
+    page.drawText('ID Doc: {{attachment, r1:Business License}}', { x: 48, y: 640, size: 11, font });
+    page.drawText('Sign: {{signature, r1}}', { x: 48, y: 580, size: 11, font });
+    const pdfBytes = await doc.save();
+
+    const inspectRes = await parse('pdf_inspect', pdfBytes);
+    expect(inspectRes.ok).toBe(true);
+    if (!inspectRes.ok || inspectRes.kind !== 'pdf_inspect') throw new Error('expected pdf_inspect');
+    expect(inspectRes.detectedTags.map((t) => ({ fieldType: t.fieldType, label: t.label, options: t.options }))).toEqual([
+      { fieldType: 'dropdown', label: 'Payment', options: ['Bank Transfer', 'Cash'] },
+      { fieldType: 'radio', label: null, options: ['Company', 'Household'] },
+      { fieldType: 'attachment', label: 'Business License', options: undefined },
+      { fieldType: 'signature', label: null, options: undefined },
+    ]);
+
+    const attachmentSha = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+    const pngBase64 = makeSignaturePng();
+    const baseCert = makeCertificate({
+      sourceSha256: createHash('sha256').update(pdfBytes).digest('hex'),
+    });
+    const sealRes = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+        fields: [
+          {
+            type: 'dropdown',
+            page: 1,
+            xNorm: 0.22,
+            yNorm: 0.13,
+            wNorm: 0.36,
+            hNorm: 0.032,
+            text: 'Chuyển khoản ngân hàng Quốc tế',
+          },
+          {
+            type: 'radio',
+            page: 1,
+            xNorm: 0.22,
+            yNorm: 0.18,
+            wNorm: 0.36,
+            hNorm: 0.032,
+            text: 'Hộ kinh doanh cá thể',
+            checked: true,
+          },
+          {
+            type: 'signature',
+            page: 1,
+            xNorm: 0.22,
+            yNorm: 0.28,
+            wNorm: 0.24,
+            hNorm: 0.06,
+            imagePngBase64: pngBase64,
+          },
+        ],
+        certificate: {
+          ...baseCert,
+          signers: baseCert.signers.map((s, idx) =>
+            idx === 0
+              ? {
+                  ...s,
+                  attachments: [
+                    {
+                      label: 'Giấy ĐKKD',
+                      filename: 'giay-dkkd-cong-ty.pdf',
+                      sha256: attachmentSha,
+                    },
+                  ],
+                }
+              : s,
+          ),
+        },
+      }),
+    );
+    expect(sealRes.ok).toBe(true);
+    if (!sealRes.ok || sealRes.kind !== 'pdf_seal') throw new Error('expected pdf_seal');
+    const sealedBytes = new Uint8Array(Buffer.from(sealRes.sealedPdfBase64, 'base64'));
+    const textRes = await parse('pdf_text', sealedBytes);
+    expect(textRes.ok).toBe(true);
+    if (!textRes.ok || textRes.kind !== 'pdf_text') throw new Error('expected pdf_text');
+    expect(textRes.text).toContain('Chuyển khoản ngân hàng Quốc tế');
+    expect(textRes.text).toContain('Hộ kinh doanh cá thể');
+    expect(textRes.text).toContain('giay-dkkd-cong-ty.pdf');
+    expect(textRes.text).toContain(attachmentSha);
+  }, 20_000);
 });
