@@ -7,7 +7,7 @@
 // bidirectional controls, zero-width and invisible characters, tag characters, unpaired surrogates; whitespace collapsed) and normalized to NFC, then judged by the same rules as the term list of
 // the transcription (`normalizeTerms`): at most 40 characters (code points), no remaining invisible/control characters or lone surrogates, at least one letter, at most 4 digits, no "@", no web
 // address. Both the contract (`term.normalize('NFKC')`) and the database (`crove_meetings.glossary_term_ok` via `pg_catalog.normalize(p_term, 'NFKC')` in
-// supabase/migrations/20270127250000_crove_meetings_glossary_invisible_chars.sql) check '@', '://' and 'www.' after NFKC folding so full-width '@' and dotted look-alikes are rejected in both
+// supabase/migrations/20270130120000_crove_meetings_glossary_invisible_chars.sql) check '@', '://' and 'www.' after NFKC folding so full-width '@' and dotted look-alikes are rejected in both
 // layers; the app stays stricter only on non-ASCII decimal digits (`\p{Nd}` vs `[[:digit:]]`).
 import { z } from 'zod';
 import { INVISIBLE_PATTERN } from './invisible-chars.ts';
