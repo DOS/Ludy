@@ -8250,10 +8250,10 @@ export const vi = {
       previewColumns: { rowNo: 'Dòng', orderNo: 'Mã đơn', lineKey: 'Mã dòng', sku: 'SKU', itemName: 'Tên hàng', quantity: 'Số lượng', amount: 'Thành tiền', status: 'Trạng thái' },
       notSaved: 'Chưa nhập gì từ đây: đây chỉ là bản xem trước để bạn kiểm tra.',
       save: 'Lưu cách ghép này',
-      saved: 'Đã lưu cách ghép. Ludy sẽ dùng nó cho báo cáo kế tiếp của sàn này có cùng các cột.',
+      saved: 'Đã lưu cách ghép cho sàn này.',
       saveOwnerOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới lưu được cách ghép.',
       saveCheckAgain: 'Lần kiểm tra này từ phiên bản cũ nên chưa lưu được; hãy kiểm tra lại cách ghép.',
-      saveHint: 'Chỉ lưu khi các dòng này đúng như bạn mong đợi: báo cáo kế tiếp có cùng tiêu đề cột sẽ được đọc theo cách này.',
+      saveHint: 'Chỉ lưu khi các dòng này đúng như bạn mong đợi.',
       retention: 'Các dòng này lấy từ tệp của bạn và chỉ được giữ tối đa 7 ngày.',
       failures: {
         not_a_sheet: 'Tệp này không phải bảng tính đọc được.',

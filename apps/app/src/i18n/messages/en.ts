@@ -8254,10 +8254,10 @@ export const en = {
       previewColumns: { rowNo: 'Row', orderNo: 'Order', lineKey: 'Line key', sku: 'SKU', itemName: 'Item', quantity: 'Quantity', amount: 'Amount', status: 'Status' },
       notSaved: 'Nothing is imported from here: this is only a preview for you to check.',
       save: 'Save this mapping',
-      saved: 'Mapping saved. Ludy will use it for the next report of this marketplace with the same columns.',
+      saved: 'Mapping saved for this marketplace.',
       saveOwnerOnly: 'Only an owner or admin can save a mapping.',
       saveCheckAgain: 'This check is from an older version and cannot be saved; check the mapping again.',
-      saveHint: 'Save it only if these lines are what you expect: the next report with the same column headers will be read this way.',
+      saveHint: 'Save it only if these lines are what you expect.',
       retention: 'These lines come from your file and are kept for 7 days at most.',
       failures: {
         not_a_sheet: 'This file is not a spreadsheet that can be read.',

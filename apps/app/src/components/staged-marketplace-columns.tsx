@@ -6,9 +6,9 @@
 // pick, and a buyer's column has no picker at all. With the AI off the pickers are the same, empty. The parsed lines are personal data (a buyer's text can sit in a column mapped by hand): they are
 // shown to the member who asked and kept seven days at most.
 // Saving (#4037): once the lines of a passed check are on screen and the choices still are the ones checked, an owner or admin can save the mapping; the server saves the mapping of that file's last check (never
-// what this screen sends beyond the file, platform and assignments it saw) and the card leaves the list.
+// what this screen sends beyond the file, platform and assignments it saw) and the card then says it is saved (it stays in the list until the file is read with the mapping).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { MARKETPLACE_COLUMN_PLATFORMS, type MarketplaceColumnsFile, type MarketplaceColumnsStatus } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
@@ -116,6 +116,11 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
   const [edits, setEdits] = useState<Edits | null>(null);
   // Set once the mapping is saved: the check row is gone with it, so the card says so instead of offering the columns again.
   const [savedNow, setSavedNow] = useState(false);
+  // Focus goes to the saved note when the Save button it replaces disappears.
+  const savedNote = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (savedNow) savedNote.current?.focus();
+  }, [savedNow]);
   const status = useQuery({
     ...orpc.marketplace.columns.queryOptions({ input: { fileId: file.fileId } }),
     enabled: opened,
@@ -172,7 +177,7 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
     return (
       <Card className="block p-4 text-sm" data-testid="staged-columns-report">
         <p className="font-medium text-foreground break-words">{file.filename}</p>
-        <p className="mt-3 text-xs text-subtle-foreground" role="status" data-testid="staged-columns-saved">
+        <p ref={savedNote} tabIndex={-1} className="mt-3 text-xs text-subtle-foreground outline-none" role="status" data-testid="staged-columns-saved">
           {t('saved')}
         </p>
       </Card>
@@ -290,8 +295,10 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
             <div className="mt-3" data-testid="staged-columns-save-area">
               {canSave && digestKnown ? (
                 <>
-                  <p className="text-xs text-subtle-foreground">{t('saveHint')}</p>
-                  <Button size="sm" className="mt-2 min-h-11 md:min-h-8" loading={save.isPending} onClick={() => current && save.mutate(current)} data-testid="staged-columns-save">
+                  <p id={`columns-save-hint-${file.fileId}`} className="text-xs text-subtle-foreground">
+                    {t('saveHint')}
+                  </p>
+                  <Button size="sm" className="mt-2 min-h-11 md:min-h-8" loading={save.isPending} aria-describedby={`columns-save-hint-${file.fileId}`} onClick={() => current && save.mutate(current)} data-testid="staged-columns-save">
                     {t('save')}
                   </Button>
                 </>

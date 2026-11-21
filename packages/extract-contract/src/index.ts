@@ -852,8 +852,11 @@ export const zExtractedMarketplaceColumns = z.strictObject({
   sheet: z
     .strictObject({
       headerRow: z.number().int().min(0).max(1_048_576),
-      // sha-256 (hex) of the header row's text (@crove/l10n-vn headerRowText), the key a saved column mapping is found by (#4037). A hash of header words: no value, no buyer text can be read back from it.
-      headerDigest: z.string().regex(/^[0-9a-f]{64}$/),
+      // sha-256 (hex) of the header row's text (@crove/l10n-vn headerRowText), the key a saved column mapping is found by (#4037); the sandbox always sets it, and a sheet without one (an older sandbox) simply cannot be saved. A hash of header words: no value, no buyer text can be read back from it.
+      headerDigest: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
       columns: z
         .array(
           z

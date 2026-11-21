@@ -22,6 +22,7 @@ import {
   zMarketplaceColumnSheet,
   zMarketplaceColumnsConfirm,
   type MarketplaceColumnEntry,
+  type MarketplaceColumnMapping,
   type MarketplaceColumnProfile,
   type MarketplaceColumnsConfirmed,
 } from '@crove/kernel-contract';
@@ -67,6 +68,10 @@ export function checkColumnProfileHeader(platform: MarketplacePlatform, columns:
 // What the table holds in `columns`, read through its schema (the database's CHECK keeps it that shape; this keeps the type honest).
 const storedColumns = (value: unknown): MarketplaceColumnEntry[] => z.array(zMarketplaceColumnEntry).parse(value);
 
+// Assignments sorted by column, whatever came in (a stored jsonb list or a request): the form two mappings are compared in. Anything that is not a list of assignments compares as empty.
+const byColumn = (value: unknown): MarketplaceColumnMapping['assignments'] =>
+  (Array.isArray(value) ? (value as MarketplaceColumnMapping['assignments']) : []).map((a) => ({ index: a.index, field: a.field })).sort((a, b) => a.index - b.index);
+
 // The mapped columns in the order of the header row, the form that is stored and compared.
 const inColumnOrder = (columns: readonly MarketplaceColumnEntry[]): MarketplaceColumnEntry[] =>
   [...columns].sort((a, b) => a.index - b.index).map((c) => ({ index: c.index, header: c.header, field: c.field }));
@@ -94,8 +99,8 @@ export const marketplaceColumnProfileConfirm = defineCommand({
     if (check.state !== 'done' || check.refusal !== null || !check.has_preview || check.platform === null) {
       throw new DomainError('MARKETPLACE_COLUMNS_NOT_CHECKED', 409, 'Mapping này chưa được kiểm tra thành công trên tệp này', { reason: 'not_checked' });
     }
-    // What the person saw is what was checked: the same platform and the same assignments, or the screen is out of date.
-    if (!sameMapping(check, { platform: input.platform, assignments: input.assignments })) {
+    // What the person saw is what was checked: the same platform and the same assignments (in any order: the request stores them as sent, and a client need not sort by column), or the screen is out of date.
+    if (!sameMapping({ platform: check.platform, assignments: byColumn(check.assignments) }, { platform: input.platform, assignments: byColumn(input.assignments) })) {
       throw new DomainError('MARKETPLACE_COLUMNS_STALE', 409, 'Mapping trên màn hình khác với mapping đã kiểm tra; hãy kiểm tra lại', { reason: 'stale' });
     }
     const sheet = zMarketplaceColumnSheet.safeParse(check.sheet);
@@ -109,8 +114,10 @@ export const marketplaceColumnProfileConfirm = defineCommand({
     const entries: MarketplaceColumnEntry[] = [];
     for (const a of input.assignments) {
       const column = headers.get(a.index);
-      if (!column || column.buyer || column.header === '') throw new DomainError('MARKETPLACE_COLUMNS_REFUSED', 422, REFUSAL_TEXT.bad_column, { reason: 'bad_column' });
-      entries.push({ index: a.index, header: column.header, field: a.field });
+      // The sheet allows a wider index than the profile keeps (the table holds 0 to 999): an entry the profile cannot hold is a refused column, not a database error.
+      const entry = column && !column.buyer ? zMarketplaceColumnEntry.safeParse({ index: a.index, header: column.header, field: a.field }) : null;
+      if (!entry?.success) throw new DomainError('MARKETPLACE_COLUMNS_REFUSED', 422, REFUSAL_TEXT.bad_column, { reason: 'bad_column' });
+      entries.push(entry.data);
     }
     const refusal = checkColumnProfileHeader(input.platform, entries);
     if (refusal) throw new DomainError('MARKETPLACE_COLUMNS_REFUSED', 422, REFUSAL_TEXT[refusal], { reason: refusal });

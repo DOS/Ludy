@@ -57,6 +57,7 @@ suite('the confirmed column mapping (#4037)', () => {
   let rt: Runtime;
   let worker: Runtime;
   let member = '';
+  let admin2 = '';
   let viewer = '';
   let agent: AgentActor;
   let owner = '';
@@ -136,7 +137,8 @@ suite('the confirmed column mapping (#4037)', () => {
     // A member and a viewer of the first org (the roles that may read but never confirm).
     member = await person('member');
     viewer = await person('viewer');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    admin2 = await person('admin');
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, admin2]);
     // A live agent of the first org: installed from the template, holding its own position, with a run started through a task that wakes it (so its actor is a real one, and the call reaches the command's own gate).
     const { agentId, positionId } = await rt.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: asMfa(owner), orgId });
     await rt.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
@@ -192,9 +194,15 @@ suite('the confirmed column mapping (#4037)', () => {
     expect(await checkRows(other)).toBe(0);
     // The earlier confirmation is still there, never edited.
     expect(await rows('SELECT 1 FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, again.id])).toHaveLength(1);
-    // Another header row of the same mapping is another layout: a new row too.
+    // The same mapping on another header row (another digest) is another layout: a new row, though the mapping is the one saved last.
+    expect((await confirm(await checked(ASSIGN), 'shopee', ASSIGN)).added).toBe(true);
     const moved = await checked(ASSIGN, { sheet: { ...SIGNED_SHEET, headerDigest: 'd'.repeat(64) } });
     expect((await confirm(moved, 'shopee', ASSIGN)).added).toBe(true);
+    expect((await confirm(await checked(ASSIGN, { sheet: { ...SIGNED_SHEET, headerDigest: 'd'.repeat(64) } }), 'shopee', ASSIGN)).added).toBe(false);
+    // The assignments may come in any order: the check stores them as sent and the save compares them by column.
+    const reversed = await checked([...ASSIGN].reverse(), { sheet: { ...SIGNED_SHEET, headerDigest: 'd'.repeat(64) } });
+    expect((await confirm(reversed, 'shopee', ASSIGN)).added).toBe(false);
+    expect(await checkRows(reversed)).toBe(0);
   });
 
   it('refuses unless the file\'s check passed: no check, one still waiting, a refusal, a sheet alone, no parsed lines, no header digest', async () => {
@@ -230,6 +238,12 @@ suite('the confirmed column mapping (#4037)', () => {
 
   it('refuses an assignment to a buyer column or to a column the sheet does not show, whatever the check says', async () => {
     const before = await stored();
+    // A column of a very wide sheet (the sheet allows an index above what the profile keeps) is refused too, not a database error.
+    const wide = { ...SIGNED_SHEET, columns: [...COLUMNS, { index: 1200, header: 'Wide', samples: ['aaaa'], buyer: false }] };
+    const wideAssign = [...ASSIGN.slice(0, 2), { index: 1200, field: 'sku' }];
+    const wideFile = await checked(wideAssign, { sheet: wide });
+    await expect(confirm(wideFile, 'shopee', wideAssign)).rejects.toMatchObject({ code: 'MARKETPLACE_COLUMNS_REFUSED', status: 422, details: { reason: 'bad_column' } });
+    expect(await checkRows(wideFile)).toBe(1);
     for (const index of [1, 2, 40]) {
       const assignments = [...ASSIGN.slice(0, 2), { index, field: 'sku' }];
       const fileId = await checked(assignments);
@@ -282,6 +296,14 @@ suite('the confirmed column mapping (#4037)', () => {
     const seen = await latest('shopee', viewer);
     expect(seen).not.toBeNull();
     expect((await latest('shopee', member))?.id).toBe(seen?.id);
+  });
+
+  it('lets an admin save, like the owner', async () => {
+    const fileId = await checked(ASSIGN, { sheet: { ...SIGNED_SHEET, headerDigest: 'e'.repeat(64) } });
+    const saved = await confirm(fileId, 'shopee', ASSIGN, admin2);
+    expect(saved.added).toBe(true);
+    expect((await rows('SELECT confirmed_by FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, saved.id]))[0]?.confirmed_by).toBe(admin2);
+    expect(await checkRows(fileId)).toBe(0);
   });
 
   it("keeps an org's profile and its checks to itself", async () => {
