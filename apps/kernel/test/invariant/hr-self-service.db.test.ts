@@ -64,9 +64,9 @@ interface ActorSession {
 suite('HR employee self-service and multi-level leave approval DB invariants (#4300)', () => {
   const dbName = `crove_test_hr_self_service_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
-  let appUrl = '';
-  let workerUrl = '';
   let pool: pg.Pool | undefined;
+  let appClient: pg.Client | undefined;
+  let workerClient: pg.Client | undefined;
 
   const has = {
     leaveRequest: false,
@@ -105,6 +105,8 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     empC: randomUUID(),
     draftRun1: randomUUID(),
     approvedRun1: randomUUID(),
+    paidRun1: randomUUID(),
+    closedRun1: randomUUID(),
     approvedRun2: randomUUID(),
     lineA_draft: randomUUID(),
     lineB_draft: randomUUID(),
@@ -113,6 +115,10 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     lineB_approved: randomUUID(),
     lineM_approved: randomUUID(),
     lineScoped_approved: randomUUID(),
+    lineA_paid: randomUUID(),
+    lineB_paid: randomUUID(),
+    lineA_closed: randomUUID(),
+    lineB_closed: randomUUID(),
     lineC_approved: randomUUID(),
     leaveEntryA: randomUUID(),
     leaveEntryB: randomUUID(),
@@ -140,22 +146,21 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     actor: ActorSession,
     fn: (c: pg.Client) => Promise<pg.QueryResult<T>>,
   ): Promise<QueryOutcome<T>> {
-    const url = actor.login === 'worker' ? workerUrl : appUrl;
-    return withClient(url, async (c) => {
-      await c.query('BEGIN');
+    const c = actor.login === 'worker' ? workerClient : appClient;
+    if (!c) throw new Error(`${actor.login} client is not connected`);
+    await c.query('BEGIN');
+    try {
+      await actor.enter(c);
       try {
-        await actor.enter(c);
-        try {
-          const res = await fn(c);
-          return { ok: true, rows: res.rows, rowCount: res.rowCount ?? 0 };
-        } catch (error) {
-          const err = error as Error & { code?: string };
-          return { ok: false, ...(err.code !== undefined ? { code: err.code } : {}), message: err.message };
-        }
-      } finally {
-        await c.query('ROLLBACK').catch(() => undefined);
+        const res = await fn(c);
+        return { ok: true, rows: res.rows, rowCount: res.rowCount ?? 0 };
+      } catch (error) {
+        const err = error as Error & { code?: string };
+        return { ok: false, ...(err.code !== undefined ? { code: err.code } : {}), message: err.message };
       }
-    });
+    } finally {
+      await c.query('ROLLBACK').catch(() => undefined);
+    }
   }
 
   const userActor = (label: string, orgId: () => string, userId: () => string): ActorSession => ({
@@ -221,6 +226,32 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     expectBlockedWrite(delOut, `${actor.label} blind DELETE ${table}`);
   }
 
+  async function assertMasterWriteSweepsBlocked(actor: ActorSession, targetUserId: string) {
+    // True no-WHERE, no-column-read blind sweeps must succeed cleanly with 0 rows affected (never 42501 from a trigger on a reached row).
+    const sweeps: Array<[string, string, unknown[]]> = [
+      ['blind update employee display_name', `UPDATE crove_hr.payroll_employee SET display_name = 'Tamper'`, []],
+      ['blind update dependent display_name', `UPDATE crove_hr.payroll_dependent SET display_name = 'Tamper'`, []],
+      ['blind update payroll_run working_days', `UPDATE crove_hr.payroll_run SET working_days = 10`, []],
+      ['blind update payroll_line net', `UPDATE crove_hr.payroll_line SET net = 99999999`, []],
+      ['blind delete payroll_line', `DELETE FROM crove_hr.payroll_line`, []],
+      ['blind update payroll_leave_entry days', `UPDATE crove_hr.payroll_leave_entry SET days = 99`, []],
+      ['blind delete payroll_leave_entry', `DELETE FROM crove_hr.payroll_leave_entry`, []],
+      ['blind update department name', `UPDATE crove_hr.department SET name = 'Tamper'`, []],
+      ...(has.stage4a
+        ? ([
+            ['blind update employee user_id', `UPDATE crove_hr.payroll_employee SET user_id = $1`, [targetUserId]],
+            ['blind update department manager_user_id', `UPDATE crove_hr.department SET manager_user_id = NULL`, []],
+          ] as Array<[string, string, unknown[]]>)
+        : []),
+    ];
+    for (const [label, sqlText, params] of sweeps) {
+      expect(await runAs(actor, (c) => c.query(sqlText, params)), `${actor.label} ${label}`).toMatchObject({
+        ok: true,
+        rowCount: 0,
+      });
+    }
+  }
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -236,12 +267,17 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     const app = new URL(adminUrl);
     app.username = 'crove_app';
     app.password = 'test-app-pw';
-    appUrl = app.toString();
+    const appUrl = app.toString();
 
     const worker = new URL(adminUrl);
     worker.username = 'crove_worker';
     worker.password = 'test-worker-pw';
-    workerUrl = worker.toString();
+    const workerUrl = worker.toString();
+
+    appClient = new pg.Client({ connectionString: appUrl });
+    await appClient.connect();
+    workerClient = new pg.Client({ connectionString: workerUrl });
+    await workerClient.connect();
 
     pool = createPool({ connectionString: appUrl, max: 2 });
     const db = createDb(pool);
@@ -428,13 +464,15 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
         [org1Id, ids.leaveEntryA, ids.empA, ids.leaveEntryB, ids.empB, org2Id, ids.leaveEntryC, ids.empC],
       );
 
-      // Insert runs as draft first so payroll_frozen_guard allows seeding payroll_line rows, then approve approved runs.
+      // Insert runs as draft first so payroll_frozen_guard allows seeding payroll_line rows, then transition to approved, paid, and closed.
       await c.query(
         `INSERT INTO crove_hr.payroll_run (org_id, id, month, status, working_days)
          VALUES ($1, $2, '2026-11', 'draft', 26),
                 ($1, $3, '2026-10', 'draft', 26),
-                ($4, $5, '2026-10', 'draft', 26)`,
-        [org1Id, ids.draftRun1, ids.approvedRun1, org2Id, ids.approvedRun2],
+                ($1, $4, '2026-09', 'draft', 26),
+                ($1, $5, '2026-08', 'draft', 26),
+                ($6, $7, '2026-10', 'draft', 26)`,
+        [org1Id, ids.draftRun1, ids.approvedRun1, ids.paidRun1, ids.closedRun1, org2Id, ids.approvedRun2],
       );
 
       const lineRows: Array<[string, string, string, string, string]> = [
@@ -445,6 +483,10 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
         [org1Id, ids.lineB_approved, ids.approvedRun1, ids.empB, '18000000'],
         [org1Id, ids.lineM_approved, ids.approvedRun1, ids.empM, '25000000'],
         [org1Id, ids.lineScoped_approved, ids.approvedRun1, ids.empScoped, '16000000'],
+        [org1Id, ids.lineA_paid, ids.paidRun1, ids.empA, '15000000'],
+        [org1Id, ids.lineB_paid, ids.paidRun1, ids.empB, '18000000'],
+        [org1Id, ids.lineA_closed, ids.closedRun1, ids.empA, '15000000'],
+        [org1Id, ids.lineB_closed, ids.closedRun1, ids.empB, '18000000'],
         [org2Id, ids.lineC_approved, ids.approvedRun2, ids.empC, '17000000'],
       ];
       for (const [orgId, lineId, runId, empId, gross] of lineRows) {
@@ -456,12 +498,18 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
         );
       }
 
-      await c.query(
-        `UPDATE crove_hr.payroll_run
-            SET status = 'approved', approved_by = $1, approved_at = pg_catalog.now(), approval = '{}'::jsonb
-          WHERE org_id = $2 AND id = $3`,
-        [users.owner1, org1Id, ids.approvedRun1],
-      );
+      for (const [runId, status] of [
+        [ids.approvedRun1, 'approved'],
+        [ids.paidRun1, 'paid'],
+        [ids.closedRun1, 'closed'],
+      ] as const) {
+        await c.query(
+          `UPDATE crove_hr.payroll_run
+              SET status = $1, approved_by = $2, approved_at = pg_catalog.now(), approval = '{}'::jsonb
+            WHERE org_id = $3 AND id = $4`,
+          [status, users.owner1, org1Id, runId],
+        );
+      }
       await c.query(
         `UPDATE crove_hr.payroll_run
             SET status = 'approved', approved_by = $1, approved_at = pg_catalog.now(), approval = '{}'::jsonb
@@ -510,6 +558,8 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
   }, 120_000);
 
   afterAll(async () => {
+    await appClient?.end().catch(() => undefined);
+    await workerClient?.end().catch(() => undefined);
     await pool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
@@ -584,7 +634,9 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       expect(await selectIds(privActor, 'crove_hr.payroll_employee')).toEqual(
         [ids.empA, ids.empA2InDept1, ids.empB, ids.empM, ids.empScoped].sort(),
       );
-      expect(await selectIds(privActor, 'crove_hr.payroll_run')).toEqual([ids.draftRun1, ids.approvedRun1].sort());
+      expect(await selectIds(privActor, 'crove_hr.payroll_run')).toEqual(
+        [ids.draftRun1, ids.approvedRun1, ids.paidRun1, ids.closedRun1].sort(),
+      );
       if (has.stage4a) {
         expect(await selectIds(privActor, 'crove_hr.leave_request')).toEqual(
           [ids.lrA_pendingL1, ids.lrA2_pendingL1, ids.lrB_pendingL1, ids.lrScoped_pendingFinal].sort(),
@@ -636,6 +688,34 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       expect(insertLr.ok, `${actor.label} inserting leave_request`).toBe(false);
       expect((insertLr as { code?: string }).code).toBe('42501');
     }
+
+    // Demoting an already-linked member (userA -> role 'viewer') must immediately revoke all self-service reads and writes.
+    await withClient(adminUrl, async (c) => {
+      await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
+        org1Id,
+        users.userA,
+      ]);
+    });
+    try {
+      for (const table of tables) {
+        await probeTableBlocked(userAActor, table);
+      }
+      const demotedInsertLr = await runAs(userAActor, (c) =>
+        c.query(
+          `INSERT INTO crove_hr.leave_request (org_id, employee_id, department_id, month, start_on, end_on, kind, days)
+           VALUES ($1, $2, $3, '2026-12', '2026-12-05', '2026-12-05', 'annual_leave', 1)`,
+          [org1Id, ids.empA, ids.dept1],
+        ),
+      );
+      expect(demotedInsertLr).toMatchObject({ ok: false, code: '42501' });
+    } finally {
+      await withClient(adminUrl, async (c) => {
+        await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+          org1Id,
+          users.userA,
+        ]);
+      });
+    }
   });
 
   it('restricts linked member SELECTs to own employee, own leave, and own approved payslips (never drafts or other staff)', async () => {
@@ -648,10 +728,14 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       return;
     }
 
-    // Linked member A sees ONLY own employee, own leave_request, own payroll_leave_entry, approved run, and own approved line.
+    // Linked member A sees ONLY own employee, own leave_request, own payroll_leave_entry, non-draft runs (approved/paid/closed), and own non-draft lines.
     expect(await selectIds(userAActor, 'crove_hr.payroll_employee')).toEqual([ids.empA]);
-    expect(await selectIds(userAActor, 'crove_hr.payroll_run')).toEqual([ids.approvedRun1]);
-    expect(await selectIds(userAActor, 'crove_hr.payroll_line')).toEqual([ids.lineA_approved]);
+    expect(await selectIds(userAActor, 'crove_hr.payroll_run')).toEqual(
+      [ids.approvedRun1, ids.paidRun1, ids.closedRun1].sort(),
+    );
+    expect(await selectIds(userAActor, 'crove_hr.payroll_line')).toEqual(
+      [ids.lineA_approved, ids.lineA_paid, ids.lineA_closed].sort(),
+    );
     expect(await selectIds(userAActor, 'crove_hr.payroll_leave_entry')).toEqual([ids.leaveEntryA]);
     expect(await selectIds(userAActor, 'crove_hr.leave_request')).toEqual([ids.lrA_pendingL1]);
 
@@ -666,8 +750,12 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
 
     // Symmetric isolation for linked member B.
     expect(await selectIds(userBActor, 'crove_hr.payroll_employee')).toEqual([ids.empB]);
-    expect(await selectIds(userBActor, 'crove_hr.payroll_run')).toEqual([ids.approvedRun1]);
-    expect(await selectIds(userBActor, 'crove_hr.payroll_line')).toEqual([ids.lineB_approved]);
+    expect(await selectIds(userBActor, 'crove_hr.payroll_run')).toEqual(
+      [ids.approvedRun1, ids.paidRun1, ids.closedRun1].sort(),
+    );
+    expect(await selectIds(userBActor, 'crove_hr.payroll_line')).toEqual(
+      [ids.lineB_approved, ids.lineB_paid, ids.lineB_closed].sort(),
+    );
     expect(await selectIds(userBActor, 'crove_hr.payroll_leave_entry')).toEqual([ids.leaveEntryB]);
     expect(await selectIds(userBActor, 'crove_hr.leave_request')).toEqual([ids.lrB_pendingL1]);
 
@@ -684,49 +772,36 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
   });
 
   it('denies direct SQL writes on master/payroll tables and blocks employee leave-approval or cross-employee writes', async () => {
+    await assertMasterWriteSweepsBlocked(userAActor, users.userB);
+
     if (!has.stage4a) {
       for (const table of EXISTING_HR_TABLES) {
         await probeTableBlocked(userAActor, table);
       }
-      const writeUpdates = [
-        `UPDATE crove_hr.payroll_employee SET display_name = 'Tamper' WHERE org_id = $1`,
-        `UPDATE crove_hr.payroll_run SET working_days = 20 WHERE org_id = $1`,
-        `UPDATE crove_hr.payroll_line SET net = 99999999 WHERE org_id = $1`,
-        `UPDATE crove_hr.payroll_leave_entry SET days = 30 WHERE org_id = $1`,
-        `UPDATE crove_hr.department SET name = 'Tamper' WHERE org_id = $1`,
-      ];
-      for (const sqlText of writeUpdates) {
-        expectBlockedWrite(await runAs(userAActor, (c) => c.query(sqlText, [org1Id])), sqlText);
-      }
       return;
     }
 
-    // Linked member A CANNOT insert or mutate payroll_employee, employment, dependent, run, line, leave_entry, or department.
-    const readonlySqlChecks: Array<[string, string, unknown[]]> = [
+    // Linked member A CANNOT insert into payroll_employee, employment, run, leave_entry, or department.
+    const readonlyInsertChecks: Array<[string, string, unknown[]]> = [
       ['insert employee', `INSERT INTO crove_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Fake')`, [org1Id]],
-      ['update own employee', `UPDATE crove_hr.payroll_employee SET display_name = 'Tamper' WHERE org_id = $1 AND id = $2`, [org1Id, ids.empA]],
-      ['relink own user_id', `UPDATE crove_hr.payroll_employee SET user_id = $3 WHERE org_id = $1 AND id = $2`, [org1Id, ids.empA, users.userB]],
       [
         'insert employment',
         `INSERT INTO crove_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-12-01', 'indefinite', 'I', 99000000)`,
         [org1Id, ids.empA],
       ],
       ['insert run', `INSERT INTO crove_hr.payroll_run (org_id, month, working_days) VALUES ($1, '2026-12', 26)`, [org1Id]],
-      ['update draft run', `UPDATE crove_hr.payroll_run SET working_days = 10 WHERE org_id = $1`, [org1Id]],
-      ['update own line', `UPDATE crove_hr.payroll_line SET net = 99999999 WHERE org_id = $1`, [org1Id]],
-      ['delete own line', `DELETE FROM crove_hr.payroll_line WHERE org_id = $1`, [org1Id]],
       [
         'insert leave entry',
         `INSERT INTO crove_hr.payroll_leave_entry (org_id, employee_id, month, kind, days) VALUES ($1, $2, '2026-12', 'annual_leave', 5)`,
         [org1Id, ids.empA],
       ],
-      ['update leave entry', `UPDATE crove_hr.payroll_leave_entry SET days = 99 WHERE org_id = $1`, [org1Id]],
-      ['delete leave entry', `DELETE FROM crove_hr.payroll_leave_entry WHERE org_id = $1`, [org1Id]],
       ['insert department', `INSERT INTO crove_hr.department (org_id, name) VALUES ($1, 'Fake dept')`, [org1Id]],
-      ['update department manager', `UPDATE crove_hr.department SET manager_user_id = $2 WHERE org_id = $1`, [org1Id, users.userA]],
     ];
-    for (const [label, sqlText, params] of readonlySqlChecks) {
-      expectBlockedWrite(await runAs(userAActor, (c) => c.query(sqlText, params)), `userA ${label}`);
+    for (const [label, sqlText, params] of readonlyInsertChecks) {
+      expect(await runAs(userAActor, (c) => c.query(sqlText, params)), `userA ${label}`).toMatchObject({
+        ok: false,
+        code: '42501',
+      });
     }
 
     // Linked member A CANNOT submit a leave request for another employee (empB, empA2, or org2 empC).
@@ -786,6 +861,7 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       ['reject own leave_request', `UPDATE crove_hr.leave_request SET status = 'rejected' WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
       ['tamper days on own leave_request', `UPDATE crove_hr.leave_request SET days = 20 WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
       ['blind approve without WHERE', `UPDATE crove_hr.leave_request SET status = 'approved'`, []],
+      ['blind decision_note without WHERE', `UPDATE crove_hr.leave_request SET decision_note = 'tamper'`, []],
       ['delete own leave_request', `DELETE FROM crove_hr.leave_request WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
     ] as const) {
       expectBlockedWrite(
@@ -796,19 +872,21 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
 
     // Confirm none of the seeded leave requests were modified or deleted.
     await withClient(adminUrl, async (c) => {
-      const { rows } = await c.query<{ id: string; status: string; days: string }>(
-        `SELECT id::text AS id, status, days::text AS days
+      const { rows } = await c.query<{ id: string; status: string; days: string; decision_note: string | null }>(
+        `SELECT id::text AS id, status, days::text AS days, decision_note
            FROM crove_hr.leave_request
           WHERE id = ANY($1::uuid[])
           ORDER BY id`,
         [[ids.lrA_pendingL1, ids.lrA2_pendingL1, ids.lrB_pendingL1]],
       );
       expect(rows).toHaveLength(3);
-      expect(rows.every((r) => r.status === 'pending_l1' && Number(r.days) === 1)).toBe(true);
+      expect(rows.every((r) => r.status === 'pending_l1' && Number(r.days) === 1 && r.decision_note === null)).toBe(true);
     });
   });
 
-  it('scopes L1 department manager to dept1 leave_request rows only, hides staff salaries/PII, and revokes on unassign', async () => {
+  it('scopes L1 department manager to dept1 leave_request rows only, hides staff salaries/PII, blocks self-approval, and revokes on unassign', async () => {
+    await assertMasterWriteSweepsBlocked(managerMActor, users.managerM);
+
     if (!has.stage4a) {
       // Pre-Stage 4A baseline: plain member (future L1 manager) reads 0 rows across every crove_hr table.
       for (const table of EXISTING_HR_TABLES) {
@@ -869,37 +947,77 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
         [org1Id, ids.empA, ids.dept1],
       ),
     );
-    expect(mgrInsertLr.ok, 'managerM inserting leave_request for empA').toBe(false);
-    expect((mgrInsertLr as { code?: string }).code).toBe('42501');
+    expect(mgrInsertLr).toMatchObject({ ok: false, code: '42501' });
 
-    for (const [label, sqlText, params] of [
-      ['insert leave entry', `INSERT INTO crove_hr.payroll_leave_entry (org_id, employee_id, month, kind, days) VALUES ($1, $2, '2026-12', 'annual_leave', 1)`, [org1Id, ids.empA]],
-      ['update employee', `UPDATE crove_hr.payroll_employee SET display_name = 'Tamper' WHERE org_id = $1`, [org1Id]],
-      ['update run', `UPDATE crove_hr.payroll_run SET working_days = 10 WHERE org_id = $1`, [org1Id]],
-      ['update line', `UPDATE crove_hr.payroll_line SET net = 99999999 WHERE org_id = $1`, [org1Id]],
-      ['update department', `UPDATE crove_hr.department SET manager_user_id = NULL WHERE org_id = $1`, [org1Id]],
-    ] as const) {
-      expectBlockedWrite(
-        await runAs(managerMActor, (c) => c.query(sqlText, [...params])),
-        `managerM ${label}`,
-      );
-    }
+    const mgrInsertLeaveEntry = await runAs(managerMActor, (c) =>
+      c.query(
+        `INSERT INTO crove_hr.payroll_leave_entry (org_id, employee_id, month, kind, days) VALUES ($1, $2, '2026-12', 'annual_leave', 1)`,
+        [org1Id, ids.empA],
+      ),
+    );
+    expect(mgrInsertLeaveEntry).toMatchObject({ ok: false, code: '42501' });
 
-    // Even when L1 manager M is also linked to their own pre-seeded employee row (empM) in dept1, M still sees 0 staff salaries/PII.
+    // Even when L1 manager M is also linked to their own pre-seeded employee row (empM) in dept1,
+    // M still sees 0 staff salaries/PII, cannot update payroll/master tables, and CANNOT L1-self-approve/reject own leave request.
+    const lrM_pendingL1 = randomUUID();
     await withClient(adminUrl, async (c) => {
       await c.query(
         `UPDATE crove_hr.payroll_employee SET user_id = $3 WHERE org_id = $1 AND id = $2`,
         [org1Id, ids.empM, users.managerM],
       );
+      await c.query(
+        `INSERT INTO crove_hr.leave_request
+           (org_id, id, employee_id, department_id, month, start_on, end_on, kind, days, status)
+         VALUES ($1, $2, $3, $4, '2026-11', '2026-11-15', '2026-11-15', 'annual_leave', 1, 'pending_l1')`,
+        [org1Id, lrM_pendingL1, ids.empM, ids.dept1],
+      );
     });
 
     try {
       expect(await selectIds(managerMActor, 'crove_hr.payroll_employee')).toEqual([ids.empM]);
-      expect(await selectIds(managerMActor, 'crove_hr.payroll_run')).toEqual([ids.approvedRun1]);
+      const mgrRuns = await selectIds(managerMActor, 'crove_hr.payroll_run');
+      expect(mgrRuns).toContain(ids.approvedRun1);
+      expect(mgrRuns).not.toContain(ids.draftRun1);
+      expect(mgrRuns).not.toContain(ids.approvedRun2);
       expect(await selectIds(managerMActor, 'crove_hr.payroll_line')).toEqual([ids.lineM_approved]);
       expect(await selectIds(managerMActor, 'crove_hr.leave_request')).toEqual(
-        [ids.lrA_pendingL1, ids.lrA2_pendingL1].sort(),
+        [ids.lrA_pendingL1, ids.lrA2_pendingL1, lrM_pendingL1].sort(),
       );
+
+      // Self-approval / self-final-approval / self-reject via L1 path on own leave request MUST be blocked.
+      for (const [label, sqlText, params] of [
+        [
+          'L1 self-approve own leave_request',
+          `UPDATE crove_hr.leave_request SET status = 'pending_final', l1_approver_user_id = $3, l1_acted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`,
+          [org1Id, lrM_pendingL1, users.managerM],
+        ],
+        [
+          'final self-approve own leave_request',
+          `UPDATE crove_hr.leave_request SET status = 'approved' WHERE org_id = $1 AND id = $2`,
+          [org1Id, lrM_pendingL1],
+        ],
+        [
+          'self-reject own leave_request',
+          `UPDATE crove_hr.leave_request SET status = 'rejected' WHERE org_id = $1 AND id = $2`,
+          [org1Id, lrM_pendingL1],
+        ],
+      ] as const) {
+        expectBlockedWrite(
+          await runAs(managerMActor, (c) => c.query(sqlText, [...params])),
+          `managerM ${label}`,
+        );
+      }
+
+      await withClient(adminUrl, async (c) => {
+        const { rows } = await c.query<{ status: string }>(
+          `SELECT status FROM crove_hr.leave_request WHERE org_id = $1 AND id = $2`,
+          [org1Id, lrM_pendingL1],
+        );
+        expect(rows).toEqual([{ status: 'pending_l1' }]);
+      });
+
+      // Blind sweeps remain { ok: true, rowCount: 0 } even when managerM is also a linked employee.
+      await assertMasterWriteSweepsBlocked(managerMActor, users.managerM);
 
       // Unassign managerM from dept1 (and unlink empM): managerM immediately sees 0 leave_request rows.
       await withClient(adminUrl, async (c) => {
@@ -918,6 +1036,7 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       expect(await selectIds(managerMActor, 'crove_hr.payroll_line')).toEqual([]);
     } finally {
       await withClient(adminUrl, async (c) => {
+        await c.query(`DELETE FROM crove_hr.leave_request WHERE org_id = $1 AND id = $2`, [org1Id, lrM_pendingL1]);
         await c.query(`UPDATE crove_hr.department SET manager_user_id = $3 WHERE org_id = $1 AND id = $2`, [
           org1Id,
           ids.dept1,
