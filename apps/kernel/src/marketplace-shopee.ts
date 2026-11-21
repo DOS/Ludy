@@ -183,6 +183,21 @@ export function parseShopeeAnswer(text: string): unknown {
   return JSON.parse(text, reviver as unknown as Parameters<typeof JSON.parse>[1]);
 }
 
+// A JSON number kept as the exact text Shopee wrote, in the answers whose every number may be an amount (the escrow). It is its own type so a STRING that happens to hold digits (a tax registration code) is never
+// read as money.
+export class ShopeeNumber {
+  readonly text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+
+// An answer as JSON in which EVERY number is a ShopeeNumber (its exact text): nothing passes through a JS float. The escrow reader takes the numbers it needs from it (`numberText`) and refuses any it does not understand.
+export function parseShopeeSourceAnswer(text: string): unknown {
+  const reviver = (_key: string, value: unknown, context?: { source?: string }): unknown => (typeof value === 'number' ? (typeof context?.source === 'string' ? new ShopeeNumber(context.source) : value) : value);
+  return JSON.parse(text, reviver as unknown as Parameters<typeof JSON.parse>[1]);
+}
+
 export interface ShopeeShopInfo {
   name: string;
   // Two letters, upper case: the shop's market.

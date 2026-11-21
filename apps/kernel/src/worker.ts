@@ -59,7 +59,7 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
-import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
+import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, sweepSignPreExpiryReminders, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
 import {
@@ -1399,18 +1399,38 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       },
     );
     await boss.work(QUEUES.signExpireSweep, { batchSize: 1 }, async () => {
-      const expired = await sweepSignExpire({ workerDb: deps.workerDb, runtime: deps.runtime });
-      if (expired > 0) console.log(`[sign-expire-sweep] expired ${expired} envelope(s)`);
-      const recovered = await sweepSignPendingWork({
-        workerDb: deps.workerDb,
-        appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
-        enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
-        enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
-        enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
-      });
-      if (recovered.inspect > 0 || recovered.seal > 0) {
-        console.log(`[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal}`);
+      let failure: unknown;
+      try {
+        const expired = await sweepSignExpire({ workerDb: deps.workerDb, runtime: deps.runtime });
+        if (expired > 0) console.log(`[sign-expire-sweep] expired ${expired} envelope(s)`);
+      } catch (error) {
+        failure ??= error;
       }
+      try {
+        const reminded = await sweepSignPreExpiryReminders({ workerDb: deps.workerDb, runtime: deps.runtime });
+        if (reminded.remindedSigners > 0) {
+          console.log(
+            `[sign-pre-expiry-remind] envelopes=${reminded.envelopes} signers=${reminded.remindedSigners} queued=${reminded.queuedEmails} suppressed=${reminded.suppressedEmails}`,
+          );
+        }
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
+        const recovered = await sweepSignPendingWork({
+          workerDb: deps.workerDb,
+          appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+          enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
+          enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
+          enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
+        });
+        if (recovered.inspect > 0 || recovered.seal > 0) {
+          console.log(`[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal}`);
+        }
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) throw failure;
     });
     await boss.schedule(QUEUES.signExpireSweep, SIGN_EXPIRE_SWEEP_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
     await boss.work(QUEUES.signCleanup, { batchSize: 1 }, async () => {

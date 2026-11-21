@@ -4661,7 +4661,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
         const table = part as OwnerRunExportTable;
         const state = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
-        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được các tệp này khi tổ chức đang được đóng');
         const release = exportSlots.tryAcquire(user.userId);
         if (!release) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));

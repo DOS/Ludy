@@ -20,7 +20,7 @@ import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignFile,
   downloadSignPdfBytes,
@@ -76,6 +76,25 @@ function triggerDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function padTwo(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+export function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const yyyy = String(date.getFullYear()).padStart(4, '0');
+  return `${yyyy}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}T${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+}
+
+export function fromDatetimeLocalValue(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],
   signers: readonly SignSignerRecord[],
@@ -99,9 +118,13 @@ export function SignEnvelopeDetailPage() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [draftFields, setDraftFields] = useState<DraftFieldPlacement[]>([]);
   const [fieldsDirty, setFieldsDirty] = useState(false);
-  const [metaDirty, setMetaDirty] = useState(false);
+  const [dirtyMetaFields, setDirtyMetaFields] = useState<
+    ReadonlySet<'title' | 'subject' | 'message' | 'expiresAt' | 'autoRemindBeforeExpiry'>
+  >(new Set());
+  const metaDirty = dirtyMetaFields.size > 0;
   const fieldsEditRevRef = useRef(0);
   const metaEditRevRef = useRef(0);
+  const metaBaseVersionRef = useRef<number | null>(null);
   const pendingActiveSignerIdRef = useRef<string | null>(null);
   const [dismissedProposalIds, setDismissedProposalIds] = useState<string[]>([]);
   const [aiAnalysisOverride, setAiAnalysisOverride] = useState<SignAiAnalysis | null>(null);
@@ -109,6 +132,8 @@ export function SignEnvelopeDetailPage() {
   const [titleInput, setTitleInput] = useState('');
   const [subjectInput, setSubjectInput] = useState('');
   const [messageInput, setMessageInput] = useState('');
+  const [expiresAtInput, setExpiresAtInput] = useState('');
+  const [autoRemindInput, setAutoRemindInput] = useState(true);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
@@ -136,9 +161,10 @@ export function SignEnvelopeDetailPage() {
   useEffect(() => {
     fieldsEditRevRef.current = 0;
     metaEditRevRef.current = 0;
+    metaBaseVersionRef.current = null;
     pendingActiveSignerIdRef.current = null;
     setFieldsDirty(false);
-    setMetaDirty(false);
+    setDirtyMetaFields(new Set());
     setSelectedFieldId(null);
     setDismissedProposalIds([]);
     setAiAnalysisOverride(null);
@@ -152,11 +178,17 @@ export function SignEnvelopeDetailPage() {
   }, [detailQuery.data, fieldsDirty]);
 
   useEffect(() => {
-    if (!detailQuery.data || metaDirty) return;
-    setTitleInput(detailQuery.data.envelope.title);
-    setSubjectInput(detailQuery.data.envelope.subject ?? '');
-    setMessageInput(detailQuery.data.envelope.message ?? '');
-  }, [detailQuery.data, metaDirty]);
+    if (!detailQuery.data) return;
+    const env = detailQuery.data.envelope;
+    if (!dirtyMetaFields.has('title')) setTitleInput(env.title);
+    if (!dirtyMetaFields.has('subject')) setSubjectInput(env.subject ?? '');
+    if (!dirtyMetaFields.has('message')) setMessageInput(env.message ?? '');
+    if (!dirtyMetaFields.has('expiresAt')) setExpiresAtInput(toDatetimeLocalValue(env.expiresAt));
+    if (!dirtyMetaFields.has('autoRemindBeforeExpiry')) setAutoRemindInput(env.autoRemindBeforeExpiry ?? true);
+    if (dirtyMetaFields.size === 0) {
+      metaBaseVersionRef.current = env.version;
+    }
+  }, [detailQuery.data, dirtyMetaFields]);
 
   useEffect(() => {
     const pendingId = pendingActiveSignerIdRef.current;
@@ -207,6 +239,14 @@ export function SignEnvelopeDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'events', id] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'verify', id] });
+    await queryClient.invalidateQueries({ queryKey: ['today'] });
+    await queryClient.invalidateQueries({ queryKey: orpc.today.list.queryKey() });
+  };
+
+  const syncMetaBaseVersion = (nextVersion: number) => {
+    if (metaBaseVersionRef.current !== null) {
+      metaBaseVersionRef.current = nextVersion;
+    }
   };
 
   const saveFieldsMutation = useMutation({
@@ -230,7 +270,8 @@ export function SignEnvelopeDetailPage() {
       );
       return { result, revision };
     },
-    onSuccess: async ({ revision }) => {
+    onSuccess: async ({ result, revision }) => {
+      syncMetaBaseVersion(result.version);
       toast(t('actions.fieldsSavedToast'));
       await invalidateAll();
       if (fieldsEditRevRef.current === revision) {
@@ -240,34 +281,78 @@ export function SignEnvelopeDetailPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
-  const markMetaDirty = () => {
+  const markMetaFieldDirty = (
+    field: 'title' | 'subject' | 'message' | 'expiresAt' | 'autoRemindBeforeExpiry',
+  ) => {
     metaEditRevRef.current += 1;
-    setMetaDirty(true);
+    setDirtyMetaFields((prev) => {
+      if (prev.size === 0 && envelope) {
+        metaBaseVersionRef.current = envelope.version;
+      }
+      if (prev.has(field)) return prev;
+      const next = new Set(prev);
+      next.add(field);
+      return next;
+    });
   };
 
   const buildMetadataPayload = (fallbackTitle: string) => ({
-    title: titleInput.trim() || fallbackTitle,
-    subject: subjectInput.trim() || null,
-    message: messageInput.trim() || null,
+    ...(dirtyMetaFields.has('title') ? { title: titleInput.trim() || fallbackTitle } : {}),
+    ...(dirtyMetaFields.has('subject') ? { subject: subjectInput.trim() || null } : {}),
+    ...(dirtyMetaFields.has('message') ? { message: messageInput.trim() || null } : {}),
+    ...(dirtyMetaFields.has('expiresAt') ? { expiresAt: fromDatetimeLocalValue(expiresAtInput) } : {}),
+    ...(dirtyMetaFields.has('autoRemindBeforeExpiry') ? { autoRemindBeforeExpiry: autoRemindInput } : {}),
   });
 
   const updateMetaMutation = useMutation({
-    mutationFn: async (input: { routingMode?: SignRoutingMode; title?: string; subject?: string | null; message?: string | null }) => {
+    mutationFn: async (input: {
+      routingMode?: SignRoutingMode;
+      title?: string;
+      subject?: string | null;
+      message?: string | null;
+      expiresAt?: string | null;
+      autoRemindBeforeExpiry?: boolean;
+    }) => {
       const metaRevision = metaEditRevRef.current;
-      const hasTextMeta = 'title' in input || 'subject' in input || 'message' in input;
+      const hasTextMeta =
+        'title' in input ||
+        'subject' in input ||
+        'message' in input ||
+        'expiresAt' in input ||
+        'autoRemindBeforeExpiry' in input;
+      const expectedVersion = hasTextMeta
+        ? (metaBaseVersionRef.current ?? envelope?.version)
+        : envelope?.version;
       const result = await signApi.updateEnvelope({
         envelopeId: id,
-        ...(envelope ? { expectedVersion: envelope.version } : {}),
+        ...(expectedVersion !== undefined ? { expectedVersion } : {}),
         ...input,
       });
       return { result, metaRevision, hasTextMeta };
     },
-    onSuccess: async ({ metaRevision, hasTextMeta }) => {
+    onSuccess: async ({ result, metaRevision, hasTextMeta }) => {
+      syncMetaBaseVersion(result.version);
       toast(t('draftSavedToast'));
-      await invalidateAll();
       if (hasTextMeta && metaEditRevRef.current === metaRevision) {
-        setMetaDirty(false);
+        metaBaseVersionRef.current = result.version;
+        setDirtyMetaFields(new Set());
       }
+      await invalidateAll();
+    },
+    onError: async (err) => {
+      toast(errorMessage(err), 'error');
+      const fresh = await detailQuery.refetch();
+      if (fresh.data) {
+        metaBaseVersionRef.current = fresh.data.envelope.version;
+      }
+    },
+  });
+
+  const acknowledgeDeclineMutation = useMutation({
+    mutationFn: () => signApi.acknowledgeDecline(id),
+    onSuccess: async () => {
+      toast(t('actions.declineAcknowledgedToast'));
+      await invalidateAll();
     },
     onError: (err) => toast(errorMessage(err), 'error'),
   });
@@ -480,6 +565,7 @@ export function SignEnvelopeDetailPage() {
         routingOrder: nextRoutingOrder,
         ...input,
       });
+      syncMetaBaseVersion(res.version);
       if (input.signerRole !== 'cc') {
         addedSignerId = res.signerId;
         pendingActiveSignerIdRef.current = addedSignerId;
@@ -502,7 +588,8 @@ export function SignEnvelopeDetailPage() {
       pendingActiveSignerIdRef.current = null;
     }
     try {
-      await signApi.removeSigner(id, signerId);
+      const removed = await signApi.removeSigner(id, signerId);
+      syncMetaBaseVersion(removed.version);
       setDraftFields((prev) => prev.filter((item) => item.signerId !== signerId));
       await invalidateAll();
     } catch (err) {
@@ -519,10 +606,11 @@ export function SignEnvelopeDetailPage() {
     reordered[idx] = reordered[swapIdx]!;
     reordered[swapIdx] = current;
     try {
-      await signApi.reorderSigners(
+      const reorderedRes = await signApi.reorderSigners(
         id,
         reordered.map((s, orderIdx) => ({ signerId: s.id, routingOrder: orderIdx + 1 })),
       );
+      syncMetaBaseVersion(reorderedRes.version);
       await invalidateAll();
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -618,6 +706,23 @@ export function SignEnvelopeDetailPage() {
                 {t('actions.void')}
               </Button>
             ) : null}
+            {envelope.status === 'declined' ? (
+              envelope.declineAcknowledgedAt ? (
+                <Badge variant="outline" data-testid="sign-decline-acked-badge">
+                  {t('actions.declineAcknowledgedBadge')}
+                </Badge>
+              ) : queryClient.getQueryData(orpc.org.get.queryKey())?.role !== 'viewer' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  loading={acknowledgeDeclineMutation.isPending}
+                  onClick={() => acknowledgeDeclineMutation.mutate()}
+                  data-testid="sign-ack-decline-btn"
+                >
+                  {t('actions.acknowledgeDecline')}
+                </Button>
+              ) : null
+            ) : null}
           </div>
         }
       />
@@ -704,7 +809,7 @@ export function SignEnvelopeDetailPage() {
                     value={titleInput}
                     onChange={(e) => {
                       setTitleInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('title');
                     }}
                   />
                 </div>
@@ -717,7 +822,7 @@ export function SignEnvelopeDetailPage() {
                     value={subjectInput}
                     onChange={(e) => {
                       setSubjectInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('subject');
                     }}
                   />
                 </div>
@@ -730,10 +835,60 @@ export function SignEnvelopeDetailPage() {
                     value={messageInput}
                     onChange={(e) => {
                       setMessageInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('message');
                     }}
                   />
                 </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="env-expires-at-input" className="text-xs">
+                      {t('expiresAtLabel')}
+                    </Label>
+                    {expiresAtInput ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs max-md:min-h-11"
+                        onClick={() => {
+                          setExpiresAtInput('');
+                          markMetaFieldDirty('expiresAt');
+                        }}
+                      >
+                        {t('expiresAtClear')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <Input
+                    id="env-expires-at-input"
+                    type="datetime-local"
+                    className="max-md:min-h-11"
+                    value={expiresAtInput}
+                    onChange={(e) => {
+                      setExpiresAtInput(e.target.value);
+                      markMetaFieldDirty('expiresAt');
+                    }}
+                  />
+                </div>
+                <label
+                  htmlFor="env-auto-remind-checkbox"
+                  className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-md py-1.5 text-xs text-foreground"
+                >
+                  <Checkbox
+                    id="env-auto-remind-checkbox"
+                    data-testid="env-auto-remind-checkbox"
+                    className="mt-0.5"
+                    checked={autoRemindInput}
+                    onCheckedChange={(checked) => {
+                      setAutoRemindInput(Boolean(checked));
+                      markMetaFieldDirty('autoRemindBeforeExpiry');
+                    }}
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block font-medium">{t('autoRemindLabel')}</span>
+                    <span className="block text-[11px] text-muted-foreground">{t('autoRemindHint')}</span>
+                  </span>
+                </label>
                 <Button
                   type="button"
                   size="sm"
@@ -741,6 +896,7 @@ export function SignEnvelopeDetailPage() {
                   className="w-full"
                   loading={updateMetaMutation.isPending}
                   onClick={() => updateMetaMutation.mutate(buildMetadataPayload(envelope.title))}
+                  data-testid="env-save-metadata-btn"
                 >
                   {t('saveMetadata')}
                 </Button>
