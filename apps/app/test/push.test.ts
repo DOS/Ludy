@@ -8,11 +8,11 @@ import { SW_POLICY, SW_SCOPE, SW_URL, deviceOf, keyBytes, swScriptUrl } from '..
 
 const SW_SOURCE = readFileSync(new URL('../public/assets/sw.js', import.meta.url), 'utf8');
 
-describe('the crove-sw Trusted Types policy', () => {
+describe('the ludy-sw Trusted Types policy', () => {
   it('passes the service worker URL exactly and refuses anything else', () => {
     expect(SW_URL).toBe('/assets/sw.js');
     expect(SW_SCOPE).toBe('/assets/');
-    expect(SW_POLICY).toBe('crove-sw');
+    expect(SW_POLICY).toBe('ludy-sw');
     expect(swScriptUrl('/assets/sw.js')).toBe('/assets/sw.js');
     for (const url of ['/assets/sw.js?x', '/assets/sw.js#x', '//evil/sw.js', 'https://evil.example/assets/sw.js', 'javascript:alert(1)', 'data:text/javascript,1', '/assets/../sw.js', '/assets/SW.js', ' /assets/sw.js', '']) {
       expect(() => swScriptUrl(url), url).toThrow(TypeError);
@@ -43,7 +43,7 @@ describe('the crove-sw Trusted Types policy', () => {
     expect(created).toEqual([]);
     await push.enablePush('BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8');
     await push.enablePush('BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8');
-    expect(created.map((c) => c.name)).toEqual(['crove-sw']);
+    expect(created.map((c) => c.name)).toEqual(['ludy-sw']);
     expect(Object.keys(created[0]?.rules ?? {})).toEqual(['createScriptURL']);
     expect(registered).toEqual(['/assets/sw.js', '/assets/sw.js']);
   });

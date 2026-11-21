@@ -679,10 +679,10 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
   // eval) refuse plain strings, and no policy may be created that would turn one into trusted HTML. The SPA needs
   // none: it renders through React and never sets raw HTML (apps/app/test/trusted-types.test.ts). A sink reached
   // with a string throws instead of running markup an attacker smuggled into the page. One named policy may be created,
-  // once (no 'allow-duplicates'): crove-sw, whose only method gives the service worker's fixed URL to
+  // once (no 'allow-duplicates'): ludy-sw, whose only method gives the service worker's fixed URL to
   // navigator.serviceWorker.register() for browser push (#1238, apps/app/src/lib/push.ts). It has no createHTML or
   // createScript, so the HTML and script sinks still refuse every string. With Turnstile keys set (#1353), the booking
-  // page loads Turnstile's script from its origin through a second fixed-URL policy, crove-turnstile, and the widget
+  // page loads Turnstile's script from its origin through a second fixed-URL policy, ludy-turnstile, and the widget
   // runs in an iframe of that origin; without them, nothing of Cloudflare's is allowed.
   return [
     "default-src 'self'",
@@ -699,7 +699,7 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     "form-action 'self'",
     "frame-ancestors 'none'",
     "require-trusted-types-for 'script'",
-    turnstile ? 'trusted-types crove-sw crove-turnstile' : 'trusted-types crove-sw',
+    turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
   ].join('; ');
 }
 

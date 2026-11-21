@@ -11,7 +11,7 @@ import { cn } from '@ludy/ui/lib/utils';
 import { dateFieldError, formatDateValue, parseDateText, typedValue, type DateKind } from '../lib/date-input.ts';
 
 // The form attribute of the hidden pickers: an id no element has, so they belong to no form.
-export const NO_FORM = 'crove-picker-without-form';
+export const NO_FORM = 'ludy-picker-without-form';
 
 type Passed = Pick<ComponentProps<'input'>, 'id' | 'required' | 'disabled' | 'readOnly' | 'autoFocus' | 'min' | 'max' | 'aria-label' | 'aria-labelledby' | 'aria-describedby' | 'aria-invalid'>;
 

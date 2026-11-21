@@ -5,6 +5,7 @@
 // extension's redirect address with it. The extension then trades the code and its verifier for a token. The member's
 // password and browser session never reach the extension.
 import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@ludy/kernel-contract';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export const CONNECT_PATH = '/-/extension/connect';
 // Chrome and Edge give an extension this redirect address: https://<32 letters a to p>.chromiumapp.org/<path>. Nothing
@@ -12,7 +13,8 @@ export const CONNECT_PATH = '/-/extension/connect';
 const REDIRECT = /^https:\/\/[a-p]{32}\.chromiumapp\.org\/[A-Za-z0-9_./-]{0,100}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const STATE = /^[A-Za-z0-9_-]{1,200}$/;
-const KEY = 'crove-pending-extension-connect';
+const KEY = 'ludy-pending-extension-connect';
+const LEGACY_KEY = 'crove-pending-extension-connect';
 // Long enough to sign in (and pass a second factor); much shorter than the code the kernel then issues lives on.
 export const PENDING_CONNECT_TTL_MS = 10 * 60 * 1000;
 
@@ -83,7 +85,7 @@ interface Stored {
 // /mfa, and dropped once answered or after PENDING_CONNECT_TTL_MS.
 export function rememberConnect(request: ConnectRequest, now: number = Date.now()): void {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify({ request, savedAt: now } satisfies Stored));
+    writeMigratedItem(sessionStorage, KEY, LEGACY_KEY, JSON.stringify({ request, savedAt: now } satisfies Stored));
   } catch {
     // Storage may be unavailable (private mode): the member opens the extension's sign-in again after signing in.
   }
@@ -91,9 +93,9 @@ export function rememberConnect(request: ConnectRequest, now: number = Date.now(
 
 export function pendingConnect(allowedIds: readonly string[], now: number = Date.now()): ConnectRequest | null {
   try {
-    const raw = sessionStorage.getItem(KEY);
-    if (raw === null) return null;
-    const stored = JSON.parse(raw) as Partial<Stored> | null;
+    const entry = readLegacyAwareItem(sessionStorage, KEY, LEGACY_KEY);
+    if (!entry) return null;
+    const stored = JSON.parse(entry.value) as Partial<Stored> | null;
     const request = stored?.request;
     const fresh = typeof stored?.savedAt === 'number' && stored.savedAt <= now && now - stored.savedAt < PENDING_CONNECT_TTL_MS;
     // Parsed again from its own parts: whatever storage holds is checked as the address was.
@@ -110,17 +112,25 @@ export function pendingConnect(allowedIds: readonly string[], now: number = Date
           allowedIds,
         )
       : null;
-    if (checked) return checked;
-    sessionStorage.removeItem(KEY);
+    if (checked) {
+      if (entry.fromLegacy) promoteMigratedItem(sessionStorage, KEY, LEGACY_KEY, entry.value);
+      return checked;
+    }
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
     return null;
   } catch {
+    try {
+      removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return null;
   }
 }
 
 export function forgetConnect(): void {
   try {
-    sessionStorage.removeItem(KEY);
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
   } catch {
     // Nothing to forget.
   }

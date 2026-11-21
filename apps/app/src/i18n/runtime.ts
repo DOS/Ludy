@@ -2,9 +2,10 @@
 // translates too, and React follows it through useSyncExternalStore (provider.tsx). The preference is stored in this
 // browser only; it is a display setting, not account data.
 import { createTranslator } from 'use-intl/core';
+import { readMigratedItem, writeMigratedItem } from '../lib/storage-migrate.ts';
 import { brandCatalog, brandName, subscribeBrand, type Branded } from './brand.ts';
 import type { CatalogShape } from './catalog.ts';
-import { LOCALE_STORAGE_KEY, isLocale, resolveLocale, type Locale } from './locale.ts';
+import { LEGACY_LOCALE_STORAGE_KEY, LOCALE_STORAGE_KEY, isLocale, resolveLocale, type Locale } from './locale.ts';
 import { en } from './messages/en.ts';
 import { vi, type Messages as SourceMessages } from './messages/vi.ts';
 
@@ -39,7 +40,7 @@ function localStorageOrNull(): Storage | null {
 
 function readStoredLocale(): string | null {
   try {
-    return localStorage.getItem(LOCALE_STORAGE_KEY);
+    return readMigratedItem(localStorage, LOCALE_STORAGE_KEY, LEGACY_LOCALE_STORAGE_KEY);
   } catch {
     return null;
   }
@@ -47,7 +48,7 @@ function readStoredLocale(): string | null {
 
 function storeLocale(locale: Locale): void {
   try {
-    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    writeMigratedItem(localStorage, LOCALE_STORAGE_KEY, LEGACY_LOCALE_STORAGE_KEY, locale);
   } catch {
     // Storage may be unavailable (private mode); the choice then lasts until the page is reloaded.
   }
@@ -89,7 +90,7 @@ export function subscribeLocale(listener: () => void): () => void {
 }
 
 // Sets <html lang> and follows the choice made in other tabs of this browser: localStorage fires `storage` in every
-// other tab when one tab saves `crove-locale`. A removed or unknown value falls back to the browser languages.
+// other tab when one tab saves `ludy-locale`. A removed or unknown value falls back to the browser languages.
 // Returns the function that stops listening.
 export function startLocaleSync(target: Pick<Window, 'addEventListener' | 'removeEventListener'> = window): () => void {
   applyLocale(activeLocale());

@@ -393,6 +393,7 @@ suite('eSign Slice 2a A1 direct signing HTTP edge invariants (#3551)', () => {
     const directCsp = directPageRes.headers.get('content-security-policy') ?? '';
     expect(directCsp).toContain("default-src 'self'");
     expect(directCsp).not.toContain(TURNSTILE_ORIGIN);
+    expect(directCsp).not.toContain('ludy-turnstile');
     expect(directCsp).not.toContain('crove-turnstile');
 
     // Non-sign SPA routes still carry Turnstile when configured.

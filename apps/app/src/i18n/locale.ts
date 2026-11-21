@@ -10,7 +10,8 @@ export const LOCALE_NAMES: Record<Locale, string> = { vi: 'Tiếng Việt', en: 
 // documents the app shows next to them.
 export const FORMAT_LOCALE: Record<Locale, string> = { vi: 'vi-VN', en: 'en-GB' };
 
-export const LOCALE_STORAGE_KEY = 'crove-locale';
+export const LOCALE_STORAGE_KEY = 'ludy-locale';
+export const LEGACY_LOCALE_STORAGE_KEY = 'crove-locale';
 
 export function isLocale(value: unknown): value is Locale {
   return typeof value === 'string' && (LOCALES as readonly string[]).includes(value);

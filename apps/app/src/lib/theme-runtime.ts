@@ -1,7 +1,8 @@
 // The active theme, kept outside React like the locale (i18n/runtime.ts): the setting lives in this browser only, the
 // <html> element gets the resolved theme, and React follows through useSyncExternalStore (useThemeSetting).
 import { useSyncExternalStore } from 'react';
-import { resolveTheme, THEME_STORAGE_KEY, themeSetting, type ThemeSetting } from './theme.ts';
+import { readMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+import { LEGACY_THEME_STORAGE_KEY, resolveTheme, THEME_STORAGE_KEY, themeSetting, type ThemeSetting } from './theme.ts';
 
 const listeners = new Set<() => void>();
 let current: ThemeSetting = themeSetting(readStored());
@@ -11,7 +12,7 @@ let syncing = false;
 
 function readStored(): string | null {
   try {
-    return localStorage.getItem(THEME_STORAGE_KEY);
+    return readMigratedItem(localStorage, THEME_STORAGE_KEY, LEGACY_THEME_STORAGE_KEY);
   } catch {
     return null;
   }
@@ -42,7 +43,7 @@ export function activeThemeSetting(): ThemeSetting {
 export function setThemeSetting(setting: ThemeSetting): void {
   current = setting;
   try {
-    localStorage.setItem(THEME_STORAGE_KEY, setting);
+    writeMigratedItem(localStorage, THEME_STORAGE_KEY, LEGACY_THEME_STORAGE_KEY, setting);
   } catch {
     // Storage may be unavailable (private mode); the choice then lasts until the page is reloaded.
   }
