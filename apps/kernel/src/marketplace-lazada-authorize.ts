@@ -33,7 +33,7 @@ export function withLazadaAuthorize(provider: MarketplaceProvider, options: Laza
       if (!keys || typeof keys.appKey !== 'string' || typeof keys.appSecret !== 'string') return { refused: 'BAD_SECRET' };
       const result = await createLazadaToken({ fetch: options.tokenFetch, ...(options.now ? { now: options.now } : {}) }, { appKey: keys.appKey, appSecret: keys.appSecret, code });
       if ('refused' in result || 'failed' in result) return result;
-      return { granted: { secret: result.secret, accessExpiresAt: result.accessExpiresAt, refreshExpiresAt: result.refreshExpiresAt } };
+      return { granted: { secret: result.secret, accessExpiresAt: result.accessExpiresAt, refreshExpiresAt: result.refreshExpiresAt, sellerRef: result.sellerId } };
     },
   };
 }

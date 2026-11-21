@@ -474,6 +474,24 @@ describe('the worker finishes a seller\'s authorization (#4238)', () => {
     expect(JSON.stringify({ ...a.executed[0]?.input, credential: undefined })).not.toContain('new');
   });
 
+  it('names the seller who authorized and the seller of the connection\'s previous secret to the command, as plain ids only (#4285)', async () => {
+    const grant = (sellerRef?: unknown) => async () => ({ granted: { secret: '{"new":"1"}', accessExpiresAt: new Date('2026-12-21T08:00:00.000Z'), refreshExpiresAt: new Date('2027-05-20T08:00:00.000Z'), ...(sellerRef === undefined ? {} : { sellerRef }) } });
+    const previous = (sellerId: unknown) => (keyId: string) => (keyId === 'code-key' ? 'AUTH-CODE' : JSON.stringify({ appKey: '1', appSecret: 's', ...(sellerId === undefined ? {} : { sellerId }) }));
+    const sent = async (authorize: () => Promise<unknown>, open?: (keyId: string) => string) => {
+      const a = setupAuthorize({ authorize, ...(open ? { open } : {}) });
+      expect(await a.run()).toEqual({ state: 'authorized' });
+      return a.executed[0]?.input;
+    };
+    // Both known: the command gets both and decides.
+    expect(await sent(grant('100200'), previous('300400'))).toMatchObject({ sellerRef: '100200', priorSellerRef: '300400' });
+    // The answer names no seller, or a value that is not a plain id (a space, a name, an e-mail): nothing is passed for it.
+    expect(await sent(grant(), previous('300400'))).toMatchObject({ sellerRef: null, priorSellerRef: '300400' });
+    expect(await sent(grant('Nguyen Van A'), previous('a@b.vn'))).toMatchObject({ sellerRef: null, priorSellerRef: null });
+    expect(await sent(grant(12345), previous(undefined))).toMatchObject({ sellerRef: null, priorSellerRef: null });
+    // A previous secret that is not an object is no previous seller, not an error.
+    expect(await sent(grant('100200'), (keyId) => (keyId === 'code-key' ? 'AUTH-CODE' : '"just a string"'))).toMatchObject({ sellerRef: '100200', priorSellerRef: null });
+  });
+
   it('records a refused code and a failed trade (and a trade that throws) as such, clearing the code, and never asks twice', async () => {
     const refused = setupAuthorize({ authorize: async () => ({ refused: 'IllegalCode' }) });
     expect(await refused.run()).toEqual({ state: 'refused' });

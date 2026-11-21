@@ -243,6 +243,9 @@ describe('MarketplaceConnectionsCard', () => {
     for (const state of ['pending', 'refused', 'failed'] as const) {
       expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: state })] })).toContain(esc(en.marketplaceConnections.authorizeStates[state]));
     }
+    // A seller who was not the seller of the connection (#4285) reads it in words, with the button to authorize again, in both languages.
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'shop_changed' })] })).toContain(esc(en.marketplaceConnections.authorizeStates.shopChanged));
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'shop_changed' })], locale: 'vi' })).toContain('không phải là người bán của kết nối này');
     // Members and viewers read it; no button. A dead connection and the sandbox have none.
     for (const role of ['member', 'viewer'] as const) expect(card(role, { providers: lazada, connections: [mine({ authorizeState: 'pending' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
     expect(card('owner', { providers: lazada, connections: [mine({ status: 'expired' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
@@ -330,7 +333,11 @@ describe('the re-authorize notice (#4240 S3b)', () => {
     expect(expired).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
     expect(expired).not.toContain(esc('press Authorize again'));
     const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
-    expect(vi).toContain('ngắt kết nối rồi kết nối lại');
+    // Connecting again with the same App Key and Secret keeps the connection, its orders and its poll position: the words must not send the seller to disconnect (that deletes them).
+    expect(vi).toContain('không cần ngắt kết nối');
+    expect(vi).not.toContain('ngắt kết nối rồi kết nối lại');
+    expect(expired).toContain(esc('no need to disconnect'));
+    expect(expired).not.toContain(esc('disconnect it and connect again'));
   });
 
   it('sends `deleteStaged` only when the member ticked it and orders are waiting', () => {

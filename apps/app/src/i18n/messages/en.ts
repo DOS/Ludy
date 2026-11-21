@@ -5657,13 +5657,14 @@ export const en = {
     reauthorizeBy: 'authorize again before {when}',
     reauthorizeSoon: 'The authorization given to the marketplace ends on {when}. An owner or admin should press Authorize again before then so Ludy keeps pulling orders.',
     reauthorizeEnded: 'The authorization given to the marketplace ended on {when}, so Ludy cannot pull new orders. An owner or admin should press Authorize again.',
-    reauthorizeReconnect: 'The authorization given to the marketplace has ended or is about to end ({when}) and this connection cannot be authorized again. An owner or admin should disconnect it and connect again.',
+    reauthorizeReconnect: 'The authorization given to the marketplace has ended or is about to end ({when}) and this connection cannot be authorized again right away. An owner or admin should connect again with the same App Key and Secret in the connect form below (no need to disconnect): its orders, file links and poll position are kept.',
     discardWaiting: 'Also discard the orders of this connection still waiting for confirmation ({count}): nothing is posted, the originals are deleted on the retention that already applies',
     authorizeStates: {
       pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',
       refused: 'The marketplace refused the authorization code (wrong, already used or expired). Press Authorize again.',
       failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.',
+      shopChanged: 'The seller who just authorized is not the seller of this connection, so nothing was changed. Authorize with the seller account that was connected. To read another shop\'s orders, disconnect this one and make a new connection.',
     },
     oauth: {
       title: 'Authorize a marketplace connection',

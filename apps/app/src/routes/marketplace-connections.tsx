@@ -29,7 +29,7 @@ const refresh = async () => {
 const TEST_WATCH_MS = 3000;
 const TEST_WATCH_TIMES = 10;
 
-const AUTHORIZE_STATE_KEYS = { pending: 'authorizeStates.pending', authorized: 'authorizeStates.authorized', refused: 'authorizeStates.refused', failed: 'authorizeStates.failed' } as const;
+const AUTHORIZE_STATE_KEYS = { pending: 'authorizeStates.pending', authorized: 'authorizeStates.authorized', refused: 'authorizeStates.refused', failed: 'authorizeStates.failed', shop_changed: 'authorizeStates.shopChanged' } as const;
 
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
 

@@ -821,6 +821,66 @@ suite('marketplace connections (#2519)', () => {
     expect((await call('connections/disconnect', owner, { id })).body).toEqual({ removed: true });
   });
 
+  it('keeps the seller a connection was authorized for (#4285): another seller is refused and changes nothing, a reconnect keeps it, a connection authorized before it was kept is compared with its previous secret', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh người bán', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
+    const as = (who: Account) => ({ actor: asUser(who), orgId });
+    const exec = <T,>(name: string, input: unknown, who: Account) => rt.execute<T>(name, input, { ...as(who), idempotencyKey: randomUUID() });
+    const hashOf = () => `sha256:${randomBytes(32).toString('hex')}`;
+    const binding = { orgId, provider: 'marketplace_lazada', externalAccountId: `${entity}:lazada` };
+    const sealed = vault.seal(JSON.stringify({ appKey: '555555', appSecret: 'helloworld' }), binding);
+    const connectIn = { adapter: 'lazada', platform: 'lazada', legalEntityId: entity, displayName: 'lazada (lazada)', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') }, appKey: '555555' };
+    const { id } = await exec<{ id: string }>('finance.marketplace_connection.connect', connectIn, owner);
+    const codeSealed = vault.seal('AUTH-CODE-S', { orgId, provider: 'marketplace_lazada', externalAccountId: marketplaceAuthorizeCodeAccount(id) });
+    const row = async () => (await rows<Record<string, unknown>>('SELECT authorize_state, authorize_code_envelope, seller_ref FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0] as Record<string, unknown>;
+    const credentialNow = async () => {
+      const stored = await worker.query<{ keyId: string; envelope: string }>('kernel.channel.credential', { connectionId: String((await rows<{ c: string }>('SELECT channel_connection_id AS c FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.c) }, { actor: SYSTEM, orgId });
+      return JSON.parse(String(vault.open({ keyId: stored.keyId, envelope: Buffer.from(stored.envelope, 'base64') }, binding))) as Record<string, unknown>;
+    };
+    // One authorization up to the point the worker holds a code: the member starts it, the callback stores the code, the worker reads the target. `grant` is what the worker would seal after the trade.
+    const authorize = async (token: string, extra: Record<string, unknown>) => {
+      const h = hashOf();
+      await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: h }, owner);
+      await exec('finance.marketplace_connection.authorize_finish', { stateHash: h, codeKeyId: codeSealed.keyId, codeEnvelope: codeSealed.envelope.toString('base64') }, owner);
+      const target = await worker.query<{ codeDigest: string; channelVersion: string }>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
+      const granted = vault.seal(JSON.stringify({ appKey: '555555', appSecret: 'helloworld', accessToken: token, refreshToken: `${token}-R` }), binding);
+      return worker.execute<{ recorded: boolean }>(
+        'finance.marketplace_connection.authorize_complete',
+        { id, codeDigest: target.codeDigest, ifVersion: target.channelVersion, expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), reauthorizeBy: null, credential: { keyId: granted.keyId, envelope: granted.envelope.toString('base64') }, ...extra },
+        { actor: SYSTEM, orgId },
+      );
+    };
+    // The first authorization that names a seller keeps it; the same seller again passes.
+    expect(await row()).toMatchObject({ seller_ref: null });
+    expect(await authorize('TOKEN-1', { sellerRef: '100200' })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
+    expect(await authorize('TOKEN-2', { sellerRef: '100200' })).toEqual({ recorded: true });
+    expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-2' });
+    // Another seller: nothing is replaced, the code is cleared, the state says so, the stored seller stays, and the list shows the state.
+    expect(await authorize('TOKEN-3', { sellerRef: '300400' })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'shop_changed', authorize_code_envelope: null, seller_ref: '100200' });
+    expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-2' });
+    expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('shop_changed');
+    // An answer that names no seller is not compared and keeps the stored one.
+    expect(await authorize('TOKEN-4', { sellerRef: null })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
+    // A reconnect (the same entity and platform) keeps the seller: it is not the secret's, and the next authorization is compared with it.
+    await exec('finance.marketplace_connection.connect', connectIn, owner);
+    expect(await row()).toMatchObject({ authorize_state: null, seller_ref: '100200' });
+    expect(await authorize('TOKEN-5', { sellerRef: '300400' })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'shop_changed', seller_ref: '100200' });
+    // A connection authorized before the seller was kept has none stored: the worker passes the one its previous secret named, and that is compared; with none known, the first one is kept.
+    await rows('UPDATE crove_finance.marketplace_connection SET seller_ref = NULL WHERE org_id = $1 AND id = $2', [orgId, id]);
+    expect(await authorize('TOKEN-6', { sellerRef: '300400', priorSellerRef: '100200' })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'shop_changed', seller_ref: null });
+    expect(await authorize('TOKEN-7', { sellerRef: '100200', priorSellerRef: '100200' })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
+    // A value that is not a plain id is refused by the command's shape, and the database holds the same rule.
+    await expect(authorize('TOKEN-8', { sellerRef: 'not an id' })).rejects.toBeDefined();
+    await expect(rows("UPDATE crove_finance.marketplace_connection SET seller_ref = 'not an id' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toBeDefined();
+    expect((await call('connections/disconnect', owner, { id })).body).toEqual({ removed: true });
+  });
+
   it('closes the connection: the credential is dropped, the row is gone, what was staged stays, and a second disconnect finds nothing', async () => {
     const { id, connectionId } = await connection('lazada');
     for (const who of [member, viewer]) expect((await call('connections/disconnect', who, { id })).status).toBe(403);
