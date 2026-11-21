@@ -1314,3 +1314,150 @@ export const zSignDrafterRenderPdfResult = z.strictObject({
   pageCount: z.number().int().min(1),
 });
 export type SignDrafterRenderPdfResult = z.infer<typeof zSignDrafterRenderPdfResult>;
+
+// eSign Slice 2c (#3554): Vietnam CA provider connections, #62 legal gate state, and PAdES reconcile_only requests.
+export const SIGN_CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const;
+export type SignCaProvider = (typeof SIGN_CA_PROVIDERS)[number];
+export const zSignCaProvider = z.enum(SIGN_CA_PROVIDERS);
+
+export const SIGN_CA_CONNECTION_STATUSES = ['active', 'disabled'] as const;
+export type SignCaConnectionStatus = (typeof SIGN_CA_CONNECTION_STATUSES)[number];
+export const zSignCaConnectionStatus = z.enum(SIGN_CA_CONNECTION_STATUSES);
+
+export const SIGN_CA_TEST_STATES = [
+  'works',
+  'wrong_credentials',
+  'api_not_enabled',
+  'ip_not_allowed',
+  'unreachable',
+  'signing_needs_person',
+  'usb_token_unsupported',
+] as const;
+export type SignCaTestState = (typeof SIGN_CA_TEST_STATES)[number];
+export const zSignCaTestState = z.enum(SIGN_CA_TEST_STATES);
+
+export const SIGN_CA_REQUEST_STATUSES = ['pending', 'signed', 'rejected', 'expired', 'failed'] as const;
+export type SignCaRequestStatus = (typeof SIGN_CA_REQUEST_STATUSES)[number];
+export const zSignCaRequestStatus = z.enum(SIGN_CA_REQUEST_STATUSES);
+
+export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
+export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
+export const zSignCaSubFilter = z.enum(SIGN_CA_SUBFILTERS);
+
+export const zSignCaConnectionRecord = z.strictObject({
+  id: zId,
+  provider: zSignCaProvider,
+  label: z.string(),
+  certRef: z.string(),
+  status: zSignCaConnectionStatus,
+  lastTestState: zSignCaTestState.nullable(),
+  lastTestedAt: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignCaConnectionRecord = z.infer<typeof zSignCaConnectionRecord>;
+
+export const zSignCaSettingsResult = z.strictObject({
+  liveCaEnabled: z.boolean(),
+  brokerAvailable: z.boolean(),
+  connections: z.array(zSignCaConnectionRecord),
+});
+export type SignCaSettingsResult = z.infer<typeof zSignCaSettingsResult>;
+
+const zSignCaBaseUrl = z.url({ protocol: /^https$/ }).max(512);
+
+export const zSignCaVnptCredentialsInput = z.strictObject({
+  provider: z.literal('vnpt_smartca'),
+  spId: z.string().trim().min(1).max(256),
+  spPassword: z.string().min(1).max(2048),
+  userId: z.string().trim().min(1).max(256),
+  serialNumber: z.string().trim().min(1).max(256).optional(),
+  baseUrl: zSignCaBaseUrl.optional(),
+});
+
+export const zSignCaViettelCredentialsInput = z.strictObject({
+  provider: z.literal('viettel_mysign'),
+  clientId: z.string().trim().min(1).max(256),
+  clientSecret: z.string().min(1).max(2048),
+  userId: z.string().trim().min(1).max(256),
+  profileId: z.string().trim().min(1).max(256),
+  baseUrl: zSignCaBaseUrl.optional(),
+});
+
+export const zSignCaMisaCredentialsInput = z.strictObject({
+  provider: z.literal('misa_wesign'),
+  clientId: z.string().trim().min(1).max(256),
+  clientKey: z.string().min(1).max(2048),
+  username: z.string().trim().min(1).max(256),
+  password: z.string().min(1).max(2048),
+  taxCode: z.string().trim().min(1).max(64).optional(),
+  userId: z.string().trim().min(1).max(256).optional(),
+  baseUrl: zSignCaBaseUrl.optional(),
+});
+
+export const zSignCaCredentialsInput = z.discriminatedUnion('provider', [
+  zSignCaVnptCredentialsInput,
+  zSignCaViettelCredentialsInput,
+  zSignCaMisaCredentialsInput,
+]);
+export type SignCaCredentialsInput = z.infer<typeof zSignCaCredentialsInput>;
+
+// Credential-bearing saves never carry an idempotencyKey so secrets and ciphertext never enter idempotency replay rows.
+export const zSignCaConnectionSaveInput = z
+  .strictObject({
+    provider: zSignCaProvider,
+    label: z.string().trim().min(1).max(200),
+    certRef: z.string().trim().min(1).max(300).optional(),
+    status: zSignCaConnectionStatus.default('active'),
+    credentials: zSignCaCredentialsInput.optional(),
+  })
+  .refine((v) => v.credentials === undefined || v.credentials.provider === v.provider, {
+    message: 'CA credentials provider must match connection provider',
+    path: ['credentials'],
+  });
+export type SignCaConnectionSaveInput = z.infer<typeof zSignCaConnectionSaveInput>;
+
+export const zSignCaConnectionDisableInput = z.strictObject({
+  connectionId: zId,
+});
+
+export const zSignCaConnectionTestInput = z.strictObject({
+  connectionId: zId,
+});
+
+export const zSignCaSigningRequestRecord = z.strictObject({
+  id: zId,
+  envelopeId: zId,
+  signerId: zId.nullable(),
+  caConnectionId: zId,
+  provider: zSignCaProvider,
+  digestSha256: z.string(),
+  certRef: z.string(),
+  externalTxId: z.string().nullable(),
+  status: zSignCaRequestStatus,
+  retrySafety: z.literal('reconcile_only'),
+  challengeCode: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  subFilter: zSignCaSubFilter.nullable(),
+  padesFileId: zId.nullable(),
+  padesSha256: z.string().nullable(),
+  pollAttempts: z.number().int(),
+  nextPollAt: z.string().nullable(),
+  signedAt: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignCaSigningRequestRecord = z.infer<typeof zSignCaSigningRequestRecord>;
+
+export const zSignCaRequestInitiateInput = z.strictObject({
+  envelopeId: zId,
+  caConnectionId: zId.optional(),
+  signerId: zId.optional(),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignCaRequestListResult = z.strictObject({
+  items: z.array(zSignCaSigningRequestRecord),
+});

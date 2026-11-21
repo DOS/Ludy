@@ -26,6 +26,7 @@ import {
   HouseIcon,
   InboxIcon,
   InfoIcon,
+  KeyRoundIcon,
   LandmarkIcon,
   LayoutDashboardIcon,
   LayoutTemplateIcon,
@@ -110,6 +111,7 @@ const ICONS = {
   signEnvelopes: FileSignatureIcon,
   signTemplates: LayoutTemplateIcon,
   signVerify: ShieldCheckIcon,
+  signSettings: KeyRoundIcon,
   aiUsage: CoinsIcon,
   aiConnections: PlugIcon,
 } as const

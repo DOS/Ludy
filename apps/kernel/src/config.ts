@@ -88,6 +88,9 @@ const schema = z.object({
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
   CROVE_MODULES: modulesSetting,
+  // Legal gate for live external Vietnam public CA providers (VNPT SmartCA, Viettel MySign, MISA WeSign; issue #62 and
+  // #3554). false (the default) allows only the offline sandbox PAdES adapter until lawyer sign-off completes.
+  SIGN_LIVE_CA_ENABLED: optional.pipe(z.enum(['true', 'false']).default('false')),
   DATABASE_URL: z.string().min(1),
   WORKER_DATABASE_URL: optional,
   // Reset each pooled connection's session before it goes back to the pool (#117, plan §3.3). Keep true for direct
@@ -824,6 +827,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // #2503: the MISA adapter is built and off. This is the same refusal as einvoiceProvidersOf's, said at start so a deployment never boots with it half on.
   if (config.EINVOICE_PROVIDERS.split(',').some((id) => id.trim() === 'misa') && misaBlockers().length > 0) {
     throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${misaBlockers().map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503: leave misa out of EINVOICE_PROVIDERS`);
+  }
+  // #62 / #3554: live Vietnam public CA remote signing (VNPT SmartCA, Viettel MySign, MISA WeSign) stays off at boot until legal sign-off (#62) and worker egress wiring land.
+  if (config.SIGN_LIVE_CA_ENABLED === 'true') {
+    throw new Error('SIGN_LIVE_CA_ENABLED=true is refused until #62 legal review and live CA egress gate are completed: keep SIGN_LIVE_CA_ENABLED=false');
   }
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');

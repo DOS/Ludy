@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes the marketplace push hooks and their waiting pushes of the org too (#4316, S1 of the push receiver of #4315): crove_finance.marketplace_hook (a marketplace connection's push key hash) and
 -- crove_finance.marketplace_hook_notice (a raw push waiting for the worker) are tables of Finance with an org_id. This replaces crove_kernel.org_purge with the previous version (the latest on main when this was
--- written, 20270130060000, which adds the marketplace connection file links) plus the two tables in the first list, ahead of the link table and the marketplace connections they reference (the notice before its hook);
--- nothing else changes.
+-- written, 20270202100100_crove_kernel_org_purge_sign_ca, which adds the eSign CA tables) plus the two tables in the first list, ahead of the link table and the marketplace connections they reference (the notice
+-- before its hook); nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -35,6 +35,7 @@ DECLARE
   v_note_attachment_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
+    'crove_sign.ca_signing_request', 'crove_sign.ca_connection',
     'crove_sign.template_direct_link', 'crove_sign.template_field', 'crove_sign.template_role', 'crove_sign.template',
     'crove_sign.signing_otp', 'crove_sign.signing_token', 'crove_sign.ai_analysis', 'crove_sign.field', 'crove_sign.signer', 'crove_sign.envelope',
     'crove_kernel.member_vy_memory', 'crove_kernel.member_vy_result',

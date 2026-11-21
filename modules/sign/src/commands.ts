@@ -39,6 +39,7 @@ import {
   zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
+import { signCaCommands } from './ca.ts';
 import { signTemplateCommands } from './templates.ts';
 import { envelopePreExpiryRemindSweep } from './today-and-reminders.ts';
 
@@ -1697,4 +1698,5 @@ export const signCommands = [
   ...signPublicCommands,
   ...signDirectPublicCommands,
   ...signTemplateCommands,
+  ...signCaCommands,
 ];

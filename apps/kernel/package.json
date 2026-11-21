@@ -38,6 +38,7 @@
     "@crove/mod-projects": "workspace:*",
     "@crove/mod-sign": "workspace:*",
     "@crove/mod-social": "workspace:*",
+    "@crove/sign": "workspace:*",
     "@hono/node-server": "catalog:",
     "@orpc/server": "catalog:",
     "hono": "catalog:",
