@@ -9,7 +9,11 @@
     "stack:up": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml up -d --build",
     "stack:logs": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml logs --no-color",
     "stack:down": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml down -v",
+    "stack:up:ai": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml -f compose.ai.yml up -d --build",
+    "stack:logs:ai": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml -f compose.ai.yml logs --no-color",
+    "stack:down:ai": "docker compose -p crove-e2e -f ../docker-compose.yml -f compose.e2e.yml -f compose.ai.yml down -v",
     "test": "playwright test",
+    "test:ai": "playwright test -c playwright.ai.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

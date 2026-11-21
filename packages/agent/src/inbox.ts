@@ -30,6 +30,16 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import { ORDER_FIELDS } from '@crove/l10n-vn';
+import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
+import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
+import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
+import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
+import { checkEInvoiceReason, einvoiceReasonInstructions, einvoiceReasonPrompt, type EInvoiceReasonFacts, type EInvoiceReasonResult } from './einvoice-reason.ts';
+import { bankCandidatesLineInstructions, bankCandidatesLinePrompt, checkBankCandidatesLineSentence, type BankCandidatesLineFacts, type BankCandidatesLineResult } from './bank-candidates-line.ts';
+import { checkSupplierPayableLineSentence, supplierPayableLineInstructions, supplierPayableLinePrompt, type SupplierPayableLineFacts, type SupplierPayableLineResult } from './supplier-payable-line.ts';
+import { checkEInvoiceRate, einvoiceRateInstructions, einvoiceRatePrompt, type EInvoiceRateFacts, type EInvoiceRateResult } from './einvoice-rate.ts';
+import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, type StockSurplusFacts, type StockSurplusResult } from './stock-surplus-note.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
@@ -72,6 +82,13 @@ import {
   type ProjectWeeklyStatusFacts,
   type ProjectWeeklyStatusResult,
 } from './project-weekly-status.ts';
+import {
+  createSignAcceptanceDraftGenerator,
+  draftSignAcceptanceSummary,
+  type SignAcceptanceDraftGenerator,
+  type SignAcceptanceDraftOutcome,
+  type SignAcceptanceDraftRequest,
+} from './sign-acceptance.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -146,6 +163,43 @@ const zPayrollMatchOut = z.object({
 const zMarketplaceLineOut = z.object({
   sentence: z.string().describe('One plain sentence on what is waiting on the marketplace screen, citing only the figures given, each number written exactly as given'),
 });
+const zSupplierPayableLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on what is waiting above the list of received invoices to pay, citing only the figures given, each number and date written exactly as given'),
+});
+const zMisaCheckLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on what the problems found in a MISA voucher file mean and how to fix them in Ludy, citing only the counts given, each number written exactly as given'),
+});
+const zMisaAmisBlockerNotesOut = z.object({
+  notes: z.array(z.object({ kind: z.enum(MISA_AMIS_BLOCKER_KINDS), text: z.string().describe('One plain sentence on what this kind of problem means in MISA AMIS and how to fix it in Ludy, with no number') })).describe('One note for each kind of problem listed, under its kind'),
+});
+const zMarketplaceFeeNotesOut = z.object({
+  notes: z.array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence on what the fees waiting on the platform account mean and what to do, using only the numbers given for that row') })).describe('One note for each row, under its row number'),
+});
+const zMarketplaceColumnsOut = z.object({
+  columns: z.array(z.object({ column: z.number().int().min(0).describe('The number of the column, as given'), field: z.enum([...ORDER_FIELDS, 'none']).describe('The standard field this column is, or none') })).describe('One answer for each column given, at most one per column'),
+});
+export type MarketplaceColumnsGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceColumnsOut> | null; usage?: AiUsage }>;
+export type MarketplaceFeeNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceFeeNotesOut> | null; usage?: AiUsage }>;
+export type MisaAmisBlockerNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaAmisBlockerNotesOut> | null; usage?: AiUsage }>;
+export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
+const zBankCandidatesLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on why this bank line needs a person to choose between candidates, citing only the date, amount and count given, each written exactly as given'),
+});
+export type BankCandidatesLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zBankCandidatesLineOut> | null; usage?: AiUsage }>;
+export type SupplierPayableLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSupplierPayableLineOut> | null; usage?: AiUsage }>;
+const zEInvoiceRateOut = z.object({
+  sentence: z.string().describe('One or two plain Vietnamese sentences on why the correcting invoice keeps or changes the VAT rate, citing only the dates and rates given, each written exactly as given'),
+});
+const zStockSurplusOut = z.object({
+  sentence: z.string().describe('Up to three plain sentences on the surplus of a stock count: the items, what it is worth and what the accounts 711, 3388 and 331 mean, citing only the figures given, each written exactly as given'),
+});
+export type StockSurplusGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zStockSurplusOut> | null; usage?: AiUsage }>;
+const zEInvoiceReasonOut = z.object({
+  choice: z.number().int().nullable().describe('The number of the reason code in the list that fits the description, or null when none fits'),
+  why: z.string().describe('One short Vietnamese sentence on what in the description matches the code, citing only figures of the description, the lines or the labels'),
+});
+export type EInvoiceReasonGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceReasonOut> | null; usage?: AiUsage }>;
+export type EInvoiceRateGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceRateOut> | null; usage?: AiUsage }>;
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
@@ -251,6 +305,15 @@ export class InboxReader {
   private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
+  private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
+  private readonly generateBankCandidatesLine: BankCandidatesLineGenerator;
+  private readonly generateMisaCheckLine: MisaCheckLineGenerator;
+  private readonly generateMisaAmisBlockerNotes: MisaAmisBlockerNotesGenerator;
+  private readonly generateMarketplaceFeeNotes: MarketplaceFeeNotesGenerator;
+  private readonly generateMarketplaceColumns: MarketplaceColumnsGenerator;
+  private readonly generateEInvoiceRate: EInvoiceRateGenerator;
+  private readonly generateStockSurplus: StockSurplusGenerator;
+  private readonly generateEInvoiceReason: EInvoiceReasonGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
@@ -258,13 +321,15 @@ export class InboxReader {
   private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
+  private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
+    this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -338,11 +403,83 @@ export class InboxReader {
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
+    this.generateStockSurplus =
+      generators.stockSurplus ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_surplus_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zStockSurplusOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateEInvoiceReason =
+      generators.einvoiceReason ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.einvoice_reason_suggest', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zEInvoiceReasonOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateEInvoiceRate =
+      generators.einvoiceRate ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.einvoice_rate_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zEInvoiceRateOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
     this.generateMarketplaceLine =
       generators.marketplaceLine ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.marketplace_line', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMisaCheckLine =
+      generators.misaCheckLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.misa_check_line', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMisaCheckLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMisaAmisBlockerNotes =
+      generators.misaAmisBlockerNotes ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.misa_amis_blocker_notes', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMisaAmisBlockerNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceFeeNotes =
+      generators.marketplaceFeeNotes ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.marketplace_fee_note', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceFeeNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceColumns =
+      generators.marketplaceColumns ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_columns', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceColumnsOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateSupplierPayableLine =
+      generators.supplierPayableLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.supplier_payable_line', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zSupplierPayableLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateBankCandidatesLine =
+      generators.bankCandidatesLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.bank_match_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zBankCandidatesLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -498,6 +635,9 @@ export class InboxReader {
   recruitingBrief(input: RecruitingBriefInput, options?: Omit<ReviewCandidateProfileOptions, 'generate'>): Promise<RecruitingBriefResult> {
     return reviewCandidateProfile(input, { ...options, generate: this.generateRecruitingBrief });
   }
+  signAcceptanceDraft(request: SignAcceptanceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<SignAcceptanceDraftOutcome> {
+    return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
+  }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,
    * and its text is refused when it states a number the figures do not hold, a link, or is empty or too long (overview.ts). onUsage gets the tokens the call used,
@@ -519,12 +659,92 @@ export class InboxReader {
     return checkVatLateSentence(facts, output);
   }
 
+  /** The accounting coworker's explanation of the surplus of a count of stock (#3712 slice 2b), from the items, their value and the supplier code found, or why there is none: the text is refused when
+   * it states a number the facts do not hold, a link, claims a step was done, advises an account, sets an account number against the wrong meaning, or is empty or too long (stock-surplus-note.ts). onUsage
+   * gets the tokens the call used. */
+  async stockSurplusNote(facts: StockSurplusFacts, onUsage?: (usage: AiUsage) => void): Promise<StockSurplusResult> {
+    const { output, usage } = await this.generateStockSurplus({ system: stockSurplusInstructions(facts.language), prompt: stockSurplusPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkStockSurplusNote(facts, output);
+  }
+
+  /** The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690), from the numbered list of codes, the buyer's kind, the original's lines (no price) and the person's
+   * note, or why there is none: the answer is a number into the list that was offered, so a code outside the list cannot come out, and the why is refused when it states a figure the facts do not hold,
+   * a link or a step done (einvoice-reason.ts). onUsage gets the tokens the call used. */
+  async einvoiceReasonSuggestion(facts: EInvoiceReasonFacts, onUsage?: (usage: AiUsage) => void): Promise<EInvoiceReasonResult> {
+    // Nothing to ask without a list or a note: no paid call.
+    const early = checkEInvoiceReason(facts, null);
+    if (early.kind === 'none' && (early.code === 'NO_LIST' || early.code === 'NO_NOTE')) return early;
+    const { output, usage } = await this.generateEInvoiceReason({ system: einvoiceReasonInstructions(), prompt: einvoiceReasonPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkEInvoiceReason(facts, output);
+  }
+
+  /** The accounting coworker's plain-Vietnamese explanation of the VAT rate a correcting e-invoice proposes (#3709), from the nature, two dates and rates only, or why there is none: the text is
+   * refused when it states a number or a percentage the facts do not hold, a link, or is empty, too long or more than two sentences (einvoice-rate.ts). onUsage gets the tokens the call used. */
+  async einvoiceRateExplanation(facts: EInvoiceRateFacts, onUsage?: (usage: AiUsage) => void): Promise<EInvoiceRateResult> {
+    const { output, usage } = await this.generateEInvoiceRate({ system: einvoiceRateInstructions(), prompt: einvoiceRatePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkEInvoiceRate(facts, output);
+  }
+
   /** The finance coworker's one line on the Sàn screen (#2516 slice E), from four numbers code read from the books and nothing else, or why there is none: the text is refused when it states a
    * number the facts do not hold, a link, says something was posted, approved or paid, or is empty, too long or more than one sentence (marketplace-line.ts). onUsage gets the tokens the call used. */
   async marketplaceLineSentence(facts: MarketplaceLineFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceLineResult> {
     const { output, usage } = await this.generateMarketplaceLine({ system: marketplaceLineInstructions(facts.language), prompt: marketplaceLinePrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMarketplaceLineSentence(facts, output);
+  }
+
+  /** The finance coworker's one line above the MISA export check (#3848 slice B), from the count of findings per kind that code made and nothing else, or why there is none: the text is refused when it states a
+   * number the counts do not hold, sets a count against the wrong kind, has a link, or says something was fixed or imported (misa-check-line.ts). onUsage gets the tokens the call used. */
+  async misaCheckLineSentence(facts: MisaCheckLineFacts, onUsage?: (usage: AiUsage) => void): Promise<MisaCheckLineResult> {
+    const { output, usage } = await this.generateMisaCheckLine({ system: misaCheckLineInstructions(facts.language), prompt: misaCheckLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMisaCheckLineSentence(facts, output);
+  }
+
+  /** The finance coworker's notes on the kinds of blocker on the AMIS preview (#3904, S5 of #3854), from the set of kinds code found and nothing else, or why there is none: a note is dropped when it is for a kind that is
+   * not on the list, has a number, a link, says something was done or promises a result (misa-amis-blocker-notes.ts). onUsage gets the tokens the call used. */
+  async misaAmisBlockerNotes(facts: MisaAmisBlockerNotesFacts, onUsage?: (usage: AiUsage) => void): Promise<MisaAmisBlockerNotesResult> {
+    const { output, usage } = await this.generateMisaAmisBlockerNotes({ system: misaAmisBlockerNotesInstructions(facts.language, facts.product), prompt: misaAmisBlockerNotesPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMisaAmisBlockerNotes(facts, output);
+  }
+
+  /** The finance coworker's notes under the Sàn table (#3711 slice 7), from the fees waiting on each platform's 331 (amount, age, past the cycle) and nothing else, or why there is none: a note is dropped when it has
+   * a number that is not its row's, a platform name, a link, says something was done or promises a result (marketplace-fee-note.ts). onUsage gets the tokens the call used. */
+  async marketplaceFeeNotes(facts: MarketplaceFeeNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceFeeNotesResult> {
+    const { output, usage } = await this.generateMarketplaceFeeNotes({ system: marketplaceFeeNotesInstructions(facts.language), prompt: marketplaceFeeNotesPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceFeeNotes(facts, output);
+  }
+
+  /** The columns of an order report no profile knows (#3850): which standard field each shown column is, from the header texts and masked sample shapes only (no buyer column is ever shown), or why there is no
+   * proposal. A column or field answered twice, a column not given and a field not on the list are dropped; the result is a proposal the caller reads the real file with before a person confirms it
+   * (marketplace-columns.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async marketplaceColumns(facts: MarketplaceColumnFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceColumnsResult> {
+    // Fewer than three columns to show is no report: no model call, no budget spent.
+    if (!marketplaceColumnsHaveNews(facts)) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateMarketplaceColumns({ system: marketplaceColumnsInstructions(facts.language), prompt: marketplaceColumnsPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceColumns(facts, output);
+  }
+
+  /** The finance coworker's one line above the received invoices to pay (#3113 S4c), from four facts code read from the books and nothing else, or why there is none: the text is refused when it states a
+   * number or date the facts do not hold, a link, advice, or says something was paid, approved or sent (supplier-payable-line.ts). onUsage gets the tokens the call used. */
+  async supplierPayableLineSentence(facts: SupplierPayableLineFacts, onUsage?: (usage: AiUsage) => void): Promise<SupplierPayableLineResult> {
+    const { output, usage } = await this.generateSupplierPayableLine({ system: supplierPayableLineInstructions(facts.language), prompt: supplierPayableLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkSupplierPayableLineSentence(facts, output);
+  }
+
+  /** The finance coworker's one sentence on a bank line the matcher could not settle (#4219), from the date, amount, direction and candidate count only, or why there is none: refused when it states a figure the
+   * facts do not hold, a link, advice, a pick of one candidate, or says something was matched, posted, approved or paid (bank-candidates-line.ts). Metered under finance.bank_match_explain. */
+  async bankCandidatesLineSentence(facts: BankCandidatesLineFacts, onUsage?: (usage: AiUsage) => void): Promise<BankCandidatesLineResult> {
+    const { output, usage } = await this.generateBankCandidatesLine({ system: bankCandidatesLineInstructions(facts.language), prompt: bankCandidatesLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkBankCandidatesLineSentence(facts, output);
   }
 
   /** The finance coworker's one line on why a bank statement line may be a payroll payment (#2532), from the kind, month, amount and date of the payment only, or why there is none: the text is

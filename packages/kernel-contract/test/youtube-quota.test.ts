@@ -3,6 +3,9 @@
 // time (daylight saving included), and the interval backs off while nothing new comes and returns at the first new comment.
 import { describe, expect, it } from 'vitest';
 import {
+  CONVERSATION_PROVIDER_RULES,
+  YOUTUBE_COMMENT_SCOPE,
+  YOUTUBE_MODERATE_UNITS,
   YOUTUBE_POLL_BUDGET_UNITS,
   YOUTUBE_POLL_DELAYS_MINUTES,
   YOUTUBE_POLL_MAX_UNITS,
@@ -84,5 +87,19 @@ describe('the adaptive interval', () => {
   it('a day of polling at the base interval fits the budget the plan counts on (about 96 polls a day at one unit)', () => {
     expect((24 * 60) / YOUTUBE_POLL_DELAYS_MINUTES[0]).toBe(96);
     expect(YOUTUBE_POLL_BUDGET_UNITS).toBeGreaterThanOrEqual(96);
+  });
+});
+
+// Hide and show again (#3808): the contract's rule and the cost of the call (the official page of comments.setModerationStatus: 50 units, scope youtube.force-ssl).
+describe('hiding a YouTube comment', () => {
+  it('is allowed by the provider rule, needs the comment scope the poll already needs, and costs 50 units', () => {
+    expect(CONVERSATION_PROVIDER_RULES.youtube).toMatchObject({ kinds: ['comment_thread'], canHide: true });
+    expect(YOUTUBE_COMMENT_SCOPE).toBe('https://www.googleapis.com/auth/youtube.force-ssl');
+    expect(YOUTUBE_MODERATE_UNITS).toBe(50);
+  });
+
+  it('does not change what the other channels may do', () => {
+    const hides = Object.entries(CONVERSATION_PROVIDER_RULES).filter(([, rule]) => rule.canHide).map(([provider]) => provider).sort();
+    expect(hides).toEqual(['facebook_page', 'instagram', 'sandbox', 'youtube']);
   });
 });

@@ -19,14 +19,17 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignPdfBytes,
   signApi,
   uploadSignPdf,
+  type SignSharedSummary,
   type SignSignerRecord,
   type SignTemplateDetail,
   type SignTemplateFieldRecord,
@@ -155,6 +158,188 @@ export function canAutoSendTemplate(detail: SignTemplateDetail): boolean {
   return nonCc.every((r) => r.signerRole !== 'signer' || sigRoles.has(r.id));
 }
 
+export function nextFiltersAfterTemplateCreate(currentTab: TemplateFilterTab): {
+  tab: TemplateFilterTab;
+  searchQuery: string;
+} {
+  return {
+    tab: currentTab !== 'all' && currentTab !== 'draft' ? 'all' : currentTab,
+    searchQuery: '',
+  };
+}
+
+export function shouldApplySavedDraftRevision(params: {
+  loadedTemplateId: string | null;
+  savedTemplateId: string;
+  currentRevision: number;
+  submittedRevision: number;
+}): boolean {
+  return (
+    params.loadedTemplateId === params.savedTemplateId &&
+    params.currentRevision === params.submittedRevision
+  );
+}
+
+export function createTemplateDraftRevisionTracker() {
+  const rolesRevByTemplate = new Map<string, number>();
+  const fieldsRevByTemplate = new Map<string, number>();
+  let loaded: {
+    id: string;
+    version: number;
+    syncedRolesRev: number;
+    syncedFieldsRev: number;
+  } | null = null;
+
+  const rolesRev = (templateId: string) => rolesRevByTemplate.get(templateId) ?? 0;
+  const fieldsRev = (templateId: string) => fieldsRevByTemplate.get(templateId) ?? 0;
+
+  return {
+    getLoadedTemplateId: () => loaded?.id ?? null,
+    getRolesRevision: rolesRev,
+    getFieldsRevision: fieldsRev,
+    clearLoaded() {
+      loaded = null;
+    },
+    onDetailEffect(templateId: string, version: number): {
+      kind: 'none' | 'switched' | 'refreshed';
+      syncRoles: boolean;
+      syncFields: boolean;
+    } {
+      if (!loaded || loaded.id !== templateId) {
+        const rRev = rolesRev(templateId);
+        const fRev = fieldsRev(templateId);
+        loaded = {
+          id: templateId,
+          version,
+          syncedRolesRev: rRev,
+          syncedFieldsRev: fRev,
+        };
+        return { kind: 'switched', syncRoles: true, syncFields: true };
+      }
+      if (loaded.version !== version) {
+        const rRev = rolesRev(templateId);
+        const fRev = fieldsRev(templateId);
+        const syncRoles = rRev === loaded.syncedRolesRev;
+        const syncFields = fRev === loaded.syncedFieldsRev;
+        loaded = {
+          id: templateId,
+          version,
+          syncedRolesRev: syncRoles ? rRev : loaded.syncedRolesRev,
+          syncedFieldsRev: syncFields ? fRev : loaded.syncedFieldsRev,
+        };
+        return { kind: 'refreshed', syncRoles, syncFields };
+      }
+      return { kind: 'none', syncRoles: false, syncFields: false };
+    },
+    markRolesEdited(templateId?: string | null): number {
+      const id = templateId ?? loaded?.id ?? null;
+      if (!id) return 0;
+      const next = rolesRev(id) + 1;
+      rolesRevByTemplate.set(id, next);
+      return next;
+    },
+    markFieldsEdited(templateId?: string | null): number {
+      const id = templateId ?? loaded?.id ?? null;
+      if (!id) return 0;
+      const next = fieldsRev(id) + 1;
+      fieldsRevByTemplate.set(id, next);
+      return next;
+    },
+    markFieldsSavedClean(savedTemplateId: string, submittedRevision: number): void {
+      if (loaded?.id === savedTemplateId && fieldsRev(savedTemplateId) === submittedRevision) {
+        loaded.syncedFieldsRev = submittedRevision;
+      }
+    },
+    acceptSavedRoles(savedTemplateId: string, submittedRevision: number, savedVersion?: number): boolean {
+      const cur = rolesRev(savedTemplateId);
+      const ok = shouldApplySavedDraftRevision({
+        loadedTemplateId: loaded?.id ?? null,
+        savedTemplateId,
+        currentRevision: cur,
+        submittedRevision,
+      });
+      if (ok && loaded) {
+        loaded.syncedRolesRev = cur;
+        if (savedVersion !== undefined) {
+          loaded.version = savedVersion;
+        }
+      }
+      return ok;
+    },
+    acceptSavedFields(savedTemplateId: string, submittedRevision: number, savedVersion?: number): boolean {
+      const cur = fieldsRev(savedTemplateId);
+      const ok = shouldApplySavedDraftRevision({
+        loadedTemplateId: loaded?.id ?? null,
+        savedTemplateId,
+        currentRevision: cur,
+        submittedRevision,
+      });
+      if (ok && loaded) {
+        loaded.syncedFieldsRev = cur;
+        if (savedVersion !== undefined) {
+          loaded.version = savedVersion;
+        }
+      }
+      return ok;
+    },
+  };
+}
+
+export async function completeTemplateInstantiate(deps: {
+  res: { envelopeId: string; links: Array<{ signerId: string; token: string }> };
+  capturedSlug: string | undefined;
+  isMounted?: () => boolean;
+  getActiveOrg?: () => string | null | undefined;
+  getCurrentSlug: () => string | undefined;
+  invalidateEnvelopes: () => Promise<unknown>;
+  getEnvelope: (envelopeId: string) => Promise<{
+    signers: Array<{ id: string; name: string; roleLabel: string | null }>;
+  } | null>;
+  onCompletedLinks: (completed: {
+    envelopeId: string;
+    links: Array<{ signerId: string; token: string; signerName: string | null; roleLabel: string | null }>;
+  }) => void;
+  onCloseDialog: () => void;
+  navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
+}): Promise<'stale' | 'links' | 'navigated' | 'closed'> {
+  const isSameContext = () => {
+    if (deps.isMounted && !deps.isMounted()) return false;
+    if ((deps.getCurrentSlug() ?? '') !== (deps.capturedSlug ?? '')) return false;
+    const liveOrg = deps.getActiveOrg ? deps.getActiveOrg() : undefined;
+    if (liveOrg !== null && liveOrg !== undefined && deps.capturedSlug && liveOrg !== deps.capturedSlug) {
+      return false;
+    }
+    return true;
+  };
+  if (!isSameContext()) return 'stale';
+  await deps.invalidateEnvelopes();
+  if (!isSameContext()) return 'stale';
+  if (deps.res.links.length > 0) {
+    const envDetail = await deps.getEnvelope(deps.res.envelopeId).catch(() => null);
+    if (!isSameContext()) return 'stale';
+    const signersById = new Map((envDetail?.signers ?? []).map((s) => [s.id, s]));
+    deps.onCompletedLinks({
+      envelopeId: deps.res.envelopeId,
+      links: deps.res.links.map((item) => {
+        const signer = signersById.get(item.signerId);
+        return {
+          signerId: item.signerId,
+          token: item.token,
+          signerName: signer?.name ?? null,
+          roleLabel: signer?.roleLabel ?? null,
+        };
+      }),
+    });
+    return 'links';
+  }
+  deps.onCloseDialog();
+  if (deps.capturedSlug && isSameContext()) {
+    await deps.navigateToEnvelope(deps.capturedSlug, deps.res.envelopeId);
+    return 'navigated';
+  }
+  return 'closed';
+}
+
 export function TemplateRolesCard({
   roles,
   editable,
@@ -170,8 +355,10 @@ export function TemplateRolesCard({
 }) {
   const t = useTranslations('sign.templates');
   const tSign = useTranslations('sign');
+  const controlsDisabled = !editable || saving;
 
   const updateRole = (idx: number, patch: Partial<EditableTemplateRole>) => {
+    if (controlsDisabled) return;
     onChangeRoles(
       roles.map((r, i) => {
         if (i !== idx) return r;
@@ -185,6 +372,7 @@ export function TemplateRolesCard({
   };
 
   const addRole = () => {
+    if (controlsDisabled) return;
     const roleKey = nextRoleKey(roles);
     onChangeRoles([
       ...roles,
@@ -206,10 +394,23 @@ export function TemplateRolesCard({
         <CardTitle className="text-base">{t('rolesSectionTitle', { count: String(roles.length) })}</CardTitle>
         {editable ? (
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={addRole} data-testid="sign-tpl-add-role-btn">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={saving}
+              onClick={addRole}
+              data-testid="sign-tpl-add-role-btn"
+            >
               {t('addRoleButton')}
             </Button>
-            <Button type="button" size="sm" disabled={saving} onClick={onSaveRoles} data-testid="sign-tpl-save-roles-btn">
+            <Button
+              type="button"
+              size="sm"
+              loading={saving}
+              onClick={onSaveRoles}
+              data-testid="sign-tpl-save-roles-btn"
+            >
               {t('saveRolesButton')}
             </Button>
           </div>
@@ -236,6 +437,7 @@ export function TemplateRolesCard({
                     type="button"
                     variant="ghost"
                     size="sm"
+                    disabled={saving}
                     onClick={() => onChangeRoles(roles.filter((_, i) => i !== idx))}
                     aria-label={`${t('removeRoleButton')} ${role.roleLabel || role.roleKey}`}
                   >
@@ -250,7 +452,7 @@ export function TemplateRolesCard({
                   <Input
                     id={keyId}
                     value={role.roleKey}
-                    disabled={!editable}
+                    disabled={controlsDisabled}
                     onChange={(e) => updateRole(idx, { roleKey: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })}
                   />
                 </div>
@@ -259,7 +461,7 @@ export function TemplateRolesCard({
                   <Input
                     id={labelId}
                     value={role.roleLabel}
-                    disabled={!editable}
+                    disabled={controlsDisabled}
                     onChange={(e) => updateRole(idx, { roleLabel: e.target.value })}
                   />
                 </div>
@@ -270,7 +472,7 @@ export function TemplateRolesCard({
                     type="number"
                     min={1}
                     max={100}
-                    disabled={!editable}
+                    disabled={controlsDisabled}
                     value={role.routingOrder}
                     onChange={(e) => updateRole(idx, { routingOrder: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
                   />
@@ -282,7 +484,7 @@ export function TemplateRolesCard({
                   <Label htmlFor={typeId}>{t('roleTypeLabel')}</Label>
                   <NativeSelect
                     id={typeId}
-                    disabled={!editable}
+                    disabled={controlsDisabled}
                     value={role.signerRole}
                     onChange={(e) => updateRole(idx, { signerRole: e.target.value as SignSignerRole })}
                   >
@@ -297,7 +499,7 @@ export function TemplateRolesCard({
                   <Label htmlFor={deliveryId}>{t('recipientDeliveryLabel', { role: role.roleLabel || role.roleKey })}</Label>
                   <NativeSelect
                     id={deliveryId}
-                    disabled={!editable}
+                    disabled={controlsDisabled}
                     value={role.deliveryMode}
                     onChange={(e) => updateRole(idx, { deliveryMode: e.target.value as SignDeliveryMode })}
                   >
@@ -313,7 +515,7 @@ export function TemplateRolesCard({
               <div className="flex items-center gap-2 pt-1">
                 <Checkbox
                   id={otpId}
-                  disabled={!editable || role.signerRole === 'cc'}
+                  disabled={controlsDisabled || role.signerRole === 'cc'}
                   checked={role.signerRole === 'cc' ? false : role.requireEmailOtp}
                   onCheckedChange={(checked) => updateRole(idx, { requireEmailOtp: checked === true })}
                 />
@@ -331,6 +533,7 @@ export function DirectLinkCard({
   detail,
   freshDirectUrl,
   pending,
+  rotating,
   onToggleEnabled,
   onToggleOtp,
   onRotate,
@@ -339,6 +542,7 @@ export function DirectLinkCard({
   detail: SignTemplateDetail;
   freshDirectUrl: string | null;
   pending: boolean;
+  rotating?: boolean;
   onToggleEnabled: (enabled: boolean) => void;
   onToggleOtp: (otp: boolean) => void;
   onRotate: () => void;
@@ -349,6 +553,7 @@ export function DirectLinkCard({
   const eligible = detail.template.status === 'active' && detail.template.inspectStatus === 'passed' && nonCcCount === 1;
   const enabled = Boolean(detail.directLink?.enabled);
   const requireEmailOtp = Boolean(detail.directLink?.requireEmailOtp);
+  const isRotating = rotating ?? pending;
 
   return (
     <Card data-testid="sign-tpl-direct-link-card">
@@ -376,6 +581,7 @@ export function DirectLinkCard({
                   type="button"
                   variant="outline"
                   size="sm"
+                  loading={isRotating}
                   disabled={pending}
                   onClick={onRotate}
                   data-testid="sign-tpl-direct-rotate-btn"
@@ -419,6 +625,255 @@ export function DirectLinkCard({
   );
 }
 
+export function CreateTemplateForm({
+  title,
+  description,
+  routingMode,
+  subject,
+  message,
+  file,
+  error,
+  pending,
+  onChangeTitle,
+  onChangeDescription,
+  onChangeRoutingMode,
+  onChangeSubject,
+  onChangeMessage,
+  onChangeFile,
+  onSubmit,
+}: {
+  title: string;
+  description: string;
+  routingMode: SignRoutingMode;
+  subject: string;
+  message: string;
+  file: File | null;
+  error: string | null;
+  pending: boolean;
+  onChangeTitle: (value: string) => void;
+  onChangeDescription: (value: string) => void;
+  onChangeRoutingMode: (value: SignRoutingMode) => void;
+  onChangeSubject: (value: string) => void;
+  onChangeMessage: (value: string) => void;
+  onChangeFile: (file: File | null) => void;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const t = useTranslations('sign.templates');
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-title">{t('titleLabel')}</Label>
+        <Input
+          id="sign-tpl-create-title"
+          required
+          placeholder={t('titlePlaceholder')}
+          value={title}
+          onChange={(e) => onChangeTitle(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-desc">{t('descriptionLabel')}</Label>
+        <Input
+          id="sign-tpl-create-desc"
+          placeholder={t('descriptionPlaceholder')}
+          value={description}
+          onChange={(e) => onChangeDescription(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-routing">{t('routingModeLabel')}</Label>
+        <NativeSelect
+          id="sign-tpl-create-routing"
+          value={routingMode}
+          onChange={(e) => onChangeRoutingMode(e.target.value as SignRoutingMode)}
+        >
+          {SIGN_ROUTING_MODES.map((m) => (
+            <NativeSelectOption key={m} value={m}>
+              {m === 'parallel' ? t('routingParallel') : t('routingSequential')}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-subject">{t('subjectLabel')}</Label>
+        <Input
+          id="sign-tpl-create-subject"
+          value={subject}
+          onChange={(e) => onChangeSubject(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-message">{t('messageLabel')}</Label>
+        <Textarea
+          id="sign-tpl-create-message"
+          rows={2}
+          value={message}
+          onChange={(e) => onChangeMessage(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-create-file">{t('pdfFileLabel')}</Label>
+        <input
+          id="sign-tpl-create-file"
+          type="file"
+          accept="application/pdf,.pdf"
+          required
+          className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
+          onChange={(e) => onChangeFile(e.target.files?.[0] ?? null)}
+        />
+        {file ? <p className="text-xs text-muted-foreground">{t('selectedFile', { name: file.name })}</p> : null}
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <DialogFooter>
+        <Button
+          type="submit"
+          loading={pending}
+          disabled={!title.trim() || !file}
+          data-testid="sign-tpl-create-submit-btn"
+        >
+          {t('submitCreate')}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+export function InstantiateTemplateForm({
+  roles,
+  title,
+  recipients,
+  autoSend,
+  autoSendAllowed,
+  error,
+  pending,
+  onChangeTitle,
+  onChangeRecipient,
+  onChangeAutoSend,
+  onSubmit,
+}: {
+  roles: readonly SignTemplateRoleRecord[];
+  title: string;
+  recipients: Readonly<Record<string, RecipientDraft>>;
+  autoSend: boolean;
+  autoSendAllowed: boolean;
+  error: string | null;
+  pending: boolean;
+  onChangeTitle: (value: string) => void;
+  onChangeRecipient: (roleKey: string, next: RecipientDraft) => void;
+  onChangeAutoSend: (value: boolean) => void;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const t = useTranslations('sign.templates');
+  const tSign = useTranslations('sign');
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="sign-tpl-inst-title">{t('envelopeTitleLabel')}</Label>
+        <Input
+          id="sign-tpl-inst-title"
+          required
+          value={title}
+          onChange={(e) => onChangeTitle(e.target.value)}
+        />
+      </div>
+
+      {roles.map((role) => {
+        const draft = recipients[role.roleKey] ?? {
+          name: '',
+          email: '',
+          phone: '',
+          deliveryMode: role.deliveryMode,
+        };
+        const needEmail = draft.deliveryMode === 'email' || role.requireEmailOtp;
+        const nameId = `sign-tpl-inst-name-${role.roleKey}`;
+        const emailId = `sign-tpl-inst-email-${role.roleKey}`;
+        const phoneId = `sign-tpl-inst-phone-${role.roleKey}`;
+        const delivId = `sign-tpl-inst-delivery-${role.roleKey}`;
+        return (
+          <div key={role.id} className="space-y-2 rounded-md border border-border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-foreground">{role.roleLabel}</span>
+              <Badge variant="outline">{role.roleKey}</Badge>
+              <Badge variant="secondary">{tSign(`signer.roles.${role.signerRole}`)}</Badge>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor={nameId}>{t('recipientNameLabel', { role: role.roleLabel })}</Label>
+                <Input
+                  id={nameId}
+                  required={role.signerRole !== 'cc'}
+                  value={draft.name}
+                  onChange={(e) => onChangeRecipient(role.roleKey, { ...draft, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={emailId}>{t('recipientEmailLabel', { role: role.roleLabel })}</Label>
+                <Input
+                  id={emailId}
+                  type="email"
+                  required={(role.signerRole !== 'cc' || Boolean(draft.name.trim())) && needEmail}
+                  value={draft.email}
+                  onChange={(e) => onChangeRecipient(role.roleKey, { ...draft, email: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={phoneId}>{t('recipientPhoneLabel', { role: role.roleLabel })}</Label>
+                <Input
+                  id={phoneId}
+                  value={draft.phone}
+                  onChange={(e) => onChangeRecipient(role.roleKey, { ...draft, phone: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={delivId}>{t('recipientDeliveryLabel', { role: role.roleLabel })}</Label>
+                <NativeSelect
+                  id={delivId}
+                  value={draft.deliveryMode}
+                  onChange={(e) =>
+                    onChangeRecipient(role.roleKey, {
+                      ...draft,
+                      deliveryMode: e.target.value as SignDeliveryMode,
+                    })
+                  }
+                >
+                  {SIGN_DELIVERY_MODES.map((dm) => (
+                    <NativeSelectOption key={dm} value={dm}>
+                      {dm === 'link' ? t('deliveryLink') : t('deliveryEmail')}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="space-y-1 rounded-md border border-border bg-muted/30 p-3">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="sign-tpl-inst-autosend"
+            disabled={!autoSendAllowed}
+            checked={autoSend && autoSendAllowed}
+            onCheckedChange={(checked) => onChangeAutoSend(checked === true)}
+          />
+          <Label htmlFor="sign-tpl-inst-autosend">{t('autoSendLabel')}</Label>
+        </div>
+        {!autoSendAllowed ? <p className="text-xs text-muted-foreground">{t('autoSendBlockedHint')}</p> : null}
+      </div>
+
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+      <DialogFooter>
+        <Button type="submit" loading={pending} data-testid="sign-tpl-inst-submit-btn">
+          {t('submitInstantiate')}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
 export function SignTemplatesPage() {
   const t = useTranslations('sign.templates');
   const tSign = useTranslations('sign');
@@ -429,11 +884,22 @@ export function SignTemplatesPage() {
   const [tab, setTab] = useState<TemplateFilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const loadedTemplateIdRef = useRef<string | null>(null);
+  const draftTrackerRef = useRef<ReturnType<typeof createTemplateDraftRevisionTracker> | null>(null);
+  if (!draftTrackerRef.current) {
+    draftTrackerRef.current = createTemplateDraftRevisionTracker();
+  }
+  const draftTracker = draftTrackerRef.current;
   const pendingCreatedIdRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  const activeSlugRef = useRef(slug);
+  activeSlugRef.current = slug;
+  const previousSlugRef = useRef(slug);
+  const detailRetryBtnRef = useRef<HTMLButtonElement | null>(null);
+  const pendingDetailRetryFocusRef = useRef(false);
 
   // Create template dialog state
   const [createOpen, setCreateOpen] = useState(false);
+  const [drafterOpen, setDrafterOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createDesc, setCreateDesc] = useState('');
   const [createRouting, setCreateRouting] = useState<SignRoutingMode>('parallel');
@@ -468,6 +934,47 @@ export function SignTemplatesPage() {
     envelopeId: string;
     links: Array<{ signerId: string; token: string; signerName: string | null; roleLabel: string | null }>;
   } | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const isSameActiveOrgContext = (capturedSlug: string | undefined): boolean => {
+    if (!mountedRef.current) return false;
+    if ((activeSlugRef.current ?? '') !== (capturedSlug ?? '')) return false;
+    const liveOrg = typeof getCurrentOrg === 'function' ? getCurrentOrg() : null;
+    if (liveOrg !== null && capturedSlug && liveOrg !== capturedSlug) return false;
+    return true;
+  };
+
+  const updateRolesDraft = (
+    updater: EditableTemplateRole[] | ((prev: EditableTemplateRole[]) => EditableTemplateRole[]),
+  ) => {
+    draftTracker.markRolesEdited();
+    setRolesDraft(updater);
+  };
+
+  const updateFieldsDraft = (
+    updater: DraftFieldPlacement[] | ((prev: DraftFieldPlacement[]) => DraftFieldPlacement[]),
+  ) => {
+    draftTracker.markFieldsEdited();
+    setFieldsDraft(updater);
+  };
+
+  useEffect(() => {
+    if (previousSlugRef.current === slug) return;
+    previousSlugRef.current = slug;
+    pendingCreatedIdRef.current = null;
+    draftTracker.clearLoaded();
+    setSelectedId(null);
+    setFreshDirectUrl(null);
+    setInstOpen(false);
+    setInstCompleted(null);
+    setInstError(null);
+  }, [slug, draftTracker]);
 
   const listQuery = useQuery({
     queryKey: ['sign', 'templates', 'list', tab, searchQuery],
@@ -511,6 +1018,15 @@ export function SignTemplatesPage() {
 
   const detail = detailQuery.data ?? null;
 
+  useEffect(() => {
+    if (!detailQuery.isFetching && pendingDetailRetryFocusRef.current) {
+      pendingDetailRetryFocusRef.current = false;
+      if (detailQuery.error) {
+        detailRetryBtnRef.current?.focus();
+      }
+    }
+  }, [detailQuery.isFetching, detailQuery.error]);
+
   const pdfQuery = useQuery({
     queryKey: ['sign', 'templates', 'pdf', detail?.template.sourceFileId],
     queryFn: () => downloadSignPdfBytes(detail!.template.sourceFileId),
@@ -520,24 +1036,39 @@ export function SignTemplatesPage() {
 
   useEffect(() => {
     if (!resolvedSelectedId) {
-      loadedTemplateIdRef.current = null;
+      draftTracker.clearLoaded();
       return;
     }
-    if (!detail || loadedTemplateIdRef.current === detail.template.id) return;
-    loadedTemplateIdRef.current = detail.template.id;
-    setMetaTitle(detail.template.title);
-    setMetaDesc(detail.template.description ?? '');
-    setMetaRouting(detail.template.routingMode);
-    setMetaSubject(detail.template.subject ?? '');
-    setMetaMessage(detail.template.message ?? '');
-    setRolesDraft(toEditableRoles(detail.roles));
-    setFieldsDraft(toDraftFields(detail.fields));
-    setSelectedFieldId(null);
-    setPageNumber(1);
-    setFreshDirectUrl(null);
-    const firstNonCc = detail.roles.find((r) => r.signerRole !== 'cc');
-    setActiveRoleId(firstNonCc?.id ?? '');
-  }, [resolvedSelectedId, detail]);
+    if (!detail) return;
+    const sync = draftTracker.onDetailEffect(detail.template.id, detail.template.version);
+    if (sync.kind === 'none') return;
+    if (sync.kind === 'switched') {
+      setMetaTitle(detail.template.title);
+      setMetaDesc(detail.template.description ?? '');
+      setMetaRouting(detail.template.routingMode);
+      setMetaSubject(detail.template.subject ?? '');
+      setMetaMessage(detail.template.message ?? '');
+      setRolesDraft(toEditableRoles(detail.roles));
+      setFieldsDraft(toDraftFields(detail.fields));
+      setSelectedFieldId(null);
+      setPageNumber(1);
+      setFreshDirectUrl(null);
+      const firstNonCc = detail.roles.find((r) => r.signerRole !== 'cc');
+      setActiveRoleId(firstNonCc?.id ?? '');
+      return;
+    }
+    if (sync.syncRoles) {
+      setRolesDraft(toEditableRoles(detail.roles));
+      const nonCcRoles = detail.roles.filter((r) => r.signerRole !== 'cc');
+      const nonCcIds = new Set(nonCcRoles.map((r) => r.id));
+      setActiveRoleId((prev) => (prev && nonCcIds.has(prev) ? prev : nonCcRoles[0]?.id ?? ''));
+    }
+    if (sync.syncFields) {
+      const nextFields = toDraftFields(detail.fields);
+      setFieldsDraft(nextFields);
+      setSelectedFieldId((prev) => (prev && nextFields.some((f) => f.localId === prev) ? prev : null));
+    }
+  }, [resolvedSelectedId, detail, draftTracker]);
 
   const invalidateTemplates = async (id?: string) => {
     await queryClient.invalidateQueries({ queryKey: ['sign', 'templates', 'list'] });
@@ -545,12 +1076,12 @@ export function SignTemplatesPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (vars: { capturedSlug: string | undefined }) => {
       if (!createFile) throw new Error(t('pdfFileLabel'));
       if (createFile.size > MAX_UPLOAD_BYTES) throw new Error(tSign('pdfTooLarge'));
       const header = new Uint8Array(await createFile.slice(0, 16).arrayBuffer());
       if (!looksLikePdfBytes(header)) throw new Error(tSign('pdfInvalidType'));
-      const uploaded = await uploadSignPdf(createFile);
+      const uploaded = await uploadSignPdf(createFile, vars.capturedSlug ?? undefined);
       return signApi.createTemplate({
         title: createTitle.trim(),
         description: createDesc.trim() || null,
@@ -560,7 +1091,8 @@ export function SignTemplatesPage() {
         sourceFileId: uploaded.fileId,
       });
     },
-    onSuccess: async (res) => {
+    onSuccess: async (res, vars) => {
+      if (!isSameActiveOrgContext(vars.capturedSlug)) return;
       setCreateOpen(false);
       setCreateTitle('');
       setCreateDesc('');
@@ -569,14 +1101,20 @@ export function SignTemplatesPage() {
       setCreateFile(null);
       setCreateError(null);
       pendingCreatedIdRef.current = res.templateId;
-      if (tab !== 'all' && tab !== 'draft') {
-        setTab('all');
+      const nextFilters = nextFiltersAfterTemplateCreate(tab);
+      if (nextFilters.tab !== tab) {
+        setTab(nextFilters.tab);
       }
+      setSearchQuery(nextFilters.searchQuery);
       setSelectedId(res.templateId);
       await invalidateTemplates(res.templateId);
+      if (!isSameActiveOrgContext(vars.capturedSlug)) return;
       toast(t('savedToast'));
     },
-    onError: (err) => setCreateError(errorMessage(err)),
+    onError: (err, vars) => {
+      if (!isSameActiveOrgContext(vars.capturedSlug)) return;
+      setCreateError(errorMessage(err));
+    },
   });
 
   const updateMutation = useMutation({
@@ -605,25 +1143,34 @@ export function SignTemplatesPage() {
   });
 
   const rolesMutation = useMutation({
-    mutationFn: () =>
-      signApi.setTemplateRoles(
-        detail!.template.id,
-        rolesDraft.map((r) => ({
-          ...(r.id ? { id: r.id } : {}),
-          roleKey: r.roleKey,
-          signerRole: r.signerRole,
-          roleLabel: r.roleLabel.trim() || r.roleKey,
-          routingOrder: r.routingOrder,
-          deliveryMode: r.deliveryMode,
-          requireEmailOtp: r.signerRole === 'cc' ? false : r.requireEmailOtp,
-        })),
-      ),
-    onSuccess: async (res) => {
-      if (loadedTemplateIdRef.current === res.templateId) {
-        setRolesDraft(toEditableRoles(res.roles));
+    mutationFn: (vars: {
+      templateId: string;
+      rolesRev: number;
+      roles: Array<{
+        id?: string;
+        roleKey: string;
+        signerRole: SignSignerRole;
+        roleLabel: string;
+        routingOrder: number;
+        deliveryMode: SignDeliveryMode;
+        requireEmailOtp: boolean;
+      }>;
+    }) => signApi.setTemplateRoles(vars.templateId, vars.roles),
+    onSuccess: async (res, vars) => {
+      if (draftTracker.getLoadedTemplateId() === res.templateId) {
+        if (draftTracker.acceptSavedRoles(res.templateId, vars.rolesRev, res.version)) {
+          setRolesDraft(toEditableRoles(res.roles));
+        }
         const nonCcRoles = res.roles.filter((r) => r.signerRole !== 'cc');
         const nonCcIds = new Set(nonCcRoles.map((r) => r.id));
-        setFieldsDraft((prev) => prev.filter((f) => nonCcIds.has(f.signerId)));
+        setFieldsDraft((prev) => {
+          const filtered = prev.filter((f) => nonCcIds.has(f.signerId));
+          if (filtered.length !== prev.length) {
+            draftTracker.markFieldsEdited(res.templateId);
+            return filtered;
+          }
+          return prev;
+        });
         setActiveRoleId((prev) => (prev && nonCcIds.has(prev) ? prev : nonCcRoles[0]?.id ?? ''));
         if (nonCcRoles.length !== 1) {
           setFreshDirectUrl(null);
@@ -636,27 +1183,30 @@ export function SignTemplatesPage() {
   });
 
   const fieldsMutation = useMutation({
-    mutationFn: () =>
-      signApi.setTemplateFields(
-        detail!.template.id,
-        fieldsDraft.map((f) => ({
-          templateRoleId: f.signerId,
-          fieldType: f.fieldType,
-          pageNumber: f.pageNumber,
-          xNorm: f.xNorm,
-          yNorm: f.yNorm,
-          wNorm: f.wNorm,
-          hNorm: f.hNorm,
-          label: f.label,
-          required: f.required,
-          fontSizePt: f.fontSizePt ?? null,
-        })),
-      ),
-    onSuccess: async (res) => {
+    mutationFn: (vars: {
+      templateId: string;
+      fieldsRev: number;
+      fields: Array<{
+        templateRoleId: string;
+        fieldType: SignFieldType;
+        pageNumber: number;
+        xNorm: number;
+        yNorm: number;
+        wNorm: number;
+        hNorm: number;
+        label: string | null;
+        required: boolean;
+        fontSizePt: number | null;
+      }>;
+    }) => signApi.setTemplateFields(vars.templateId, vars.fields),
+    onSuccess: async (res, vars) => {
+      draftTracker.markFieldsSavedClean(res.templateId, vars.fieldsRev);
       await invalidateTemplates(res.templateId);
       const fresh = queryClient.getQueryData<SignTemplateDetail>(['sign', 'templates', 'detail', res.templateId]);
-      if (fresh && loadedTemplateIdRef.current === res.templateId) {
-        setFieldsDraft(toDraftFields(fresh.fields));
+      if (fresh && draftTracker.acceptSavedFields(res.templateId, vars.fieldsRev, fresh.template.version)) {
+        const nextFields = toDraftFields(fresh.fields);
+        setFieldsDraft(nextFields);
+        setSelectedFieldId((prev) => (prev && nextFields.some((f) => f.localId === prev) ? prev : null));
       }
       toast(t('savedFieldsToast'));
     },
@@ -667,7 +1217,7 @@ export function SignTemplatesPage() {
     mutationFn: (templateId: string) => signApi.archiveTemplate(templateId),
     onSuccess: async (res) => {
       setArchiveOpen(false);
-      if (loadedTemplateIdRef.current === res.templateId) {
+      if (draftTracker.getLoadedTemplateId() === res.templateId) {
         setFreshDirectUrl(null);
       }
       await invalidateTemplates(res.templateId);
@@ -680,7 +1230,7 @@ export function SignTemplatesPage() {
     mutationFn: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean }) =>
       signApi.setTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
-      if (loadedTemplateIdRef.current === vars.templateId) {
+      if (draftTracker.getLoadedTemplateId() === vars.templateId) {
         if (res.token) setFreshDirectUrl(buildDirectSigningUrl(res.token));
         else if (!res.enabled) setFreshDirectUrl(null);
       }
@@ -694,7 +1244,7 @@ export function SignTemplatesPage() {
     mutationFn: (input: { templateId: string; requireEmailOtp?: boolean }) =>
       signApi.rotateTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
-      if (loadedTemplateIdRef.current === vars.templateId && res.token) {
+      if (draftTracker.getLoadedTemplateId() === vars.templateId && res.token) {
         setFreshDirectUrl(buildDirectSigningUrl(res.token));
       }
       await invalidateTemplates(vars.templateId);
@@ -703,8 +1253,39 @@ export function SignTemplatesPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const defaultPartyAName = meQuery.data?.orgs.find((o) => o.slug === slug)?.name ?? '';
+
+  const canEditTemplateSharedSummary = useMemo(() => {
+    if (!detail || detail.template.status === 'archived') return false;
+    const me = meQuery.data;
+    if (!me) return true;
+    const orgSummary = me.orgs.find((o) => o.slug === slug);
+    if (!orgSummary) return false;
+    if (orgSummary.role === 'owner' || orgSummary.role === 'admin') return true;
+    return orgSummary.role === 'member' && me.userId === detail.template.createdBy;
+  }, [detail, meQuery.data, slug]);
+
+  const templateSharedSummaryMutation = useMutation({
+    mutationFn: (vars: {
+      templateId: string;
+      shareSummaryWithSigners: boolean;
+      sharedSummary: SignSharedSummary | null;
+    }) => signApi.setTemplateSharedSummary(vars),
+    onSuccess: async (_res, vars) => {
+      await invalidateTemplates(vars.templateId);
+      toast(tSign('sharedSummary.savedToast'));
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
   const instantiateMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (vars: { capturedSlug: string | undefined }) => {
       if (!detail) throw new Error('No template selected');
       const recipients = detail.roles.flatMap((role) => {
         const rec = instRecipients[role.roleKey];
@@ -724,39 +1305,35 @@ export function SignTemplatesPage() {
           },
         ];
       });
-      return signApi.instantiateTemplate({
+      const res = await signApi.instantiateTemplate({
         templateId: detail.template.id,
         title: instTitle.trim() || detail.template.title,
         autoSend: instAutoSend,
         recipients,
       });
+      return { res, capturedSlug: vars.capturedSlug };
     },
-    onSuccess: async (res) => {
+    onSuccess: async ({ res, capturedSlug }) => {
+      if (!isSameActiveOrgContext(capturedSlug)) return;
       setInstError(null);
-      await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-      if (res.links.length > 0) {
-        const envDetail = await signApi.getEnvelope(res.envelopeId).catch(() => null);
-        const signersById = new Map((envDetail?.signers ?? []).map((s) => [s.id, s]));
-        setInstCompleted({
-          envelopeId: res.envelopeId,
-          links: res.links.map((item) => {
-            const signer = signersById.get(item.signerId);
-            return {
-              signerId: item.signerId,
-              token: item.token,
-              signerName: signer?.name ?? null,
-              roleLabel: signer?.roleLabel ?? null,
-            };
-          }),
-        });
-        return;
-      }
-      setInstOpen(false);
-      if (slug) {
-        await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: res.envelopeId } });
-      }
+      await completeTemplateInstantiate({
+        res,
+        capturedSlug,
+        isMounted: () => mountedRef.current,
+        getActiveOrg: () => (typeof getCurrentOrg === 'function' ? getCurrentOrg() : null),
+        getCurrentSlug: () => activeSlugRef.current,
+        invalidateEnvelopes: () => queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),
+        getEnvelope: (envelopeId) => signApi.getEnvelope(envelopeId),
+        onCompletedLinks: (completed) => setInstCompleted(completed),
+        onCloseDialog: () => setInstOpen(false),
+        navigateToEnvelope: (targetSlug, envelopeId) =>
+          navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: targetSlug, id: envelopeId } }),
+      });
     },
-    onError: (err) => setInstError(errorMessage(err)),
+    onError: (err, vars) => {
+      if (!isSameActiveOrgContext(vars.capturedSlug)) return;
+      setInstError(errorMessage(err));
+    },
   });
 
   const openInstantiateDialog = () => {
@@ -785,22 +1362,26 @@ export function SignTemplatesPage() {
     [fieldsDraft, selectedFieldId],
   );
   const editable = detail ? detail.template.status !== 'archived' : false;
+  const fieldsSaving = fieldsMutation.isPending;
+  const fieldsEditable = editable && !fieldsSaving;
   const effectivePageCount = detail?.template.pageCount ?? detectedPages ?? 1;
   const autoSendAllowed = detail ? canAutoSendTemplate(detail) : false;
   const detectedTags = detail?.template.detectedTags ?? [];
   const tplTagPlan = useMemo(() => {
     const effectiveExisting =
-      detail && loadedTemplateIdRef.current !== detail.template.id ? toDraftFields(detail.fields) : fieldsDraft;
+      detail && draftTracker.getLoadedTemplateId() !== detail.template.id
+        ? toDraftFields(detail.fields)
+        : fieldsDraft;
     return planDetectedTagsForTemplateRoles({
       detectedTags,
       roles: nonCcSavedRoles,
       existingFields: effectiveExisting,
       pageCount: effectivePageCount,
     });
-  }, [detail, detectedTags, nonCcSavedRoles, fieldsDraft, effectivePageCount]);
+  }, [detail, detectedTags, nonCcSavedRoles, fieldsDraft, effectivePageCount, draftTracker]);
 
   const handleApplyDetectedTags = () => {
-    if (!editable || tplTagPlan.applicable.length === 0) return;
+    if (!fieldsEditable || tplTagPlan.applicable.length === 0) return;
     const placed: DraftFieldPlacement[] = tplTagPlan.applicable.map((item) => ({
       localId: `tpl-tag-${crypto.randomUUID()}`,
       signerId: item.signerId,
@@ -815,14 +1396,14 @@ export function SignTemplatesPage() {
       proposedByAi: false,
       fontSizePt: null,
     }));
-    setFieldsDraft((prev) => [...prev, ...placed]);
+    updateFieldsDraft((prev) => [...prev, ...placed]);
     setSelectedFieldId(placed[0]!.localId);
     setPageNumber(placed[0]!.pageNumber);
     toast(tSign('tags.appliedToast', { count: String(placed.length) }));
   };
 
   const handleAddField = (fieldType: SignFieldType) => {
-    if (!editable || !activeRoleId) return;
+    if (!fieldsEditable || !activeRoleId) return;
     const samePageCount = fieldsDraft.filter((f) => f.pageNumber === pageNumber).length;
     const box = createPlacedFieldBox({ fieldType, existingOnPageCount: samePageCount });
     const next: DraftFieldPlacement = {
@@ -836,7 +1417,7 @@ export function SignTemplatesPage() {
       proposedByAi: false,
       fontSizePt: null,
     };
-    setFieldsDraft((prev) => [...prev, next]);
+    updateFieldsDraft((prev) => [...prev, next]);
     setSelectedFieldId(next.localId);
   };
 
@@ -847,14 +1428,16 @@ export function SignTemplatesPage() {
 
   const onSubmitCreate = (e: FormEvent) => {
     e.preventDefault();
+    if (createMutation.isPending) return;
     setCreateError(null);
-    createMutation.mutate();
+    createMutation.mutate({ capturedSlug: slug });
   };
 
   const onSubmitInstantiate = (e: FormEvent) => {
     e.preventDefault();
+    if (instantiateMutation.isPending) return;
     setInstError(null);
-    instantiateMutation.mutate();
+    instantiateMutation.mutate({ capturedSlug: slug });
   };
 
   return (
@@ -863,9 +1446,25 @@ export function SignTemplatesPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button type="button" onClick={() => setCreateOpen(true)} data-testid="sign-tpl-new-btn">
-            {t('createButton')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDrafterOpen(true)}
+              data-testid="sign-tpl-open-drafter-btn"
+            >
+              {tSign('drafter.openButton')}
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11"
+              onClick={() => setCreateOpen(true)}
+              data-testid="sign-tpl-new-btn"
+            >
+              {t('createButton')}
+            </Button>
+          </div>
         }
       />
 
@@ -892,7 +1491,10 @@ export function SignTemplatesPage() {
             id="sign-tpl-search"
             value={searchQuery}
             placeholder={t('searchPlaceholder')}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              pendingCreatedIdRef.current = null;
+              setSearchQuery(e.target.value);
+            }}
           />
         </div>
       </div>
@@ -951,7 +1553,31 @@ export function SignTemplatesPage() {
             {!detail ? (
               <Card>
                 <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  {detailQuery.isLoading ? <ListSkeleton rows={3} /> : t('selectPrompt')}
+                  {resolvedSelectedId && detailQuery.error ? (
+                    <div className="space-y-3 text-left" data-testid="sign-tpl-detail-error">
+                      <ErrorText>{errorMessage(detailQuery.error)}</ErrorText>
+                      <div>
+                        <Button
+                          ref={detailRetryBtnRef}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          loading={detailQuery.isFetching}
+                          onClick={() => {
+                            pendingDetailRetryFocusRef.current = true;
+                            void detailQuery.refetch();
+                          }}
+                          data-testid="sign-tpl-detail-retry-btn"
+                        >
+                          {t('retryButton')}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : detailQuery.isLoading ? (
+                    <ListSkeleton rows={3} />
+                  ) : (
+                    t('selectPrompt')
+                  )}
                 </CardContent>
               </Card>
             ) : (
@@ -985,6 +1611,7 @@ export function SignTemplatesPage() {
                           <Button
                             type="button"
                             variant="outline"
+                            loading={updateMutation.isPending && updateMutation.variables?.status === 'active'}
                             disabled={detail.template.inspectStatus !== 'passed' || updateMutation.isPending}
                             onClick={() => updateMutation.mutate({ templateId: detail.template.id, status: 'active' })}
                             data-testid="sign-tpl-activate-btn"
@@ -996,6 +1623,7 @@ export function SignTemplatesPage() {
                           <Button
                             type="button"
                             variant="outline"
+                            loading={updateMutation.isPending && updateMutation.variables?.status === 'draft'}
                             disabled={updateMutation.isPending}
                             onClick={() => updateMutation.mutate({ templateId: detail.template.id, status: 'draft' })}
                           >
@@ -1006,6 +1634,7 @@ export function SignTemplatesPage() {
                           <Button
                             type="button"
                             variant="outline"
+                            loading={archiveMutation.isPending}
                             onClick={() => setArchiveOpen(true)}
                             data-testid="sign-tpl-archive-btn"
                           >
@@ -1092,8 +1721,10 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          loading={updateMutation.isPending && Boolean(updateMutation.variables?.includeMeta)}
                           disabled={updateMutation.isPending || !metaTitle.trim()}
                           onClick={() => updateMutation.mutate({ templateId: detail.template.id, includeMeta: true })}
+                          data-testid="sign-tpl-save-meta-btn"
                         >
                           {t('saveMetadata')}
                         </Button>
@@ -1106,14 +1737,29 @@ export function SignTemplatesPage() {
                   roles={rolesDraft}
                   editable={editable}
                   saving={rolesMutation.isPending}
-                  onChangeRoles={setRolesDraft}
-                  onSaveRoles={() => rolesMutation.mutate()}
+                  onChangeRoles={updateRolesDraft}
+                  onSaveRoles={() =>
+                    rolesMutation.mutate({
+                      templateId: detail.template.id,
+                      rolesRev: draftTracker.getRolesRevision(detail.template.id),
+                      roles: rolesDraft.map((r) => ({
+                        ...(r.id ? { id: r.id } : {}),
+                        roleKey: r.roleKey,
+                        signerRole: r.signerRole,
+                        roleLabel: r.roleLabel.trim() || r.roleKey,
+                        routingOrder: r.routingOrder,
+                        deliveryMode: r.deliveryMode,
+                        requireEmailOtp: r.signerRole === 'cc' ? false : r.requireEmailOtp,
+                      })),
+                    })
+                  }
                 />
 
                 <DirectLinkCard
                   detail={detail}
                   freshDirectUrl={freshDirectUrl}
                   pending={directLinkSetMutation.isPending || directLinkRotateMutation.isPending}
+                  rotating={directLinkRotateMutation.isPending}
                   onToggleEnabled={(enabled) => directLinkSetMutation.mutate({ templateId: detail.template.id, enabled })}
                   onToggleOtp={(requireEmailOtp) =>
                     directLinkSetMutation.mutate({ templateId: detail.template.id, enabled: true, requireEmailOtp })
@@ -1129,6 +1775,26 @@ export function SignTemplatesPage() {
                   onCopyUrl={(url) => void handleCopy(url)}
                 />
 
+                {canEditTemplateSharedSummary ||
+                Boolean(detail.template.sharedSummary) ||
+                Boolean(detail.template.shareSummaryWithSigners) ? (
+                  <SenderSharedSummaryEditor
+                    recordKey={`tpl-${detail.template.id}`}
+                    initialShare={Boolean(detail.template.shareSummaryWithSigners)}
+                    initialSummary={detail.template.sharedSummary ?? null}
+                    pageCount={detail.template.pageCount ?? detectedPages}
+                    editable={canEditTemplateSharedSummary}
+                    saving={templateSharedSummaryMutation.isPending}
+                    onSave={(payload) =>
+                      templateSharedSummaryMutation.mutateAsync({
+                        templateId: detail.template.id,
+                        shareSummaryWithSigners: payload.shareSummaryWithSigners,
+                        sharedSummary: payload.sharedSummary,
+                      })
+                    }
+                  />
+                ) : null}
+
                 <Card>
                   <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-3">
                     <CardTitle className="text-base">{t('fieldsSectionTitle', { count: String(fieldsDraft.length) })}</CardTitle>
@@ -1136,8 +1802,26 @@ export function SignTemplatesPage() {
                       <Button
                         type="button"
                         size="sm"
-                        disabled={fieldsMutation.isPending || nonCcSavedRoles.length === 0}
-                        onClick={() => fieldsMutation.mutate()}
+                        loading={fieldsSaving}
+                        disabled={nonCcSavedRoles.length === 0}
+                        onClick={() =>
+                          fieldsMutation.mutate({
+                            templateId: detail.template.id,
+                            fieldsRev: draftTracker.getFieldsRevision(detail.template.id),
+                            fields: fieldsDraft.map((f) => ({
+                              templateRoleId: f.signerId,
+                              fieldType: f.fieldType,
+                              pageNumber: f.pageNumber,
+                              xNorm: f.xNorm,
+                              yNorm: f.yNorm,
+                              wNorm: f.wNorm,
+                              hNorm: f.hNorm,
+                              label: f.label,
+                              required: f.required,
+                              fontSizePt: f.fontSizePt ?? null,
+                            })),
+                          })
+                        }
                         data-testid="sign-tpl-save-fields-btn"
                       >
                         {t('saveFieldsButton')}
@@ -1169,7 +1853,7 @@ export function SignTemplatesPage() {
                           <Button
                             type="button"
                             size="sm"
-                            disabled={tplTagPlan.applicable.length === 0}
+                            disabled={!fieldsEditable || tplTagPlan.applicable.length === 0}
                             onClick={handleApplyDetectedTags}
                             data-testid="sign-tpl-apply-detected-tags-btn"
                           >
@@ -1191,7 +1875,7 @@ export function SignTemplatesPage() {
                           <Label htmlFor="sign-tpl-active-role">{t('activeRoleLabel')}</Label>
                           <NativeSelect
                             id="sign-tpl-active-role"
-                            disabled={!editable}
+                            disabled={!fieldsEditable}
                             value={activeRoleId}
                             onChange={(e) => setActiveRoleId(e.target.value)}
                           >
@@ -1212,7 +1896,7 @@ export function SignTemplatesPage() {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                disabled={!activeRoleId}
+                                disabled={!fieldsEditable || !activeRoleId}
                                 onClick={() => handleAddField(ft)}
                                 data-testid={`sign-tpl-add-field-${ft}`}
                               >
@@ -1230,9 +1914,10 @@ export function SignTemplatesPage() {
                           <Label htmlFor="sign-tpl-field-role">{tSign('fields.assignedSignerSelect')}</Label>
                           <NativeSelect
                             id="sign-tpl-field-role"
+                            disabled={!fieldsEditable}
                             value={selectedField.signerId}
                             onChange={(e) =>
-                              setFieldsDraft((prev) =>
+                              updateFieldsDraft((prev) =>
                                 prev.map((f) => (f.localId === selectedField.localId ? { ...f, signerId: e.target.value } : f)),
                               )
                             }
@@ -1248,9 +1933,10 @@ export function SignTemplatesPage() {
                           <Label htmlFor="sign-tpl-field-label">{tSign('fields.fieldLabelInput')}</Label>
                           <Input
                             id="sign-tpl-field-label"
+                            disabled={!fieldsEditable}
                             value={selectedField.label ?? ''}
                             onChange={(e) =>
-                              setFieldsDraft((prev) =>
+                              updateFieldsDraft((prev) =>
                                 prev.map((f) =>
                                   f.localId === selectedField.localId ? { ...f, label: e.target.value || null } : f,
                                 ),
@@ -1262,9 +1948,10 @@ export function SignTemplatesPage() {
                           <div className="flex items-center gap-2 pb-2">
                             <Checkbox
                               id="sign-tpl-field-required"
+                              disabled={!fieldsEditable}
                               checked={selectedField.required}
                               onCheckedChange={(checked) =>
-                                setFieldsDraft((prev) =>
+                                updateFieldsDraft((prev) =>
                                   prev.map((f) =>
                                     f.localId === selectedField.localId ? { ...f, required: checked === true } : f,
                                   ),
@@ -1277,8 +1964,9 @@ export function SignTemplatesPage() {
                             type="button"
                             variant="destructive"
                             size="sm"
+                            disabled={!fieldsEditable}
                             onClick={() => {
-                              setFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
+                              updateFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
                               setSelectedFieldId(null);
                             }}
                           >
@@ -1303,15 +1991,15 @@ export function SignTemplatesPage() {
                           proposals={[]}
                           signers={overlaySigners}
                           selectedFieldId={selectedFieldId}
-                          editable={editable}
+                          editable={fieldsEditable}
                           onSelectField={setSelectedFieldId}
                           onUpdateFieldBox={(fieldId, box) =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === fieldId ? { ...f, ...clampFieldBox(box) } : f)),
                             )
                           }
                           onDeleteField={(fieldId) => {
-                            setFieldsDraft((prev) => prev.filter((f) => f.localId !== fieldId));
+                            updateFieldsDraft((prev) => prev.filter((f) => f.localId !== fieldId));
                             if (selectedFieldId === fieldId) setSelectedFieldId(null);
                           }}
                           onApplyProposal={() => {}}
@@ -1326,8 +2014,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...nudgeFieldBox(f, -0.01, 0) } : f)),
                             )
                           }
@@ -1338,8 +2027,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...nudgeFieldBox(f, 0.01, 0) } : f)),
                             )
                           }
@@ -1350,8 +2040,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...nudgeFieldBox(f, 0, -0.01) } : f)),
                             )
                           }
@@ -1362,8 +2053,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...nudgeFieldBox(f, 0, 0.01) } : f)),
                             )
                           }
@@ -1374,8 +2066,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...resizeFieldBox(f, 0.02, 0) } : f)),
                             )
                           }
@@ -1386,8 +2079,9 @@ export function SignTemplatesPage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          disabled={!fieldsEditable}
                           onClick={() =>
-                            setFieldsDraft((prev) =>
+                            updateFieldsDraft((prev) =>
                               prev.map((f) => (f.localId === selectedField.localId ? { ...f, ...resizeFieldBox(f, -0.02, 0) } : f)),
                             )
                           }
@@ -1410,78 +2104,23 @@ export function SignTemplatesPage() {
             <DialogTitle>{t('createTitle')}</DialogTitle>
             <DialogDescription>{t('createHint')}</DialogDescription>
           </DialogHeader>
-          <form onSubmit={onSubmitCreate} className="space-y-3">
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-title">{t('titleLabel')}</Label>
-              <Input
-                id="sign-tpl-create-title"
-                required
-                placeholder={t('titlePlaceholder')}
-                value={createTitle}
-                onChange={(e) => setCreateTitle(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-desc">{t('descriptionLabel')}</Label>
-              <Input
-                id="sign-tpl-create-desc"
-                placeholder={t('descriptionPlaceholder')}
-                value={createDesc}
-                onChange={(e) => setCreateDesc(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-routing">{t('routingModeLabel')}</Label>
-              <NativeSelect
-                id="sign-tpl-create-routing"
-                value={createRouting}
-                onChange={(e) => setCreateRouting(e.target.value as SignRoutingMode)}
-              >
-                {SIGN_ROUTING_MODES.map((m) => (
-                  <NativeSelectOption key={m} value={m}>
-                    {m === 'parallel' ? t('routingParallel') : t('routingSequential')}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-subject">{t('subjectLabel')}</Label>
-              <Input
-                id="sign-tpl-create-subject"
-                value={createSubject}
-                onChange={(e) => setCreateSubject(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-message">{t('messageLabel')}</Label>
-              <Textarea
-                id="sign-tpl-create-message"
-                rows={2}
-                value={createMessage}
-                onChange={(e) => setCreateMessage(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sign-tpl-create-file">{t('pdfFileLabel')}</Label>
-              <input
-                id="sign-tpl-create-file"
-                type="file"
-                accept="application/pdf,.pdf"
-                required
-                className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
-                onChange={(e) => setCreateFile(e.target.files?.[0] ?? null)}
-              />
-              {createFile ? (
-                <p className="text-xs text-muted-foreground">{t('selectedFile', { name: createFile.name })}</p>
-              ) : null}
-            </div>
-            {createError ? <p className="text-sm text-destructive">{createError}</p> : null}
-            <DialogFooter>
-              <Button type="submit" disabled={createMutation.isPending || !createTitle.trim() || !createFile}>
-                {createMutation.isPending ? t('creating') : t('submitCreate')}
-              </Button>
-            </DialogFooter>
-          </form>
+          <CreateTemplateForm
+            title={createTitle}
+            description={createDesc}
+            routingMode={createRouting}
+            subject={createSubject}
+            message={createMessage}
+            file={createFile}
+            error={createError}
+            pending={createMutation.isPending}
+            onChangeTitle={setCreateTitle}
+            onChangeDescription={setCreateDesc}
+            onChangeRoutingMode={setCreateRouting}
+            onChangeSubject={setCreateSubject}
+            onChangeMessage={setCreateMessage}
+            onChangeFile={setCreateFile}
+            onSubmit={onSubmitCreate}
+          />
         </DialogContent>
       </Dialog>
 
@@ -1530,115 +2169,21 @@ export function SignTemplatesPage() {
               </DialogFooter>
             </div>
           ) : (
-            <form onSubmit={onSubmitInstantiate} className="space-y-3">
-              <div className="space-y-1">
-                <Label htmlFor="sign-tpl-inst-title">{t('envelopeTitleLabel')}</Label>
-                <Input
-                  id="sign-tpl-inst-title"
-                  required
-                  value={instTitle}
-                  onChange={(e) => setInstTitle(e.target.value)}
-                />
-              </div>
-
-              {detail?.roles.map((role) => {
-                const draft = instRecipients[role.roleKey] ?? {
-                  name: '',
-                  email: '',
-                  phone: '',
-                  deliveryMode: role.deliveryMode,
-                };
-                const needEmail = draft.deliveryMode === 'email' || role.requireEmailOtp;
-                const nameId = `sign-tpl-inst-name-${role.roleKey}`;
-                const emailId = `sign-tpl-inst-email-${role.roleKey}`;
-                const phoneId = `sign-tpl-inst-phone-${role.roleKey}`;
-                const delivId = `sign-tpl-inst-delivery-${role.roleKey}`;
-                return (
-                  <div key={role.id} className="space-y-2 rounded-md border border-border p-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">{role.roleLabel}</span>
-                      <Badge variant="outline">{role.roleKey}</Badge>
-                      <Badge variant="secondary">{tSign(`signer.roles.${role.signerRole}`)}</Badge>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor={nameId}>{t('recipientNameLabel', { role: role.roleLabel })}</Label>
-                        <Input
-                          id={nameId}
-                          required={role.signerRole !== 'cc'}
-                          value={draft.name}
-                          onChange={(e) =>
-                            setInstRecipients((prev) => ({ ...prev, [role.roleKey]: { ...draft, name: e.target.value } }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor={emailId}>{t('recipientEmailLabel', { role: role.roleLabel })}</Label>
-                        <Input
-                          id={emailId}
-                          type="email"
-                          required={(role.signerRole !== 'cc' || Boolean(draft.name.trim())) && needEmail}
-                          value={draft.email}
-                          onChange={(e) =>
-                            setInstRecipients((prev) => ({ ...prev, [role.roleKey]: { ...draft, email: e.target.value } }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor={phoneId}>{t('recipientPhoneLabel', { role: role.roleLabel })}</Label>
-                        <Input
-                          id={phoneId}
-                          value={draft.phone}
-                          onChange={(e) =>
-                            setInstRecipients((prev) => ({ ...prev, [role.roleKey]: { ...draft, phone: e.target.value } }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor={delivId}>{t('recipientDeliveryLabel', { role: role.roleLabel })}</Label>
-                        <NativeSelect
-                          id={delivId}
-                          value={draft.deliveryMode}
-                          onChange={(e) =>
-                            setInstRecipients((prev) => ({
-                              ...prev,
-                              [role.roleKey]: { ...draft, deliveryMode: e.target.value as SignDeliveryMode },
-                            }))
-                          }
-                        >
-                          {SIGN_DELIVERY_MODES.map((dm) => (
-                            <NativeSelectOption key={dm} value={dm}>
-                              {dm === 'link' ? t('deliveryLink') : t('deliveryEmail')}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              <div className="space-y-1 rounded-md border border-border bg-muted/30 p-3">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="sign-tpl-inst-autosend"
-                    disabled={!autoSendAllowed}
-                    checked={instAutoSend && autoSendAllowed}
-                    onCheckedChange={(checked) => setInstAutoSend(checked === true)}
-                  />
-                  <Label htmlFor="sign-tpl-inst-autosend">{t('autoSendLabel')}</Label>
-                </div>
-                {!autoSendAllowed ? <p className="text-xs text-muted-foreground">{t('autoSendBlockedHint')}</p> : null}
-              </div>
-
-              {instError ? <p className="text-sm text-destructive">{instError}</p> : null}
-
-              <DialogFooter>
-                <Button type="submit" disabled={instantiateMutation.isPending} data-testid="sign-tpl-inst-submit-btn">
-                  {instantiateMutation.isPending ? t('instantiating') : t('submitInstantiate')}
-                </Button>
-              </DialogFooter>
-            </form>
+            <InstantiateTemplateForm
+              roles={detail?.roles ?? []}
+              title={instTitle}
+              recipients={instRecipients}
+              autoSend={instAutoSend}
+              autoSendAllowed={autoSendAllowed}
+              error={instError}
+              pending={instantiateMutation.isPending}
+              onChangeTitle={setInstTitle}
+              onChangeRecipient={(roleKey, next) =>
+                setInstRecipients((prev) => ({ ...prev, [roleKey]: next }))
+              }
+              onChangeAutoSend={setInstAutoSend}
+              onSubmit={onSubmitInstantiate}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -1653,6 +2198,28 @@ export function SignTemplatesPage() {
           if (!archiveMutation.isPending && detail) archiveMutation.mutate(detail.template.id);
         }}
       />
+
+      {drafterOpen ? (
+        <ContractDrafterDialog
+          open={drafterOpen}
+          onOpenChange={setDrafterOpen}
+          defaultPartyAName={defaultPartyAName}
+          onEnvelopeCreated={async (envelopeId) => {
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+          onTemplateCreated={async (templateId) => {
+            pendingCreatedIdRef.current = templateId;
+            const nextFilters = nextFiltersAfterTemplateCreate(tab);
+            if (nextFilters.tab !== tab) setTab(nextFilters.tab);
+            setSearchQuery(nextFilters.searchQuery);
+            setSelectedId(templateId);
+            await invalidateTemplates(templateId);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

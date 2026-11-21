@@ -104,11 +104,28 @@ describe('the panel that starts a correction', () => {
     expect(individual).toContain('không cần biên bản thỏa thuận');
   });
 
+  it('asks what the error is before it proposes a rate, and starts nothing until the proposal is confirmed (#3709)', () => {
+    const html = render(<CorrectionAction draft={summary()} onStarted={() => undefined} openWith="adjustment" />);
+    expect(html).toContain('data-testid="invoice-correction-nature"');
+    expect(html).toContain('Chọn loại sai sót');
+    for (const text of ['Người mua trả lại hàng', 'Chiết khấu thương mại lập sau', 'Sai số lượng hoặc đơn giá, làm đổi số tiền và tiền thuế']) expect(html).toContain(text);
+    // The coworker's proposal of the reason (#3690): the person describes the error, and the button stays off until they do.
+    expect(html).toContain('data-testid="invoice-correction-error-note"');
+    expect(html).toMatch(/data-testid="invoice-correction-reason-suggest"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-reason-suggest"/);
+    expect(html).toContain('Gợi ý lý do');
+    expect(html).not.toContain('invoice-correction-reason-why');
+    // No nature picked: no proposal, no confirmation, and the start button is disabled.
+    expect(html).not.toContain('invoice-correction-rate-proposal');
+    expect(html).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
+  });
+
   it('says why nothing can start while the list of reason codes is empty, and offers no reason to pick', () => {
     const html = render(<CorrectionAction draft={summary()} onStarted={() => undefined} openWith="adjustment" />, 'vi', []);
     expect(html).toContain('data-testid="invoice-correction-no-reasons"');
     expect(html).toContain('Phụ lục XVII');
     expect(html).not.toContain('invoice-correction-reason');
+    // Nothing to propose from an empty list: no note and no button either.
+    expect(html).not.toContain('invoice-correction-reason-suggest');
     // The start button is there but disabled: no reason, no draft.
     expect(html).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
   });
@@ -140,7 +157,7 @@ describe('the panel when the reason codes cannot be loaded', () => {
 });
 
 describe('the form of a correcting invoice', () => {
-  const correction = (kind: EInvoiceCorrection['kind']): EInvoiceCorrection => ({ kind, originalDraftId: ORIGINAL, reasonCode: '1', agreementFileId: null });
+  const correction = (kind: EInvoiceCorrection['kind']): EInvoiceCorrection => ({ kind, originalDraftId: ORIGINAL, reasonCode: '1', agreementFileId: null, rateBasis: null });
 
   it('says an adjusting invoice carries the difference with its sign and leaves the original in force', () => {
     const html = render(<CorrectionBanner correction={correction('adjustment')} originalNumber="0000007" />);
@@ -154,6 +171,14 @@ describe('the form of a correcting invoice', () => {
     const html = render(<CorrectionBanner correction={correction('replacement')} originalNumber="0000007" />);
     expect(html).toContain('Hóa đơn thay thế cho hóa đơn số 0000007');
     expect(html).toContain('không còn hiệu lực');
+  });
+
+  it('says which day the VAT rate of the lines follows, the original\'s unless the person confirmed the correction\'s own (#3709)', () => {
+    const original = render(<CorrectionBanner correction={correction('adjustment')} originalNumber="0000007" />);
+    expect(original).toContain('Thuế suất các dòng tính theo ngày hóa đơn gốc.');
+    const own = render(<CorrectionBanner correction={{ ...correction('adjustment'), rateBasis: 'correction_date' }} originalNumber="0000007" />);
+    expect(own).toContain('Thuế suất các dòng tính theo ngày lập hóa đơn điều chỉnh này.');
+    expect(render(<CorrectionBanner correction={{ ...correction('adjustment'), rateBasis: 'correction_date' }} originalNumber="0000007" />, 'en')).toContain('follow the date of this correcting invoice');
   });
 
   it('falls back to the code when the list no longer holds it, and speaks English', () => {

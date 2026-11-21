@@ -7,6 +7,7 @@ import ExcelJS from 'exceljs';
 import { confirmUnverifiedSignature } from '../lib/inbox.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const INVOICE = fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -28,6 +29,7 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
 
   await test.step('the stock accounts show the default codes in Settings; set the codes of 156', async () => {
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const card = page.getByLabel('Mã hàng và mã kho cho MISA');
     await expect(card.getByText('Hóa đơn mua nguyên vật liệu, công cụ dụng cụ và hàng hóa', { exact: false })).toBeVisible();
     const goods = card.getByRole('listitem').filter({ hasText: '156 · Hàng hóa' });

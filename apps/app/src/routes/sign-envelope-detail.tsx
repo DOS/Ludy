@@ -15,12 +15,13 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
-import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignFile,
   downloadSignPdfBytes,
@@ -29,10 +30,13 @@ import {
   type SignAiAnalysis,
   type SignFieldRecord,
   type SignProposedField,
+  type SignSharedSummary,
   type SignSignerRecord,
 } from '../lib/sign-api.ts';
+import { canManageSignCa } from './sign-settings.tsx';
 import {
   SIGN_FIELD_TYPES,
+  SIGN_DELIVERY_MODES,
   checkSendReadiness,
   clampFieldBox,
   createPlacedFieldBox,
@@ -41,6 +45,7 @@ import {
   resizeFieldBox,
   type DraftFieldPlacement,
   type NormalizedBox,
+  type SignDeliveryMode,
   type SignFieldType,
   type SignRoutingMode,
 } from '../lib/sign-fields.ts';
@@ -76,6 +81,25 @@ function triggerDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function padTwo(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+export function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const yyyy = String(date.getFullYear()).padStart(4, '0');
+  return `${yyyy}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}T${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+}
+
+export function fromDatetimeLocalValue(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],
   signers: readonly SignSignerRecord[],
@@ -99,9 +123,13 @@ export function SignEnvelopeDetailPage() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [draftFields, setDraftFields] = useState<DraftFieldPlacement[]>([]);
   const [fieldsDirty, setFieldsDirty] = useState(false);
-  const [metaDirty, setMetaDirty] = useState(false);
+  const [dirtyMetaFields, setDirtyMetaFields] = useState<
+    ReadonlySet<'title' | 'subject' | 'message' | 'expiresAt' | 'autoRemindBeforeExpiry'>
+  >(new Set());
+  const metaDirty = dirtyMetaFields.size > 0;
   const fieldsEditRevRef = useRef(0);
   const metaEditRevRef = useRef(0);
+  const metaBaseVersionRef = useRef<number | null>(null);
   const pendingActiveSignerIdRef = useRef<string | null>(null);
   const [dismissedProposalIds, setDismissedProposalIds] = useState<string[]>([]);
   const [aiAnalysisOverride, setAiAnalysisOverride] = useState<SignAiAnalysis | null>(null);
@@ -109,10 +137,26 @@ export function SignEnvelopeDetailPage() {
   const [titleInput, setTitleInput] = useState('');
   const [subjectInput, setSubjectInput] = useState('');
   const [messageInput, setMessageInput] = useState('');
+  const [expiresAtInput, setExpiresAtInput] = useState('');
+  const [autoRemindInput, setAutoRemindInput] = useState(true);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
+  const [correctTarget, setCorrectTarget] = useState<SignSignerRecord | null>(null);
+  const [correctName, setCorrectName] = useState('');
+  const [correctEmail, setCorrectEmail] = useState('');
+  const [correctPhone, setCorrectPhone] = useState('');
+  const [correctDeliveryMode, setCorrectDeliveryMode] = useState<SignDeliveryMode>('link');
+  const [correctRequireOtp, setCorrectRequireOtp] = useState(false);
+  const [correctFormError, setCorrectFormError] = useState<string | null>(null);
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
 
   const detailQuery = useQuery({
     queryKey: ['sign', 'envelope', id],
@@ -132,13 +176,22 @@ export function SignEnvelopeDetailPage() {
   const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
   const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
   const isDraft = envelope?.status === 'draft';
+  const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role;
+  const currentUserId = meQuery.data?.userId ?? null;
+  const canCorrectRecipients = Boolean(
+    envelope &&
+      (envelope.status === 'sent' || envelope.status === 'in_progress') &&
+      meQuery.data &&
+      (roleHere === 'owner' || roleHere === 'admin' || (currentUserId !== null && envelope.createdBy === currentUserId)),
+  );
 
   useEffect(() => {
     fieldsEditRevRef.current = 0;
     metaEditRevRef.current = 0;
+    metaBaseVersionRef.current = null;
     pendingActiveSignerIdRef.current = null;
     setFieldsDirty(false);
-    setMetaDirty(false);
+    setDirtyMetaFields(new Set());
     setSelectedFieldId(null);
     setDismissedProposalIds([]);
     setAiAnalysisOverride(null);
@@ -152,11 +205,17 @@ export function SignEnvelopeDetailPage() {
   }, [detailQuery.data, fieldsDirty]);
 
   useEffect(() => {
-    if (!detailQuery.data || metaDirty) return;
-    setTitleInput(detailQuery.data.envelope.title);
-    setSubjectInput(detailQuery.data.envelope.subject ?? '');
-    setMessageInput(detailQuery.data.envelope.message ?? '');
-  }, [detailQuery.data, metaDirty]);
+    if (!detailQuery.data) return;
+    const env = detailQuery.data.envelope;
+    if (!dirtyMetaFields.has('title')) setTitleInput(env.title);
+    if (!dirtyMetaFields.has('subject')) setSubjectInput(env.subject ?? '');
+    if (!dirtyMetaFields.has('message')) setMessageInput(env.message ?? '');
+    if (!dirtyMetaFields.has('expiresAt')) setExpiresAtInput(toDatetimeLocalValue(env.expiresAt));
+    if (!dirtyMetaFields.has('autoRemindBeforeExpiry')) setAutoRemindInput(env.autoRemindBeforeExpiry ?? true);
+    if (dirtyMetaFields.size === 0) {
+      metaBaseVersionRef.current = env.version;
+    }
+  }, [detailQuery.data, dirtyMetaFields]);
 
   useEffect(() => {
     const pendingId = pendingActiveSignerIdRef.current;
@@ -202,11 +261,59 @@ export function SignEnvelopeDetailPage() {
     enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
   });
 
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const isCompletedAndSealed = envelope?.status === 'completed' && envelope?.sealStatus === 'sealed';
+
+  const caSettingsQuery = useQuery({
+    queryKey: ['sign', 'ca-settings'],
+    queryFn: () => signApi.getCaSettings(),
+    enabled: Boolean(isCompletedAndSealed),
+  });
+
+  const caRequestsQuery = useQuery({
+    queryKey: ['sign', 'ca-requests', id],
+    queryFn: () => signApi.listCaRequests(id),
+    enabled: Boolean(id) && Boolean(isCompletedAndSealed),
+    refetchInterval: (query) => {
+      const hasPending = query.state.data?.items.some(
+        (r) => r.status === 'pending' || (r.status === 'signed' && !r.padesFileId),
+      );
+      return hasPending ? 3000 : false;
+    },
+  });
+
+  const activeCaConnection = useMemo(() => {
+    const conns = caSettingsQuery.data?.connections.filter((c) => c.status === 'active') ?? [];
+    return conns.find((c) => c.provider !== 'sandbox') ?? conns[0] ?? null;
+  }, [caSettingsQuery.data]);
+
+  const latestCaRequest = caRequestsQuery.data?.items[0] ?? null;
+  const canInitiateCa = canManageSignCa(orgQuery.data?.role) && activeCaConnection !== null;
+
+  const initiateCaMutation = useMutation({
+    mutationFn: (caConnectionId: string) =>
+      signApi.initiateCaRequest({ envelopeId: id, caConnectionId }),
+    onSuccess: async () => {
+      toast(t('ca.initiatingToast'));
+      await queryClient.invalidateQueries({ queryKey: ['sign', 'ca-requests', id] });
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
   const invalidateAll = async () => {
     await queryClient.invalidateQueries({ queryKey: ['sign', 'envelope', id] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'events', id] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'verify', id] });
+    await queryClient.invalidateQueries({ queryKey: ['today'] });
+    await queryClient.invalidateQueries({ queryKey: orpc.today.list.queryKey() });
+  };
+
+  const syncMetaBaseVersion = (nextVersion: number) => {
+    if (metaBaseVersionRef.current !== null) {
+      metaBaseVersionRef.current = nextVersion;
+    }
   };
 
   const saveFieldsMutation = useMutation({
@@ -230,7 +337,8 @@ export function SignEnvelopeDetailPage() {
       );
       return { result, revision };
     },
-    onSuccess: async ({ revision }) => {
+    onSuccess: async ({ result, revision }) => {
+      syncMetaBaseVersion(result.version);
       toast(t('actions.fieldsSavedToast'));
       await invalidateAll();
       if (fieldsEditRevRef.current === revision) {
@@ -240,34 +348,79 @@ export function SignEnvelopeDetailPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
-  const markMetaDirty = () => {
+  const markMetaFieldDirty = (
+    field: 'title' | 'subject' | 'message' | 'expiresAt' | 'autoRemindBeforeExpiry',
+  ) => {
     metaEditRevRef.current += 1;
-    setMetaDirty(true);
+    setDirtyMetaFields((prev) => {
+      if (prev.size === 0 && envelope) {
+        metaBaseVersionRef.current = envelope.version;
+      }
+      if (prev.has(field)) return prev;
+      const next = new Set(prev);
+      next.add(field);
+      return next;
+    });
   };
 
   const buildMetadataPayload = (fallbackTitle: string) => ({
-    title: titleInput.trim() || fallbackTitle,
-    subject: subjectInput.trim() || null,
-    message: messageInput.trim() || null,
+    ...(dirtyMetaFields.has('title') ? { title: titleInput.trim() || fallbackTitle } : {}),
+    ...(dirtyMetaFields.has('subject') ? { subject: subjectInput.trim() || null } : {}),
+    ...(dirtyMetaFields.has('message') ? { message: messageInput.trim() || null } : {}),
+    ...(dirtyMetaFields.has('expiresAt') ? { expiresAt: fromDatetimeLocalValue(expiresAtInput) } : {}),
+    ...(dirtyMetaFields.has('autoRemindBeforeExpiry') ? { autoRemindBeforeExpiry: autoRemindInput } : {}),
   });
 
   const updateMetaMutation = useMutation({
-    mutationFn: async (input: { routingMode?: SignRoutingMode; title?: string; subject?: string | null; message?: string | null }) => {
+    mutationFn: async (input: {
+      routingMode?: SignRoutingMode;
+      allowDelegation?: boolean;
+      title?: string;
+      subject?: string | null;
+      message?: string | null;
+      expiresAt?: string | null;
+      autoRemindBeforeExpiry?: boolean;
+    }) => {
       const metaRevision = metaEditRevRef.current;
-      const hasTextMeta = 'title' in input || 'subject' in input || 'message' in input;
+      const hasTextMeta =
+        'title' in input ||
+        'subject' in input ||
+        'message' in input ||
+        'expiresAt' in input ||
+        'autoRemindBeforeExpiry' in input;
+      const expectedVersion = hasTextMeta
+        ? (metaBaseVersionRef.current ?? envelope?.version)
+        : envelope?.version;
       const result = await signApi.updateEnvelope({
         envelopeId: id,
-        ...(envelope ? { expectedVersion: envelope.version } : {}),
+        ...(expectedVersion !== undefined ? { expectedVersion } : {}),
         ...input,
       });
       return { result, metaRevision, hasTextMeta };
     },
-    onSuccess: async ({ metaRevision, hasTextMeta }) => {
+    onSuccess: async ({ result, metaRevision, hasTextMeta }) => {
+      syncMetaBaseVersion(result.version);
       toast(t('draftSavedToast'));
-      await invalidateAll();
       if (hasTextMeta && metaEditRevRef.current === metaRevision) {
-        setMetaDirty(false);
+        metaBaseVersionRef.current = result.version;
+        setDirtyMetaFields(new Set());
       }
+      await invalidateAll();
+    },
+    onError: async (err) => {
+      toast(errorMessage(err), 'error');
+      const fresh = await detailQuery.refetch();
+      if (fresh.data) {
+        metaBaseVersionRef.current = fresh.data.envelope.version;
+      }
+    },
+  });
+
+  const acknowledgeDeclineMutation = useMutation({
+    mutationFn: () => signApi.acknowledgeDecline(id),
+    onSuccess: async () => {
+      toast(t('actions.declineAcknowledgedToast'));
+      await invalidateAll();
     },
     onError: (err) => toast(errorMessage(err), 'error'),
   });
@@ -325,6 +478,104 @@ export function SignEnvelopeDetailPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
+  const canEditSharedSummary = useMemo(() => {
+    if (!envelope) return false;
+    if (envelope.status !== 'draft' && envelope.status !== 'sent' && envelope.status !== 'in_progress') {
+      return false;
+    }
+    const me = meQuery.data;
+    if (!me) return true;
+    const orgSummary = me.orgs.find((o) => o.slug === slug);
+    if (!orgSummary) return false;
+    if (orgSummary.role === 'owner' || orgSummary.role === 'admin') return true;
+    return orgSummary.role === 'member' && envelope.createdBy !== null && me.userId === envelope.createdBy;
+  }, [envelope, meQuery.data, slug]);
+
+  const sharedSummaryMutation = useMutation({
+    mutationFn: (payload: { shareSummaryWithSigners: boolean; sharedSummary: SignSharedSummary | null }) =>
+      signApi.setEnvelopeSharedSummary({
+        envelopeId: id,
+        shareSummaryWithSigners: payload.shareSummaryWithSigners,
+        sharedSummary: payload.sharedSummary,
+        ...(envelope ? { expectedVersion: envelope.version } : {}),
+      }),
+    onSuccess: async () => {
+      toast(t('sharedSummary.savedToast'));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const openCorrectRecipientDialog = (signer: SignSignerRecord) => {
+    setCorrectTarget(signer);
+    setCorrectName(signer.name);
+    setCorrectEmail(signer.email ?? '');
+    setCorrectPhone(signer.phone ?? '');
+    setCorrectDeliveryMode(signer.deliveryMode);
+    setCorrectRequireOtp(signer.requireEmailOtp);
+    setCorrectFormError(null);
+  };
+
+  const correctRecipientMutation = useMutation({
+    mutationFn: async (payload: {
+      signerId: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      deliveryMode: SignDeliveryMode;
+      requireEmailOtp: boolean;
+    }) => {
+      return signApi.correctSignerRecipient({
+        envelopeId: id,
+        ...payload,
+      });
+    },
+    onSuccess: async (res) => {
+      setCorrectTarget(null);
+      setCorrectFormError(null);
+      if (res.link) {
+        const url = buildSigningUrl(res.link.token);
+        setMintedLinks((prev) => [...prev.filter((item) => item.signerId !== res.signerId), { signerId: res.signerId, url }]);
+        await copyTextToClipboard(url);
+        toast(t('correctDialog.savedLinkToast'));
+      } else {
+        setMintedLinks((prev) => prev.filter((item) => item.signerId !== res.signerId));
+        toast(res.mailStatus ? t('correctDialog.savedEmailToast') : t('correctDialog.savedWaitingToast'));
+      }
+      await invalidateAll();
+    },
+    onError: (err) => setCorrectFormError(errorMessage(err)),
+  });
+
+  const handleCorrectRecipientSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!correctTarget) return;
+    setCorrectFormError(null);
+    const trimmedName = correctName.trim();
+    const trimmedEmail = correctEmail.trim();
+    const trimmedPhone = correctPhone.trim();
+    if (!trimmedName) {
+      setCorrectFormError(t('signer.nameLabel'));
+      return;
+    }
+    const nextOtp = correctTarget.signerRole === 'cc' ? false : correctRequireOtp;
+    if ((correctDeliveryMode === 'email' || nextOtp) && !isEmailAddress(trimmedEmail)) {
+      setCorrectFormError(t('signer.emailNeededForOtp'));
+      return;
+    }
+    if (trimmedEmail && !isEmailAddress(trimmedEmail)) {
+      setCorrectFormError(t('signer.emailNeededForOtp'));
+      return;
+    }
+    correctRecipientMutation.mutate({
+      signerId: correctTarget.id,
+      name: trimmedName,
+      email: trimmedEmail || null,
+      phone: trimmedPhone || null,
+      deliveryMode: correctDeliveryMode,
+      requireEmailOtp: nextOtp,
+    });
+  };
   const effectiveAi = useMemo(
     () => normalizeAiAnalysis(aiAnalysisOverride ?? aiQuery.data ?? null),
     [aiAnalysisOverride, aiQuery.data],
@@ -480,6 +731,7 @@ export function SignEnvelopeDetailPage() {
         routingOrder: nextRoutingOrder,
         ...input,
       });
+      syncMetaBaseVersion(res.version);
       if (input.signerRole !== 'cc') {
         addedSignerId = res.signerId;
         pendingActiveSignerIdRef.current = addedSignerId;
@@ -502,7 +754,8 @@ export function SignEnvelopeDetailPage() {
       pendingActiveSignerIdRef.current = null;
     }
     try {
-      await signApi.removeSigner(id, signerId);
+      const removed = await signApi.removeSigner(id, signerId);
+      syncMetaBaseVersion(removed.version);
       setDraftFields((prev) => prev.filter((item) => item.signerId !== signerId));
       await invalidateAll();
     } catch (err) {
@@ -519,10 +772,11 @@ export function SignEnvelopeDetailPage() {
     reordered[idx] = reordered[swapIdx]!;
     reordered[swapIdx] = current;
     try {
-      await signApi.reorderSigners(
+      const reorderedRes = await signApi.reorderSigners(
         id,
         reordered.map((s, orderIdx) => ({ signerId: s.id, routingOrder: orderIdx + 1 })),
       );
+      syncMetaBaseVersion(reorderedRes.version);
       await invalidateAll();
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -580,6 +834,11 @@ export function SignEnvelopeDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{t(`statuses.${envelope.status}`)}</Badge>
           <Badge variant="secondary">{t(`inspectStatuses.${envelope.inspectStatus}`)}</Badge>
+          {envelope.allowDelegation ? (
+            <Badge variant="outline" data-testid="sign-allow-delegation-badge">
+              {t('allowDelegationBadge')}
+            </Badge>
+          ) : null}
           {envelope.sealStatus || envelope.status === 'completed' ? (
             <Badge variant="secondary">{t(`sealStatuses.${envelope.sealStatus ?? 'pending'}`)}</Badge>
           ) : null}
@@ -617,6 +876,23 @@ export function SignEnvelopeDetailPage() {
               <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
                 {t('actions.void')}
               </Button>
+            ) : null}
+            {envelope.status === 'declined' ? (
+              envelope.declineAcknowledgedAt ? (
+                <Badge variant="outline" data-testid="sign-decline-acked-badge">
+                  {t('actions.declineAcknowledgedBadge')}
+                </Badge>
+              ) : queryClient.getQueryData(orpc.org.get.queryKey())?.role !== 'viewer' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  loading={acknowledgeDeclineMutation.isPending}
+                  onClick={() => acknowledgeDeclineMutation.mutate()}
+                  data-testid="sign-ack-decline-btn"
+                >
+                  {t('actions.acknowledgeDecline')}
+                </Button>
+              ) : null
             ) : null}
           </div>
         }
@@ -687,6 +963,7 @@ export function SignEnvelopeDetailPage() {
             onMoveSigner={handleMoveSigner}
             onCopyZaloLink={handleCopyZaloLink}
             onRemindSigner={handleRemindSigner}
+            {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
           />
 
           {isDraft ? (
@@ -704,7 +981,7 @@ export function SignEnvelopeDetailPage() {
                     value={titleInput}
                     onChange={(e) => {
                       setTitleInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('title');
                     }}
                   />
                 </div>
@@ -717,7 +994,7 @@ export function SignEnvelopeDetailPage() {
                     value={subjectInput}
                     onChange={(e) => {
                       setSubjectInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('subject');
                     }}
                   />
                 </div>
@@ -730,9 +1007,76 @@ export function SignEnvelopeDetailPage() {
                     value={messageInput}
                     onChange={(e) => {
                       setMessageInput(e.target.value);
-                      markMetaDirty();
+                      markMetaFieldDirty('message');
                     }}
                   />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="env-expires-at-input" className="text-xs">
+                      {t('expiresAtLabel')}
+                    </Label>
+                    {expiresAtInput ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs max-md:min-h-11"
+                        onClick={() => {
+                          setExpiresAtInput('');
+                          markMetaFieldDirty('expiresAt');
+                        }}
+                      >
+                        {t('expiresAtClear')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <Input
+                    id="env-expires-at-input"
+                    type="datetime-local"
+                    className="max-md:min-h-11"
+                    value={expiresAtInput}
+                    onChange={(e) => {
+                      setExpiresAtInput(e.target.value);
+                      markMetaFieldDirty('expiresAt');
+                    }}
+                  />
+                </div>
+                <label
+                  htmlFor="env-auto-remind-checkbox"
+                  className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-md py-1.5 text-xs text-foreground"
+                >
+                  <Checkbox
+                    id="env-auto-remind-checkbox"
+                    data-testid="env-auto-remind-checkbox"
+                    className="mt-0.5"
+                    checked={autoRemindInput}
+                    onCheckedChange={(checked) => {
+                      setAutoRemindInput(Boolean(checked));
+                      markMetaFieldDirty('autoRemindBeforeExpiry');
+                    }}
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block font-medium">{t('autoRemindLabel')}</span>
+                    <span className="block text-[11px] text-muted-foreground">{t('autoRemindHint')}</span>
+                  </span>
+                </label>
+                <div className="space-y-1 pt-1">
+                  <label
+                    htmlFor="env-allow-delegation-checkbox"
+                    className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground"
+                  >
+                    <Checkbox
+                      id="env-allow-delegation-checkbox"
+                      checked={Boolean(envelope.allowDelegation)}
+                      disabled={updateMetaMutation.isPending}
+                      onCheckedChange={(checked) => updateMetaMutation.mutate({ allowDelegation: Boolean(checked) })}
+                      className="mt-0.5"
+                      data-testid="env-allow-delegation-checkbox"
+                    />
+                    <span>{t('allowDelegationLabel')}</span>
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">{t('allowDelegationHint')}</p>
                 </div>
                 <Button
                   type="button"
@@ -741,6 +1085,7 @@ export function SignEnvelopeDetailPage() {
                   className="w-full"
                   loading={updateMetaMutation.isPending}
                   onClick={() => updateMetaMutation.mutate(buildMetadataPayload(envelope.title))}
+                  data-testid="env-save-metadata-btn"
                 >
                   {t('saveMetadata')}
                 </Button>
@@ -853,6 +1198,19 @@ export function SignEnvelopeDetailPage() {
             onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
             onApplyAllProposals={handleApplyAllProposals}
           />
+
+          {canEditSharedSummary || Boolean(envelope.sharedSummary) || Boolean(envelope.shareSummaryWithSigners) ? (
+            <SenderSharedSummaryEditor
+              recordKey={`env-${envelope.id}`}
+              initialShare={Boolean(envelope.shareSummaryWithSigners)}
+              initialSummary={envelope.sharedSummary ?? null}
+              pageCount={envelope.pageCount ?? detectedPages}
+              aiAnalysis={effectiveAi}
+              editable={canEditSharedSummary}
+              saving={sharedSummaryMutation.isPending}
+              onSave={(payload) => sharedSummaryMutation.mutateAsync(payload)}
+            />
+          ) : null}
 
           {isDraft && selectedField ? (
             <Card data-testid="field-inspector-card">
@@ -1064,6 +1422,101 @@ export function SignEnvelopeDetailPage() {
                   ) : null}
                 </div>
 
+                {isCompletedAndSealed && (activeCaConnection || latestCaRequest) ? (
+                  <div className="space-y-2 border-t pt-2.5" data-testid="sign-ca-pades-section">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-foreground">{t('ca.envelopeSectionTitle')}</span>
+                      {latestCaRequest ? (
+                        <Badge
+                          variant={
+                            latestCaRequest.status === 'signed' && latestCaRequest.padesFileId
+                              ? 'success'
+                              : latestCaRequest.status === 'pending' ||
+                                  (latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId)
+                                ? 'brand'
+                                : 'destructive'
+                          }
+                          data-testid="sign-ca-request-status"
+                        >
+                          {t(
+                            `ca.requestStatus.${
+                              latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId
+                                ? 'pending'
+                                : latestCaRequest.status
+                            }`,
+                          )}
+                        </Badge>
+                      ) : activeCaConnection ? (
+                        <span className="text-[11px] text-muted-foreground">
+                          {t('ca.envelopeActiveProvider', {
+                            provider: t(`ca.providers.${activeCaConnection.provider}`),
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {latestCaRequest?.challengeCode && latestCaRequest.status === 'pending' ? (
+                      <p className="font-mono text-[11px] text-foreground">
+                        {t('ca.challengeCodeLabel', { challenge: latestCaRequest.challengeCode })}
+                      </p>
+                    ) : null}
+
+                    {latestCaRequest?.padesSha256 ? (
+                      <div className="space-y-1">
+                        <span className="block text-muted-foreground">{t('ca.padesSha256Label')}</span>
+                        <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                          <span className="truncate">{latestCaRequest.padesSha256}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void copyDigest(latestCaRequest.padesSha256!)}
+                          >
+                            {t('evidence.copyDigest')}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {latestCaRequest?.padesFileId ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() =>
+                          void handleDownload(
+                            latestCaRequest.padesFileId,
+                            `${envelope.certificateCode ?? envelope.id}-pades.pdf`,
+                          )
+                        }
+                        data-testid="sign-download-pades-btn"
+                      >
+                        {t('ca.downloadPadesButton')}
+                      </Button>
+                    ) : null}
+
+                    {canInitiateCa &&
+                    activeCaConnection &&
+                    latestCaRequest?.status !== 'pending' &&
+                    latestCaRequest?.status !== 'signed' ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        loading={initiateCaMutation.isPending}
+                        onClick={() => initiateCaMutation.mutate(activeCaConnection.id)}
+                        data-testid="sign-apply-pades-btn"
+                      >
+                        {t('ca.applyPadesButton', {
+                          provider: t(`ca.providers.${activeCaConnection.provider}`),
+                        })}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {eventsQuery.data?.events.length ? (
                   <div className="space-y-1.5 border-t pt-2">
                     <p className="font-medium text-foreground">{t('evidence.eventsHeading')}</p>
@@ -1122,6 +1575,101 @@ export function SignEnvelopeDetailPage() {
               {t('voidDialog.confirm')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={correctTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCorrectTarget(null);
+            setCorrectFormError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" closeLabel={common('close')} data-testid="sign-correct-recipient-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('correctDialog.title')}</DialogTitle>
+            <DialogDescription>{t('correctDialog.description')}</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCorrectRecipientSubmit} className="space-y-3">
+            {correctFormError ? <ErrorText>{correctFormError}</ErrorText> : null}
+            <div className="space-y-1.5">
+              <Label htmlFor="correct-signer-name">{t('signer.nameLabel')}</Label>
+              <Input
+                id="correct-signer-name"
+                className="min-h-11"
+                value={correctName}
+                onChange={(e) => setCorrectName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="correct-signer-email">{t('signer.emailLabel')}</Label>
+              <Input
+                id="correct-signer-email"
+                type="email"
+                className="min-h-11"
+                value={correctEmail}
+                onChange={(e) => setCorrectEmail(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="correct-signer-phone">{t('signer.phoneLabel')}</Label>
+                <Input
+                  id="correct-signer-phone"
+                  className="min-h-11"
+                  value={correctPhone}
+                  onChange={(e) => setCorrectPhone(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="correct-signer-delivery">{t('signer.deliveryLabel')}</Label>
+                <NativeSelect
+                  id="correct-signer-delivery"
+                  value={correctDeliveryMode}
+                  className="min-h-11 w-full"
+                  onChange={(e) => setCorrectDeliveryMode(e.target.value as SignDeliveryMode)}
+                >
+                  {SIGN_DELIVERY_MODES.map((mode) => (
+                    <NativeSelectOption key={mode} value={mode}>
+                      {t(`signer.deliveries.${mode}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+            </div>
+            {correctTarget?.signerRole !== 'cc' ? (
+              <label
+                htmlFor="correct-signer-otp"
+                className="flex min-h-11 cursor-pointer items-center gap-2.5 text-xs text-foreground"
+              >
+                <Checkbox
+                  id="correct-signer-otp"
+                  checked={correctRequireOtp}
+                  onCheckedChange={(checked) => setCorrectRequireOtp(Boolean(checked))}
+                />
+                <span>{t('signer.otpLabel')}</span>
+              </label>
+            ) : null}
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => {
+                  setCorrectTarget(null);
+                  setCorrectFormError(null);
+                }}
+              >
+                {common('cancel')}
+              </Button>
+              <Button type="submit" className="min-h-11" loading={correctRecipientMutation.isPending}>
+                {t('correctDialog.confirm')}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

@@ -69,13 +69,13 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   });
 
   // A grant with a wake-up set through the real setup commands (the receiver URL is only stored here: the delivery tests give the job a local address).
-  async function wakeUp(extra: Record<string, unknown> = {}): Promise<{ grantId: string; secret: string }> {
+  async function wakeUp(extra: Record<string, unknown> = {}, scopes: string[] = ['ludy.read']): Promise<{ grantId: string; secret: string }> {
     const grantId = randomUUID();
     await admin((c) =>
       c.query(
         `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
-         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
-        [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`],
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', $6::text[], $4, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`, scopes],
       ),
     );
     const made = makeWakeSecret(vault, orgId, grantId);
@@ -184,6 +184,44 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const rows = await deliveries(grantId);
     expect(rows.map((r) => r.body.data.items?.length)).toEqual([20, 20, 5]);
     expect(new Set(rows.flatMap((r) => r.body.data.items?.map((i) => i.key))).size).toBe(45);
+  });
+
+  it('sends a line\'s event only for a registered type and only to a grant that holds its scope: the source is not asked for an unregistered type, an unlisted field fails the grant\'s turn, and a grant without the scope gets none', async () => {
+    const type = 'engage.zz_test_wake_event';
+    const fields = { conversation_id: 'id', channel: ['facebook', 'zalo'] };
+    await admin((c) => c.query(`INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, 'ludy.engage.write', $2::jsonb, 'ADR-0051')`, [type, JSON.stringify(fields)]));
+    try {
+      const registry = { [type]: { scope: 'ludy.engage.write', fields } } as const;
+      const holder = await wakeUp({}, ['ludy.read', 'ludy.engage.write']);
+      const readOnly = await wakeUp();
+      const asked: string[] = [];
+      const conversation = randomUUID();
+      const lines = [
+        { type, events: async (g: { grantId: string }) => (asked.push(g.grantId), [{ conversation_id: conversation, channel: 'zalo' }]) },
+        { type: 'engage.zz_not_registered', events: async () => (asked.push('unregistered'), [{ conversation_id: conversation, channel: 'zalo' }]) },
+      ];
+      const sent: Array<{ orgId: string; id: string }> = [];
+      const sweep = () => runWakeSweep({ runtime: worker, workerDb, send: async (job) => void sent.push(job), evaluate: async () => ({ items: [], complete: [] }), lines, lineRegistry: registry as never });
+      await sweep();
+      expect(asked).not.toContain('unregistered');
+      expect(asked).toContain(holder.grantId);
+      const mine = await deliveries(holder.grantId);
+      expect(mine.filter((r) => r.type === type)).toHaveLength(1);
+      expect(mine.find((r) => r.type === type)?.body.data).toEqual({ conversation_id: conversation, channel: 'zalo' });
+      // The grant without the scope was asked (the sweep does not know scopes) but the database stored nothing for it, and the sweep went on.
+      expect((await deliveries(readOnly.grantId)).filter((r) => r.type === type)).toHaveLength(0);
+      // The database's refusal of that grant is the sweep's normal answer, not an attempt: no refusal row is written against the org for it.
+      expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.enqueue' AND outcome <> 'ok'`, [orgId]))).rows[0].n).toBe(0);
+      // A source that adds a field the registry does not list fails the grant's turn: nothing is stored.
+      const before = (await deliveries(holder.grantId)).length;
+      const bad = [{ type, events: async () => [{ conversation_id: conversation, channel: 'zalo', customer_name: 'Nguyễn Văn A' }] }];
+      await stampPast(holder.grantId, 'signals_checked_at', '10 minutes');
+      const done = await runWakeSweep({ runtime: worker, workerDb, send: async () => undefined, evaluate: async () => ({ items: [], complete: [] }), lines: bad, lineRegistry: registry as never });
+      expect(done.failures).toBeGreaterThan(0);
+      expect((await deliveries(holder.grantId)).length).toBe(before);
+    } finally {
+      await admin((c) => c.query(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [type]));
+    }
   });
 
   it('sends nothing for a rule the grant may not read: the runtime refuses a query that does not declare `mcp`, so the real evaluator is quiet', async () => {

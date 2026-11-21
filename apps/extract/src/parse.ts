@@ -3,15 +3,17 @@
 // leaves, so the worker never sees a shape it does not expect.
 import PostalMime from 'postal-mime';
 import type { Address } from 'postal-mime';
-import { EXTRACT_LIMITS, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, MarketplaceColumnsInputError, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
 import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
+import { DocxError, readDocxText } from './docx-text.ts';
 import { EInvoiceParseError, parseEInvoiceXml } from './einvoice-xml.ts';
 import { HtmlMetaError, htmlText, readHtmlMeta } from './html-meta.ts';
 import { FeedError, readFeed } from './feed.ts';
 import { PortalListError, readPortalList } from './portal-list.ts';
 import { ArchiveError, readZip } from './zip.ts';
 import { readBankStatement } from './bank-statement.ts';
+import { readMarketplaceColumns } from './marketplace-columns.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 import { readMarketplaceOrders } from './marketplace-orders.ts';
 import { extractPageDeterministicTags, parseDeterministicTagToken } from './pdf-tags.ts';
@@ -180,6 +182,8 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
       return { ok: true, kind, invoice: { ...parseEInvoiceXml(bytes), source: 'einvoice_xml' } };
     case 'pdf_text':
       return pdfText(bytes);
+    case 'docx_text':
+      return { ok: true, kind, text: readDocxText(bytes) };
     case 'pdf_inspect':
       return inspectPdf(bytes);
     case 'pdf_seal':
@@ -211,12 +215,16 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
     case 'marketplace_income':
       // A Shopee or TikTok Shop income report (#2516): .xlsx or CSV, the per-order table found on one of the first sheets and read through the platform's profile; only the allow-listed columns come back.
       return { ok: true, kind, income: readMarketplaceIncome(bytes) };
+    case 'marketplace_columns':
+      // A report no platform profile fits (#4035): the masked sheet for the column proposal, or the check of a confirmed mapping on the real file; the request is a JSON envelope.
+      return { ok: true, kind, columns: readMarketplaceColumns(bytes) };
   }
 }
 
 const UNREADABLE: Record<ExtractKind, string> = {
   einvoice_xml: 'Không đọc được XML hóa đơn điện tử',
   pdf_text: 'Không đọc được tệp PDF',
+  docx_text: 'Không đọc được tệp Word (.docx)',
   pdf_inspect: 'Không kiểm tra được tệp PDF',
   pdf_seal: 'Không đóng dấu được tệp PDF',
   pdf_embed_cms: 'Không nhúng được chữ ký số CMS vào tệp PDF',
@@ -229,6 +237,7 @@ const UNREADABLE: Record<ExtractKind, string> = {
   bank_statement: 'Không đọc được sao kê ngân hàng',
   marketplace_orders: 'Không đọc được báo cáo đơn hàng của sàn',
   marketplace_income: 'Không đọc được báo cáo thu nhập của sàn',
+  marketplace_columns: 'Không đọc được các cột của báo cáo đơn hàng của sàn',
 };
 
 export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractResponse> {
@@ -239,6 +248,7 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
     // The e-invoice parser, eSign PDF handlers and ZIP reader explain what is wrong; other parser errors are not passed on.
     if (
       error instanceof EInvoiceParseError ||
+      error instanceof DocxError ||
       error instanceof ArchiveError ||
       error instanceof PortalListError ||
       error instanceof DsnError ||
@@ -246,7 +256,8 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
       error instanceof FeedError ||
       error instanceof PdfSignError ||
       error instanceof PdfSealInputError ||
-      error instanceof PdfEmbedCmsInputError
+      error instanceof PdfEmbedCmsInputError ||
+      error instanceof MarketplaceColumnsInputError
     ) {
       return failure('invalid', error.message);
     }

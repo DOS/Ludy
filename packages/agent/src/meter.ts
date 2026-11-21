@@ -52,6 +52,15 @@ export const AI_FEATURES = {
   // The finance coworker on a sales e-invoice draft (#2505): the lines, the VAT rate the text states and the customer it is for, proposed from a text a person typed or pasted. A figure the text
   // does not hold, or a rate the invoice date does not allow, refuses the proposal; a person reads the whole draft and issues it.
   'finance.einvoice_draft': 'finance',
+  // The accounting coworker's plain-Vietnamese reason for the VAT rate a correcting e-invoice proposes (#3709): code decided the basis and the rate, a person confirms; the model is told the nature, two
+  // dates and the rates only, and its text is refused when it states a figure or a rate the facts do not hold.
+  'finance.einvoice_rate_explain': 'finance',
+  // The accounting coworker's plain-Vietnamese explanation of the surplus of a count of stock (#3712 slice 2b): code reads the items, the amount and the supplier the goods were last received
+  // from, and its text is refused when it states a figure the facts do not hold, advises an account or claims a step was done.
+  'finance.stock_surplus_explain': 'finance',
+  // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the model answers a number into the list of Appendix XVII codes it is shown, so a code outside
+  // the list cannot come out; its one-line why is refused when it states a figure the note, the lines or the labels do not hold. A person confirms by starting the correction.
+  'finance.einvoice_reason_suggest': 'finance',
   // The finance coworker on payroll (#2534): prepare the month from the diff of last month, put the anomalies code found in a sentence, explain one payslip. The model sees the pseudonymized sheet only
   // (an alias per employee, fixed component labels and amounts); every text is refused when it states a figure it was not given, and a person decides.
   'finance.payroll_prepare': 'finance',
@@ -65,6 +74,21 @@ export const AI_FEATURES = {
   // The finance coworker's one line on the Sàn screen (#2516 slice E): code read the facts from the books (settlements waiting to be posted, what the platforms owe, fees awaiting an invoice), the model
   // only words them from those four numbers; a line that states a figure it was not given, a link, or says something was posted, approved or paid is refused. A read, never a post.
   'finance.marketplace_line': 'finance',
+  // The finance coworker's one line above the received invoices to pay (#3113 S4c): code read the facts (how many invoices wait, their total, the oldest date, how many are of a supplier whose bank account
+  // changed recently), the model only words them; a line that states a figure it was not given, a link, advice, or says something was paid or sent is refused. A read, it asks for no payment.
+  'finance.supplier_payable_line': 'finance',
+  // The finance coworker's one line above the MISA export check (#3848 slice B): code ran the deterministic check over the rows of the file and counted what it found per kind, the model only explains those
+  // counts (what each kind means in MISA and how to fix it in Ludy); a line that states a number it was not given, sets a count against the wrong kind, has a link or says something was fixed is refused. A read.
+  'finance.misa_check_line': 'finance',
+  // The finance coworker's notes on the AMIS preview (#3904, S5 of #3854): code built the preview and listed its blockers, the model only words what each KIND of blocker on the list means in AMIS and how to fix it in Ludy,
+  // told the set of kinds and nothing else (no count, voucher, item or party); a note with a number, a link, a claim that something was done or a promise is dropped. A read: the list decides, a person sends.
+  'finance.misa_amis_blocker_notes': 'finance',
+  // The finance coworker's notes under the Sàn table (#3711 slice 7): code read, per platform, the fees waiting on its 331, how old the oldest is and whether that is past one settlement cycle; the model only
+  // words what that means, told those figures per numbered row and no platform name; a note with a number that is not its row's, a name, a link, a claim that something was done or a promise is dropped. A read.
+  'finance.marketplace_fee_note': 'finance',
+  // The finance coworker's proposal for which standard field each column of a marketplace order report is, when no profile knows its header (#3850): told only the header texts and masked sample shapes of the
+  // columns that are not buyer data; the proposal is read against the real file by code and confirmed by a person. A read.
+  'finance.stock_columns': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
@@ -84,6 +108,18 @@ export const AI_FEATURES = {
   'meetings.ask': 'meetings',
   // The member's Vy writing the two or three sentences of the brief before a meeting (#3543): one call over at most 23 short facts the member's own reads found, the member waiting for it, through their own meter.
   'meetings.brief': 'meetings',
+  // The member's Vy writing the few sentences of the weekly digest across meetings (#3949): one call over at most 60 short facts the member's own reads found, the member waiting for it, through their own meter.
+  'meetings.digest': 'meetings',
+  // The member's Vy naming who an action item belongs to from the name said in the meeting (#3921): one call over a name and at most 100 names, the member waiting for it, through their own meter.
+  'meetings.assignee': 'meetings',
+  // The recorder's Vy checking whether a meeting covered its agenda (#3959): one call over a short agenda and the transcript the recorder reads, the recorder waiting for it, through their own meter.
+  'meetings.adherence': 'meetings',
+  // The recorder's Vy writing the table of contents of one meeting (#3844): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.chapters': 'meetings',
+  // The recorder's Vy suggesting a title for one meeting (#3947): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.title': 'meetings',
+  // The recorder's Vy listing what each speaker committed to or decided (#3954): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.commitments': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
@@ -96,10 +132,20 @@ export const AI_FEATURES = {
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
   'sign.clause_summary': 'sign',
+  // Vy (the general manager) summarizing completed project tasks into 3 to 5 handover deliverable bullets for a draft eSign acceptance minutes PDF (#3812): one call over the project name and caller-readable completed tasks only, nothing persisted or sent automatically.
+  'sign.acceptance_draft': 'sign',
+  // Vy (the general manager) summarizing commercial and legal risk deltas between two PDF contract revisions (#3822): one call over bounded changed hunks, every delta citing verbatim quotes from v1 or v2.
+  'sign.version_diff': 'sign',
+  // Vy (the general manager) proposing customized Vietnamese SME contract clauses for human editing before PDF generation (#3822): one call over structured contract variables and plain-language instructions, neutralized against tag injection.
+  'sign.contract_draft': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.
   'notes.todo_suggest': 'notes',
+  // Member-scoped Vy daily focus planner & overdue reschedule suggestions on My Work (notes v2 T4b, #3563, ADR-0049): stores counts only; caller confirms every reschedule.
+  'notes.todo_plan': 'notes',
+  // Member-scoped Vy inbox organizer proposing notebooks & #tags for unfiled notes (notes v2 E5b, #3563, ADR-0049): stores counts only; caller confirms every move/tag update.
+  'notes.organize': 'notes',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

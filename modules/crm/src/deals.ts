@@ -111,7 +111,7 @@ export const pipelineSetup = defineCommand({
 // Deals
 // ---------------------------------------------------------------------------------------------------------------
 
-const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at'] as const;
+const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at', 'd.actor_origin', 'd.tainted'] as const;
 
 export interface Row {
   id: string;
@@ -128,6 +128,8 @@ export interface Row {
   created_by: string;
   created_at: Date | string;
   updated_at: Date | string;
+  actor_origin: string;
+  tainted: boolean;
   party_name: string;
   stage_kind: string;
   // The deal's open next step, while it is not snoozed (#2381).
@@ -162,6 +164,8 @@ export function view(r: Row, canDelete: boolean): Deal {
     partyDuplicateOf: r.keep_party_id === null ? null : { id: r.keep_party_id, name: r.keep_party_name ?? '' },
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
+    actorOrigin: r.actor_origin as 'ui' | 'mcp',
+    tainted: r.tainted,
   };
 }
 

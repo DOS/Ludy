@@ -10,3 +10,7 @@ export const MISA_BUYER_IDENTITY_FIELDS: Readonly<Record<BuyerIdentityKind, stri
   passport: null,
   budget_code: null,
 };
+
+// Where a foreign buyer's nationality (ISO 3166-1 alpha-2, Decree 254 Appendix point 4.b, #3709) goes: empty on purpose for the same reason as the names above. A request that carries a nationality
+// is refused before any call (`invalid_data`) while this is null; the offline sandbox echoes it in its own XML (`QTich`).
+export const MISA_BUYER_NATIONALITY_FIELD: string | null = null;

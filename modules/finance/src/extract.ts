@@ -17,6 +17,7 @@ import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { booksOn } from './payroll-posting.ts';
 import {
   bookableLines,
   classificationCheck,
@@ -94,6 +95,8 @@ export interface InvoiceLookup {
   // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is crove_kernel.tenant.tax_code for the default entity,
   // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
+  // The books regime the sale is posted under on the invoice's issue date ('tt133', 'tt99'); set only for a sale whose issue date was asked for (#3712 slice 4).
+  regime?: string;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
   learnedRules?: LearnedRule[];
@@ -122,7 +125,7 @@ const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate',
 
 // What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
 // HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
-// history). The bank accounts are those its earlier proposals carried.
+// history). The bank accounts are those its earlier proposals carried, from an XML or a PDF read but not a photo (#2426).
 async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
   const documents = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
@@ -154,7 +157,8 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
       ? []
       : await ctx.trx
           .selectFrom('crove_kernel.proposal')
-          .select(['id', sql<string | null>`payload #>> '{seller,bankAccount}'`.as('account')])
+          // An account a photo gave is left out: nothing in the document confirms the model read it right (one read from a PDF was checked against its text, one from an XML was printed by the seller's software).
+          .select(['id', sql<string | null>`CASE WHEN payload ->> 'extractionMethod' IN ('einvoice_xml', 'pdf_text_ai') THEN payload #>> '{seller,bankAccount}' END`.as('account')])
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', proposalIds)
           .execute();
@@ -184,6 +188,8 @@ export const purchaseLookup = defineQuery({
     legalEntityId: zId.optional(),
     // The buyer's tax code, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books).
     buyerTaxCode: z.string().nullable().default(null),
+    // The invoice's issue date, to read the books regime the sale is posted under (#3712 slice 4); omitted, no regime is named.
+    issueDate: zLocalDate.optional(),
     // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
     // the invoice's own currency when it is not VND (each side converts at its own rate, so the dong amounts may differ
     // while the invoice is the same), else the amounts booked.
@@ -291,8 +297,10 @@ export const purchaseLookup = defineQuery({
             .where((eb) => eb(eb.fn('lower', ['name']), '=', input.sellerName.trim().toLowerCase()))
             .executeTakeFirst()
         : undefined);
+    const regime = sale && input.issueDate ? (await booksOn(ctx, entityId, input.issueDate)).regime : undefined;
     return {
       direction: sale ? 'sale' : 'purchase',
+      ...(regime ? { regime } : {}),
       vendorDefault: rule?.debit_account ?? null,
       learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId),
       duplicateDocumentId: document?.id ?? null,
@@ -652,6 +660,8 @@ export async function extractAndPropose(
     related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
     buyerTaxCode: invoice.buyer.taxCode ? (parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode) : null,
     ...(file.legalEntityId ? { legalEntityId: file.legalEntityId } : {}),
+    // Only a well-formed date: a malformed one must not fail the lookup (the invoice's own checks name it).
+    ...(zLocalDate.safeParse(invoice.issueDate).success ? { issueDate: invoice.issueDate } : {}),
   };
   const lookup = await deps.runtime.query<InvoiceLookup>('finance.extraction.lookup', { fileId, ...lookupInput }, { actor, orgId });
 
@@ -728,7 +738,8 @@ export async function extractAndPropose(
       ...(converted ? { foreign: { ...converted.foreign, source: 'invoice' as const } } : {}),
     },
     lines,
-    journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo) : buildPurchaseJournal(lines, booked.vatTotal, memo),
+    ...(sale && lookup.regime ? { regime: lookup.regime } : {}),
+    journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo, lookup.regime) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,
     ...(lookupHints.length > 0 ? { lookupHints } : {}),

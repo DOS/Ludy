@@ -7,14 +7,13 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { briefItemDue, briefLines, vnDateOf, type BriefAnswer, type BriefFacts, type BriefLine, type BriefTarget } from '@crove/kernel-contract';
+import { briefLines, vnDateOf, type BriefAnswer, type BriefFacts, type BriefLine, type BriefTarget } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { ErrorText } from './ui.tsx';
 import { askBlocked } from './meeting-ask.tsx';
-import { memberLabel } from './meeting-results.tsx';
-import { useMe } from './conversation-inbox.tsx';
+import { FactNumber, OpenItemLine } from './meeting-open-item.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
@@ -46,7 +45,7 @@ export function MeetingBrief({ slug, emptyNote = false, ...which }: { slug: stri
   return (
     <Card data-testid="meeting-brief">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('title')}</CardTitle>
         {data.previous && (
           <CardDescription className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{t('from', { title: data.previous.title, date: vnDateOf(data.previous.startedAt) })}</span>
@@ -57,19 +56,36 @@ export function MeetingBrief({ slug, emptyNote = false, ...which }: { slug: stri
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        <Facts slug={slug} facts={data} />
-        <VyWords input={input} lines={briefLines(data)} />
+        <BriefBody slug={slug} facts={data} target={input} />
       </CardContent>
     </Card>
+  );
+}
+
+// The facts of one brief and Vy's click under them, for a page that already read the facts (the Today view, #3955): the same numbered lists and the same button as the card above, with the same checks.
+export function BriefBody({ slug, facts, target: input, showSource = false }: { slug: string; facts: BriefFacts; target: BriefTarget; showSource?: boolean }) {
+  const t = useTranslations('meetings.brief');
+  return (
+    <>
+      {/* Which meeting the decisions and items come from, with a link, where the card has no header to say it (the Today view). */}
+      {showSource && facts.previous && (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="brief-source">
+          <span>{t('from', { title: facts.previous.title, date: vnDateOf(facts.previous.startedAt) })}</span>
+          <Link to="/o/$slug/meetings/$id" params={{ slug, id: facts.previous.meetingId }} className="font-medium text-link underline" data-testid="brief-open-previous">
+            {t('openPrevious')}
+          </Link>
+        </p>
+      )}
+      <Facts slug={slug} facts={facts} />
+      <VyWords input={input} lines={briefLines(facts)} />
+    </>
   );
 }
 
 // The numbered facts, grouped: the number is the one a sentence of Vy cites.
 function Facts({ slug, facts }: { slug: string; facts: BriefFacts }) {
   const t = useTranslations('meetings.brief');
-  const series = useTranslations('meetings.series');
   const f = useFormat();
-  const { members } = useMe();
   const lines = briefLines(facts);
   const of = (kind: BriefLine['kind']) => lines.filter((l) => l.kind === kind);
   const decisions = of('decision');
@@ -96,17 +112,7 @@ function Facts({ slug, facts }: { slug: string; facts: BriefFacts }) {
           <ol className="space-y-1">
             {items.map((line, index) => {
               const item = facts.items[index];
-              if (!item) return null;
-              const who = item.whoUserId ? memberLabel(members, item.whoUserId, item.who) : (item.assigneeSeat ?? item.who);
-              return (
-                <li key={line.n} className="flex flex-wrap items-center gap-2" data-testid="brief-fact" data-assigned={item.assigned}>
-                  <FactNumber n={line.n} />
-                  <span className="font-medium">{item.title}</span>
-                  {who !== '' && <span className="text-muted-foreground">{who}</span>}
-                  {item.assigned ? item.taskStatus && <Badge variant="outline">{series(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{series('unassigned')}</Badge>}
-                  {briefItemDue(item) !== null && <span className="text-xs text-muted-foreground">{series('due', { date: briefItemDue(item) as string })}</span>}
-                </li>
-              );
+              return item ? <OpenItemLine key={line.n} n={line.n} item={item} testId="brief-fact" /> : null;
             })}
           </ol>
         </section>
@@ -141,12 +147,6 @@ function Facts({ slug, facts }: { slug: string; facts: BriefFacts }) {
     </div>
   );
 }
-
-const FactNumber = ({ n }: { n: number }) => (
-  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-xs text-muted-foreground" aria-label={String(n)}>
-    {n}
-  </span>
-);
 
 // The click: Vy's two or three sentences. Absent when AI is off (no model, the deployment's switch, no right to work with Vy), with the reason said when the member could expect it to be there.
 function VyWords({ input, lines }: { input: BriefTarget; lines: BriefLine[] }) {

@@ -195,7 +195,8 @@ const zWakeKey = z.string().max(300);
 export const zMcpWakeEnqueue = z.strictObject({
   id: zWakeEventId,
   grantId: zMcpWakeGrantRef.shape.grantId,
-  type: z.enum(['signal.fired', 'schedule.due', 'ping', MINUTES_WAKE_TYPE]),
+  // The fixed types, or a line's (`engage.conversation_unanswered`): the body check of the database says which are registered.
+  type: z.union([z.enum(['signal.fired', 'schedule.due', 'ping', MINUTES_WAKE_TYPE]), z.string().regex(/^(social|engage|ads)(\.[a-z_]+){1,3}$/)]),
   body: z.record(z.string(), z.unknown()),
   // The signal keys this event carries: noted as seen in the same transaction that stores it.
   keys: z.array(zWakeKey).max(20).optional(),
@@ -206,10 +207,26 @@ export const zMcpWakeTouch = z.strictObject({ id: zWakeEventId });
 // `complete`: the short names of the rules that answered in full (the part of a key before the first colon); only their keys are forgotten.
 export const zMcpWakeSignalsCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(zWakeKey).max(200), complete: z.array(z.string().max(60)).max(10) });
 
+// The item keys of a line's source (`<type>_<words>:<id>:<yyyy-mm-dd>`, the type's dots as underscores): which of them were not sent for the grant yet (#3862).
+export const zMcpWakeLineCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(zWakeKey).max(200) });
+// What a line's source needs before it reads for a grant: the kind and scopes of the grant and the org's N (the inbox's setting row, with the defaults when the org set none).
+export const zMcpWakeLinePlan = z.strictObject({
+  kind: z.enum(['company', 'member']),
+  scopes: z.array(z.string().max(60)).max(20),
+  // The apps the org switched off (ADR-0053): a line's source leaves them out.
+  appsOff: z.array(z.string().max(60)).max(40),
+  unansweredHours: z.number().int(),
+  replyWindowHours: z.number().int(),
+  quoteDays: z.number().int(),
+});
+export type McpWakeLinePlan = z.infer<typeof zMcpWakeLinePlan>;
+
 function wakeSystemError(error: unknown): never {
   const message = (error as { message?: unknown; code?: unknown } | null)?.message;
   const code = (error as { code?: unknown } | null)?.code;
   if (message === 'MCP_WAKE_GRANT') throw new DomainError('MCP_WAKE_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực');
+  // An event of a line's type for a grant that does not hold the type's scope (or is not a company grant): not for this grant.
+  if (message === 'MCP_WAKE_SCOPE') throw new DomainError('MCP_WAKE_SCOPE', 403, 'Quyền kết nối này không nhận loại báo thức này');
   if (message === 'MCP_WAKE_INVALID' || code === '23514') throw new DomainError('INVALID', 422, 'Nội dung báo thức không hợp lệ');
   throw error;
 }
@@ -288,7 +305,8 @@ export const mcpWakeSignalsCheck = defineCommand({
 export interface McpWakeDeliveryRow {
   id: string;
   grantId: string;
-  type: 'signal.fired' | 'schedule.due' | 'ping' | typeof MINUTES_WAKE_TYPE;
+  type: string;
+  body: Record<string, unknown>;
   body: Record<string, unknown>;
   status: 'queued' | 'sent' | 'failed' | 'dropped';
   attempts: number;
@@ -366,5 +384,31 @@ export const mcpWakeMinutesTargets = defineCommand({
   },
 });
 
-export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck, mcpWakeMinutesTargets];
-export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget];
+// Which of a line source's item keys are new for the grant (#3862): the keys are noted as seen by the event that carries them (kernel.mcp.wake.enqueue), so a failure between the two sends the event again.
+export const mcpWakeLineCheck = defineCommand({
+  name: 'kernel.mcp.wake.line_check',
+  input: zMcpWakeLineCheck,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới kiểm tra các mục đã gửi báo thức');
+    const { rows } = await sql<{ fresh: string[] }>`SELECT crove_kernel.mcp_wake_line_check(${input.grantId}::uuid, ${input.keys}::text[]) AS fresh`.execute(ctx.trx).catch(wakeSystemError);
+    return { fresh: rows[0]?.fresh ?? [] };
+  },
+});
+
+// The grant's kind and scopes and the org's N, for the worker's sweep before a line's source reads (#3862). Ids, words and numbers only.
+export const mcpWakeLinePlan = defineQuery({
+  name: 'kernel.mcp.wake.line_plan',
+  input: z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<McpWakeLinePlan> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc cách xếp báo thức của một quyền kết nối');
+    const { rows } = await sql<{ plan: unknown }>`SELECT crove_kernel.mcp_wake_line_plan(${input.grantId}::uuid) AS plan`.execute(ctx.trx).catch(wakeSystemError);
+    return zMcpWakeLinePlan.parse(rows[0]?.plan);
+  },
+});
+
+export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck, mcpWakeLineCheck, mcpWakeMinutesTargets];
+export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget, mcpWakeLinePlan];

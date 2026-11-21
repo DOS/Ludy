@@ -133,7 +133,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   }
 
   // The whole consent: authorize, the page's details call, the approve call, the resumed authorization, the code.
-  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean } = {}) {
+  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean; writes?: string[] } = {}) {
     const reg = await register();
     expect(reg.status, JSON.stringify(reg.body)).toBe(201);
     const clientId = String(reg.body.client_id);
@@ -143,7 +143,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const uid = new URL(started.location, base).pathname.split('/').pop() as string;
     const headers = { ...(await asBrowser(owner, null)), cookie: started.cookie };
     const detailsResponse = await fetch(`${base}/oauth/interaction/${uid}/details`, { headers });
-    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}) } : { decision }) });
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}), ...(opts.writes !== undefined ? { writes: opts.writes } : {}) } : { decision }) });
     const answer = (await approved.json()) as { redirectTo?: string; message?: string; code?: string };
     return { clientId, verifier, redirect: reg.redirect, uid, started, details: { status: detailsResponse.status, body: (await detailsResponse.json()) as Record<string, unknown> }, consentStatus: approved.status, redirectTo: answer.redirectTo ?? '', cookie: started.cookie + '; ' + cookiesOf(approved) };
   }
@@ -254,7 +254,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('publishes its metadata: the resource, the issuer, S256 only, registration, revocation', async () => {
     const protectedResource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<string, unknown>;
-    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft'] });
+    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] });
     for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
       const meta = (await (await fetch(`${base}${path}`)).json()) as Record<string, any>;
       expect(meta.issuer).toBe(base);
@@ -533,7 +533,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
       expect(initialized.status).toBe(202);
       const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
-      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
       for (const tool of list.result.tools) expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
       expect(called.result.structuredContent.clientName).toBe('Test MCP client');
@@ -735,7 +735,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
     expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     const called = await client.callTool({ name: 'ludy_about', arguments: {} });
     expect(called.isError).toBeFalsy();
@@ -1029,6 +1029,86 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(draftOnly.consentStatus).toBe(422);
     // Nothing half made is left: no grant of those clients.
     for (const c of [readOnly, asMember, draftOnly]) {
+      expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
+    }
+  });
+
+  // The per-line write scopes (ADR-0051 decision 11, #3858): each is ticked on its own, held only by a company grant with the read scope, and lists the tools of its commands (E2, #3861).
+  const ENGAGE = 'ludy.engage.write';
+  const ADS = 'ludy.ads.draft';
+  const ALL_WRITES = `ludy.read ${DRAFT} ${ENGAGE} ${ADS}`;
+
+  it('lets an owner tick the Engage and Ads write scopes one by one: the page offers all three, the token and the grant hold exactly the ticked ones, and the tools of the ticked scope are listed', async () => {
+    const asked = await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asked.details.body).toMatchObject({ scopes: ['ludy.read', DRAFT, ENGAGE, ADS] });
+    const access = await tokenOf(asked);
+    expect(claimsOf(access).scope.split(' ').sort()).toEqual(['ludy.engage.write', 'ludy.read']);
+    expect((await admin((client) => client.query(`SELECT scopes, kind FROM crove_kernel.agent_grant WHERE client_id = $1`, [asked.clientId]))).rows[0]).toEqual({ scopes: ['ludy.engage.write', 'ludy.read'], kind: 'company' });
+    // The tool list is filtered by scope: the Social draft tool is not listed for a grant that does not hold its scope.
+    const names = await toolNames(access);
+    expect(names).not.toContain('ludy_social_draft_create');
+    expect(names).toContain('ludy_about');
+    const both = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [DRAFT, ADS] }));
+    expect(claimsOf(both).scope.split(' ').sort()).toEqual(['ludy.ads.draft', 'ludy.read', DRAFT]);
+    expect(await toolNames(both)).toContain('ludy_social_draft_create');
+    // Ticking nothing leaves the read scope alone, whatever the client asked for.
+    const none = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [] }));
+    expect(claimsOf(none).scope).toBe('ludy.read');
+  });
+
+  it('works an inbox thread through the endpoint with the Engage scope: the tools are listed for it alone, a note and a contact land, and the calls are audited by tool and as the grant\'s (#3861)', async () => {
+    const engageOnly = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [ENGAGE] }));
+    const names = await toolNames(engageOnly);
+    for (const name of ['ludy_conversation_assign', 'ludy_conversation_resolve', 'ludy_conversation_reopen', 'ludy_conversation_note', 'ludy_conversation_link_contact', 'ludy_party_create', 'ludy_deal_create', 'ludy_deal_move', 'ludy_quote_save', 'ludy_quote_revise', 'ludy_next_step_done', 'ludy_next_step_snooze']) expect(names, name).toContain(name);
+    expect(names).not.toContain('ludy_ads_campaign_draft_save');
+    expect(names).not.toContain('ludy_social_draft_create');
+    // A read-only grant is offered none of them and a call to one is an unknown tool.
+    const readOnly = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [] }));
+    expect(await toolNames(readOnly)).not.toContain('ludy_conversation_note');
+    expect((await mcpModern(readOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: {} }, 'ludy_conversation_note')).body?.error?.message).toBe('Unknown tool');
+    // A thread of the org, and the writes through the tools.
+    const [connection, identity, thread] = [randomUUID(), randomUUID(), randomUUID()];
+    await admin((client) => client.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'facebook_page', 'acct-engage-e2e', 'Trang thử', user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connection]));
+    await admin((client) => client.query(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', 'u-e2e-12345678', 'Khách')`, [orgId, identity]));
+    await admin((client) => client.query(`INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at) VALUES ($1, $2, $3, 'comment_thread', 't-e2e', $4, 1, now(), now())`, [orgId, thread, connection, identity]));
+    const noted = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: { conversationId: thread, body: 'Khách hỏi giá (Dy)' } }, 'ludy_conversation_note');
+    expect(noted.status).toBe(200);
+    const noteId = ((noted.body?.result?.structuredContent ?? {}) as { noteId: string }).noteId;
+    expect((await admin((client) => client.query(`SELECT body FROM crove_kernel.conversation_note WHERE id = $1`, [noteId]))).rows[0].body).toBe('Khách hỏi giá (Dy)');
+    const made = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_party_create', arguments: { kind: 'person', name: 'Khách qua MCP' } }, 'ludy_party_create');
+    const partyId = ((made.body?.result?.structuredContent ?? {}) as { partyId: string }).partyId;
+    expect((await admin((client) => client.query(`SELECT source_trust FROM crove_kernel.party WHERE id = $1`, [partyId]))).rows[0].source_trust).toBe('external');
+    const resolved = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_resolve', arguments: { conversationId: thread } }, 'ludy_conversation_resolve');
+    expect(resolved.body?.result?.structuredContent).toEqual({ conversationId: thread });
+    expect((await admin((client) => client.query(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [thread]))).rows[0].status).toBe('resolved');
+    // A field outside the schema is refused before anything runs.
+    const bad = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: { conversationId: thread, body: 'x', authorUserId: randomUUID() } }, 'ludy_conversation_note');
+    expect(bad.body?.error?.message).toMatch(/Invalid arguments/);
+    // Every call is audited by tool (the endpoint's row) and as the grant's (the command's row, naming the client).
+    for (const [tool, command] of [['ludy_conversation_note', 'kernel.mcp.conversation_note'], ['ludy_party_create', 'kernel.mcp.party_create'], ['ludy_conversation_resolve', 'kernel.mcp.conversation_resolve']] as const) {
+      const call = await admin((client) => client.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'tool' = $1 ORDER BY id DESC LIMIT 1`, [tool]));
+      expect(call.rows[0].detail, tool).toMatchObject({ mcpCall: true, result: 'ok', mcpClientName: 'Test MCP client' });
+      const row = await admin((client) => client.query(`SELECT outcome, detail FROM crove_kernel.audit_event WHERE command = $1 ORDER BY id DESC LIMIT 1`, [command]));
+      expect(row.rows[0], command).toMatchObject({ outcome: 'ok', detail: { mcpCall: true, mcpClientName: 'Test MCP client' } });
+      expect(typeof row.rows[0].detail.mcpGrant, command).toBe('string');
+    }
+  });
+
+  it('refuses a write scope the client did not ask for, one asked for a member grant, and the old draft box together with another scope the client left out', async () => {
+    const notAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, writes: [ADS] });
+    expect(notAsked.consentStatus).toBe(422);
+    const asMember = await consent('owner', orgId, 'approve', 'member', { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asMember.consentStatus).toBe(422);
+    // The old one-box form means the Social draft scope: refused when the client did not ask for it, and the same scope as `writes: [DRAFT]` (one scope, not two) when it did.
+    const oldBoxNotAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, draft: true, writes: [ENGAGE] });
+    expect(oldBoxNotAsked.consentStatus).toBe(422);
+    const oldBoxAndWrites = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${DRAFT}`, draft: true, writes: [DRAFT] });
+    expect(oldBoxAndWrites.consentStatus).toBe(200);
+    expect(claimsOf(await tokenOf(oldBoxAndWrites)).scope.split(' ').sort()).toEqual(['ludy.read', DRAFT]);
+    const noRead = await consent('owner', orgId, 'approve', undefined, { scope: ENGAGE, writes: [ENGAGE] });
+    expect(noRead.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(noRead.consentStatus).toBe(422);
+    for (const c of [notAsked, asMember, oldBoxNotAsked, noRead]) {
       expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
     }
   });

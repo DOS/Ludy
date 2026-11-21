@@ -15,7 +15,7 @@ import { ErrorText } from './ui.tsx';
 import { meetingsInstalled } from './linked-meetings.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { AgendaBrief } from './meeting-brief.tsx';
+import { BriefBody } from './meeting-brief.tsx';
 
 // Where a join address leads, by its host: the badge names the service, never the address.
 export function joinService(url: string | null): 'meet' | 'zoom' | 'teams' | null {
@@ -32,10 +32,13 @@ export function joinService(url: string | null): 'meet' | 'zoom' | 'teams' | nul
   return null;
 }
 
-const refreshAgenda = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.agenda.key() });
+const refreshAgenda = () => {
+  void queryClient.invalidateQueries({ queryKey: orpc.meetings.agenda.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.meetings.today.key() });
+};
 
-// One event: its time, its title, the service of its join address and how many people are invited.
-function EventLine({ event }: { event: AgendaEvent }) {
+// One event: its time, its title, the service of its join address and how many people are invited. `titleId` names the title for a link of the same row that has to say which event it acts on.
+function EventLine({ event, titleId }: { event: AgendaEvent; titleId?: string }) {
   const t = useTranslations('meetings.agenda');
   const f = useFormat();
   const service = joinService(event.joinUrl);
@@ -46,7 +49,7 @@ function EventLine({ event }: { event: AgendaEvent }) {
         {'–'}
         {f.time(event.endsAt)}
       </span>
-      <span className="min-w-0 break-words font-medium">{event.title === '' ? t('untitled') : event.title}</span>
+      <span id={titleId} className="min-w-0 break-words font-medium">{event.title === '' ? t('untitled') : event.title}</span>
       {service && <Badge variant="outline">{t(`service.${service}`)}</Badge>}
       {event.invitees > 0 && <span className="text-xs text-muted-foreground">{t('invitees', { count: String(event.invitees) })}</span>}
     </>
@@ -56,7 +59,8 @@ function EventLine({ event }: { event: AgendaEvent }) {
 export function TodayAgenda({ slug }: { slug: string }) {
   const t = useTranslations('meetings.agenda');
   const on = meetingsInstalled();
-  const agenda = useQuery({ ...orpc.meetings.agenda.list.queryOptions({ input: {} }), enabled: on, staleTime: 60_000, refetchOnWindowFocus: false });
+  // The Today view (#3955): today's events with the facts of each one's brief, read as the member in one call (no model runs; Vy's sentences stay the brief's own click).
+  const agenda = useQuery({ ...orpc.meetings.today.facts.queryOptions({ input: {} }), enabled: on, staleTime: 60_000, refetchOnWindowFocus: false });
   const providers = useQuery({ ...orpc.calendar.providers.queryOptions(), enabled: on, staleTime: 5 * 60_000 });
   if (!on || !agenda.data) return null;
   if (!agenda.data.enabled) {
@@ -65,41 +69,54 @@ export function TodayAgenda({ slug }: { slug: string }) {
     return (
       <p className="text-xs text-muted-foreground" data-testid="meeting-agenda-off">
         {t('off')}{' '}
-        <Link to="/o/$slug/settings" params={{ slug }} className="font-medium text-foreground underline">
+        <Link to="/o/$slug/settings/bookings" params={{ slug }} hash="booking-settings" className="font-medium text-foreground underline">
           {t('offLink')}
         </Link>
       </p>
     );
   }
-  const events = agenda.data.events;
+  const items = agenda.data.items;
+  // "2 h 30 min": hours and minutes in the member's own words.
+  const hours = Math.floor(agenda.data.totalMinutes / 60);
+  const rest = agenda.data.totalMinutes % 60;
+  const span = hours === 0 ? t('durationM', { minutes: String(rest) }) : rest === 0 ? t('durationH', { hours: String(hours) }) : t('durationHM', { hours: String(hours), minutes: String(rest) });
   return (
     <section className="space-y-2" aria-labelledby="meeting-agenda-title" data-testid="meeting-agenda">
       <h2 id="meeting-agenda-title" className="text-sm font-semibold">
         {t('title')}
       </h2>
-      {events.length === 0 ? (
+      {items.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="meeting-agenda-total">
+          {t('summary', { count: String(items.length), duration: span })}
+        </p>
+      )}
+      {items.length === 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="meeting-agenda-empty">
           {t('none')}
         </p>
       ) : (
         <ul className="divide-y rounded-lg border border-border bg-card">
-          {events.map((event) => (
+          {items.map(({ event, brief }) => (
             <li key={event.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3 text-sm" data-testid="meeting-agenda-event">
-              <EventLine event={event} />
+              <EventLine event={event} titleId={`agenda-event-${event.id}`} />
               <span className="ml-auto">
                 {event.meetingId ? (
-                  <Link to="/o/$slug/meetings/$id" params={{ slug, id: event.meetingId }} className="text-xs font-medium underline">
+                  <Link to="/o/$slug/meetings/$id" params={{ slug, id: event.meetingId }} aria-describedby={`agenda-event-${event.id}`} className="text-xs font-medium underline">
                     {t('recorded')}
                   </Link>
                 ) : (
                   // Fills the title and opens the normal record screen: its consent step runs before anything is recorded, and the event is linked to the meeting once it is made.
-                  <Link to="/o/$slug/meetings/record" params={{ slug }} search={{ title: event.title.slice(0, 200), agendaId: event.id }} className="text-xs font-medium underline" data-testid="meeting-agenda-record">
+                  <Link to="/o/$slug/meetings/record" params={{ slug }} search={{ title: event.title.slice(0, 200), agendaId: event.id }} aria-describedby={`agenda-event-${event.id}`} className="text-xs font-medium underline" data-testid="meeting-agenda-record">
                     {t('record')}
                   </Link>
                 )}
               </span>
-              {/* Before it starts (#3543): what was decided last time, what is open and the customer's open deals, on a click */}
-              {!event.meetingId && <AgendaBrief slug={slug} agendaId={event.id} />}
+              {/* What was decided last time, what is still open and the customer's open deals (#3543), read by code and shown with the event; Vy's sentences are the click under them. Nothing for an event with nothing to say. */}
+              {!brief.empty && (
+                <div className="basis-full space-y-3 border-t border-border pt-3" data-testid="meeting-agenda-brief">
+                  <BriefBody slug={slug} showSource facts={brief} target={event.meetingId ? { meetingId: event.meetingId, agendaId: null } : { meetingId: null, agendaId: event.id }} />
+                </div>
+              )}
             </li>
           ))}
         </ul>

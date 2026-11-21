@@ -492,8 +492,106 @@ describe('TasksPage P3 SSR (#2593)', () => {
 
     const tasksFilterHtml = renderToStaticMarkup(wrap('vi', <TasksPage />));
     expect(tasksFilterHtml).toContain('data-testid="task-filter-search"');
-    expect(tasksFilterHtml).toContain('data-testid="task-filter-tainted"');
-    expect(tasksFilterHtml).toContain('data-testid="task-filter-sort"');
+    // The status, assignee, due, origin and sort controls sit in one popover behind a button (#3597).
+    expect(tasksFilterHtml).toContain('data-testid="task-filter-button"');
     expect(tasksFilterHtml).toContain(catalog('vi').savedViews.all);
+  });
+  it('shows the list first: no form above it, an Add task button for a member who can give work, an edit button on each row (#3606)', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const html = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(html).not.toContain('<form');
+    expect(html).not.toContain('Giao việc mới');
+    expect(html).toContain('data-testid="task-add"');
+    expect(html).toContain('>Thêm việc<');
+    expect(html).toContain('aria-label="Sửa việc: Kiểm tra sổ sách"');
+    expect(html).toContain('aria-label="Sửa việc: Việc độc lập"');
+    // The English screen says the same.
+    const en = renderToStaticMarkup(wrap('en', <TasksPage />));
+    expect(en).toContain('>Add task<');
+    expect(en).toContain('aria-label="Edit task: Kiểm tra sổ sách"');
+  });
+
+  it('offers a viewer neither the Add task button nor the row edit buttons (#3606)', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const org = queryClientState.current.getQueryData<Record<string, unknown>>(['org', 'get', {}]);
+    queryClientState.current.setQueryData(['org', 'get', {}], { ...org, role: 'viewer' });
+    const html = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(html).toContain('Kiểm tra sổ sách');
+    expect(html).not.toContain('data-testid="task-add"');
+    expect(html).not.toContain('Sửa việc:');
+    expect(html).not.toContain('Thao tác');
+  });
+
+  // One name, one filter popover, one hint, no second strip (#3597, audit TK-1 to TK-4).
+  it('TK-1: the menu, the tab title and the H1 are one string in both languages, in plain words', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    for (const locale of ['vi', 'en'] as const) {
+      const messages = catalog(locale);
+      expect(messages.tasks.title).toBe(messages.nav.tasks);
+      const html = renderToStaticMarkup(wrap(locale, <TasksPage />));
+      expect(html).toMatch(new RegExp(`<h1[^>]*>${messages.nav.tasks}</h1>`));
+    }
+    expect(catalog('vi').nav.tasks).toBe('Việc nhóm');
+    expect(catalog('en').nav.tasks).toBe('Team tasks');
+    // No org-chart words where the screen explains itself.
+    const vi = catalog('vi').tasks;
+    for (const text of [vi.subtitle, vi.emptyHint, vi.emptyHintReadOnly, vi.emptyMineHint]) expect(text).not.toMatch(/sơ đồ|vị trí|tác tử/);
+    const en = catalog('en').tasks;
+    for (const text of [en.subtitle, en.emptyHint, en.emptyHintReadOnly, en.emptyMineHint]) expect(text).not.toMatch(/org chart|position|agent/i);
+  });
+
+  it('TK-2: the list is not preceded by a row of filters: the search box and one Filters button are all that show', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const html = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(html).toContain('data-testid="task-filter-search"');
+    expect(html).toContain('data-testid="task-filter-button"');
+    expect(html).toContain('>Bộ lọc<');
+    for (const control of ['status', 'assignee', 'due', 'tainted', 'sort']) expect(html).not.toContain(`data-testid="task-filter-${control}"`);
+    expect(html).not.toContain('data-testid="task-filter-count"');
+    // The English screen says the same.
+    expect(renderToStaticMarkup(wrap('en', <TasksPage />))).toContain('>Filters<');
+  });
+
+  it('TK-4: the shortcut hint is on this screen as it is on My work, and a viewer is told only the keys that work for them', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const vi = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(vi).toContain('data-testid="tasks-shortcuts"');
+    expect(vi).toContain(catalog('vi').tasks.shortcuts);
+    expect(renderToStaticMarkup(wrap('en', <TasksPage />))).toContain(catalog('en').tasks.shortcuts);
+    const org = queryClientState.current.getQueryData<Record<string, unknown>>(['org', 'get', {}]);
+    queryClientState.current.setQueryData(['org', 'get', {}], { ...org, role: 'viewer' });
+    const viewer = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(viewer).toContain(catalog('vi').tasks.shortcutsReadOnly);
+    expect(viewer).not.toContain(catalog('vi').tasks.shortcuts);
+  });
+
+  it('TK-3: My work draws no second tab strip: the menu is the one place that lists the five Cộng tác screens', () => {
+    authState.modules = ['projects', 'notes', 'meetings'];
+    queryClientState.current.clear();
+    queryClientState.current.setQueryData(['notes', 'todos', 'myWork', { timeZone: browserTimeZone() }], {
+      todos: [],
+      tasks: [],
+      tasksTruncated: false,
+      projectsAvailable: true,
+      noSeatHint: false,
+    } satisfies MyWork);
+    queryClientState.current.setQueryData(['chart', 'get', {}], { root: [], positions: [], agents: [], killSwitches: [] });
+    const html = renderToStaticMarkup(wrap('vi', <MyWorkPage />));
+    expect(html).not.toContain('href="/o/demo-org/notes"');
+    expect(html).not.toContain('href="/o/demo-org/meetings"');
+    expect(html).not.toContain('href="/o/demo-org/projects"');
+    expect(html).not.toContain('href="/o/demo-org/tasks"');
+    // The hint line of My work stays.
+    expect(html).toContain(catalog('vi').myWork.shortcuts);
   });
 });

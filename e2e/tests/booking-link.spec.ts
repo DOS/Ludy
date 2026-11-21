@@ -21,18 +21,21 @@ test('a new owner reaches a copyable booking link from Lịch hẹn, and "Mở t
     await openBookings();
     await expect(page.getByText('Tạo loại lịch hẹn đầu tiên để khách đặt lịch')).toBeVisible();
     await page.getByRole('link', { name: 'Tạo loại lịch hẹn', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings#booking-event-types$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings/bookings#booking-event-types$`));
     // On screen, not only in the page: the jump waits for the cards and lands on the event types.
-    await expect(page.getByRole('form', { name: 'Thêm loại lịch hẹn' })).toBeInViewport();
+    // On screen, the button that opens the panel to add one (#3608).
+    await expect(page.getByRole('button', { name: 'Thêm loại lịch hẹn' })).toBeInViewport();
   });
 
   await test.step('the first event type needs only a name; the link it will have is shown, not a slug box', async () => {
+    await page.getByRole('button', { name: 'Thêm loại lịch hẹn' }).click();
     const form = page.getByRole('form', { name: 'Thêm loại lịch hẹn' });
     await expect(form.getByText('sẽ hiện khi bạn đặt tên.')).toBeVisible();
     await expect(form.getByLabel('Nghỉ trước', { exact: false })).toHaveCount(0);
     await form.getByLabel('Tên', { exact: true }).fill('Tư vấn thuế 30 phút');
     await expect(form.getByTestId('event-type-link')).toContainText(`/-/b/${slug}/tu-van-thue-30-phut`);
     await form.getByRole('button', { name: 'Thêm', exact: true }).click();
+    await expect(form).toHaveCount(0);
     const row = page.getByRole('listitem').filter({ hasText: 'Tư vấn thuế 30 phút' });
     await expect(row.getByRole('button', { name: /Sao chép liên kết đặt lịch/ })).toBeVisible();
     await expect(row.getByRole('link', { name: /Xem trang/ })).toHaveAttribute('href', new RegExp(`/-/b/${slug}/tu-van-thue-30-phut$`));

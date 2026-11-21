@@ -43,6 +43,9 @@ export interface SignSignerForSeal {
   otp_verified_at: Date | string | null;
   signature_kind: SignSignatureKind | null;
   signer_ip_hash: string | null;
+  delegated_from_name?: string | null;
+  delegated_from_email?: string | null;
+  delegation_count?: number;
   created_at: Date | string;
 }
 
@@ -206,7 +209,10 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
   return out;
 }
 
-export function buildPdfSealSigners(signers: readonly SignSignerForSeal[]): PdfSealCertificateSigner[] {
+export function buildPdfSealSigners(
+  signers: readonly SignSignerForSeal[],
+  options?: { correctedSignerIds?: ReadonlySet<string> },
+): PdfSealCertificateSigner[] {
   const signed = signers
     .filter((s) => s.signer_role !== 'cc' && s.status === 'signed' && s.signed_at !== null)
     .sort((a, b) => {
@@ -224,6 +230,10 @@ export function buildPdfSealSigners(signers: readonly SignSignerForSeal[]): PdfS
       : s.otp_verified_at !== null
         ? 'verified'
         : 'unverified';
+    const delegatedFromName = s.delegated_from_name ? s.delegated_from_name.trim().slice(0, 200) || null : null;
+    const delegatedFromMaskedEmail = delegatedFromName ? maskEmail(s.delegated_from_email ?? null) : null;
+    const delegationCount = s.delegation_count ?? 0;
+    const recipientCorrected = options?.correctedSignerIds?.has(s.id) === true;
     return {
       name: s.name.trim().slice(0, 200) || 'Signer',
       roleLabel: s.role_label.trim().slice(0, 100) || 'Signer',
@@ -233,6 +243,14 @@ export function buildPdfSealSigners(signers: readonly SignSignerForSeal[]): PdfS
       signedAtIso: new Date(s.signed_at!).toISOString(),
       ipHashPrefix: ipHashPrefixOf(s.signer_ip_hash),
       ...(s.signature_kind ? { signatureKind: s.signature_kind } : {}),
+      ...(delegatedFromName
+        ? {
+            delegatedFromName,
+            delegatedFromMaskedEmail,
+            delegationCount: Math.max(1, Math.min(2, delegationCount)),
+          }
+        : {}),
+      ...(recipientCorrected ? { recipientCorrected: true } : {}),
     };
   });
 }
@@ -244,14 +262,21 @@ export function buildPdfSealCertificate(input: {
   completedAtIso: string;
   eventChainTipHash: string;
   signers: readonly SignSignerForSeal[];
+  events?: ReadonlyArray<{ signer_id: string | null; event_type: string }>;
 }): PdfSealCertificate {
+  const correctedSignerIds = new Set<string>();
+  for (const ev of input.events ?? []) {
+    if (ev.event_type === 'signer_corrected' && ev.signer_id) {
+      correctedSignerIds.add(ev.signer_id);
+    }
+  }
   return {
     certificateCode: input.certificateCode,
     envelopeTitle: input.envelopeTitle.trim().slice(0, 300) || 'Document',
     sourceSha256: input.sourceSha256,
     completedAtIso: input.completedAtIso,
     eventChainTipHash: input.eventChainTipHash,
-    signers: buildPdfSealSigners(input.signers),
+    signers: buildPdfSealSigners(input.signers, { correctedSignerIds }),
   };
 }
 

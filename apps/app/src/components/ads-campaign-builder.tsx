@@ -60,6 +60,7 @@ import {
   budgetTextOf,
 } from '../lib/ads-campaigns.ts';
 import { toast } from '../lib/toast.ts';
+import { ManageSection } from './ads-manage.tsx';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText, Field, focusFirstInvalid } from './ui.tsx';
@@ -248,7 +249,7 @@ export function CampaignBuilder({
           </Link>
         </Alert>
       )}
-      {approved && draft && <LaunchNote draft={draft} canManage={canManage} />}
+      {approved && draft && <LaunchNote draft={draft} canManage={canManage} slug={slug} />}
       {draft?.origin === 'ai' && !frozen && <p className="text-sm text-muted-foreground">{t('campaigns.draftedHint')}</p>}
       {moved && dirty && !frozen && draft && (
         <Alert role="status" data-testid="campaign-moved">
@@ -514,7 +515,7 @@ export function CampaignBuilder({
 // What an approved plan's launch is (W2-2..W2-4c, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
 // not started, which releases the amount at once, retry one that needs attention (W2-4b..W2-4c), and stop one that has started (W2-4a): the commitment stays to at least today,
 // and the ads it made at the platform are paused.
-function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canManage: boolean }) {
+function LaunchNote({ draft, canManage, slug }: { draft: AdsCampaignDraftView; canManage: boolean; slug: string }) {
   const t = useTranslations('ads');
   const root = useTranslations();
   const f = useFormat();
@@ -562,7 +563,7 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
     );
   }
   if (launch.state === 'launching' || launch.state === 'needs_attention' || launch.state === 'live') {
-    return (
+    const note = (
       <Alert role="status" data-testid="campaign-launch">
         <p>
           {launch.state === 'live'
@@ -611,6 +612,15 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
         {retry.error && <ErrorText>{errorMessage(retry.error)}</ErrorText>}
         {stop.error && <ErrorText>{errorMessage(stop.error)}</ErrorText>}
       </Alert>
+    );
+    // A live launch is managed under its note (ads W4, #3835): the Manage section sits beside the note, not inside it, since the note is a live region and holds forms and lists.
+    return launch.state === 'live' ? (
+      <div className="space-y-3">
+        {note}
+        <ManageSection launch={launch} canManage={canManage} slug={slug} />
+      </div>
+    ) : (
+      note
     );
   }
   return (

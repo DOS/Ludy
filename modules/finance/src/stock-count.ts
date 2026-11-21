@@ -32,6 +32,8 @@ import { money } from '@crove/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';
+import { surplusAmount } from './domain/stock-surplus.ts';
+import { surplusSource, surplusStanding } from './stock-surplus.ts';
 import { countDescription, countDifferences, type CountItem, type CountLine, type CountResult } from './domain/stock-count.ts';
 import { monthFigures, nextMonth, previousMonth } from './domain/stock-cost.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
@@ -444,6 +446,11 @@ export const listStockCounts = defineQuery({
         FROM crove_finance.stock_move m WHERE m.org_id = ${ctx.orgId}::uuid AND m.count_line_id = ANY (${confirmedLineIds}::uuid[])`.execute(ctx.trx);
       for (const m of moves) adjustments.set(m.count_line_id, { quantity: m.quantity, amount: m.amount });
     }
+    // The surplus of each confirmed count (what its adjustments brought in), and the voucher that resolved it or the proposal of one that waits (#3712 slice 2a).
+    const resolutions = new Map<string, { voucherId: string | null; proposalId: string | null }>();
+    for (const head of rows) {
+      if (head.status === 'confirmed') resolutions.set(head.id, await surplusStanding(ctx, head.id));
+    }
     const books = new Map<string, Awaited<ReturnType<typeof bookFigures>>>();
     const out: StockCount[] = [];
     for (const head of rows) {
@@ -489,6 +496,9 @@ export const listStockCounts = defineQuery({
         createdAt: iso(head.created_at),
         confirmedAt: head.confirmed_at === null ? null : iso(head.confirmed_at),
         voucherId: head.voucher_id,
+        surplus: head.status === 'confirmed' ? surplusAmount(shown.map((l) => ({ amount: l.value }))) : '0',
+        surplusVoucherId: resolutions.get(head.id)?.voucherId ?? null,
+        surplusProposalId: resolutions.get(head.id)?.proposalId ?? null,
         lines: shown.map((l) => ({
           itemId: l.itemId,
           code: l.code,
@@ -508,4 +518,4 @@ export const listStockCounts = defineQuery({
 });
 
 export const stockCountCommands = [createStockCount, cancelStockCount, confirmEmptyStockCount, prepareStockCount, confirmStockCount];
-export const stockCountQueries = [previewStockCount, listStockCounts];
+export const stockCountQueries = [previewStockCount, listStockCounts, surplusSource];

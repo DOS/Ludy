@@ -28,7 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.');
 
@@ -131,7 +131,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
   }
-  // The settlement posted (Dr 131 / Cr 511), the state a payout needs.
+  // The settlement posted (Dr 131 / Cr 5111), the state a payout needs.
   const post = async (o: Org, settlementId: string) => approve(o, (await askSettlement(o, settlementId)).proposalId);
   const payloadOf = async (o: Org, proposalId: string) =>
     (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
@@ -344,6 +344,44 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const after = await worklist(o);
     expect(after.accrualReversals).toEqual([]);
     expect(after.accruals).toEqual([]);
+  });
+
+  // The acceptance of #3711: a settlement with fees, the payout that leaves the fees on 331, the month-end accrual to 335, its reversal on the first day of the next month and the platform's fee invoice
+  // (the ordinary purchase entry: Dr expense, Dr 1331 / Cr 331, the platform party on the 331 line) tie 131, 331 and 335 to zero, and the fees are expensed once.
+  it('ties 131, 331 and 335 to zero after the fee invoice: settlement, payout, month-end accrual, its reversal, then the invoice (#3711)', async () => {
+    const o = await companyWithFees();
+    const party = await partyOf(o, 'shopee');
+    const net = async () =>
+      Object.fromEntries(
+        (await rows<{ a: string; n: string }>(
+          "SELECT account_code AS a, (sum(debit) - sum(credit))::bigint::text AS n FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '331', '335', '6421', '1331') GROUP BY 1",
+          [o.orgId],
+        )).map((r) => [r.a, Number(r.n)]),
+      );
+    // After the settlement and the payout: 131 is cleared, the fees kept wait on 331 (debit).
+    expect(await net()).toMatchObject({ '131': 0, '331': 12000 });
+    // The month-end accrual: Dr 6421 / Cr 335 of what waits on 331, as the work list offers it, approved by a person.
+    today.value = '2026-10-31';
+    const [offer] = (await worklist(o)).accruals;
+    await approve(o, (await askAccrual(o, offer as NonNullable<typeof offer>)).proposalId);
+    expect(await net()).toMatchObject({ '131': 0, '331': 12000, '335': -12000, '6421': 12000 });
+    // From the first day of the next month it is reversed, so the invoice's own expense is not counted twice.
+    today.value = '2026-11-01';
+    const [reversal] = (await worklist(o)).accrualReversals;
+    const reversed = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: reversal?.entryId, entryDate: reversal?.reverseOn, reason: 'Đảo trích trước phí sàn tháng 10/2026' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, reversed.proposalId);
+    expect(await net()).toMatchObject({ '131': 0, '331': 12000, '335': 0, '6421': 0 });
+    // The platform's fee invoice for the 12 000 (11 111 of fees and 889 of VAT, 8%): the ordinary purchase entry, naming the platform on the 331 line.
+    await rows(
+      `WITH e AS (INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-05', 'Hóa đơn phí sàn Shopee', 'test', $2, $3) RETURNING id)
+       INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+       SELECT $1, e.id, v.n, v.account, v.debit, v.credit, v.party, $3 FROM e, (VALUES (1, '6421', 11111, 0, NULL::uuid), (2, '1331', 889, 0, NULL::uuid), (3, '331', 0, 12000, $4::uuid)) AS v(n, account, debit, credit, party)`,
+      [o.orgId, randomUUID(), o.entity, party],
+    );
+    // 131, 331 and 335 are all zero; the fees are expensed once (the invoice's 11 111) and the VAT sits on 1331.
+    expect(await net()).toEqual({ '131': 0, '331': 0, '335': 0, '6421': 11111, '1331': 889 });
+    // The Sàn read agrees: nothing waits for an invoice any more, so no age and no flag.
+    expect((await balance(o)).rows[0]).toMatchObject({ platform: 'shopee', awaitingPayout: '0', feesAwaitingInvoice: '0' });
   });
 
   it('does not take a tagged voucher that is not an accrual for the platform\'s standing accrual', async () => {

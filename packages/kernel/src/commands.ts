@@ -2,6 +2,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   ANOMALY_CHECK_PREFIX,
+  ENGAGE_PROPOSALS,
   MAX_IMPORT_BYTES,
   MAX_MEETING_AUDIO_BYTES,
   MAX_MEETING_VIDEO_BYTES,
@@ -36,7 +37,10 @@ import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
 import { extensionCommands } from './extension.ts';
 import { mcpCommands } from './mcp.ts';
+import { conversationProposalCommands } from './engage-proposals.ts';
 import { conversationCommands } from './conversations.ts';
+import { engageWakeCommands } from './engage-wake.ts';
+import { mcpEngageWriteCommands } from './mcp-write.ts';
 import {
   actorRef,
   addAuthor,
@@ -116,12 +120,18 @@ const PROPOSAL_COMMANDS = new Set([
   'ads.cap.set',
   'ads.launches.unblock',
   'ads.campaign.launch',
+  // Managing a running ad (ADR-0043, #3835, W4): what can start or raise spend on a live launch, approved like a launch. None posts to the ledger.
+  'ads.object.resume',
+  'ads.budget.raise',
+  'ads.schedule.extend',
   // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document, posted to no ledger.
   'finance.einvoice.issue',
   // A payment to a supplier approved in Ludy (#3113 S2): posts to no ledger (Ludy moves no money).
   'finance.supplier_payment.record',
   // The settlement of an approved supplier payment (#3700 S3c): records a bank voucher that names the payment and moves it to paid.
   'finance.supplier_payment.settle.record',
+  // What an AI coworker proposes in the Engage lines (E4 #3863): the proposal-only twins of a reply, a quote, a booking change, a post and the ads that only reduce spend. Each runs its original as the approver.
+  ...ENGAGE_PROPOSALS.map((p) => p.command),
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -964,7 +974,7 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
 // The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
 // #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
 // item by item with BULK_NOT_ALLOWED, without running them.
-const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue', 'finance.supplier_payment.record', 'finance.supplier_payment.settle.record'];
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend', 'finance.einvoice.issue', 'finance.supplier_payment.record', 'finance.supplier_payment.settle.record', ...ENGAGE_PROPOSALS.map((p) => p.command)];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
@@ -1239,6 +1249,9 @@ const otherKernelCommands = [
   ...extensionCommands,
   ...mcpCommands,
   ...conversationCommands,
+  ...conversationProposalCommands,
+  ...engageWakeCommands,
+  ...mcpEngageWriteCommands,
   setTaxCode,
   setVatFilingPeriod,
   setApprovalPreset,

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
+import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, isEngageProposalKind, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -13,6 +13,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { EngageProposalCard, EngageProposalHiddenCard } from '../components/engage-proposal-card.tsx';
 import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
@@ -27,7 +28,7 @@ import { PROPOSAL_STATUS_VARIANT } from '../lib/status.ts';
 import { isZeroAmount, linesBalance, previewPurchaseJournal, previewSalesJournal } from '../lib/decimal.ts';
 import { nextDay, postingDateAllowed } from '../lib/period-lock.ts';
 import { useFormat } from '../i18n/provider.tsx';
-import { visibleBidi } from '../lib/ads-change.ts';
+import { isAdsManageChange, visibleBidi } from '../lib/ads-change.ts';
 import { invoiceCheckMessage } from '../lib/invoice-checks.ts';
 import { parseExchangeRate } from '../lib/exchange-rate.ts';
 import { reversalErrorMessage } from '../lib/reversal.ts';
@@ -42,6 +43,7 @@ import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
@@ -417,6 +419,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const adsLaunch = adsView.data?.change?.change === 'campaign_launch' ? adsView.data.change : null;
   // This server has no launch writer for the plan's account (#3675): approving holds the amount and creates nothing, so the words say that.
   const adsHeldOnly = adsLaunch !== null && adsView.data?.canLaunch === false;
+  // A resume, a budget raise or a longer schedule of a running ad (W4, #3835) spends like a launch: it is approved one at a time with the second factor, and its button, toast and
+  // subtitle name the largest amount the launch can spend with it.
+  const adsManage = adsView.data?.change && isAdsManageChange(adsView.data.change) ? adsView.data.change : null;
   // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
   const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
   // The invoice the approval would send. Approving waits for it: with no view of the invoice (still loading, or the read failed) nothing can be approved.
@@ -450,7 +455,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const latePosting = (invoiceLocked || invoiceBeforeOpening) && postLate ? chosenPostingDate : null;
   const latePostingValid = latePosting === null || (closedThrough !== null && postingDateAllowed(latePosting, closedThrough, vietnamToday()));
   const journal = useMemo(
-    () => (payload ? (payload.direction === 'sale' ? previewSalesJournal : previewPurchaseJournal)(lines, payload.invoice.vatTotal) : []),
+    () => (payload ? (payload.direction === 'sale' ? previewSalesJournal(lines, payload.invoice.vatTotal, payload.regime) : previewPurchaseJournal(lines, payload.invoice.vatTotal)) : []),
     [payload, lines],
   );
   const accountName = (code: string) => accounts.data?.find((a) => a.code === code)?.name ?? '';
@@ -479,7 +484,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t(adsHeldOnly ? 'approvedCampaignHeldToast' : 'approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t(adsHeldOnly ? 'approvedCampaignHeldToast' : 'approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : adsManage ? t('approvedAdsManageToast', { amount: f.money(adsManage.amount, adsManage.currency) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : engage ? t('approvedEngageToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
   // The dialog closes as soon as the approval is sent again, while the approve button is disabled and cannot take focus: once the request is over, and the page is
   // still here (an ordinary refusal), focus goes back to the button.
@@ -491,7 +496,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       approveRef.current?.focus();
     }
   }, [stepUp, approve.isPending]);
-  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
+  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : engage ? t('rejectedEngageToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
     orpc.inbox.edit.mutationOptions({
@@ -533,7 +538,11 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A general journal voucher (NVK, #888) is approved as shown too.
   const journalVoucher = item?.journalVoucher ?? null;
   const journalVoucherCode = (journalVoucher && item?.status === 'executed' && item.result?.voucherCode) || null;
-  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue;
+  // What an AI coworker asks to do in an Engage line (E4 #3863): approved as shown, on its own card, like an ads change.
+  const engage = item?.engage ?? null;
+  // A member or a viewer who opens one gets no `engage` view from the kernel (only owners and admins read the proposed text); they see a plain card, not the invoice layout.
+  const engageHidden = item !== undefined && engage === null && isEngageProposalKind(item.kind);
+  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue || engage !== null || engageHidden;
   const failed = payload?.checks.filter((c) => c.status === 'fail').length ?? 0;
   const blocked = payload?.checks.some((c) => c.status === 'fail' && BLOCKING_CHECK_IDS.includes(c.id)) ?? false;
   // As the kernel decides (kernel.proposal.approve): an XML invoice whose signature is not verified, including one read
@@ -663,6 +672,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending ? (
       <>
         {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+        {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
         {reextractButton}
         {item.canReject && (
           // The reason is asked in a dialog (#1512) that stays open until the rejection is done, so a refusal is
@@ -746,7 +756,12 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         )}
         {item.canApprove && ads && (
           <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {adsLaunch ? t(adsHeldOnly ? 'approveCampaignHeldOnly' : 'approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : t('approveAds')}
+            {adsLaunch ? t(adsHeldOnly ? 'approveCampaignHeldOnly' : 'approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : adsManage ? t('approveAdsManage', { amount: f.money(adsManage.amount, adsManage.currency) }) : t('approveAds')}
+          </Button>
+        )}
+        {item.canApprove && engage && (
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {t('approveEngage')}
           </Button>
         )}
         {item.canApprove && issue && (
@@ -763,6 +778,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     ) : (
       <>
         {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+        {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
         {reextractButton}
         {item.canResubmit && (
           <ConfirmDialog
@@ -826,17 +842,19 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       ? t('journalVoucherSubtitlePosted', { code: journalVoucherCode, date: f.date(journalVoucher.date) })
                       : t('journalVoucherSubtitle', { date: f.date(journalVoucher.date) })
                     : ads
-                      ? t(adsLaunch ? (adsHeldOnly ? 'adsLaunchHeldSubtitle' : 'adsLaunchSubtitle') : 'adsSubtitle')
+                      ? t(adsLaunch ? (adsHeldOnly ? 'adsLaunchHeldSubtitle' : 'adsLaunchSubtitle') : adsManage ? 'adsManageSubtitle' : 'adsSubtitle')
                       : issue
                         ? t('issueSubtitle')
-                        : undefined
+                        : engage
+                          ? t('engageSubtitle')
+                          : undefined
           }
           actions={wide || !pending ? headerActions : undefined}
         />
       </div>
       <StepUpDialog
         open={stepUp}
-        action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
+        action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : engage ? t('stepUpApproveEngage') : t('stepUpApprove')}
         onVerified={retryApproval}
         onCancel={() => approve.reset()}
         returnFocus={() => approveRef.current}
@@ -916,6 +934,18 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('adsFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('adsNotEligible')}</p>}
           <AdsProposalCard id={item.id} title={item.title} slug={slug} />
+        </div>
+      )}
+      {engage && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('engageFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('engageNotEligible')}</p>}
+          <EngageProposalCard engage={engage} kind={item.kind} status={item.status} client={item.requestedByMcp ?? null} slug={slug} />
+        </div>
+      )}
+      {engageHidden && (
+        <div className="mb-6">
+          <EngageProposalHiddenCard status={item.status} client={item.requestedByMcp ?? null} />
         </div>
       )}
       {issue && (
@@ -1264,13 +1294,14 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
   const range = (from: string | null, to: string | null) =>
     from && to ? t('exportRange', { from: f.date(from), to: f.date(to) }) : from ? t('exportFrom', { from: f.date(from) }) : to ? t('exportTo', { to: f.date(to) }) : t('exportAll');
   const items = [
-    ...(timeline.data?.items ?? []).map((e) => ({ id: e.id, at: e.at, summary: e.summary, actorType: e.actorType, actorName: e.actorName })),
+    ...(timeline.data?.items ?? []).map((e) => ({ id: e.id, at: e.at, summary: e.summary, actorType: e.actorType, actorName: e.actorName, actorOrigin: e.actorOrigin })),
     ...(exports.data ?? []).map((e) => ({
       id: `export:${e.id}`,
       at: e.at,
       summary: t('exported', { file: t(`exportFormats.${e.format}`), range: range(e.from, e.to) }),
       actorType: 'user' as const,
       actorName: e.actorName,
+      actorOrigin: 'ui' as const,
     })),
   ].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   return (
@@ -1292,6 +1323,7 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
                 <p className="text-xs text-subtle-foreground">
                   {f.dateTime(e.at)} · {e.actorType === 'system' ? t('timelineSystem') : (e.actorName ?? t('timelineFormer'))}
                   {e.actorType === 'agent' ? ` (${t('timelineAgent')})` : ''}
+                  <AiWrittenBadge actorOrigin={e.actorOrigin} className="ml-1" />
                 </p>
               </li>
             ))}

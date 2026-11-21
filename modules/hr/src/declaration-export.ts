@@ -15,7 +15,7 @@ import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, zHrLaborCheckAudit, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery, type HrLaborCheckAsk, type HrLaborCheckAudit, type HrLaborCheckKind } from '@crove/kernel-contract';
 import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind, type ProbationRoleTier } from '@crove/l10n-vn';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type QueryContext } from '@crove/kernel-runtime';
-import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationContractTerm, type DeclarationContractType, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
+import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, fallbackTaxCode, quarterMonths, type DeclarationBreakdown, type DeclarationContractTerm, type DeclarationContractType, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { build01PliReport, buildLaborRegister, parse01PliPeriod, type LaborRegisterPerson } from './labor-register.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';
 
@@ -81,7 +81,7 @@ function breakdownOf(raw: unknown, kind: string): DeclarationBreakdown | null {
   return { insurance: { suspended: b.insurance.suspended, funds: b.insurance.funds.map((f) => ({ fund: f.fund, wage: f.wage, employee: f.employee, employer: f.employer })) }, tax: b.tax };
 }
 
-type LegalEntityRow = { id: string; name: string; tax_code: string | null };
+type LegalEntityRow = { id: string; name: string; tax_code: string | null; is_default: boolean };
 type EmploymentRow = {
   id: string;
   employee_id: string;
@@ -128,8 +128,8 @@ type SealedEmployeeRow = {
 
 async function resolveLegalEntity(ctx: QueryContext, legalEntityId?: string): Promise<LegalEntityRow> {
   const entity = legalEntityId
-    ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst()
-    : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
+    ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst()
+    : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
   if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng kê');
   return entity;
 }
@@ -580,7 +580,10 @@ export const declarationGet = defineQuery({
     // before anything is read or opened, and for every caller (the download route and the screen's read).
     if (ctx.actor.type !== 'user' || !hasFreshMfa(ctx.actor)) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    const employer = { name: entity.name, taxCode: entity.tax_code, address: null };
+    const tenantAddress = entity.is_default
+      ? ((await ctx.trx.selectFrom('crove_kernel.tenant').select('address').where('org_id', '=', ctx.orgId).executeTakeFirst())?.address ?? null)
+      : null;
+    const employer = { name: entity.name, taxCode: entity.tax_code, address: tenantAddress };
 
     if (input.kind === 'labor_register' || input.kind === '01pli') {
       const rows = await ctx.trx
@@ -754,7 +757,7 @@ export const declarationGet = defineQuery({
           employeeId: e.id,
           name: e.display_name,
           birthDate: !erased && e.birth_date !== null ? iso(e.birth_date) : null,
-          taxCode: c.taxCode ?? c.identityNumber ?? null,
+          taxCode: c.taxCode ?? fallbackTaxCode(c.identityNumber),
           insuranceNumber: c.insuranceNumber ?? null,
           identityNumber: c.identityNumber ?? null,
           position: erased ? null : (e.job_title ?? null),
@@ -768,7 +771,7 @@ export const declarationGet = defineQuery({
     const d02Input = (persons: DeclarationPerson[]) => {
       const previous = months[1] as string;
       const previousLines = approvedMonths.includes(previous) ? lines.filter((l) => l.month === previous && l.kind === 'pay') : null;
-      return { month: input.period, employer, persons, lines: lines.filter((l) => l.month === input.period), previousLines };
+      return { month: input.period, employer, persons, lines: lines.filter((l) => l.month === input.period), previousLines, approvedMonths };
     };
     let document: Omit<HrDeclarationDocument, 'used'>;
     let persons: DeclarationPerson[];
@@ -789,18 +792,18 @@ export const declarationGet = defineQuery({
       } else if (input.kind === 'qtt') {
         identityFor = taxCodeFor = buildAnnualListing({ year: Number(input.period), employer, persons: blank, lines, approvedMonths }).printed;
       } else {
-        const listing = buildCertificatesListing({ year: Number(input.period), employer, persons: blank, lines });
+        const listing = buildCertificatesListing({ year: Number(input.period), employer, persons: blank, lines, approvedMonths });
         identityFor = listing.certified;
         taxCodeFor = new Set([...listing.certified, ...listing.authorizers]);
       }
       const clear = await openSealedFor(ctx, employees, taxCodeFor, ['taxCode']);
       const needsIdentity = new Set([...identityFor, ...[...taxCodeFor].filter((id) => clear.get(id)?.taxCode === undefined)]);
       for (const [id, c] of await openSealedFor(ctx, employees, needsIdentity, ['identityNumber'])) clear.set(id, { ...clear.get(id), ...c });
-      for (const c of clear.values()) if (c.taxCode === undefined && c.identityNumber !== undefined) taxCodeFromIdentity += 1;
+      for (const c of clear.values()) if (c.taxCode === undefined && fallbackTaxCode(c.identityNumber) !== null) taxCodeFromIdentity += 1;
       persons = personsOf(clear);
       if (input.kind === 'kk') document = buildQuarterly({ quarter: input.period, employer, persons, lines, approvedMonths });
       else if (input.kind === 'qtt') document = buildAnnual({ year: Number(input.period), employer, persons, lines, approvedMonths });
-      else document = buildCertificates({ year: Number(input.period), employer, persons, lines });
+      else document = buildCertificates({ year: Number(input.period), employer, persons, lines, approvedMonths });
     }
     if (taxCodeFromIdentity > 0) document.notes.push(`${taxCodeFromIdentity} người chưa có mã số thuế riêng trong hồ sơ nên cột mã số thuế lấy số định danh cá nhân (từ 2025-07-01 hai số này thường trùng nhau): kiểm tra lại.`);
     if (employer.taxCode === null) document.notes.push('Đơn vị chưa có mã số thuế trong hồ sơ pháp nhân.');

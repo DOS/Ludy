@@ -38,6 +38,7 @@ const RETURNS: Readonly<Record<string, string>> = {
   meeting_platform_recording_claim_failed: 'void',
   meeting_platform_recording_imported: 'void',
   meeting_platform_recording_sweep: 'TABLE(staging_key text)',
+  meeting_platform_ring: 'integer',
 };
 
 // Who may execute each (the roles that hold EXECUTE, and nobody else; the helpers are executable by no login role).
@@ -62,7 +63,14 @@ const EXECUTORS: Readonly<Record<string, readonly string[]>> = {
   meeting_platform_recording_claim_failed: ['crove_app'],
   meeting_platform_recording_imported: ['crove_app'],
   meeting_platform_recording_sweep: ['crove_worker'],
+  meeting_platform_ring: ['crove_app'],
 };
+
+// Definers an open PR adds (the two-step landing of the invariant suite: this list first, in a PR of its own, then the PR with the migration moves each one into RETURNS and EXECUTORS above). A name here may be
+// absent from the database; when it is there it must return exactly this type and be executable by exactly these roles, and any other function of the family still fails the exact check below.
+// meeting_platform_ring (Zoom's webhook doorbell, #3175): clears the last listing of the active connections of one account whose org has Meetings on (it asks org_app_on) so the sweep lists them again, returns only how many; the API login runs it.
+const PENDING_RETURNS: Readonly<Record<string, string>> = {};
+const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = {};
 
 // A column name that would carry something a person wrote or the platform titled.
 const TEXTUAL_NAME = /title|summary|body|text|name|subject|note|transcript|decision|message/i;
@@ -111,7 +119,10 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
 
   it('has exactly the pinned definers, each returning exactly its pinned columns', async () => {
     const { rows } = await functions();
-    expect(Object.fromEntries(rows.map((r) => [r.proname, r.result]))).toEqual(RETURNS);
+    const got = Object.fromEntries(rows.map((r) => [r.proname, r.result]));
+    // A pending definer may be absent; when present it is pinned like the others.
+    const expected = { ...RETURNS, ...Object.fromEntries(Object.entries(PENDING_RETURNS).filter(([name]) => name in got)) };
+    expect(got).toEqual(expected);
   });
 
   it('returns no text-like column from any worker-facing definer except the pinned technical ones (ids, provider, platform id, staging key, key id)', async () => {
@@ -142,6 +153,9 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
     const got: Record<string, string[]> = {};
     for (const r of rows) if (r.ok) (got[r.proname] ??= []).push(r.role);
     for (const name of Object.keys(EXECUTORS)) expect([...(got[name] ?? [])].sort(), name).toEqual([...(EXECUTORS[name] ?? [])].sort());
+    // A pending definer that exists is held to its own pin; one that does not exist yet has no executor.
+    const present = new Set((await functions()).rows.map((r) => r.proname));
+    for (const name of Object.keys(PENDING_EXECUTORS)) expect([...(got[name] ?? [])].sort(), name).toEqual(present.has(name) ? [...(PENDING_EXECUTORS[name] ?? [])].sort() : []);
     const publicExec = await admin((c) =>
       c.query<{ proname: string }>(
         `SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace

@@ -1,0 +1,16 @@
+{
+  "value": [
+    {
+      "id": "series-transcript-first",
+      "createdDateTime": "2026-11-10T09:03:00Z",
+      "endDateTime": "2026-11-10T09:58:00Z",
+      "transcriptContentUrl": "https://graph.microsoft.com/v1.0/$metadata#transcript"
+    },
+    {
+      "id": "series-transcript-second",
+      "createdDateTime": "2026-11-12T09:02:00Z",
+      "endDateTime": "2026-11-12T09:57:00Z",
+      "transcriptContentUrl": "https://graph.microsoft.com/v1.0/$metadata#transcript"
+    }
+  ]
+}

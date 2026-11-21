@@ -6,16 +6,19 @@ import type { MemberRole } from '@crove/db';
 import {
   DEFAULT_TIME_ZONE,
   NOTE_BODY_MAX,
+  TODO_LISTS_MAX,
   zId,
   zNoteAcceptSummary,
+  zTimeZone,
   zTodoAcceptSuggestions,
+  zonedDate,
   type NoteVyStatus,
   type NoteWritten,
   type TodoAcceptSuggestionsResult,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { assertAuthor, assertNotInTrash, loadForChange } from './notes.ts';
-import { detailsOf, due, ownKeys, placeBetween, remindAt } from './todos.ts';
+import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
+import { TODO_SUMMARY_COLUMNS, detailsOf, due, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -248,6 +251,10 @@ export const noteAcceptSummary = defineCommand({
       throw new DomainError('NOTE_TOO_LONG', 422, 'Nội dung ghi chú sau khi chèn vượt quá giới hạn cho phép');
     }
 
+    if (nextBody !== before.body) {
+      await recordNoteVersionSnapshot(ctx, before);
+    }
+
     const row = await ctx.trx
       .updateTable('crove_notes.note')
       .set({
@@ -373,5 +380,122 @@ export const todoAcceptSuggestions = defineCommand({
   },
 });
 
+// Member-scoped open personal to-dos for Vy daily planner (Notes v2 T4b, #3563): writers only, bounded batch read under caller RLS.
+export const notesVyPlanInputs = defineQuery({
+  name: 'notes.vy.plan_inputs',
+  input: z.strictObject({ timeZone: zTimeZone.optional() }),
+  access: WRITERS,
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const now = new Date();
+    const timeZone = input.timeZone ?? DEFAULT_TIME_ZONE;
+    const today = zonedDate(timeZone, now.getTime());
+    const [todoRows, listRows] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select([...TODO_SUMMARY_COLUMNS, 'details'])
+        .where('org_id', '=', ctx.orgId)
+        .where('owner_user_id', '=', userId)
+        .where('status', '=', 'open')
+        .where('deleted_at', 'is', null)
+        .orderBy('due_on')
+        .orderBy('priority')
+        .orderBy('updated_at', 'desc')
+        .orderBy('id')
+        .limit(120)
+        .execute(),
+      ctx.trx
+        .selectFrom('crove_notes.todo_list')
+        .select(['id', 'name'])
+        .where('org_id', '=', ctx.orgId)
+        .where('owner_user_id', '=', userId)
+        .where('deleted_at', 'is', null)
+        .limit(TODO_LISTS_MAX)
+        .execute(),
+    ]);
+    const listNames = new Map(listRows.map((l) => [l.id, l.name]));
+    return {
+      today,
+      todos: todoRows.map((row) => {
+        const s = todoSummaryRow(row, now);
+        const overdue = s.overdue || (s.dueOn !== null && s.dueOn < today);
+        const group: 'overdue' | 'today' | 'later' | 'none' = overdue
+          ? 'overdue'
+          : s.dueOn === today
+            ? 'today'
+            : s.dueOn !== null
+              ? 'later'
+              : 'none';
+        return {
+          id: s.id,
+          title: s.title,
+          details: (row.details ?? '').trim().slice(0, 240) || null,
+          priority: s.priority,
+          tags: s.tags,
+          dueOn: s.dueOn,
+          dueTime: s.dueTime,
+          overdue,
+          group,
+          listName: s.listId ? (listNames.get(s.listId) ?? null) : null,
+          revision: s.revision,
+        };
+      }),
+    };
+  },
+});
+
+// Member-scoped unfiled editable notes and readable notebooks for Vy inbox organizer (Notes v2 E5b, #3563): writers only, bounded batch read under caller RLS.
+export const notesVyOrganizeInputs = defineQuery({
+  name: 'notes.vy.organize_inputs',
+  input: z.strictObject({}),
+  access: WRITERS,
+  handler: async (ctx) => {
+    const userId = userOf(ctx.actor);
+    const isManager = ctx.role === 'owner' || ctx.role === 'admin';
+    let notesQ = ctx.trx
+      .selectFrom('crove_notes.note')
+      .select(['id', 'author_user_id', 'visibility', 'title', 'body', 'tags', 'revision', 'updated_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('deleted_at', 'is', null)
+      .where('archived_at', 'is', null)
+      .where('notebook_id', 'is', null);
+    notesQ = isManager
+      ? notesQ.where((eb) => eb.or([eb('author_user_id', '=', userId), eb('visibility', '=', 'org')]))
+      : notesQ.where('author_user_id', '=', userId);
+
+    const [noteRows, notebookRows] = await Promise.all([
+      notesQ.orderBy('updated_at', 'desc').orderBy('id', 'desc').limit(25).execute(),
+      ctx.trx
+        .selectFrom('crove_notes.notebook')
+        .select(['id', 'name', 'visibility'])
+        .where('org_id', '=', ctx.orgId)
+        .where((eb) => eb.or([eb('author_user_id', '=', userId), eb('visibility', '=', 'org')]))
+        .orderBy('pinned', 'desc')
+        .orderBy('sort_key')
+        .orderBy('id')
+        .limit(50)
+        .execute(),
+    ]);
+
+    return {
+      notes: noteRows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        body: r.body,
+        tags: Array.isArray(r.tags) ? r.tags : [],
+        visibility: r.visibility as 'private' | 'org',
+        updatedAt: new Date(r.updated_at).toISOString(),
+        canEditTags: r.author_user_id === userId,
+        revision: r.revision,
+      })),
+      notebooks: notebookRows.map((nb) => ({
+        id: nb.id,
+        name: nb.name,
+        visibility: nb.visibility as 'private' | 'org',
+      })),
+    };
+  },
+});
+
 export const vyCommands = [noteAcceptSummary, todoAcceptSuggestions];
-export const vyQueries = [notesVyStatus, notesVyAccepted];
+export const vyQueries = [notesVyStatus, notesVyAccepted, notesVyPlanInputs, notesVyOrganizeInputs];

@@ -110,7 +110,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   // It is an org setting (#3582): not on the Inbox, in Settings, and an owner finds it there.
   const inboxUrl = page.url();
   await expect(page.getByTestId('conversation-retention')).toHaveCount(0);
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/apps`);
   const retention = page.getByTestId('conversation-retention-select');
   await expect(retention).toHaveValue('24');
   await retention.selectOption('12');

@@ -7,8 +7,13 @@ import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
+import { chaptersCommands, chaptersQueries } from './chapters.ts';
+import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
+import { titleCommands, titleQueries } from './title.ts';
+import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
+import { glossaryCommands, glossaryQueries } from './glossary.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
 import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
@@ -20,6 +25,11 @@ import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
+import { digestCommands, digestQueries } from './digest.ts';
+import { todayQueries } from './today.ts';
+import { morningCommands, morningQueries } from './morning.ts';
+import { assigneeCommands, assigneeQueries } from './assignee.ts';
+import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
@@ -27,6 +37,7 @@ import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
+import { captureCommands, endCapture, openCapture } from './capture.ts';
 import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
 import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
@@ -159,6 +170,7 @@ interface MeetingRow {
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
   recording_stop_reason: RecordingStopReason | null;
+  platform_transcript_cut: boolean;
   audio_retention_date: Date | string;
   text_retention_date: Date | string | null;
   created_at: Date | string;
@@ -218,6 +230,8 @@ export const meetingCreate = defineCommand({
       readerUserIds: input.readerUserIds,
       extensionTokenId,
     });
+    // A live recording is a capture (ADR-0055 slice 1, #4123), and an extension token always is: asked here, in the meeting's own transaction, so a refused start (CAPTURE_ALREADY_RUNNING) leaves no meeting.
+    const captureKind = input.capture !== undefined || extensionTokenId !== null ? await openCapture(ctx, meetingId, input.capture) : null;
 
     ctx.audit({
       meetingId,
@@ -227,6 +241,7 @@ export const meetingCreate = defineCommand({
       consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
       summaryTemplate: input.summaryTemplate,
+      ...(captureKind !== null ? { capture: captureKind } : {}),
     });
 
     return { meetingId };
@@ -322,6 +337,8 @@ export const meetingRecordingStopped = defineCommand({
     }
     // The media lock first, so a recording being stored at this moment either commits before the checks below or waits for this transaction.
     await lockMeetingMedia(ctx, input.meetingId);
+    // The recorder says the recording is over, whether or not anything was recorded: the call is free again (ADR-0055 slice 1, #4123).
+    await endCapture(ctx, input.meetingId, 'stopped');
     const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
       SELECT EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
           OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
@@ -705,6 +722,7 @@ export const meetingGet = defineQuery({
       consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
       consentNoticeVersion: meeting.consent_notice_version,
       recordingStopReason: meeting.recording_stop_reason,
+      platformTranscriptCut: meeting.platform_transcript_cut,
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
@@ -1004,21 +1022,31 @@ export const meetingsCommands = [
   ...transcribeCommandList,
   ...resultCommands,
   ...notesCommands,
+  ...chaptersCommands,
+  ...chaptersRunCommands,
+  ...titleCommands,
+  ...commitmentsCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
   ...minutesTemplateCommands,
+  ...glossaryCommands,
   ...summaryRunCommands,
   ...summaryReadyCommands,
   ...translateCommands,
   ...translateRunCommands,
   ...askRunCommands,
   ...briefCommands,
+  ...digestCommands,
+  ...morningCommands,
+  ...assigneeCommands,
+  ...adherenceCommands,
   ...agendaCommands,
   ...chatCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...captureCommands,
   ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
@@ -1042,13 +1070,23 @@ export const meetingsQueries = [
   ...transcribeRunQueries,
   ...resultQueries,
   ...notesQueries,
+  ...chaptersQueries,
+  ...chaptersRunQueries,
+  ...titleQueries,
+  ...commitmentsQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
+  ...glossaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
   ...askRunQueries,
   ...briefQueries,
+  ...digestQueries,
+  ...todayQueries,
+  ...morningQueries,
+  ...assigneeQueries,
+  ...adherenceQueries,
   ...agendaQueries,
   ...chatQueries,
   ...linkQueries,

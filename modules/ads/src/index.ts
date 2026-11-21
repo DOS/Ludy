@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { accountCommands, accountQueries } from './accounts.ts';
 import { flagSettingCommands, flagSettingQueries } from './flag-settings.ts';
+import { boostCommands, boostQueries } from './boost.ts';
 import { campaignCommands, campaignQueries } from './campaign-draft.ts';
+import { mcpAdsDraftCommands } from './mcp-draft.ts';
 import { campaignRequestCommands, campaignRequestQueries } from './campaign-request.ts';
 import { launchActivateCommands } from './launch-activate.ts';
+import { manageCommands, manageQueries } from './manage.ts';
+import { mcpAdsQueries } from './mcp.ts';
 import { objectStateCommands, objectStateQueries } from './object-state.ts';
 import { launchRunCommands } from './launch-run.ts';
 import { launchPauseCommands, launchPauseQueries } from './launch-pause.ts';
@@ -18,8 +22,11 @@ import { tokenRevokeCommands } from './token-revoke-commands.ts';
 import { writeConnectionCommands, writeConnectionQueries } from './write-connection.ts';
 
 export * from './accounts.ts';
+export * from './boost-plan.ts';
+export * from './boost.ts';
 export * from './busy.ts';
 export * from './campaign-draft.ts';
+export * from './mcp-draft.ts';
 export * from './campaign-plan.ts';
 export * from './campaign-request.ts';
 export * from './committed-spend.ts';
@@ -32,6 +39,12 @@ export * from './launch-pause.ts';
 export * from './launch-pause-policy.ts';
 export * from './launch-run.ts';
 export * from './launch-steps.ts';
+export * from './engage-proposals.ts';
+import { adsEngageProposalCommands } from './engage-proposals.ts';
+export * from './manage.ts';
+export * from './manage-rules.ts';
+export * from './mcp.ts';
+export * from './manage-state.ts';
 export * from './object-state.ts';
 export * from './spend-flags.ts';
 export * from './summary.ts';
@@ -40,6 +53,6 @@ export * from './today.ts';
 export * from './weekly-note.ts';
 export * from './write.ts';
 
-export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands];
-export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...committedQueries, ...launchPauseQueries, ...objectStateQueries];
+export const adsCommands = [...adsEngageProposalCommands, ...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...boostCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands, ...manageCommands, ...mcpAdsDraftCommands];
+export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...boostQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...committedQueries, ...launchPauseQueries, ...objectStateQueries, ...manageQueries, ...mcpAdsQueries];
 export { adsManifest } from './manifest.ts';

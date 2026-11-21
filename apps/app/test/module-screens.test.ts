@@ -102,6 +102,8 @@ describe('module screens against the router (#1652)', () => {
       '/channels/oauth/$provider/callback',
       '/clients',
       '/login',
+      '/marketplace/oauth/$provider/callback',
+      '/meetings/oauth/$provider/callback',
       '/mfa',
       '/oauth/interaction/$uid',
       '/onboarding',
@@ -227,8 +229,8 @@ describe('module screens against the router (#1652)', () => {
       ],
       // The HR app (#2530): the staff list, for owners and admins.
       ['hr', [['people', ['hr/employees', 'hr/recruiting', 'hr/payroll', 'hr/declarations']]]],
-      // The eSign app (#3325, #3526): envelopes, reusable templates, and offline SHA-256 verifier.
-      ['sign', [['sign', ['sign/envelopes', 'sign/templates', 'sign/verify']]]],
+      // The eSign app (#3325, #3526, #3554): envelopes, reusable templates, offline SHA-256 verifier, and CA settings.
+      ['sign', [['sign', ['sign/envelopes', 'sign/templates', 'sign/verify', 'sign/settings']]]],
       // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
       ['ai', [['ai', ['agents', 'ai-usage', 'ai-connections']]]],
     ]);
@@ -236,7 +238,7 @@ describe('module screens against the router (#1652)', () => {
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'signEnvelopes', 'signTemplates', 'signVerify', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
+      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'signEnvelopes', 'signTemplates', 'signVerify', 'signSettings', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
     ]);
   });
 });
@@ -329,7 +331,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
       expect(screenInstalled(session.modules, path), path).toBe(false);
       expect(await landing(path), path).toBe('/o/acme/overview');
     }
-    for (const path of [...addresses('kernel'), ...addresses('finance')]) expect(await landing(path), path).toBe(path);
+    // The kernel's screens open whatever the modules, but a tab of Settings that serves one app (the sales tab, crm) opens where that app runs.
+    const kernelOpen = MODULE_SCREENS.kernel.routes.filter((r) => !('modules' in r) || r.modules.some((m: string) => session.modules.includes(m))).map((r) => `/o/acme/${r.path.replaceAll(/\$[a-z]+/gi, '0190-abc')}`);
+    for (const path of [...kernelOpen, ...addresses('finance')]) expect(await landing(path), path).toBe(path);
     // The router matches without regard to case, and so does the guard.
     for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/overview');
     session.modules = ['kernel'];

@@ -46,3 +46,21 @@ describe('the consent page and Meetings', () => {
     expect(render(details('member'))).not.toContain('oauth-consent-meetings');
   });
 });
+
+describe('the consent page and the Engage reads (#3860)', () => {
+  it('tells a company connection, in both languages, that it reads the inbox, deals, quotes, bookings and the results of Social and ads', () => {
+    expect(render(details('owner'))).toContain('data-testid="oauth-consent-engage-reads"');
+    expect(render(details('owner'))).toContain(en.oauthConsent.scope.engageReads.slice(0, 60));
+    expect(render(details('admin'), 'vi')).toContain(viMessages.oauthConsent.scope.engageReads.slice(0, 40));
+    expect(en.oauthConsent.scope.engageReads).toMatch(/inbox.*deals and quotes.*bookings.*ads/);
+  });
+
+  it('tells a member connection that it reads only what the member may read, and no bookings, Social results or ads', () => {
+    const html = render(details('member'));
+    expect(html).toContain('data-testid="oauth-consent-engage-reads"');
+    expect(html).not.toContain(en.oauthConsent.scope.engageReads.slice(0, 60));
+    expect(en.oauthConsent.scope.engageReadsMember).toMatch(/no bookings, Social results or ads/);
+    expect(viMessages.oauthConsent.scope.engageReadsMember).toMatch(/không đọc lịch hẹn/);
+  });
+});
+

@@ -12,7 +12,7 @@ type Decimal = ReturnType<typeof money>;
 export const LEAVE_CATEGORIES = ['standard', 'heavy', 'special_heavy'] as const;
 export type LeaveCategory = (typeof LEAVE_CATEGORIES)[number];
 
-export const LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export const LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'] as const;
 export type LeaveEntryKind = (typeof LEAVE_ENTRY_KINDS)[number];
 
 export const LEAVE_WORKWEEKS = ['mon_fri', 'mon_sat', 'all_days'] as const;
@@ -84,6 +84,14 @@ export interface LeaveBalanceResult {
   personalPaidDays: string;
   /** Unpaid leave days keyed by YYYY-MM for months in `year` with unpaid leave > 0. */
   unpaidDaysByMonth: Record<string, string>;
+  /** Total BHXH sickness leave days recorded in `year` (does not consume annual leave). */
+  sicknessBhxhDays: string;
+  /** Total BHXH maternity leave days recorded in `year` (does not consume annual leave). */
+  maternityBhxhDays: string;
+  /** BHXH sickness leave days keyed by YYYY-MM for months in `year` with days > 0. */
+  sicknessBhxhDaysByMonth: Record<string, string>;
+  /** BHXH maternity leave days keyed by YYYY-MM for months in `year` with days > 0. */
+  maternityBhxhDaysByMonth: Record<string, string>;
   rulesUsed: RuleRef[];
 }
 
@@ -241,34 +249,46 @@ function cmpRational(a: Rational, b: Rational): number {
 }
 
 /**
- * Consumes Decree 145/2020/ND-CP Art. 65(4) approved unpaid-leave allowance for one month
- * using exact rational arithmetic so multi-month fractions never accumulate division rounding error.
+ * Consumes a Decree 145/2020/ND-CP Art. 65(4)-(6) monthly leave allowance (approved unpaid leave,
+ * sickness leave, or maternity leave) for one month using exact rational arithmetic so multi-month
+ * fractions never accumulate division rounding error.
  */
-function consumeApprovedUnpaidAllowance(
-  approvedInMonth: Decimal,
+function consumeMonthlyAllowance(
+  leaveInMonth: Decimal,
   totalMonthWork: Decimal,
   allowanceMonthsRemaining: Rational,
-): { coveredDays: Rational; uncoveredApproved: Rational; nextAllowance: Rational } {
-  const approved = toRational(approvedInMonth);
+): { coveredDays: Rational; uncoveredDays: Rational; nextAllowance: Rational } {
+  const days = toRational(leaveInMonth);
   const totalWork = toRational(totalMonthWork);
-  if (approved.num <= ZERO_BI || allowanceMonthsRemaining.num <= ZERO_BI || totalWork.num <= ZERO_BI) {
-    return { coveredDays: ZERO_RATIONAL, uncoveredApproved: approved, nextAllowance: allowanceMonthsRemaining };
+  if (days.num <= ZERO_BI || allowanceMonthsRemaining.num <= ZERO_BI || totalWork.num <= ZERO_BI) {
+    return { coveredDays: ZERO_RATIONAL, uncoveredDays: days, nextAllowance: allowanceMonthsRemaining };
   }
   const maxCoveredDays = mulRational(allowanceMonthsRemaining, totalWork);
-  if (cmpRational(approved, maxCoveredDays) <= 0) {
-    const consumedFraction = divRational(approved, totalWork);
+  if (cmpRational(days, maxCoveredDays) <= 0) {
+    const consumedFraction = divRational(days, totalWork);
     const nextAllowance = subRational(allowanceMonthsRemaining, consumedFraction);
     return {
-      coveredDays: approved,
-      uncoveredApproved: ZERO_RATIONAL,
+      coveredDays: days,
+      uncoveredDays: ZERO_RATIONAL,
       nextAllowance: nextAllowance.num < ZERO_BI ? ZERO_RATIONAL : nextAllowance,
     };
   }
   return {
     coveredDays: maxCoveredDays,
-    uncoveredApproved: subRational(approved, maxCoveredDays),
+    uncoveredDays: subRational(days, maxCoveredDays),
     nextAllowance: ZERO_RATIONAL,
   };
+}
+
+function formatDaysByMonth(byMonth: ReadonlyMap<string, Decimal>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const ym of [...byMonth.keys()].sort()) {
+    const val = byMonth.get(ym);
+    if (val !== undefined && val.greaterThan(0)) {
+      out[ym] = toMoney(val);
+    }
+  }
+  return out;
 }
 
 /**
@@ -331,9 +351,13 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   let openingTotal = parseNonNegativeDays('openingBalanceDays', input.openingBalanceDays);
   let takenAnnual = zero;
   let personalPaid = zero;
+  let sicknessBhxhTotal = zero;
+  let maternityBhxhTotal = zero;
   const unpaidByMonth = new Map<string, Decimal>();
   const approvedUnpaidByMonth = new Map<string, Decimal>();
   const unapprovedUnpaidByMonth = new Map<string, Decimal>();
+  const sicknessByMonth = new Map<string, Decimal>();
+  const maternityByMonth = new Map<string, Decimal>();
   const paidLeaveByMonth = new Map<string, Decimal>();
 
   for (const entry of input.entries ?? []) {
@@ -355,6 +379,12 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
     } else if (entry.kind === 'personal_paid') {
       personalPaid = personalPaid.plus(days);
       paidLeaveByMonth.set(entry.month, (paidLeaveByMonth.get(entry.month) ?? zero).plus(days));
+    } else if (entry.kind === 'sickness_bhxh') {
+      sicknessBhxhTotal = sicknessBhxhTotal.plus(days);
+      sicknessByMonth.set(entry.month, (sicknessByMonth.get(entry.month) ?? zero).plus(days));
+    } else if (entry.kind === 'maternity_bhxh') {
+      maternityBhxhTotal = maternityBhxhTotal.plus(days);
+      maternityByMonth.set(entry.month, (maternityByMonth.get(entry.month) ?? zero).plus(days));
     } else {
       unpaidByMonth.set(entry.month, (unpaidByMonth.get(entry.month) ?? zero).plus(days));
       const bucket = entry.approved === true ? approvedUnpaidByMonth : unapprovedUnpaidByMonth;
@@ -380,6 +410,9 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
 
   const halfRatio = toRational(money(rule.value.halfMonthWorkingDaysRatio));
   let allowanceMonthsRemaining = toRational(money(rule.value.approvedUnpaidMonthsAllowance));
+  let sicknessAllowanceRemaining = toRational(money(rule.value.sicknessMonthsAllowance ?? '0'));
+  const fullMaternityAllowance = toRational(money(rule.value.maternityMonthsAllowancePerEvent ?? '0'));
+  let maternityAllowanceRemaining = fullMaternityAllowance;
   let eligibleMonths = 0;
   if (input.eligibleMonths !== undefined) {
     eligibleMonths = input.eligibleMonths;
@@ -404,6 +437,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       const workedExplicit = input.workedDaysByMonth?.[ym];
       const approvedInMonth = approvedUnpaidByMonth.get(ym) ?? zero;
       const unapprovedInMonth = unapprovedUnpaidByMonth.get(ym) ?? zero;
+      const sicknessInMonth = sicknessByMonth.get(ym) ?? zero;
+      const maternityInMonth = maternityByMonth.get(ym) ?? zero;
       let effectiveRatio: Rational;
 
       if (workedExplicit !== undefined) {
@@ -411,20 +446,24 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           throw invalid(`standardWorkingDays or workingDaysByMonth[${ym}] is required when workedDaysByMonth[${ym}] is provided`);
         }
         const totalMonthWork = money(monthStd.trim());
-        const { coveredDays, nextAllowance } = consumeApprovedUnpaidAllowance(
-          approvedInMonth,
-          totalMonthWork,
-          allowanceMonthsRemaining,
-        );
-        allowanceMonthsRemaining = nextAllowance;
+        const unpaidAlloc = consumeMonthlyAllowance(approvedInMonth, totalMonthWork, allowanceMonthsRemaining);
+        allowanceMonthsRemaining = unpaidAlloc.nextAllowance;
+        const sicknessAlloc = consumeMonthlyAllowance(sicknessInMonth, totalMonthWork, sicknessAllowanceRemaining);
+        sicknessAllowanceRemaining = sicknessAlloc.nextAllowance;
+        const maternityAlloc = consumeMonthlyAllowance(maternityInMonth, totalMonthWork, maternityAllowanceRemaining);
+        maternityAllowanceRemaining = maternityAlloc.nextAllowance;
         const paidLeaveInMonth = paidLeaveByMonth.get(ym) ?? zero;
         const holidayRaw = input.paidHolidayDaysByMonth?.[ym];
         const paidHolidayInMonth = holidayRaw !== undefined ? money(holidayRaw.trim()) : zero;
+        const coveredExtras = addRational(addRational(unpaidAlloc.coveredDays, sicknessAlloc.coveredDays), maternityAlloc.coveredDays);
         const totalEffectiveWork = addRational(
           toRational(money(workedExplicit.trim()).plus(paidLeaveInMonth).plus(paidHolidayInMonth)),
-          coveredDays,
+          coveredExtras,
         );
         effectiveRatio = divRational(totalEffectiveWork, toRational(totalMonthWork));
+        if (maternityInMonth.isZero() && cmpRational(effectiveRatio, ZERO_RATIONAL) > 0) {
+          maternityAllowanceRemaining = fullMaternityAllowance;
+        }
       } else {
         let totalMonthWork: Decimal;
         let activeMonthWork: Rational;
@@ -458,16 +497,23 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           activeMonthWork = toRational(money(String(activeWork)));
         }
 
-        // Decree 145/2020/ND-CP Art. 65(4): employer-approved unpaid leave up to 1 month/year counts as working time.
-        const { uncoveredApproved, nextAllowance } = consumeApprovedUnpaidAllowance(
-          approvedInMonth,
-          totalMonthWork,
-          allowanceMonthsRemaining,
+        // Decree 145/2020/ND-CP Art. 65(4)-(6): approved unpaid leave (up to 1 month/year), accumulated sickness
+        // leave (up to 2 months/year), and maternity leave (up to 6 months/event) count as working time.
+        const unpaidAlloc = consumeMonthlyAllowance(approvedInMonth, totalMonthWork, allowanceMonthsRemaining);
+        allowanceMonthsRemaining = unpaidAlloc.nextAllowance;
+        const sicknessAlloc = consumeMonthlyAllowance(sicknessInMonth, totalMonthWork, sicknessAllowanceRemaining);
+        sicknessAllowanceRemaining = sicknessAlloc.nextAllowance;
+        const maternityAlloc = consumeMonthlyAllowance(maternityInMonth, totalMonthWork, maternityAllowanceRemaining);
+        maternityAllowanceRemaining = maternityAlloc.nextAllowance;
+        const effectiveUnpaid = addRational(
+          addRational(toRational(unapprovedInMonth), unpaidAlloc.uncoveredDays),
+          addRational(sicknessAlloc.uncoveredDays, maternityAlloc.uncoveredDays),
         );
-        allowanceMonthsRemaining = nextAllowance;
-        const effectiveUnpaid = addRational(toRational(unapprovedInMonth), uncoveredApproved);
         const actual = subRational(activeMonthWork, effectiveUnpaid);
         effectiveRatio = actual.num <= ZERO_BI ? ZERO_RATIONAL : divRational(actual, toRational(totalMonthWork));
+        if (maternityInMonth.isZero() && actual.num > ZERO_BI) {
+          maternityAllowanceRemaining = fullMaternityAllowance;
+        }
       }
 
       if (cmpRational(effectiveRatio, halfRatio) >= 0) {
@@ -502,14 +548,6 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   const remainingAnnual = signedBalance.isNegative() ? zero : signedBalance;
   const exceededAnnual = signedBalance.isNegative() ? signedBalance.negated() : zero;
 
-  const unpaidDaysByMonth: Record<string, string> = {};
-  for (const ym of [...unpaidByMonth.keys()].sort()) {
-    const val = unpaidByMonth.get(ym);
-    if (val !== undefined && val.greaterThan(0)) {
-      unpaidDaysByMonth[ym] = toMoney(val);
-    }
-  }
-
   return {
     year: input.year,
     eligibleMonths,
@@ -523,7 +561,11 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
     remainingAnnualDays: toMoney(remainingAnnual),
     exceededAnnualDays: toMoney(exceededAnnual),
     personalPaidDays: toMoney(personalPaid),
-    unpaidDaysByMonth,
+    unpaidDaysByMonth: formatDaysByMonth(unpaidByMonth),
+    sicknessBhxhDays: toMoney(sicknessBhxhTotal),
+    maternityBhxhDays: toMoney(maternityBhxhTotal),
+    sicknessBhxhDaysByMonth: formatDaysByMonth(sicknessByMonth),
+    maternityBhxhDaysByMonth: formatDaysByMonth(maternityByMonth),
     rulesUsed: [{ id: rule.id, kind: rule.kind, key: rule.key, effectiveFrom: rule.effectiveFrom, status: rule.status }],
   };
 }

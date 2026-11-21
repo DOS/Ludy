@@ -14,11 +14,15 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, type ExtractClient } from '@crove/extract-contract';
 import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSuggestInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
+import { readWithSavedColumns } from './marketplace-column-apply.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
+import { pickCandidates } from './domain/stock-low.ts';
+import { oneLine } from './missing-invoices.ts';
+import { OFFERED_ITEMS_MAX } from './stock-low.ts';
 import { moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, plainQuantity } from './domain/stock.ts';
 import { loadItem, writeStockMove } from './stock.ts';
 
@@ -46,7 +50,7 @@ export function canAdvance(from: Stage, to: Stage): boolean {
   return false;
 }
 
-// The stages that move stock: a shipment takes it out, a return brings it back; a placed or cancelled order moves nothing.
+// The stages that move stock: a shipment takes it out, a return brings it back; a placed order moves nothing, and a cancelled one only if it had shipped (it brings the stock back, see moveLineStock).
 const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'returned']);
 
 // The summary a staged read keeps: the file's own figures, nothing of the orders' content beyond counts.
@@ -578,9 +582,16 @@ export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: stri
     if (limitHit && attempt < EXTRACT_LIMIT_RETRIES) throw new Error(`crove-extract stopped at a limit: ${read.code}`);
     return { handled: false };
   }
-  const orders = read.orders;
+  let orders = read.orders;
   // Not an order report: the same call says whether it is an income report, so the caller can skip that reader (and its sandbox parse) for any other sheet (#2753).
-  if (!orders.recognized || orders.platform === null || orders.profile === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+  if (!orders.recognized || orders.platform === null || orders.profile === null) {
+    // No built-in profile fits: a mapping a person saved for a file with this very header row reads it (#4037), and its lines are staged like any report's for a person to approve.
+    // An income report (the same call says so) is the income reader's, never an order report read through a mapping.
+    const applied = orders.incomeReport === true ? null : await readWithSavedColumns(deps, orgId, bytes, attempt);
+    if (applied === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+    orders = applied;
+  }
+  if (orders.platform === null || orders.profile === null) return { handled: false };
   if (orders.tooMany) {
     await record('failed', { error: TOO_MANY_LINES });
     return { handled: true };
@@ -759,5 +770,46 @@ export const marketplaceUnassign = defineCommand({
   },
 });
 
+// What the finance coworker may see when it proposes the item of unassigned order lines (#2686, plan stock-and-marketplaces.md section 8.6): for each line the product name and the SKU text as one string, and the
+// entity's active items (code, name, unit). Read only, in the caller's own transaction. It selects the line's id, SKU and product name and joins nothing: no order number, buyer, address, phone, date or amount
+// is in the query, so none can reach the model. A line counts only while it is still unassigned by the rule of `finance.marketplace.unassigned` and belongs to the entity asked: one already assigned, not yet
+// shipped, cancelled or of another entity or org is left out, never read. The model is asked outside any transaction by the API (apps/kernel stock-ai.ts).
+export interface MarketplaceSuggestSource {
+  lines: Array<{ lineId: string; text: string }>;
+  items: Array<{ id: string; code: string; name: string; unit: string }>;
+}
+
+export const marketplaceSuggestSource = defineQuery({
+  name: 'finance.marketplace.suggest_source',
+  input: zMarketplaceSuggestInput,
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<MarketplaceSuggestSource> => {
+    const entity = await resolveLegalEntity(ctx, input.legalEntityId);
+    const rows = await ctx.trx
+      .selectFrom('crove_finance.channel_order_line as l')
+      .select(['l.id', 'l.sku', 'l.item_name'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.legal_entity_id', '=', entity)
+      .where('l.id', 'in', input.lineIds)
+      .where('l.stage', 'in', ['shipped', 'completed', 'returned'])
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.order_line_id = l.id AND m.order_move = 'ship' AND m.order_attempt = l.attempt)`)
+      .orderBy('l.id')
+      .execute();
+    const lines = rows
+      .map((r) => ({ lineId: r.id, text: oneLine([r.item_name, r.sku ? `SKU ${r.sku}` : null].filter((part): part is string => part !== null && part.trim() !== '').join(' '), 200) }))
+      .filter((l) => l.text !== '');
+    if (lines.length === 0) return { lines: [], items: [] };
+    const items = await ctx.trx
+      .selectFrom('crove_finance.stock_item')
+      .select(['id', 'code', 'name', 'unit'])
+      .where('org_id', '=', ctx.orgId)
+      .where('legal_entity_id', '=', entity)
+      .where('active', '=', true)
+      .orderBy('code')
+      .execute();
+    return { lines, items: pickCandidates(lines.map((l) => l.text), items, OFFERED_ITEMS_MAX) };
+  },
+});
+
 export const marketplaceCommands = [marketplaceConfirm, marketplaceReject, marketplaceAssign, marketplaceUnassign];
-export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders, marketplaceUnassigned];
+export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders, marketplaceUnassigned, marketplaceSuggestSource];

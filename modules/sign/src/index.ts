@@ -37,7 +37,44 @@ export {
   cleanUserAgent as sanitizeSignUserAgent,
   normalizePageDimensions as normalizeSignPageDimensions,
 } from './public-commands.ts';
-export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  signAcceptanceAiStatus,
+  signAcceptanceQueries,
+  signAcceptanceSource,
+  type SignAcceptanceAiStatus,
+  type SignAcceptanceSource,
+  type SignAcceptanceSourceTask,
+} from './acceptance.ts';
+export { parseSharedSummary, sanitizeSharedSummaryForWrite } from './shared.ts';
+export { signQueries, type SignDiffSourceResult, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  computeSignVersionDiff,
+  splitPageIntoClauses,
+  type SignDiffPageText,
+} from './version-diff.ts';
+export {
+  STARTER_CONTRACT_TEMPLATES,
+  buildStarterContractClauses,
+  buildStarterContractFilename,
+  buildStarterContractTitle,
+  formatContractDecimalAmount,
+  neutralizeContractInputText,
+  renderStarterContractPdf,
+  type RenderedStarterContractPdf,
+  type StarterTemplateMeta,
+} from './contract-drafter.ts';
+export {
+  assertSignCaProviderAllowed,
+  isSignCaBrokerAvailable,
+  isSignLiveCaEnabled,
+  setSignCaBrokerAvailable,
+  setSignLiveCaEnabled,
+  signCaCommands,
+  signCaQueries,
+  type SealedCaConnectionSecret,
+  type SignCaJobBeginResult,
+  type SignCaJobRecordResult,
+} from './ca.ts';
 export {
   signTemplateCommands,
   signTemplateQueries,
@@ -61,19 +98,25 @@ export {
 export {
   SIGN_COMPLETED_MAIL_SOURCE,
   SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_CORRECT_INVITE_MAIL_SOURCE,
+  SIGN_DELEGATED_MAIL_TEMPLATE,
+  SIGN_DELEGATE_MAIL_SOURCE,
   SIGN_DIRECT_OTP_MAIL_SOURCE,
   SIGN_DIRECT_OTP_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_SOURCE,
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_OTP_MAIL_SOURCE,
   SIGN_OTP_MAIL_TEMPLATE,
+  SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
+  renderSignDelegatedMail,
   renderSignDirectOtpMail,
   renderSignInviteMail,
   renderSignOtpMail,
   zSignCompletedMailPayload,
+  zSignDelegatedMailPayload,
   zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,
@@ -94,3 +137,14 @@ export {
   type SignFieldForSeal,
   type SignSignerForSeal,
 } from './sealing.ts';
+export {
+  SIGN_ACTIVE_VIEW_GRACE_MINUTES,
+  SIGN_PRE_EXPIRY_REMIND_HOURS,
+  SIGN_TODAY_DECLINED_DAYS,
+  SIGN_TODAY_EXPIRING_HOURS,
+  selectPreExpiryEligibleSigners,
+  signTodayItemsOf,
+  type SignPreExpirySignerCandidate,
+  type SignPreExpirySweepResult,
+  type SignTodayEnvelopeRow,
+} from './today-and-reminders.ts';

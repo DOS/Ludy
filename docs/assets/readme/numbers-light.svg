@@ -7,23 +7,23 @@
 <text x="42" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">modules</text>
 <text x="42" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">on one shared kernel</text>
 <rect x="195.6" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="209.6" y="98" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">1,248</text>
+<text x="209.6" y="98" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">1,456</text>
 <text x="209.6" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">commands + queries</text>
-<text x="209.6" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">793 + 455</text>
+<text x="209.6" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">908 + 548</text>
 <rect x="363.2" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="377.2" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">672</text>
+<text x="377.2" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">772</text>
 <text x="377.2" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">database migrations</text>
 <text x="377.2" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">forward-only</text>
 <rect x="530.8" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="544.8" y="98" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">13,000+</text>
+<text x="544.8" y="98" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">17,000+</text>
 <text x="544.8" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">test cases</text>
 <text x="544.8" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">run on every merge</text>
 <rect x="698.4" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="712.4" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">175</text>
+<text x="712.4" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">200</text>
 <text x="712.4" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">invariant test suites</text>
 <text x="712.4" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">tenancy, ledger, approvals</text>
 <rect x="28" y="160" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="42" y="196" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">39</text>
+<text x="42" y="196" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">42</text>
 <text x="42" y="216" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">design decisions</text>
 <text x="42" y="233" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">each one written down</text>
 <rect x="195.6" y="160" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
@@ -35,11 +35,11 @@
 <text x="377.2" y="216" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">AI coworkers</text>
 <text x="377.2" y="233" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">Vy, Ly, Dy, Uy</text>
 <rect x="530.8" y="160" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="544.8" y="196" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">7</text>
+<text x="544.8" y="196" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">29</text>
 <text x="544.8" y="216" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">read-only MCP tools</text>
 <text x="544.8" y="233" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">for Claude and ChatGPT</text>
 <rect x="698.4" y="160" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="712.4" y="196" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">860k+</text>
+<text x="712.4" y="196" font-size="28" font-weight="800" fill="#136a55" text-anchor="start">1010k+</text>
 <text x="712.4" y="216" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">lines of TypeScript</text>
 <text x="712.4" y="233" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">tests included</text>
 <text x="440" y="280" font-size="12" font-weight="400" fill="#6b6b74" text-anchor="middle">How each number is counted: see &quot;How these numbers are counted&quot; in the README.</text>

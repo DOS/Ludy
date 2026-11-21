@@ -240,6 +240,9 @@ export type LookupHint = z.infer<typeof zLookupHint>;
 // 3331. Absent on purchases, including every proposal raised before sales existed.
 export const zPurchaseProposal = z.object({
   direction: z.literal('sale').optional(),
+  // The books regime a sale is posted under on its issue date ('tt133', 'tt99'), for the Inbox preview of the journal (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521). Display
+  // only: the posting reads the books again. Absent on purchases and on proposals raised before it existed (read as Circular 133).
+  regime: z.string().max(20).optional(),
   seller: zPartyRef,
   buyer: zPartyRef,
   invoice: z.object({
@@ -576,6 +579,8 @@ export const zInboxItem = z.object({
   createdAt: z.string(),
   // The AI agent that asked for the proposal (#435); null for a proposal a person or an upload made.
   requestedByAgent: z.object({ id: zId, name: z.string() }).nullable(),
+  // The outside AI app (connected over MCP) that asked for the proposal (ADR-0051 decision 10): its self-declared name and the host it returns to, stamped from its grant; null for any other proposal.
+  requestedByMcp: z.object({ client: z.string(), host: z.string() }).nullable(),
   // Whether an extraction run read the proposal's source (so its invoice checks ran); an agent's proposal has none.
   extracted: z.boolean(),
   // An expired proposal (#876): the whole days it waited for approval before it expired, its reason; null otherwise.
@@ -694,6 +699,9 @@ export const zJournalVoucherProposal = z.object({
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
+  // The confirmed count of stock whose surplus (3381) this voucher resolves (#3712 slice 2a): written only by finance's own preparer, never by a requester, and
+  // checked again at approval (modules/finance/src/stock-surplus.ts).
+  surplusCountId: zId.optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
 
@@ -717,6 +725,37 @@ export const zInboxOriginal = z.object({
 });
 export type InboxOriginal = z.infer<typeof zInboxOriginal>;
 
+// What an AI coworker asks for in the Engage lines (E4 #3863), as the card shows it: the twin's command and the stored payload's fields, in order, each a name and a text. Every value is the AI's and is not
+// trusted: the card marks it so and renders it as plain text. The proposal's own `requestedByMcp` says which app asked.
+export const zEngageProposalField = z.object({ key: z.string(), value: z.string(), long: z.boolean() });
+// `about` says who and what the ask is about, read from the records themselves (the channel, the customer, the customer's message, the guest and time of a booking, the quote and its customer, the post and its channels, the launch and its budget), so an approver does not have to read ids.
+export const zEngageProposalAbout = z.object({
+  label: z.enum([
+    'channel',
+    'contact',
+    'customerMessage',
+    'guest',
+    'guestEmail',
+    'eventType',
+    'bookingTime',
+    'quote',
+    'quoteStatus',
+    'quoteTotal',
+    'party',
+    'partyEmail',
+    'post',
+    'channels',
+    'launch',
+    'adAccount',
+    'launchState',
+    'launchBudget',
+    'launchEnds',
+  ]),
+  value: z.string(),
+});
+export const zEngageProposalView = z.object({ command: z.string(), fields: z.array(zEngageProposalField).max(40), about: z.array(zEngageProposalAbout).max(10) });
+export type EngageProposalView = z.infer<typeof zEngageProposalView>;
+
 export const zInboxDetail = zInboxItem.extend({
   revision: z.number().int(),
   // Parsed by kind: a purchase (kind finance.purchase), a reversal (kind finance.journal_reversal) or a cash or bank
@@ -726,6 +765,8 @@ export const zInboxDetail = zInboxItem.extend({
   voucher: zCashVoucherProposal.nullable(),
   // A general journal voucher (kind finance.journal_voucher, #888).
   journalVoucher: zJournalVoucherProposal.nullable(),
+  // The ask of an AI coworker in an Engage line (a reply, a quote, a booking change, a post, an ad change), for its card; null for every other proposal.
+  engage: zEngageProposalView.nullable(),
   error: z.string().nullable(),
   file: z.object({ id: zId, filename: z.string(), contentType: z.string(), sizeBytes: z.string() }).nullable(),
   decidedAt: z.string().nullable(),

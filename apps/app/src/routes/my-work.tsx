@@ -52,10 +52,10 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
+import { MyWorkVyPlannerPanel, MyWorkVyPlannerTrigger } from '../components/my-work-vy-planner.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { TaskChecklistBadge } from '../components/task-checklist.tsx';
 import { TodoQuickAddBar } from '../components/todo-quick-add.tsx';
@@ -1275,6 +1275,8 @@ export function MyWorkPage() {
   const draggedTodoIdRef = useRef<string | null>(null);
   const [dropDay, setDropDay] = useState<string | null>(null);
   const [reschedulePrompt, setReschedulePrompt] = useState<ReschedulePromptState | null>(null);
+  const [vyOpen, setVyOpen] = useState(false);
+  const vyTriggerRef = useRef<HTMLButtonElement>(null);
   const quickAdd = useRef<HTMLInputElement>(null);
   const live = useStreamLive();
   // Read again every minute while the stream is down, and every few minutes anyway: the groups move with the clock
@@ -1754,8 +1756,25 @@ export function MyWorkPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
-      <NotesSubnav slug={slug} active="my-work" />
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          <MyWorkVyPlannerTrigger
+            slug={slug}
+            open={vyOpen}
+            onToggle={() => setVyOpen((v) => !v)}
+            buttonRef={vyTriggerRef}
+          />
+        }
+      />
+      <MyWorkVyPlannerPanel
+        slug={slug}
+        open={vyOpen}
+        viewerTz={viewerTz}
+        triggerRef={vyTriggerRef}
+        onClose={() => setVyOpen(false)}
+      />
       <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
         <aside aria-label={t('listsTitle')} data-testid="my-work-lists-sidebar" className="space-y-2">
           <div className="flex items-center justify-between px-1">

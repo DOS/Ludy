@@ -118,7 +118,20 @@ export const EXPORT_TABLES = {
   'finance.channel_order_line': { from: 'crove_finance.channel_order_line', omit: [] },
   'finance.channel_settlement': { from: 'crove_finance.channel_settlement', omit: [] },
   'finance.channel_settlement_line': { from: 'crove_finance.channel_settlement_line', omit: [] },
+  // The mapping of a marketplace report's columns a person confirmed (#4037): the header texts of the mapped columns and their standard fields, never a cell value or a buyer column.
+  'finance.marketplace_column_profile': { from: 'crove_finance.marketplace_column_profile', omit: [] },
   'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
+  // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and a time only.
+  'finance.marketplace_connection_file': { from: 'crove_finance.marketplace_connection_file', omit: [] },
+  // The code AMIS is told for this connection is a routing id of the deployment, not the org's data; the access code is sealed in crove_kernel.credential, which is never exported.
+  'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
+  // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.
+  'finance.misa_amis_push': { from: 'crove_finance.misa_amis_push', omit: [] },
+  // The last check of a connection's vouchers against the firm's MISA catalogue (#4112): the batch asked about, its state and times, and per party (its tax code) or item (its code) whether one entry matched, with that entry's code and id. No catalogue name or address is stored.
+  'finance.misa_amis_match': { from: 'crove_finance.misa_amis_match', omit: [] },
+  'finance.misa_amis_match_check': { from: 'crove_finance.misa_amis_match_check', omit: [] },
+  // The last column check per unrecognised order report: the preview of parsed lines is personal data kept seven days at most and a cache of the file, so it stays out (#4036).
+  'finance.marketplace_column_check': { from: 'crove_finance.marketplace_column_check', omit: ['preview'] },
   'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
   'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
   'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
@@ -173,12 +186,17 @@ export const EXPORT_TABLES = {
   'ads.ad_account': { from: 'crove_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
   'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
   'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
-  // Notes (#1671, ADR-0037 §6): the shared notes and their links, which the system context's row policies let the
-  // snapshot read, without their folded search words; private notes stay out, and private_count records how many
-  // each author had (crove_notes.private_counts(), a definer that answers counts only).
+  // Notes (#1671, #3559, #3561, #3562, ADR-0037 §6): the shared notes, attachments, shared notebooks, shared templates and links, which the system context's row
+  // policies let the snapshot read, without their folded search words; private items stay out,
+  // and private_count / private_notebook_count / private_template_count record how many each author had (counts only).
   'notes.note': { from: 'crove_notes.note', omit: ['search'] },
+  'notes.attachment': { from: 'crove_notes.attachment', omit: ['search'] },
+  'notes.notebook': { from: 'crove_notes.notebook', omit: [] },
   'notes.link': { from: 'crove_notes.link', omit: [] },
+  'notes.note_template': { from: 'crove_notes.note_template', omit: [] },
   'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },
+  'notes.private_notebook_count': { from: 'crove_notes.private_notebook_counts()', omit: [] },
+  'notes.private_template_count': { from: 'crove_notes.private_template_counts()', omit: [] },
   // Members' own to-dos (#1673) are private by nature, so none is exported; todo_count records how many each member
   // had (crove_notes.todo_counts(), counts only).
   'notes.todo_count': { from: 'crove_notes.todo_counts()', omit: [] },
@@ -244,6 +262,8 @@ export const EXPORT_TABLES = {
   'ads.ad_campaign_request': { from: 'crove_ads.ad_campaign_request', omit: [] },
   'ads.ad_flag_setting': { from: 'crove_ads.ad_flag_setting', omit: [] },
   'ads.ad_launch': { from: 'crove_ads.ad_launch', omit: [] },
+  // The changes of a running ad (#3835, W4): what was asked and where it stands, ids, amounts, dates and codes only.
+  'ads.ad_manage_change': { from: 'crove_ads.ad_manage_change', omit: [] },
   'ads.ad_object': { from: 'crove_ads.ad_object', omit: [] },
   'ads.ad_org_setting': { from: 'crove_ads.ad_org_setting', omit: [] },
   'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },
@@ -257,7 +277,7 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  // eSign (#3323, #3526): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, and reusable templates; bearer/direct-link token and OTP machinery tables stay out.
+  // eSign (#3323, #3526, #3554): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out.
   'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
   'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
   'sign.field': { from: 'crove_sign.field', omit: [] },
@@ -266,6 +286,7 @@ export const EXPORT_TABLES = {
   'sign.template': { from: 'crove_sign.template', omit: [] },
   'sign.template_role': { from: 'crove_sign.template_role', omit: [] },
   'sign.template_field': { from: 'crove_sign.template_field', omit: [] },
+  'sign.ca_signing_request': { from: 'crove_sign.ca_signing_request', omit: ['idempotency_key'] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;
@@ -464,6 +485,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },
+  // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
+  // export an empty table: the owner's own session reads it here.
+  'meetings.glossary_term': { from: 'crove_meetings.glossary_term', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
@@ -487,7 +511,7 @@ export const exportPeople = defineQuery({
   handler: async (ctx, input, sink) => {
     if (!sink) throw new DomainError('STREAM_ONLY', 400, 'Truy vấn này chỉ đọc theo luồng');
     const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được các tệp này khi tổ chức đang được đóng');
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
     const spec = OWNER_RUN_EXPORT_TABLES[input.table];
     // spec.from is one of the constant names above, never input.

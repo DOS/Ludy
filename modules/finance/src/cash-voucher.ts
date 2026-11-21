@@ -481,6 +481,7 @@ export const cashVouchers = defineQuery({
       .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
       .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
       .select([
+        'v.id as source_id',
         'v.voucher_type',
         'v.number',
         'v.number_period',
@@ -489,6 +490,7 @@ export const cashVouchers = defineQuery({
         'v.person_name',
         'v.description',
         'j.id as entry_id',
+        'p.id as party_id',
         'p.name as party_name',
         'p.tax_code as party_tax_code',
         'p.address as party_address',
@@ -529,12 +531,13 @@ export const cashVouchers = defineQuery({
       byEntry.set(l.entry_id, list);
     }
     return vouchers.map((v) => ({
+      sourceId: v.source_id,
       type: input.type,
       code: voucherCode(v.voucher_type, v.number),
       numberPeriod: v.number_period,
       date: v.voucher_date,
       cashAccount: v.cash_account,
-      party: v.party_name !== null ? { name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,
+      party: v.party_name !== null ? { id: v.party_id, name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,
       personName: v.person_name,
       description: v.description,
       lines: byEntry.get(v.entry_id) ?? [],

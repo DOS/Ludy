@@ -43,16 +43,25 @@ export async function myOrgs(db: Db, userId: string): Promise<OrgSummary[]> {
   return rows.map((r) => ({ orgId: r.org_id, slug: r.slug, name: r.name, role: r.role }));
 }
 
+function trimDashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 45) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 45) end -= 1;
+  return value.slice(start, end);
+}
+
 export function slugify(name: string): string {
-  const base = name
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/đ/gi, 'd')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/, '');
+  const base = trimDashes(
+    trimDashes(
+      name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/gi, 'd')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-'),
+    ).slice(0, 40),
+  );
   return base.length >= 3 ? base : `org-${Math.random().toString(36).slice(2, 8)}`;
 }
 

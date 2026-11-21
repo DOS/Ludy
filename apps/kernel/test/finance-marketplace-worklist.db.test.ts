@@ -27,7 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
@@ -130,7 +130,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
   }
-  // The settlement posted (Dr 131 / Cr 511), the state a payout needs.
+  // The settlement posted (Dr 131 / Cr 5111), the state a payout needs.
   const post = async (o: Org, settlementId: string) => approve(o, (await askSettlement(o, settlementId)).proposalId);
   const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
 
@@ -228,7 +228,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const o = await org();
     expect((await worklist(o, rtShipped)).postingConfirmed).toBe(false);
     expect((await worklist(o)).postingConfirmed).toBe(true);
-    // A chart with no marketplace map yet (TT99) is closed too, and an entity the caller does not name is not looked at.
+    // A chart whose map is not in the injected set (TT99; the shipped TT99 map is commentary, #3711 slice 4) is closed too, and an entity the caller does not name is not looked at.
     const tt99 = await org('tt99');
     expect((await worklist(tt99)).postingConfirmed).toBe(false);
     expect((await worklist(o, rt, o.entity)).postingConfirmed).toBe(true);

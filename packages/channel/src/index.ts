@@ -12,6 +12,10 @@ export * from './oauth.ts';
 export * from './calendar-google.ts';
 export * from './calendar-microsoft.ts';
 export * from './meeting-platform.ts';
+export * from './meeting-platform-zoom.ts';
+export * from './meeting-platform-zoom-webhook.ts';
+export * from './meeting-platform-teams.ts';
+export * from './meeting-google.ts';
 export * from './minutes-webhook.ts';
 export * from './text.ts';
 export * from './meta.ts';
@@ -204,7 +208,8 @@ export type ReconcileResult = { found: true; externalId: string; url: string | n
 // Renews a connection's tokens before they expire (providers with short-lived tokens and refresh tokens, such as Zalo
 // OA). refused: the provider turned the refresh down and the connection needs reconnecting; failed: try again later.
 export interface Refresher {
-  readonly provider: ChannelProviderId;
+  // A channel provider, or a marketplace connection's (`marketplace_<adapter>`, whose token life is the platform's own).
+  readonly provider: ChannelProviderId | `marketplace_${string}`;
   // How long before expiry to renew (6 hours when unset): long-lived tokens are renewed days ahead.
   readonly horizonSeconds?: number;
   refresh(secret: string): Promise<{ secret: string; expiresAt: Date | null } | { refused: string } | { failed: string }>;

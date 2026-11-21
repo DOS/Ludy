@@ -71,6 +71,7 @@ import {
   zConversationSettle,
   zYoutubeCommentsSet,
   YOUTUBE_COMMENT_SCOPE,
+  YOUTUBE_MODERATE_UNITS,
   YOUTUBE_POLL_BUDGET_UNITS,
   YOUTUBE_POLL_MAX_UNITS,
   YOUTUBE_POLL_RETRY_MINUTES,
@@ -232,6 +233,7 @@ interface ConnectionRow {
   provider: string;
   status: string;
   display_name: string;
+  scopes: string[];
   updated_at: Date;
 }
 // A YouTube connection's quota counters (#3134), as the pure functions of the contract read them.
@@ -248,10 +250,12 @@ async function youtubeQuotaRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connect
 
 // A reply to a YouTube comment is refused up front while Google has said the project's quota is spent (a call would be refused anyway, and costs a
 // unit): the person is told when sending is possible again. Sending resumes by itself after the reset, as the block ends.
-async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: Date, connectionId: string): Promise<void> {
+async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: Date, connectionId: string, act: 'reply' | 'hide' = 'reply'): Promise<void> {
   const row = await youtubeQuotaRow(ctx, connectionId);
   if (row?.quota_blocked_until && row.quota_blocked_until.getTime() > now.getTime()) {
-    throw new DomainError('YOUTUBE_QUOTA_SPENT', 409, 'Hạn mức YouTube trong ngày đã hết, chưa gửi được trả lời. Sẽ gửi lại được sau khi hạn mức đặt lại', { until: row.quota_blocked_until.toISOString() });
+    const until = { until: row.quota_blocked_until.toISOString() };
+    if (act === 'hide') throw new DomainError('YOUTUBE_QUOTA_SPENT', 409, 'Hạn mức YouTube trong ngày đã hết, chưa ẩn hay hiện lại được bình luận. Làm lại được sau khi hạn mức đặt lại', until);
+    throw new DomainError('YOUTUBE_QUOTA_SPENT', 409, 'Hạn mức YouTube trong ngày đã hết, chưa gửi được trả lời. Sẽ gửi lại được sau khi hạn mức đặt lại', until);
   }
 }
 
@@ -261,7 +265,7 @@ async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'org
 async function connectionOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false): Promise<ConnectionRow | null> {
   let query = ctx.trx
     .selectFrom('crove_kernel.channel_connection')
-    .select(['id', 'provider', 'status', 'display_name', 'updated_at'])
+    .select(['id', 'provider', 'status', 'display_name', 'scopes', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId);
   if (lock) query = query.forKeyShare();
@@ -1221,7 +1225,7 @@ export const conversationGet = defineQuery({
     }
     const notes = await ctx.trx
       .selectFrom('crove_kernel.conversation_note')
-      .select(['id', 'author_user_id', 'body', 'created_at'])
+      .select(['id', 'author_user_id', 'body', 'created_at', 'actor_origin', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
       .orderBy('created_at')
@@ -1242,6 +1246,8 @@ export const conversationGet = defineQuery({
     const conversation = toSummary(row);
     const connection = await connectionOf(ctx, row.channel_connection_id);
     const rules = connection ? conversationRules(connection.provider) : null;
+    // Hide is the provider's rule, and for YouTube (#3808) a grant that holds the comment scope.
+    const hideAllowed = Boolean(rules?.canHide) && (connection?.provider !== 'youtube' || connection.scopes.includes(YOUTUBE_COMMENT_SCOPE));
     let reason: ConversationDetail['reply']['reason'] = null;
     if (!connection || connection.status !== 'active') reason = 'channel_inactive';
     else if (!rules || !rules.kinds.includes(row.kind as ConversationKind) || parent?.external_thread_id?.startsWith('private:')) reason = 'not_supported';
@@ -1310,9 +1316,10 @@ export const conversationGet = defineQuery({
           removed: m.platform_removed_at !== null,
           privateReplyConversationId: m.external_message_id ? (privateReplies.get(m.external_message_id) ?? null) : null,
         })),
-      notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString() })),
+      notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString(), actorOrigin: n.actor_origin as 'ui' | 'mcp', tainted: n.tainted })),
       parentId,
       reply: { allowed: reason === null, reason },
+      hideAllowed,
       // A gap the history read could not fill, shown on the threads that were alive after it began.
       gap,
     };
@@ -1787,14 +1794,14 @@ const zCallResult = z.discriminatedUnion('kind', [
 // A reply YouTube accepted cost 50 units of the project's day [O]: counted beside the connection's polling budget, so the screen shows what was spent.
 // The connection's row is locked only for a YouTube one, which has a quota to add to: a reply on any other channel must not hold a channel's row after
 // it holds a message's (a disconnect with erase holds the channel's and then deletes messages: the same two rows in the other order).
-async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string): Promise<void> {
+async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string, units: number = YOUTUBE_REPLY_UNITS): Promise<void> {
   if ((await youtubeQuotaRow(ctx, connectionId, false))?.provider !== 'youtube') return;
   const row = await youtubeQuotaRow(ctx, connectionId, true);
   if (row?.provider !== 'youtube') return;
   const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, ctx.now);
   await ctx.trx
     .updateTable('crove_kernel.channel_connection')
-    .set({ quota_reset_at: q.resetAt, quota_poll_units: q.pollUnits, quota_reply_units: q.replyUnits + YOUTUBE_REPLY_UNITS })
+    .set({ quota_reset_at: q.resetAt, quota_poll_units: q.pollUnits, quota_reply_units: q.replyUnits + units })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId)
     .execute();
@@ -1954,8 +1961,14 @@ export const conversationHide = defineCommand({
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     if (!conversationRules(connection.provider)?.canHide) throw new DomainError('HIDE_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ ẩn bình luận');
+    // YouTube (#3808): the call needs the comment scope, which a grant made before it (or one the owner narrowed) may lack: refused with the way out, nothing queued.
+    if (connection.provider === 'youtube' && !connection.scopes.includes(YOUTUBE_COMMENT_SCOPE)) {
+      throw new DomainError('YOUTUBE_SCOPE_MISSING', 409, 'Kênh YouTube này chưa cấp quyền bình luận, hãy kết nối lại kênh để ẩn bình luận');
+    }
     const already = input.hidden ? message.hidden_at !== null : message.hidden_at === null;
     if (already && message.hide_request === null) return { messageId: message.id };
+    // YouTube meters the call (50 units of the project's day): refused up front while Google has said the quota is spent, like a reply.
+    if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id, 'hide');
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
       .set({ hide_request: input.hidden ? 'hide' : 'unhide', hide_attempt: message.hide_attempt + 1, hide_error_code: null, hidden_by: input.hidden ? me : message.hidden_by })
@@ -2039,6 +2052,9 @@ export const conversationHideRecord = defineCommand({
   target: (input) => ({ type: 'kernel.conversation_message', id: input.messageId }),
   handler: async (ctx, input): Promise<{ state: string }> => {
     requireSystem(ctx);
+    // A YouTube hide adds to the connection's quota under its row's lock, so (as for a reply) the channel's row is locked before the message's.
+    const own = await ctx.trx.selectFrom('crove_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
+    if (own && (await youtubeQuotaRow(ctx, own.channel_connection_id, false))?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
     const message = await lockMessage(ctx, input.messageId);
     if (!message.hide_request || input.callKey !== hideCallKey(message.id, message.hide_attempt)) return { state: 'stale' };
     const { result } = input;
@@ -2059,6 +2075,8 @@ export const conversationHideRecord = defineCommand({
         .where('id', '=', message.id)
         .execute();
       await settle({ state: 'succeeded' });
+      // Hiding or showing a YouTube comment cost 50 units of the project's day, counted with the replies' (a no-op for any other channel).
+      await countYoutubeReplyUnits(ctx, message.channel_connection_id, YOUTUBE_MODERATE_UNITS);
       return { state: hide ? 'hidden' : 'visible' };
     }
     if (result.kind === 'unknown') {
@@ -2687,7 +2705,17 @@ async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>
     WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
     SELECT (SELECT count(*) FROM gone)::text AS threads,
            (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
+  // What an AI coworker proposed to send into these threads (E4 #3863: a reply, a private reply, hiding a comment) holds the thread's or the message's id and, for a reply, the text, in the proposal's payload. It goes
+  // with the thread, pending or decided (a decided proposal is frozen against the tenant, so the database's definer does it). The definer runs after the delete and takes no ids: it blanks the proposals whose
+  // thread or message no longer exists, so it cannot reach a live thread's, and a large purge builds no id lists (#4160).
+  await eraseGoneProposals(ctx);
   return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
+}
+
+// Blanks, rejects (a pending one) and audits the Engage proposals that name a conversation or a message the org no longer has; run after the deletes. Answers how many.
+async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
+  const { rows } = await sql<{ n: number }>`SELECT crove_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
+  return rows[0]?.n ?? 0;
 }
 
 // Identities left with no thread: nothing the org holds names them any more.
@@ -2744,6 +2772,8 @@ export const conversationEraseContact = defineCommand({
       const others = await sql<{ conversation_id: string }>`
         DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
       erased.messages += others.rows.length;
+      // What an AI coworker proposed about those comments (a private reply to one, hiding one: E4 #3863) names them by message id, and goes with them: the definer finds what lost its message.
+      await eraseGoneProposals(ctx);
       // A draft Vy wrote in one of those threads read what the customer wrote: it goes stale with its text.
       await staleDrafts(ctx, [...new Set(others.rows.map((r) => r.conversation_id))]);
       // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises

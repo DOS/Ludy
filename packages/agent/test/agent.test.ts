@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AmountFormatError, toParsed } from '../src/index.ts';
+import { AmountFormatError, printedBankAccount, toParsed } from '../src/index.ts';
 
 type Extracted = Parameters<typeof toParsed>[0];
 
@@ -9,7 +9,7 @@ const base: Extracted = {
   number: '00001234',
   issueDate: '2026-09-15',
   currency: 'VND',
-  seller: { name: 'Người bán', taxCode: '0101234564', address: null },
+  seller: { name: 'Người bán', taxCode: '0101234564', address: null, bankAccount: null },
   buyer: { name: 'Người mua', taxCode: null, address: null },
   lines: [{ description: 'Dịch vụ', unit: null, quantity: '1', unitPrice: '250000', amount: '250000', vatRate: '10%', isDiscount: false }],
   subtotal: '250000',
@@ -33,5 +33,29 @@ describe('AI extraction output', () => {
     const parsed = toParsed({ ...base, currency: 'usd', subtotal: '12.5', total: '12.5', vatTotal: '' });
     expect(parsed?.currency).toBe('USD');
     expect(parsed?.vatTotal).toBe('0');
+  });
+
+  it('keeps the seller\'s bank account only when it is a plain copy, and checks it against the PDF text when there is one (#2426)', () => {
+    const account = (value: string | null, sourceText?: string) => toParsed({ ...base, seller: { ...base.seller, bankAccount: value } }, sourceText)?.seller.bankAccount;
+    // A photo has no text to check against: a printed account of 6 or more digits is kept as printed, nothing else of the answer changes.
+    expect(account('5011 2233 4455')).toBe('5011 2233 4455');
+    expect(account('  STK 501122334455 (VCB)  ')).toBe('STK 501122334455 (VCB)');
+    expect(toParsed({ ...base, seller: { ...base.seller, bankAccount: null } })?.seller).not.toHaveProperty('bankAccount');
+    // Not an account: empty, a note, a short code, too long.
+    expect(account(null)).toBeUndefined();
+    expect(account('')).toBeUndefined();
+    expect(account('N/A')).toBeUndefined();
+    expect(account('12345')).toBeUndefined();
+    expect(account(`TK ${'1234567890 '.repeat(8)}`)).toBeUndefined();
+    // From a PDF every digit run the model wrote must be in the text (digits split by spaces or dots are one run): an account the text does not hold is dropped, never repaired.
+    const text = 'Số tài khoản: 5011.2233.4455 tại Vietcombank\nTổng cộng 275.000';
+    expect(account('501122334455', text)).toBe('501122334455');
+    expect(account('5011 2233 4455', text)).toBe('5011 2233 4455');
+    expect(account('501122334456', text)).toBeUndefined();
+    expect(account('5011 2233 4455 / 0987654321', text)).toBeUndefined();
+    // A line break or a note after the account does not glue a following figure onto it, on either side.
+    expect(account('501122334455', 'Số tài khoản: 501122334455\n1 Dịch vụ')).toBe('501122334455');
+    expect(account('501122334455', 'STK 501122334455 - 2026')).toBe('501122334455');
+    expect(printedBankAccount('501122334455', '')).toBeNull();
   });
 });

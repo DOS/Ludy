@@ -60,7 +60,7 @@ export function MinutesChannelsCard() {
   return (
     <Card data-testid="minutes-channels">
       <CardHeader>
-        <CardTitle>{t('cardTitle')}</CardTitle>
+        <CardTitle role="heading" aria-level={2}>{t('cardTitle')}</CardTitle>
         <CardDescription>{t('cardHint')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

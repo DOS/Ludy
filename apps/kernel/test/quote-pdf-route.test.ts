@@ -40,6 +40,8 @@ function document(number: string | null): QuoteDocument {
       createdBy: 'u',
       createdAt: '2026-11-15T02:00:00.000Z',
       updatedAt: '2026-11-15T02:00:00.000Z',
+      actorOrigin: 'ui',
+      tainted: false,
       notes: null,
       terms: null,
       // The send's facts (Q2, #2694).

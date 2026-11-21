@@ -55,6 +55,8 @@ export const PROTECTED_PATHS = [
   [/^packages\/db\/src\/index\.ts$/, 'database context guards'],
   [/^packages\/db\/src\/migrate\.ts$/, 'migration runner and hardening guard'],
   [/^packages\/kernel\/src\/(approval|identity)\.ts$/, 'approval policy or identity'],
+  // The table of the Engage proposal kinds: the approval policy reads it to know which commands wait for a person, so a kind added or dropped there changes who must approve what (#4160).
+  [/^packages\/kernel-contract\/src\/engage-proposals\.ts$/, 'Engage proposal kinds (approval policy membership)'],
   [/(^|\/)auth(\/|\.ts$|-[^/]*\.ts$)/, 'authentication'],
   [/^apps\/kernel\/src\/(auth|sessions)[^/]*\.ts$/, 'identity adapter'],
   [/^apps\/kernel\/src\/http\.ts$/, 'HTTP edge (authentication, inbound secret)'],

@@ -4,6 +4,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { createOrg, newEmail, signInNewUser, storedSession } from '../lib/session.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 function vietnamToday(): string {
   return new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -345,6 +346,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) recruiting and wage isol
   const slug = await createOrg(page, 'Công ty Cách Ly Tuyển Dụng');
 
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'security');
   await enrollTotp(page);
   await expect(page.getByText('Đang bật')).toBeVisible();
 
@@ -389,7 +391,8 @@ test('Phase 7 non-admin (member + Kế toán trưởng) recruiting and wage isol
 
   // Invite a second user as org `member` and assign `Kế toán trưởng`.
   const memberEmail = newEmail('hr-rec-member');
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/members`);
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder(/^email@/).fill(memberEmail);
   await page.getByLabel('Vai trò', { exact: true }).selectOption('member');
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
@@ -414,7 +417,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) recruiting and wage isol
     await expect(rolesGroup.getByText('Kế toán trưởng', { exact: true })).toBeVisible();
 
     // Enroll TOTP on the member session so R3 erase refusal proves RBAC FORBIDDEN rather than missing step-up.
-    await memberPage.goto(`/o/${slug}/settings`);
+    await memberPage.goto(`/o/${slug}/settings/security`);
     await enrollTotp(memberPage);
     await expect(memberPage.getByText('Đang bật')).toBeVisible();
 

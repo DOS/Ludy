@@ -11,7 +11,7 @@ import {
   AGENDA_LIST_MAX,
   AGENDA_NEXT_MAX,
   AGENDA_NEXT_MINUTES,
-  AGENDA_OVERLAP_MINUTES,
+  meetingOverlapWindow,
   zAgendaClear,
   zAgendaCleared,
   zAgendaLink,
@@ -77,29 +77,31 @@ export const agendaList = defineQuery({
   name: 'meetings.agenda.list',
   input: zAgendaListInput,
   access: ROLES,
-  handler: async (ctx): Promise<AgendaList> => {
-    const userId = userOf(ctx.actor);
-    const enabled = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('user_id', '=', userId)
-      .where('status', '=', 'active')
-      .where('read_events', '=', true)
-      .limit(1)
-      .executeTakeFirst();
-    if (!enabled) return zAgendaList.parse({ enabled: false, events: [] });
-    const start = new Date(vnDayStart(vnDay(new Date())));
-    const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
-      .where('a.starts_at', '>=', start)
-      .where('a.starts_at', '<', new Date(start.getTime() + DAY_MS))
-      .orderBy('a.starts_at')
-      .orderBy('a.id')
-      .limit(AGENDA_LIST_MAX)
-      .execute();
-    return zAgendaList.parse({ enabled: true, events: rows.map(toEvent) });
-  },
+  handler: async (ctx): Promise<AgendaList> => todaysAgenda(ctx.trx, ctx.orgId, userOf(ctx.actor)),
 });
+
+// The body of `meetings.agenda.list`, for the Today view (#3955) to read the same events under the same rules: an empty, disabled answer when no calendar of the member reads events.
+export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
+  const enabled = await trx
+    .selectFrom('crove_kernel.calendar_connection')
+    .select('id')
+    .where('org_id', '=', orgId)
+    .where('user_id', '=', userId)
+    .where('status', '=', 'active')
+    .where('read_events', '=', true)
+    .limit(1)
+    .executeTakeFirst();
+  if (!enabled) return zAgendaList.parse({ enabled: false, events: [] });
+  const start = new Date(vnDayStart(vnDay(new Date())));
+  const rows = await agendaOf(trx, orgId, userId)
+    .where('a.starts_at', '>=', start)
+    .where('a.starts_at', '<', new Date(start.getTime() + DAY_MS))
+    .orderBy('a.starts_at')
+    .orderBy('a.id')
+    .limit(AGENDA_LIST_MAX)
+    .execute();
+  return zAgendaList.parse({ enabled: true, events: rows.map(toEvent) });
+}
 
 // The host of a join address (meet.google.com, zoom.us, teams.microsoft.com): all the extension is told of it, so a stolen token learns no meeting link.
 function hostOf(url: string | null): string | null {
@@ -167,13 +169,12 @@ export const agendaSuggest = defineQuery({
     const linked = await agendaOf(ctx.trx, ctx.orgId, userId).where('a.meeting_id', '=', input.meetingId).executeTakeFirst();
     if (linked) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: toEvent(linked), suggestion: null });
     const startedAt = meeting.started_at;
-    const endedAt = meeting.ended_at ?? (startedAt && meeting.length_seconds ? new Date(startedAt.getTime() + Number(meeting.length_seconds) * 1000) : startedAt);
-    if (!startedAt || !endedAt) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: null, suggestion: null });
-    const slack = AGENDA_OVERLAP_MINUTES * 60_000;
+    if (!startedAt) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: null, suggestion: null });
+    const { windowStart, windowEnd } = meetingOverlapWindow({ startedAt, endedAt: meeting.ended_at, lengthSeconds: meeting.length_seconds });
     const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
       .where('a.meeting_id', 'is', null)
-      .where('a.starts_at', '<', new Date(endedAt.getTime() + slack))
-      .where('a.ends_at', '>', new Date(startedAt.getTime() - slack))
+      .where('a.starts_at', '<', windowEnd)
+      .where('a.ends_at', '>', windowStart)
       .orderBy('a.starts_at')
       .limit(2)
       .execute();

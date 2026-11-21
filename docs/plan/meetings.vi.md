@@ -1,6 +1,6 @@
 # Ghi chú cuộc họp bằng AI: tóm tắt cho chủ sở hữu
 
-> Tóm tắt tiếng Việt của [meetings.md](meetings.md) và [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (epic [#932](https://github.com/DOS/Ludy/issues/932), ngày 2026-11-03, đã sửa cùng ngày theo ý JOY về tiện ích trình duyệt và video). Bản tiếng Anh là bản chuẩn. **JOY đã duyệt kế hoạch ngày 2026-11-04 ("Đồng ý"): các câu 1 đến 6 theo đúng đề xuất, câu về video đã quyết cùng ngày.** Chưa xây gì, chưa tốn tiền; các issue xây đã được mở (xem bản tiếng Anh, mục 15). Bước chép lời và bước tóm tắt còn chờ ADR-0049 (cơ chế "Vy của từng người", PR [#2572](https://github.com/DOS/Ludy/pull/2572)) được PO Nền tảng chấp nhận. Theo lời JOY: làm gọn, tính năng lõi trước, AI làm việc ngay trong luồng.
+> Tóm tắt tiếng Việt của [meetings.md](meetings.md) và [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (epic [#932](https://github.com/DOS/Ludy/issues/932), ngày 2026-11-03, đã sửa cùng ngày theo ý JOY về tiện ích trình duyệt và video). Bản tiếng Anh là bản chuẩn. **JOY đã duyệt kế hoạch ngày 2026-11-04 ("Đồng ý"): các câu 1 đến 6 theo đúng đề xuất, câu về video đã quyết cùng ngày.** **Cập nhật ngày 2026-11-20 UTC / 2026-11-21 +07:00:** [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md) (Đã duyệt) đảo lại điểm "không làm app máy tính": làm xong lát 1 ([#4123](https://github.com/DOS/Ludy/issues/4123), chống ghi trùng trên các đường đang có) trước, sau đó mới làm khung Electron `Ludy Desktop` do nhóm Platform sở hữu để ghi cuộc họp (Windows trước rồi macOS, lát 3 chờ câu trả lời luật sư `#2585` / `#62`); chưa mua tài khoản ký phần mềm hay làm bot vội. Chưa xây gì, chưa tốn tiền; các issue xây đã được mở (xem bản tiếng Anh, mục 15). Bước chép lời và bước tóm tắt còn chờ ADR-0049 (cơ chế "Vy của từng người", PR [#2572](https://github.com/DOS/Ludy/pull/2572)) được PO Nền tảng chấp nhận. Theo lời JOY: làm gọn, tính năng lõi trước, AI làm việc ngay trong luồng.
 
 ## Người dùng được gì
 
@@ -15,12 +15,12 @@ Chủ một công ty một người hoặc một nhóm nhỏ họp hằng tuần
 
 ## Ba cách ghi cuộc họp
 
-- **(a) Tiện ích Ludy cho trình duyệt** (cách chính cho họp trực tuyến): một "tiện ích" (extension, phần mềm nhỏ cài vào Chrome hoặc Edge). Khi người dùng bấm nút trên thẻ đang họp, tiện ích ghi âm thanh của thẻ đó, cộng giọng của chính người dùng từ micro, và ghi cả hình nếu tích chọn. Dùng được với Google Meet, và với Teams, Zoom khi mở trên trình duyệt. **Không cần bot** (tài khoản máy tự vào họp) và **không cần cài ứng dụng máy tính**. Luôn hiện dấu đang ghi và bắt xác nhận đồng ý trước khi ghi.
+- **(a) Tiện ích Ludy cho trình duyệt** (cách chính cho họp trực tuyến): một "tiện ích" (extension, phần mềm nhỏ cài vào Chrome hoặc Edge). Khi người dùng bấm nút trên thẻ đang họp, tiện ích ghi âm thanh của thẻ đó, cộng giọng của chính người dùng từ micro, và ghi cả hình nếu tích chọn. Dùng được với Google Meet, và với Teams, Zoom khi mở trên trình duyệt. **Không cần bot** (tài khoản máy tự vào họp) và **không cần cài ứng dụng máy tính** để dùng tiện ích (ghi ứng dụng cài trên máy tính sẽ có sau lát 1 qua `Ludy Desktop` theo [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md)). Luôn hiện dấu đang ghi và bắt xác nhận đồng ý trước khi ghi.
 - **(b) Ghi bằng micro trong ứng dụng Ludy** cho cuộc họp trực tiếp trong phòng, trên máy tính hoặc điện thoại, không cần tiện ích.
 - **(c) Tải lên file ghi âm hoặc ghi hình** có sẵn.
 
 **Giới hạn, nói thẳng:**
-- Ứng dụng Zoom và Teams cài trên máy tính thì không ghi được; người dùng tải lên bản ghi mà các ứng dụng đó tạo ra.
+- Ứng dụng Zoom và Teams cài trên máy tính thì tiện ích không ghi được; hiện người dùng tải lên bản ghi mà các ứng dụng đó tạo ra, cho tới khi `Ludy Desktop` hoàn thành sau lát 1 (#4123, ADR-0055).
 - Safari và Firefox chỉ ghi được bằng micro (cách b).
 - Tiện ích phải lên Chrome Web Store (cửa hàng tiện ích của Google). Ludy tự chịu trách nhiệm duyệt, quyền truy cập, cập nhật và an toàn của tiện ích. JOY cần mở tài khoản nhà phát triển trên cửa hàng đó.
 
@@ -101,8 +101,8 @@ JOY trả lời "Đồng ý" ngày 2026-11-04, nên cả sáu câu dưới đây
 
 ## Để sau, và không làm
 
-- **Để sau** (issue #2587, #2589, #2590, #2592 trong Icebox, #2594 trước khi mở đăng ký công khai): gắn cuộc họp với khách hàng, cơ hội bán hàng, lịch hẹn; tìm kiếm trong các cuộc họp; Vy soạn email sau họp (người bấm gửi); bot tự vào Meet, Zoom, Teams và ghi chú trực tiếp (JOY thấy bot phiền nên để sau); tìm dữ liệu cá nhân trong bản chép lời khi có yêu cầu xóa; ghi âm bằng ứng dụng điện thoại; đưa tiện ích lên cửa hàng của Edge nếu cần.
-- **Không làm**: ứng dụng cài trên máy tính (một ứng dụng chỉ để ghi âm không đáng công duy trì, và Ludy hiện chưa có ứng dụng máy tính nào); nhận diện giọng nói giữa các cuộc họp; ghi mà không báo trước.
+- **Để sau** (issue #2587, #2589, #2590, #2592 trong Icebox, #2594 trước khi mở đăng ký công khai, và [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md) đã duyệt ngày 2026-11-20 UTC / 2026-11-21 +07:00): gắn cuộc họp với khách hàng, cơ hội bán hàng, lịch hẹn; tìm kiếm trong các cuộc họp; Vy soạn email sau họp (người bấm gửi); bot tự vào Meet, Zoom, Teams và ghi chú trực tiếp (ADR-0052 L4b, các câu hỏi 2, 3, 4, 6, 7, 8 vẫn giữ mở và chưa làm vội); tìm dữ liệu cá nhân trong bản chép lời khi có yêu cầu xóa; ghi âm bằng ứng dụng điện thoại; đưa tiện ích lên cửa hàng của Edge nếu cần; ứng dụng máy tính `Ludy Desktop` (khung Electron thuộc nhóm Platform `line:platform`, ghi cuộc họp trên Windows trước rồi macOS, làm sau lát 1 `#4123` và lát 3 chờ câu trả lời luật sư `#2585` / `#62`, chưa mua tài khoản ký phần mềm vội).
+- **Không làm**: nhận diện giọng nói giữa các cuộc họp; ghi mà không báo trước; mô-đun chat kiểu Slack/Lark (chỉ ghi chú trong ADR-0055, ngoài kế hoạch hiện tại cho tới khi có quyết định và ADR riêng).
 
 ## Tình trạng ngày 2026-11-12
 

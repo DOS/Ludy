@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  plainLine,
   LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
@@ -22,9 +23,11 @@ import {
   type JournalVoucherProposal,
   type PurchaseProposal,
   type SignatureStatus,
+  isEngageProposalKind,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { engageAboutOf, engageViewOf } from './engage-view.ts';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
@@ -47,6 +50,7 @@ import { offboardingQueries } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { orgOverviewQuery, RECENT_FILES, type OverviewContribution } from './overview.ts';
 import { conversationSignalsQueries } from './conversation-signals.ts';
+import { engageWakeQueries } from './engage-wake.ts';
 import { conversationUnansweredQuery, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
 import { todayQuery } from './today.ts';
 import { todayWeeklyQuery } from './today-weekly.ts';
@@ -204,6 +208,9 @@ function toInboxItem(row: {
   decided_at: Date | null;
   extraction_id: string | null;
   requested_by_agent: string | null;
+  requested_by_grant?: string | null;
+  mcp_client_name?: string | null;
+  mcp_client_host?: string | null;
   legal_entity_id: string;
 }, agentName: string | null) {
   const payload = parsePayload(row.kind, row.payload);
@@ -266,9 +273,14 @@ function expiredAfterDays(row: { status: string; created_at: Date; decided_at: D
 
 // Whether an AI agent asked for the proposal and whether an extraction run read it (#435). An agent's proposal has no
 // extraction, so no invoice checks ran and the Inbox must not show it as matched.
-function agentFields(row: { extraction_id: string | null; requested_by_agent: string | null }, agentName: string | null) {
+function agentFields(
+  row: { extraction_id: string | null; requested_by_agent: string | null; requested_by_grant?: string | null; mcp_client_name?: string | null; mcp_client_host?: string | null },
+  agentName: string | null,
+) {
   return {
     requestedByAgent: row.requested_by_agent ? { id: row.requested_by_agent, name: agentName ?? '' } : null,
+    // An outside AI app connected over MCP asked for it (ADR-0051 decision 10): the client's self-declared name and the host it returns to, both stamped from the grant by the database, so the card says who asked.
+    requestedByMcp: row.requested_by_grant && row.mcp_client_name ? { client: plainLine(row.mcp_client_name, 120), host: plainLine(row.mcp_client_host ?? '', 253) } : null,
     extracted: row.extraction_id !== null,
   };
 }
@@ -282,7 +294,7 @@ export const inboxList = defineQuery({
       sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'status' = ${status})`;
     let query = ctx.trx
       .selectFrom('crove_kernel.proposal')
-      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent'])
+      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host'])
       .select([
         sql<string | null>`left(payload #>> '{seller,name}', 500)`.as('seller_name'),
         sql<boolean>`coalesce(payload ->> 'direction' = 'sale', false)`.as('is_sale'),
@@ -460,6 +472,7 @@ export const inboxGet = defineQuery({
             .limit(20)
             .execute()
         : [];
+    const engage = (ctx.role === 'owner' || ctx.role === 'admin') && isEngageProposalKind(row.kind) ? engageViewOf(row.kind, row.command, row.payload, await engageAboutOf(ctx.trx, ctx.orgId, row.command, row.payload)) : null;
     return {
       ...toInboxItem(row, agent?.display_name ?? null),
       revision: row.revision,
@@ -467,6 +480,8 @@ export const inboxGet = defineQuery({
       reversal: parseReversal(row.kind, row.payload),
       voucher: parseVoucher(row.kind, row.payload),
       journalVoucher: parseJournalVoucher(row.kind, row.payload),
+      // The text an AI coworker proposes may be a reply in a thread this reader may not read (a private message, an email): only the people who approve it, owners and admins, who read every thread, see it.
+      engage: engage,
       error: null,
       file: file ? { id: file.id, filename: file.filename, contentType: file.content_type, sizeBytes: file.size_bytes } : null,
       decidedAt: row.decided_at ? row.decided_at.toISOString() : null,
@@ -661,5 +676,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[]; apps?: OrgAppsOptions }) {
-  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

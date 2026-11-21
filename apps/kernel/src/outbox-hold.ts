@@ -36,6 +36,7 @@ export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'sign.envelope.inspect_queued',
   'sign.template.inspect_queued',
   'sign.envelope.seal_queued',
+  'sign.ca.sign_queued',
 ]);
 
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
@@ -46,7 +47,14 @@ const KERNEL_EVENT_APPS: Readonly<Record<string, string>> = {
 
 // An app's own events carry its id as their prefix (the module that emits them). Meetings is not here: its events are bound to a time (a transcription or live notes
 // of a meeting that is happening), so they are dropped when the app is off, not parked for later.
-const HOLDING_PREFIXES: Readonly<Record<string, string>> = { 'finance.': 'finance', 'social.': 'social', 'crm.': 'crm', 'ads.': 'ads' };
+const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
+  'finance.': 'finance',
+  'social.': 'social',
+  'crm.': 'crm',
+  'ads.': 'ads',
+  // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
+  'notes.attachment.': 'notes',
+};
 
 /** The app whose events wait while it is off, for this event type, or null when the event is never parked. */
 export function heldAppOf(type: string): string | null {

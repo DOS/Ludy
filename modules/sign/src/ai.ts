@@ -187,22 +187,26 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+const FORMAT_CONTROL_RE = /\p{Cf}+/gu;
+
+function stripFormatControl(value: string): string {
+  return value.replace(FORMAT_CONTROL_RE, '');
+}
+
 function safeSlice(value: string, max: number): string {
-  const trimmed = value.trim();
+  const trimmed = stripFormatControl(value).trim();
   if (trimmed.length <= max) return trimmed;
   const points = Array.from(trimmed);
-  return points.length <= max ? trimmed : points.slice(0, max).join('');
+  return points.length <= max ? trimmed : points.slice(0, max).join('').trimEnd();
 }
 
 function cleanLine(value: string, max: number): string {
-  const one = value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const one = stripFormatControl(value).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
   return safeSlice(one, max).trimEnd();
 }
 
 function normalizePreservingCase(value: string): string {
-  return value
-    .normalize('NFKC')
-    .replace(/\p{Cf}/gu, '')
+  return stripFormatControl(value.normalize('NFKC'))
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, '-');
@@ -722,8 +726,7 @@ function collectNumberUnitPairs(norm: string): Array<[string[], string]> {
 }
 
 function collectRawUppercaseCodePairs(rawText: string): Array<[string[], string]> {
-  const normRaw = stripLeadingBullets(rawText)
-    .replace(/\p{Cf}/gu, '')
+  const normRaw = stripFormatControl(stripLeadingBullets(rawText))
     .normalize('NFKC')
     .replace(/\s+/g, ' ');
   const pairs: Array<[string[], string]> = [];
@@ -1020,14 +1023,14 @@ export function sanitizeSignAiProposals(params: {
       droppedFields += 1;
       continue;
     }
-    const fieldType = candidate.fieldType.trim();
+    const fieldType = stripFormatControl(candidate.fieldType).trim();
     if (!FIELD_TYPE_SET.has(fieldType)) {
       droppedFields += 1;
       continue;
     }
     const resolved = candidate.signerId
       ? assignableById.get(candidate.signerId)
-      : roleLookup.get(candidate.signerRoleKey.trim().toLowerCase());
+      : roleLookup.get(cleanLine(candidate.signerRoleKey, 160).toLowerCase());
     if (!resolved) {
       droppedFields += 1;
       continue;
@@ -1059,7 +1062,7 @@ export function sanitizeSignAiProposals(params: {
   const pageParts = new Map<number, string[]>();
   for (const p of params.extractedPages ?? []) {
     if (!Number.isInteger(p.page) || p.page < 1 || (maxPage > 0 && p.page > maxPage)) continue;
-    const text = p.text.trim();
+    const text = stripFormatControl(p.text).trim();
     if (!text) continue;
     const list = pageParts.get(p.page);
     if (list) list.push(text);
@@ -1083,14 +1086,14 @@ export function sanitizeSignAiProposals(params: {
     droppedClauses = params.riskClauses.length;
   } else {
     for (const item of params.riskClauses) {
-      const severity = item.severity.trim().toLowerCase();
+      const severity = stripFormatControl(item.severity).trim().toLowerCase();
       if (!SEVERITY_SET.has(severity)) {
         droppedClauses += 1;
         continue;
       }
       const title = cleanLine(item.title, 200);
       const explanation = cleanLine(item.explanation, 800);
-      const quote = item.quote.trim();
+      const quote = stripFormatControl(item.quote).trim();
       const normQuote = normalizeText(quote);
       if (!title || !explanation || normQuote.length < 6) {
         droppedClauses += 1;
@@ -1146,16 +1149,18 @@ export function sanitizeSignAiProposals(params: {
 
   let summaryText: string | null = null;
   let summaryDropped = false;
-  if (typeof params.summaryText === 'string' && params.summaryText.replace(/\p{Cf}/gu, '').trim().length > 0) {
-    const trimmed = safeSlice(params.summaryText.replace(/\p{Cf}/gu, ''), SIGN_AI_SUMMARY_MAX);
-    if (
-      !sourceNumbers ||
-      hasUnsourcedLinks(trimmed, sourceAddresses) ||
-      hasInventedNumbers(trimmed, sourceNumbers, maxPage)
-    ) {
-      summaryDropped = true;
-    } else {
-      summaryText = trimmed;
+  if (typeof params.summaryText === 'string') {
+    const trimmed = safeSlice(params.summaryText, SIGN_AI_SUMMARY_MAX);
+    if (trimmed.length > 0) {
+      if (
+        !sourceNumbers ||
+        hasUnsourcedLinks(trimmed, sourceAddresses) ||
+        hasInventedNumbers(trimmed, sourceNumbers, maxPage)
+      ) {
+        summaryDropped = true;
+      } else {
+        summaryText = trimmed;
+      }
     }
   }
 
@@ -1213,10 +1218,63 @@ function toAnalysisRecord(
 ): SignAiAnalysisRecord {
   const proposedFields = parseJsonArray<SignAiProposedField>(row.proposed_fields_json)
     .filter((f) => !activeSignerIds || (typeof f.signerId === 'string' && activeSignerIds.has(f.signerId)))
-    .map((f) => ({
-      ...f,
-      proposedByAi: true as const,
-    }));
+    .map((f) => {
+      const cleanedLabel = typeof f.label === 'string' ? cleanLine(f.label, 120) : '';
+      return {
+        signerId: f.signerId,
+        signerRoleKey: typeof f.signerRoleKey === 'string' ? cleanLine(f.signerRoleKey, 160) : '',
+        fieldType: f.fieldType,
+        pageNumber: f.pageNumber,
+        xNorm: f.xNorm,
+        yNorm: f.yNorm,
+        wNorm: f.wNorm,
+        hNorm: f.hNorm,
+        label: cleanedLabel.length > 0 ? cleanedLabel : null,
+        confidence: typeof f.confidence === 'number' && Number.isFinite(f.confidence) ? f.confidence : null,
+        proposedByAi: true as const,
+      };
+    });
+  const riskClauses = parseJsonArray<Record<string, unknown>>(row.risk_clauses_json)
+    .map((c): SignAiRiskClause | null => {
+      if (!c || typeof c !== 'object') return null;
+      const title = typeof c.title === 'string' ? cleanLine(c.title, 200) : '';
+      const rawQuote =
+        typeof c.quote === 'string'
+          ? c.quote
+          : typeof c.quoteExcerpt === 'string'
+            ? c.quoteExcerpt
+            : '';
+      const rawExplanation =
+        typeof c.explanation === 'string'
+          ? c.explanation
+          : typeof c.note === 'string'
+            ? c.note
+            : '';
+      const quote = safeSlice(rawQuote, 1000);
+      const explanation = cleanLine(rawExplanation, 800);
+      const rawSeverity =
+        typeof c.severity === 'string' ? stripFormatControl(c.severity).trim().toLowerCase() : '';
+      const severity: SignAiClauseSeverity = SEVERITY_SET.has(rawSeverity)
+        ? (rawSeverity as SignAiClauseSeverity)
+        : 'low';
+      const pageNumber =
+        typeof c.pageNumber === 'number' && Number.isInteger(c.pageNumber) && c.pageNumber >= 1
+          ? c.pageNumber
+          : null;
+      if (!title || !quote || !explanation) return null;
+      return {
+        title,
+        severity,
+        pageNumber,
+        quote,
+        explanation,
+      };
+    })
+    .filter((c): c is SignAiRiskClause => c !== null);
+  const cleanedSummary =
+    typeof row.summary_text === 'string' ? safeSlice(row.summary_text, SIGN_AI_SUMMARY_MAX) : '';
+  const cleanedError =
+    typeof row.error_message === 'string' ? cleanLine(row.error_message, SIGN_AI_ERROR_MAX) : '';
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1224,16 +1282,16 @@ function toAnalysisRecord(
     sourceSha256: row.source_sha256,
     status: row.status,
     proposedFields,
-    riskClauses: parseJsonArray<SignAiRiskClause>(row.risk_clauses_json),
-    summaryText: row.summary_text,
-    errorMessage: row.error_message,
-    promptVersion: row.prompt_version,
+    riskClauses,
+    summaryText: cleanedSummary.length > 0 ? cleanedSummary : null,
+    errorMessage: cleanedError.length > 0 ? cleanedError : null,
+    promptVersion: cleanLine(row.prompt_version, 32) || 'v1',
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
 
-async function isSignAiStoppedOnTrx(
+export async function isSignAiStoppedOnTrx(
   trx: QueryContext['trx'] | CommandContext['trx'],
   orgId: string,
 ): Promise<boolean> {
@@ -1285,12 +1343,18 @@ async function recordAiAnalysisRow(
     throw new DomainError('SIGN_AI_STOPPED', 409, 'AI features are stopped for this organization');
   }
   const hasSourceText = (input.extractedPages ?? []).some(
-    (p) => Number.isInteger(p.page) && p.page >= 1 && (env.page_count ?? 0) >= p.page && p.text.trim().length > 0,
+    (p) =>
+      Number.isInteger(p.page) &&
+      p.page >= 1 &&
+      (env.page_count ?? 0) >= p.page &&
+      stripFormatControl(p.text).trim().length > 0,
   );
   if (
     input.status === 'completed' &&
     !hasSourceText &&
-    (input.proposedFields.length > 0 || input.riskClauses.length > 0 || (input.summaryText !== null && input.summaryText.trim().length > 0))
+    (input.proposedFields.length > 0 ||
+      input.riskClauses.length > 0 ||
+      (input.summaryText !== null && stripFormatControl(input.summaryText).trim().length > 0))
   ) {
     throw new DomainError(
       'SIGN_AI_SOURCE_TEXT_REQUIRED',
@@ -1330,8 +1394,9 @@ async function recordAiAnalysisRow(
   const completedAt = input.status === 'pending' ? null : ctx.now;
   const errorMessage =
     input.status === 'failed'
-      ? cleanLine(input.errorMessage ?? 'AI analysis failed', SIGN_AI_ERROR_MAX)
+      ? cleanLine(input.errorMessage ?? '', SIGN_AI_ERROR_MAX) || 'AI analysis failed'
       : null;
+  const promptVersion = cleanLine(input.promptVersion, 32) || 'v1';
 
   const inserted = await ctx.trx
     .insertInto('crove_sign.ai_analysis')
@@ -1344,7 +1409,7 @@ async function recordAiAnalysisRow(
       risk_clauses_json: JSON.stringify(sanitized.riskClauses),
       summary_text: sanitized.summaryText,
       error_message: errorMessage,
-      prompt_version: input.promptVersion,
+      prompt_version: promptVersion,
       completed_at: completedAt,
     })
     .returningAll()
@@ -1427,13 +1492,16 @@ export const aiAnalysisSource = defineQuery({
 
     const assignable = signers
       .filter((s): s is typeof s & { signer_role: 'signer' | 'approver' } => s.signer_role !== 'cc')
-      .map((s, idx) => ({
-        signerId: s.id,
-        roleKey: signerRoleKeyOf(idx),
-        roleLabel: s.role_label,
-        signerRole: s.signer_role,
-        routingOrder: s.routing_order,
-      }));
+      .map((s, idx) => {
+        const roleKey = signerRoleKeyOf(idx);
+        return {
+          signerId: s.id,
+          roleKey,
+          roleLabel: cleanLine(s.role_label, 120) || roleKey,
+          signerRole: s.signer_role,
+          routingOrder: s.routing_order,
+        };
+      });
 
     let pageDimensions: SignAiSource['pageDimensions'] = null;
     if (Array.isArray(env.page_dimensions_json)) {
@@ -1453,7 +1521,7 @@ export const aiAnalysisSource = defineQuery({
       status: env.status,
       inspectStatus: env.inspect_status,
       sourceSha256: env.source_sha256,
-      title: env.title,
+      title: cleanLine(env.title, 300),
       pageCount: env.page_count,
       pageDimensions,
       signers: assignable,

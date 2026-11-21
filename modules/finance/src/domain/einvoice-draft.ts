@@ -22,8 +22,8 @@ export interface DraftBuyerInput {
   name: string | null;
   address: string | null;
   email: string | null;
-  // An individual's CCCD, passport or budget code (one); null for any other buyer.
-  identity: { kind: BuyerIdentityKind; value: string } | null;
+  // An individual's CCCD, passport or budget code (one); null for any other buyer. A passport carries the buyer's nationality (ISO alpha-2, #3709) and nothing else does.
+  identity: { kind: BuyerIdentityKind; value: string; nationality?: string | null | undefined } | null;
 }
 
 export interface DraftInput {
@@ -38,8 +38,9 @@ export interface DraftInput {
   lines: readonly DraftLineInput[];
   // An adjusting invoice (#2504): a unit price may be negative (a decrease) and no price may be zero, since each line is a difference.
   adjustment?: boolean;
-  // The day the VAT rate of the lines is judged on when it is not the draft's own: an adjusting or replacing invoice keeps the rate and the date of the invoice it corrects (plan
-  // einvoice-issue.md, "VAT 8% ends on 2026-12-31"). Left out, it is the sale date, or the invoice date when there is no sale date.
+  // The day the VAT rate of the lines is judged on when it is not the draft's own: an adjusting or replacing invoice that keeps the rate of the invoice it corrects is judged on that invoice's date
+  // (plan einvoice-issue.md, "VAT 8% ends on 2026-12-31"); one whose rate follows the correction's own date (a change of amount, #3709) leaves it out. Left out, it is the sale date, or the invoice
+  // date when there is no sale date.
   rateDate?: string | null;
 }
 
@@ -90,6 +91,11 @@ const IDENTITY_SHAPE: Record<BuyerIdentityKind, RegExp> = { cccd: /^\d{12}$/, pa
 export function isBuyerIdentity(kind: BuyerIdentityKind, value: string): boolean {
   return IDENTITY_SHAPE[kind].test(value);
 }
+// A nationality is the ISO 3166-1 alpha-2 code in capitals (#3709): its shape is checked here, not the list of countries.
+const NATIONALITY = /^[A-Z]{2}$/;
+export function isNationalityCode(value: string): boolean {
+  return NATIONALITY.test(value);
+}
 
 // The kind and the last three characters, the rest hidden: what a list shows of an identity (never the whole value, never in an audit fact).
 export function maskBuyerIdentity(value: string): string {
@@ -137,6 +143,13 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
   }
   if (buyer.email && !EMAIL.test(buyer.email)) add('buyer.email', 'BUYER_EMAIL_INVALID');
   if (buyer.identity && (buyer.kind !== 'individual' || !isBuyerIdentity(buyer.identity.kind, buyer.identity.value))) add('buyer.identity', 'BUYER_IDENTITY_INVALID');
+  // A passport carries the buyer's nationality (Decree 254 Appendix point 4.b); no other identity does.
+  if (buyer.identity?.kind === 'passport') {
+    if (!buyer.identity.nationality) add('buyer.nationality', 'BUYER_NATIONALITY_REQUIRED');
+    else if (!isNationalityCode(buyer.identity.nationality)) add('buyer.nationality', 'BUYER_NATIONALITY_INVALID');
+  } else if (buyer.identity?.nationality) {
+    add('buyer.nationality', 'BUYER_NATIONALITY_INVALID');
+  }
 
   // 8% only inside a period the reduced rate applied, by the sale date (the invoice date when there is none); an adjustment or a replacement is judged on its original's. With no valid
   // day there is nothing to judge on: the date check says so.

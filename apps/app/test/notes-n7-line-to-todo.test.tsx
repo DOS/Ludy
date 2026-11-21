@@ -41,6 +41,7 @@ vi.mock('../src/i18n/provider.tsx', () => ({
     dateTime: (v: string) => v,
     number: (v: number | bigint | string) => String(v),
   }),
+  useLocaleSetting: () => ({ locale: 'vi', setLocale: () => undefined }),
 }));
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {

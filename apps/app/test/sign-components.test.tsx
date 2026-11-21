@@ -64,7 +64,12 @@ const { isCurrentPdfTargetRendered } = await import('../src/components/sign/pdf-
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
-const { filterPendingProposalsForSigners, SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
+const {
+  filterPendingProposalsForSigners,
+  fromDatetimeLocalValue,
+  SignEnvelopeDetailPage,
+  toDatetimeLocalValue,
+} = await import('../src/routes/sign-envelope-detail.tsx');
 const {
   buildSignSubmitPayload,
   canSubmitCeremony,
@@ -1292,5 +1297,427 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
 
     const enHtml = renderEn(<SignEnvelopeDetailPage />, qc);
     expect(enHtml).toContain('Apply 3 tag fields');
+  });
+
+  it('renders 24h pre-expiry auto-remind toggle on draft envelopes and declined reason + pre-expiry badge on signers (#3813)', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const envId = routerState.id;
+
+    expect(toDatetimeLocalValue(null)).toBe('');
+    expect(fromDatetimeLocalValue('')).toBeNull();
+    const roundTripIso = fromDatetimeLocalValue(toDatetimeLocalValue('2026-11-20T09:30:00Z'));
+    expect(roundTripIso).toBe('2026-11-20T09:30:00.000Z');
+
+    qc.setQueryData(['sign', 'envelope', envId], {
+      envelope: {
+        id: envId,
+        title: 'Hợp đồng dịch vụ cần nhắc hạn',
+        subject: null,
+        message: null,
+        status: 'draft' as const,
+        routingMode: 'sequential' as const,
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-000000000077',
+        sourceSha256: 'a'.repeat(64),
+        inspectStatus: 'passed' as const,
+        inspectError: null,
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: '2026-11-20T08:00:00Z',
+        autoRemindBeforeExpiry: true,
+        sentAt: null,
+        completedAt: null,
+        declinedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 1,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-19T00:00:00Z',
+        updatedAt: '2026-11-19T00:00:00Z',
+      },
+      signers: [SIGNER_1],
+      fields: [],
+    });
+    qc.setQueryData(['sign', 'ai', envId], {
+      status: 'disabled',
+      summaryText: null,
+      riskLevel: null,
+      proposedFields: [],
+      riskClauses: [],
+    } satisfies SignAiAnalysis);
+
+    const draftVi = renderVi(<SignEnvelopeDetailPage />, qc);
+    expect(draftVi).toContain('data-testid="env-auto-remind-checkbox"');
+    expect(draftVi).toContain('Tự động nhắc qua email trước 24 giờ khi sắp hết hạn');
+    expect(draftVi).toContain('id="env-expires-at-input"');
+    expect(draftVi).toContain('max-md:min-h-11');
+
+    const draftEn = renderEn(<SignEnvelopeDetailPage />, qc);
+    expect(draftEn).toContain('Send automatic 24-hour pre-expiry email reminder');
+    expect(draftEn).toContain('Signing deadline (optional)');
+
+    // Declined unacknowledged envelope shows Acknowledge decline action in PageHeader.
+    const declinedQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    declinedQc.setQueryData(['sign', 'envelope', envId], {
+      envelope: {
+        id: envId,
+        title: 'Hợp đồng bị từ chối',
+        subject: null,
+        message: null,
+        status: 'declined' as const,
+        routingMode: 'parallel' as const,
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-000000000077',
+        sourceSha256: 'a'.repeat(64),
+        inspectStatus: 'passed' as const,
+        inspectError: null,
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: null,
+        autoRemindBeforeExpiry: true,
+        sentAt: '2026-11-19T01:00:00Z',
+        completedAt: null,
+        declinedAt: '2026-11-19T02:00:00Z',
+        declineAcknowledgedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 2,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-19T00:00:00Z',
+        updatedAt: '2026-11-19T02:00:00Z',
+      },
+      signers: [SIGNER_1],
+      fields: [],
+    });
+    const declinedVi = renderVi(<SignEnvelopeDetailPage />, declinedQc);
+    expect(declinedVi).toContain('data-testid="sign-ack-decline-btn"');
+    expect(declinedVi).toContain('Đã nắm / Ẩn khỏi Hôm nay');
+
+    const activePanelVi = renderVi(
+      <SignerPanel
+        envelopeStatus="declined"
+        routingMode="sequential"
+        signers={[
+          {
+            ...SIGNER_1,
+            id: 'signer-reminded',
+            status: 'viewed',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'sent',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-queued',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'queued',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-failed',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'failed',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-suppressed',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'suppressed',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-declined',
+            name: 'Lê Văn C',
+            status: 'declined',
+            declinedAt: '2026-11-19T13:00:00Z',
+            declineReason: 'Cần điều chỉnh điều khoản thanh toán đợt 2',
+          },
+        ]}
+        activeSignerId="signer-reminded"
+        onSelectSigner={vi.fn()}
+        onChangeRoutingMode={vi.fn()}
+        onAddSigner={vi.fn()}
+        onRemoveSigner={vi.fn()}
+        onMoveSigner={vi.fn()}
+      />,
+    );
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-reminded-signer-reminded"');
+    expect(activePanelVi).toContain('Đã gửi nhắc trước hạn');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-queued-signer-queued"');
+    expect(activePanelVi).toContain('Đang chờ gửi nhắc trước hạn');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-failed-signer-failed"');
+    expect(activePanelVi).toContain('Gửi nhắc trước hạn thất bại');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-suppressed-signer-suppressed"');
+    expect(activePanelVi).toContain('Email nhắc hạn bị chặn');
+    expect(activePanelVi).toContain('data-testid="signer-decline-reason-signer-declined"');
+    expect(activePanelVi).toContain('Lý do từ chối: Cần điều chỉnh điều khoản thanh toán đợt 2');
+  });
+
+  it('renders recipient correction gate, delegation provenance, allowDelegation toggle, and ceremony delegation controls (#3819)', async () => {
+    const noop = () => undefined;
+
+    // 1. SignerPanel shows "Sửa người nhận" only on unsigned signers of active envelopes when onCorrectSigner is passed,
+    //    and renders "Ủy quyền ký bởi ..." provenance when delegatedFromName is present.
+    const signedSigner: SignSignerRecord = {
+      ...SIGNER_1,
+      id: 'signer-signed',
+      name: 'Phạm Văn Đã Ký',
+      email: 'signed@example.com',
+      status: 'signed',
+      signedAt: '2026-11-21T08:00:00Z',
+    };
+    const delegatedPendingSigner: SignSignerRecord = {
+      ...SIGNER_1,
+      id: 'signer-delegated-pending',
+      routingOrder: 2,
+      name: 'Lê Thị Đại Diện',
+      email: 'delegate@example.com',
+      status: 'pending',
+      delegatedFromName: 'Trần Văn Ủy Quyền',
+      delegatedFromEmail: 'u***n@example.com',
+      delegationCount: 1,
+    };
+
+    const panelVi = renderVi(
+      <SignerPanel
+        envelopeStatus="in_progress"
+        routingMode="sequential"
+        signers={[signedSigner, delegatedPendingSigner]}
+        activeSignerId={null}
+        onSelectSigner={noop}
+        onChangeRoutingMode={noop}
+        onAddSigner={async () => undefined}
+        onRemoveSigner={async () => undefined}
+        onMoveSigner={async () => undefined}
+        onCorrectSigner={noop}
+      />,
+    );
+    expect(panelVi).not.toContain('data-testid="signer-correct-signer-signed"');
+    expect(panelVi).toContain('data-testid="signer-correct-signer-delegated-pending"');
+    expect(panelVi).toContain('Sửa người nhận');
+    expect(panelVi).toContain('data-testid="signer-delegated-signer-delegated-pending"');
+    expect(panelVi).toContain('Ủy quyền ký bởi Trần Văn Ủy Quyền (u***n@example.com)');
+
+    const panelEn = renderEn(
+      <SignerPanel
+        envelopeStatus="sent"
+        routingMode="parallel"
+        signers={[delegatedPendingSigner]}
+        activeSignerId={null}
+        onSelectSigner={noop}
+        onChangeRoutingMode={noop}
+        onAddSigner={async () => undefined}
+        onRemoveSigner={async () => undefined}
+        onMoveSigner={async () => undefined}
+        onCorrectSigner={noop}
+      />,
+    );
+    expect(panelEn).toContain('Correct recipient');
+    expect(panelEn).toContain('Delegated by Trần Văn Ủy Quyền (u***n@example.com)');
+
+    // 2. SignEnvelopeDetailPage enforces creator/owner/admin gate for recipient correction and renders allowDelegation checkbox.
+    const envId = routerState.id;
+    const creatorUserId = '01900000-0000-7000-8000-000000000088';
+    const otherMemberUserId = '01900000-0000-7000-8000-000000000099';
+
+    const baseEnvelope = {
+      id: envId,
+      title: 'Hợp đồng dịch vụ 2026',
+      subject: null,
+      message: null,
+      status: 'sent' as const,
+      routingMode: 'sequential' as const,
+      allowDelegation: true,
+      sourceKind: 'standalone',
+      sourceId: null,
+      sourceFileId: '01900000-0000-7000-8000-000000000077',
+      sourceSha256: 'b'.repeat(64),
+      inspectStatus: 'passed' as const,
+      inspectError: null,
+      pageCount: 1,
+      pageDimensions: [{ page: 1, widthPt: 595.28, heightPt: 841.89, rotation: 0 }],
+      detectedTags: [],
+      sealedFileId: null,
+      sealedSha256: null,
+      sealStatus: null,
+      certificateFileId: null,
+      certificateSha256: null,
+      certificateCode: null,
+      expiresAt: '2027-02-01T00:00:00Z',
+      sentAt: '2026-11-21T00:00:00Z',
+      completedAt: null,
+      declinedAt: null,
+      voidedAt: null,
+      voidedBy: null,
+      voidReason: null,
+      expiredAt: null,
+      version: 2,
+      createdBy: creatorUserId,
+      createdAt: '2026-11-21T00:00:00Z',
+      updatedAt: '2026-11-21T00:00:00Z',
+    };
+
+    const nonCreatorQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    nonCreatorQc.setQueryData(['me', 'get'], {
+      userId: otherMemberUserId,
+      email: 'member@example.com',
+      displayName: 'Member',
+      orgs: [{ id: 'org-1', slug: 'acme', name: 'Acme', role: 'member' }],
+    });
+    nonCreatorQc.setQueryData(['sign', 'envelope', envId], {
+      envelope: baseEnvelope,
+      signers: [delegatedPendingSigner],
+      fields: [],
+    });
+    const nonCreatorHtml = renderVi(<SignEnvelopeDetailPage />, nonCreatorQc);
+    expect(nonCreatorHtml).not.toContain('data-testid="signer-correct-signer-delegated-pending"');
+
+    const creatorQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    creatorQc.setQueryData(['me', 'get'], {
+      userId: creatorUserId,
+      email: 'creator@example.com',
+      displayName: 'Creator',
+      orgs: [{ id: 'org-1', slug: 'acme', name: 'Acme', role: 'member' }],
+    });
+    creatorQc.setQueryData(['sign', 'envelope', envId], {
+      envelope: baseEnvelope,
+      signers: [delegatedPendingSigner],
+      fields: [],
+    });
+    const creatorHtml = renderVi(<SignEnvelopeDetailPage />, creatorQc);
+    expect(creatorHtml).toContain('data-testid="signer-correct-signer-delegated-pending"');
+
+    const draftQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    draftQc.setQueryData(['sign', 'envelope', envId], {
+      envelope: { ...baseEnvelope, status: 'draft' as const },
+      signers: [SIGNER_1],
+      fields: [],
+    });
+    const draftHtml = renderVi(<SignEnvelopeDetailPage />, draftQc);
+    expect(draftHtml).toContain('data-testid="env-allow-delegation-checkbox"');
+    expect(draftHtml).toContain('Cho phép người ký ủy quyền cho người khác (tối đa 2 lần)');
+
+    // 3. SignCeremonyReadyView shows "Ủy quyền người khác ký" when allowDelegation=true and delegationCount < 2,
+    //    hides it when allowDelegation=false or delegationCount >= 2, and renders delegatedFromName notice.
+    const ceremonyCommon = {
+      answers: {},
+      pdfBytes: new Uint8Array([1, 2, 3]),
+      loadingPdf: false,
+      pdfError: null,
+      viewerRenderError: null,
+      pageNumber: 1,
+      scale: 1,
+      consentChecked: true,
+      canSubmit: true,
+      submitting: false,
+      submitError: null,
+      declineOpen: false,
+      declineReason: '',
+      declining: false,
+      declineError: null,
+      delegateOpen: false,
+      delegateName: '',
+      delegateEmail: '',
+      delegateReason: '',
+      delegating: false,
+      delegateError: null,
+      padFieldId: null,
+      onPageChange: noop,
+      onScaleChange: noop,
+      onRenderStatusChange: noop,
+      onJumpToNext: noop,
+      onOpenPad: noop,
+      onUpdateAnswer: noop,
+      onConsentChange: noop,
+      onSubmit: noop,
+      onDeclineOpenChange: noop,
+      onDeclineReasonChange: noop,
+      onDeclineSubmit: noop,
+      onDelegateOpenChange: noop,
+      onDelegateNameChange: noop,
+      onDelegateEmailChange: noop,
+      onDelegateReasonChange: noop,
+      onDelegateSubmit: noop,
+    };
+
+    const readyDelegatable = {
+      state: 'ready' as const,
+      orgName: 'Công ty ABC',
+      title: 'Hợp đồng mua bán',
+      message: null,
+      signerName: 'Lê Thị Đại Diện',
+      roleLabel: 'Bên B',
+      signerRole: 'signer' as const,
+      expiresAt: '2027-02-01T00:00:00.000Z',
+      pageCount: 1,
+      allowDelegation: true,
+      delegationCount: 1,
+      delegatedFromName: 'Trần Văn Ủy Quyền',
+      fields: [],
+    };
+    const ceremonyAllowedHtml = renderVi(<SignCeremonyReadyView viewState={readyDelegatable} {...ceremonyCommon} />);
+    expect(ceremonyAllowedHtml).toContain('data-testid="ceremony-delegate-btn"');
+    expect(ceremonyAllowedHtml).toContain('Ủy quyền người khác ký');
+    expect(ceremonyAllowedHtml).toContain('data-testid="ceremony-delegated-from"');
+    expect(ceremonyAllowedHtml).toContain('Được ủy quyền bởi Trần Văn Ủy Quyền');
+
+    const ceremonyMaxedHtml = renderVi(
+      <SignCeremonyReadyView viewState={{ ...readyDelegatable, delegationCount: 2 }} {...ceremonyCommon} />,
+    );
+    expect(ceremonyMaxedHtml).not.toContain('data-testid="ceremony-delegate-btn"');
+
+    const ceremonyDisabledHtml = renderVi(
+      <SignCeremonyReadyView viewState={{ ...readyDelegatable, allowDelegation: false }} {...ceremonyCommon} />,
+    );
+    expect(ceremonyDisabledHtml).not.toContain('data-testid="ceremony-delegate-btn"');
+
+    // 4. publicSignApi.view normalizes 'delegated' state cleanly.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            state: 'delegated',
+            title: 'Hợp đồng mua bán',
+            delegateName: 'Nguyễn Minh Quân',
+            maskedDelegateEmail: 'q***n@example.com',
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const delegatedView = await publicSignApi.view('T'.repeat(43));
+    expect(delegatedView).toEqual({
+      state: 'delegated',
+      title: 'Hợp đồng mua bán',
+      delegateName: 'Nguyễn Minh Quân',
+      maskedDelegateEmail: 'q***n@example.com',
+    });
   });
 });

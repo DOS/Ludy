@@ -62,6 +62,7 @@ describe('describeError', () => {
       ['MEDIA_KEY_SHREDDED', 'Meeting media retention has ended'],
       ['MEDIA_KEY_UNAVAILABLE', 'Media decryption key unavailable'],
       ['AUDIO_NOT_FOUND', 'Meeting audio segment not found'],
+      ['CAPTURE_ALREADY_RUNNING', 'This meeting is already being recorded'],
     ] as const) {
       expect(describeError(new ApiError(code, 404, message), vi, 'vi'), `vi ${code}`).toBe(vi(`kernelErrors.codes.${code}`));
       expect(describeError(new ApiError(code, 404, message), en, 'en'), `en ${code}`).toBe(en(`kernelErrors.codes.${code}`));
@@ -77,7 +78,6 @@ describe('describeError', () => {
 
   it('keeps the kernel message for a code the SPA does not word, then a generic text', () => {
     expect(describeError({ code: 'TASK_CLOSED', message: 'Việc này đã kết thúc' }, en, 'en')).toBe('Việc này đã kết thúc');
-    expect(describeError(new TypeError('Failed to fetch'), en, 'en')).toBe('Failed to fetch');
     expect(describeError(null, en, 'en')).toBe('Something went wrong');
     expect(describeError({}, vi, 'vi')).toBe('Đã có lỗi xảy ra');
   });

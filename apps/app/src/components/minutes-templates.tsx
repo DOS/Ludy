@@ -14,10 +14,16 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { toast } from '../lib/toast.ts';
 
 const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.template.key() });
 };
+
+// Focus a control once React has drawn it: a removed or moved control would otherwise drop the keyboard user back to the top of the page (WCAG 2.4.3).
+function focusLater(id: string): void {
+  requestAnimationFrame(() => document.getElementById(id)?.focus());
+}
 
 interface DraftSection {
   // Present for a section the template already has (it keeps its key), absent for a new one.
@@ -42,17 +48,27 @@ function TemplateForm({
   onCancel?: () => void;
 }) {
   const t = useTranslations('minutesTemplates');
+  const idBase = template?.id ?? 'new';
   const [name, setName] = useState(template?.name ?? '');
   const [sections, setSections] = useState<DraftSection[]>(template ? template.sections.map((s) => ({ key: s.key, title: s.title, hint: s.hint })) : [{ title: '', hint: '' }]);
   const change = (i: number, patch: Partial<DraftSection>) => setSections((all) => all.map((s, at) => (at === i ? { ...s, ...patch } : s)));
-  const move = (i: number, by: -1 | 1) =>
+  const move = (i: number, by: -1 | 1) => {
+    const j = i + by;
+    if (j < 0 || j >= sections.length) return;
     setSections((all) => {
-      const j = i + by;
-      if (j < 0 || j >= all.length) return all;
       const next = [...all];
       [next[i], next[j]] = [next[j] as DraftSection, next[i] as DraftSection];
       return next;
     });
+    // The section went to row j: the same button of that row keeps the keyboard user on it, or its twin when it is now the first or the last.
+    const last = sections.length - 1;
+    focusLater(`mt-${idBase}-${by === -1 ? (j === 0 ? 'down' : 'up') : j === last ? 'up' : 'down'}-${j}`);
+  };
+  const remove = (i: number) => {
+    setSections((all) => all.filter((_, at) => at !== i));
+    // The row that takes its place (or the one before, when it was the last).
+    focusLater(`mt-title-${idBase}-${Math.min(i, sections.length - 2)}`);
+  };
   const ready = name.trim() !== '' && sections.length > 0 && sections.every((s) => s.title.trim() !== '');
   return (
     <form
@@ -63,10 +79,10 @@ function TemplateForm({
       }}
     >
       <div className="space-y-1">
-        <label htmlFor={`mt-name-${template?.id ?? 'new'}`} className="text-xs font-medium">
+        <label htmlFor={`mt-name-${idBase}`} className="text-xs font-medium">
           {t('name')}
         </label>
-        <Input id={`mt-name-${template?.id ?? 'new'}`} value={name} maxLength={TEMPLATE_NAME_MAX} onChange={(e) => setName(e.target.value)} />
+        <Input id={`mt-name-${idBase}`} value={name} maxLength={TEMPLATE_NAME_MAX} onChange={(e) => setName(e.target.value)} />
       </div>
       <p className="text-xs font-medium text-muted-foreground" data-testid="minutes-template-privacy">
         {t('noPersonalData')}
@@ -75,32 +91,37 @@ function TemplateForm({
         {sections.map((s, i) => (
           <li key={s.key ?? `new-${i}`} className="space-y-1 rounded border p-2" data-testid="minutes-template-section">
             <div className="flex items-center justify-between gap-2">
-              <label htmlFor={`mt-title-${template?.id ?? 'new'}-${i}`} className="text-xs font-medium">
+              <label htmlFor={`mt-title-${idBase}-${i}`} className="text-xs font-medium">
                 {t('sectionTitle', { n: String(i + 1) })}
               </label>
               <div className="flex gap-1">
-                <Button type="button" size="sm" variant="ghost" disabled={i === 0} aria-label={t('moveUp', { n: String(i + 1) })} onClick={() => move(i, -1)}>
+                <Button type="button" id={`mt-${idBase}-up-${i}`} size="sm" variant="ghost" disabled={i === 0} aria-label={t('moveUp', { n: String(i + 1) })} onClick={() => move(i, -1)}>
                   &uarr;
                 </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={i === sections.length - 1} aria-label={t('moveDown', { n: String(i + 1) })} onClick={() => move(i, 1)}>
+                <Button type="button" id={`mt-${idBase}-down-${i}`} size="sm" variant="ghost" disabled={i === sections.length - 1} aria-label={t('moveDown', { n: String(i + 1) })} onClick={() => move(i, 1)}>
                   &darr;
                 </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={sections.length === 1} aria-label={t('removeSectionN', { n: String(i + 1) })} onClick={() => setSections((all) => all.filter((_, at) => at !== i))}>
+                <Button type="button" size="sm" variant="ghost" disabled={sections.length === 1} aria-label={t('removeSectionN', { n: String(i + 1) })} onClick={() => remove(i)}>
                   {t('removeSection')}
                 </Button>
               </div>
             </div>
-            <Input id={`mt-title-${template?.id ?? 'new'}-${i}`} value={s.title} maxLength={SECTION_TITLE_MAX} onChange={(e) => change(i, { title: e.target.value })} />
-            <label htmlFor={`mt-hint-${template?.id ?? 'new'}-${i}`} className="text-xs font-medium text-muted-foreground">
+            <Input id={`mt-title-${idBase}-${i}`} value={s.title} maxLength={SECTION_TITLE_MAX} onChange={(e) => change(i, { title: e.target.value })} />
+            <label htmlFor={`mt-hint-${idBase}-${i}`} className="text-xs font-medium text-muted-foreground">
               {t('sectionHint')}
             </label>
-            <Textarea id={`mt-hint-${template?.id ?? 'new'}-${i}`} value={s.hint} maxLength={SECTION_HINT_MAX} rows={2} onChange={(e) => change(i, { hint: e.target.value })} />
+            <Textarea id={`mt-hint-${idBase}-${i}`} value={s.hint} maxLength={SECTION_HINT_MAX} rows={2} onChange={(e) => change(i, { hint: e.target.value })} />
           </li>
         ))}
       </ol>
       {error ? <ErrorText>{errorMessage(error)}</ErrorText> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={sections.length >= SECTIONS_MAX} onClick={() => setSections((all) => [...all, { title: '', hint: '' }])}>
+        <Button type="button" size="sm" variant="outline" disabled={sections.length >= SECTIONS_MAX}
+          onClick={() => {
+            setSections((all) => [...all, { title: '', hint: '' }]);
+            focusLater(`mt-title-${idBase}-${sections.length}`);
+          }}
+        >
           {t('addSection')}
         </Button>
         <Button type="submit" size="sm" loading={pending} disabled={!ready}>
@@ -124,27 +145,48 @@ function TemplateRow({ template }: { template: MinutesTemplateView }) {
     onSuccess: () => {
       setEditing(false);
       refresh();
+      toast(t('saved'), 'success');
+      focusLater(`mt-edit-${template.id}`);
     },
   });
-  const archive = useMutation({ mutationFn: () => orpc.meetings.template.archive.call({ templateId: template.id }), onSuccess: refresh });
+  const archive = useMutation({
+    mutationFn: () => orpc.meetings.template.archive.call({ templateId: template.id }),
+    onSuccess: () => {
+      refresh();
+      toast(t('archivedDone'), 'success');
+      // Its Edit and Archive buttons are gone: the focus goes to the template's name.
+      focusLater(`mt-name-text-${template.id}`);
+    },
+  });
   return (
     <li className="py-3" data-testid="minutes-template">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           {/* React renders the name as text: markup typed into it is shown as typed. */}
-          <p className="text-sm font-medium">{template.name}</p>
+          <p id={`mt-name-text-${template.id}`} tabIndex={-1} className="text-sm font-medium outline-none">{template.name}</p>
           <p className="text-xs text-muted-foreground">{t('sectionCount', { count: template.sections.length })}</p>
         </div>
         {template.archived ? (
           <Badge variant="outline">{t('archived')}</Badge>
         ) : (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setEditing((v) => !v)}>
+            {/* Every row has the same two words: the template's name is the button's description, so a screen reader hears which one it is on. */}
+            <Button
+              id={`mt-edit-${template.id}`}
+              size="sm"
+              variant="outline"
+              aria-expanded={editing}
+              aria-describedby={`mt-name-text-${template.id}`}
+              onClick={() => {
+                if (!editing) focusLater(`mt-name-${template.id}`);
+                setEditing((v) => !v);
+              }}
+            >
               {t('edit')}
             </Button>
             <ConfirmDialog
               render={
-                <Button size="sm" variant="outline">
+                <Button size="sm" variant="outline" aria-describedby={`mt-name-text-${template.id}`}>
                   {t('archive')}
                 </Button>
               }
@@ -172,7 +214,10 @@ function TemplateRow({ template }: { template: MinutesTemplateView }) {
           pending={update.isPending}
           error={update.error}
           onSubmit={(name, sections) => update.mutate({ name, sections })}
-          onCancel={() => setEditing(false)}
+          onCancel={() => {
+            setEditing(false);
+            focusLater(`mt-edit-${template.id}`);
+          }}
         />
       )}
     </li>
@@ -189,12 +234,24 @@ function NewTemplate({ activeCount }: { activeCount: number }) {
       setOpen(false);
       setRound((r) => r + 1);
       refresh();
+      toast(t('created'), 'success');
+      focusLater('mt-new-open');
     },
   });
   if (activeCount >= TEMPLATES_ACTIVE_MAX) return <p className="mt-3 text-xs text-muted-foreground">{t('limit', { max: String(TEMPLATES_ACTIVE_MAX) })}</p>;
   if (!open)
     return (
-      <Button className="mt-3" size="sm" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        id="mt-new-open"
+        className="mt-3"
+        size="sm"
+        variant="outline"
+        aria-expanded={false}
+        onClick={() => {
+          setOpen(true);
+          focusLater('mt-name-new');
+        }}
+      >
         {t('create')}
       </Button>
     );
@@ -206,7 +263,10 @@ function NewTemplate({ activeCount }: { activeCount: number }) {
       pending={create.isPending}
       error={create.error}
       onSubmit={(name, sections) => create.mutate({ name, sections })}
-      onCancel={() => setOpen(false)}
+      onCancel={() => {
+        setOpen(false);
+        focusLater('mt-new-open');
+      }}
     />
   );
 }
@@ -217,8 +277,8 @@ export function MinutesTemplatesCard() {
   const list = useQuery(orpc.meetings.template.list.queryOptions({ input: {} }));
   const templates = list.data?.templates ?? [];
   return (
-    <Card className="block p-4" aria-label={t('title')} data-testid="minutes-templates-card">
-      <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
+    <Card role="region" aria-labelledby="minutes-templates-title" className="block p-4" data-testid="minutes-templates-card">
+      <h2 id="minutes-templates-title" className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       <p className="mt-1 text-sm font-medium">{t('noPersonalData')}</p>
       {list.isLoading ? (
@@ -232,7 +292,7 @@ export function MinutesTemplatesCard() {
           ) : (
             <ul className="mt-3 divide-y">
               {templates.map((tpl) => (
-                <TemplateRow key={`${tpl.id}:${tpl.updatedAt}`} template={tpl} />
+                <TemplateRow key={tpl.id} template={tpl} />
               ))}
             </ul>
           )}

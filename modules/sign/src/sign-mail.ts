@@ -12,12 +12,16 @@ export const SIGN_OTP_MAIL_TEMPLATE = 'sign.otp';
 export const SIGN_DIRECT_OTP_MAIL_TEMPLATE = 'sign.direct_otp';
 export const SIGN_COMPLETED_MAIL_TEMPLATE = 'sign.completed';
 export const SIGN_REMIND_MAIL_TEMPLATE = 'sign.remind';
+export const SIGN_DELEGATED_MAIL_TEMPLATE = 'sign.delegated';
 
 export const SIGN_INVITE_MAIL_SOURCE = 'sign.envelope.send';
+export const SIGN_CORRECT_INVITE_MAIL_SOURCE = 'sign.signer.correct_recipient';
+export const SIGN_DELEGATE_MAIL_SOURCE = 'sign.public.delegate';
 export const SIGN_OTP_MAIL_SOURCE = 'sign.public.request_otp';
 export const SIGN_DIRECT_OTP_MAIL_SOURCE = 'sign.direct.request_otp';
 export const SIGN_COMPLETED_MAIL_SOURCE = 'sign.envelope.seal_complete';
 export const SIGN_REMIND_MAIL_SOURCE = 'sign.envelope.remind';
+export const SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE = 'sign.envelope.pre_expiry_remind_sweep';
 
 export const zSignInviteMailPayload = z.strictObject({
   lang: z.literal('vi'),
@@ -27,6 +31,7 @@ export const zSignInviteMailPayload = z.strictObject({
   docTitle: z.string().min(1).max(300),
   roleLabel: z.string().min(1).max(120),
   signerRole: z.enum(['signer', 'approver']).optional(),
+  preExpiry: z.boolean().optional(),
   expiresAt: z.string().min(1).max(64).nullable(),
 });
 
@@ -57,6 +62,16 @@ export const zSignCompletedMailPayload = z.strictObject({
   sealedSha256: z.string().regex(/^[0-9a-f]{64}$/),
   completedAtIso: z.string().min(1).max(64),
   signerCount: z.number().int().min(1).max(200),
+});
+
+export const zSignDelegatedMailPayload = z.strictObject({
+  lang: z.literal('vi'),
+  orgName: z.string().min(1).max(200),
+  envelopeId: zId,
+  signerId: zId,
+  docTitle: z.string().min(1).max(300),
+  roleLabel: z.string().min(1).max(120),
+  delegationCount: z.number().int().min(1).max(2),
 });
 
 export interface RenderedSignMail {
@@ -117,6 +132,7 @@ export function renderSignInviteMail(
     signerRole?: 'signer' | 'approver';
     message?: string | null;
     isReminder?: boolean;
+    preExpiry?: boolean;
   },
 ): RenderedSignMail {
   const mail = zSignInviteMailPayload.parse(raw);
@@ -128,6 +144,7 @@ export function renderSignInviteMail(
   const title = oneLine(mail.docTitle, 300);
   const roleLabel = oneLine(mail.roleLabel, 120);
   const isApprover = (context.signerRole ?? mail.signerRole) === 'approver';
+  const isPreExpiry = Boolean(context.preExpiry ?? mail.preExpiry);
   const signerName = context.signerName ? oneLine(context.signerName, 200) : null;
   const note = context.message ? oneLine(context.message, 1000) : null;
   const expiryTime = formatViTime(mail.expiresAt);
@@ -146,6 +163,11 @@ export function renderSignInviteMail(
   const htmlActionLine = isApprover
     ? `<strong>${escapeHtml(orgName)}</strong> gui ban xem va phe duyet tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`
     : `<strong>${escapeHtml(orgName)}</strong> gui ban xem va ky tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`;
+  const preExpiryLine = isPreExpiry
+    ? isApprover
+      ? 'Luu y: Tai lieu nay sap den han phe duyet trong vong 24 gio toi. Vui long xem va hoan tat truoc han ben duoi.'
+      : 'Luu y: Tai lieu nay sap den han ky trong vong 24 gio toi. Vui long xem va hoan tat truoc han ben duoi.'
+    : null;
   const expiryLabel = isApprover ? 'Han phe duyet den' : 'Han ky den';
   const openLine = isApprover ? `Mo tai lieu de xem va phe duyet: ${url}` : `Mo tai lieu de ky: ${url}`;
   const ctaLabel = isApprover ? 'Xem va phe duyet tai lieu' : 'Xem va ky tai lieu';
@@ -158,6 +180,7 @@ export function renderSignInviteMail(
     '',
     greeting,
     actionLine,
+    ...(preExpiryLine ? ['', preExpiryLine] : []),
     ...(note ? ['', `Loi nhan: ${note}`] : []),
     ...(expiryTime ? [`${expiryLabel}: ${expiryTime} (gio Viet Nam)`] : []),
     '',
@@ -172,6 +195,7 @@ export function renderSignInviteMail(
     <h1 style="margin:0 0 16px;font-size:20px;line-height:1.35;color:#0f172a">${escapeHtml(heading)}</h1>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6">${escapeHtml(greeting)}</p>
     <p style="margin:0 0 16px;font-size:15px;line-height:1.6">${htmlActionLine}</p>
+    ${preExpiryLine ? `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#9a3412">${escapeHtml(preExpiryLine)}</p>` : ''}
     ${note ? `<div style="margin:0 0 16px;padding:12px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;font-size:14px;color:#334155">${escapeHtml(note)}</div>` : ''}
     ${expiryTime ? `<p style="margin:0 0 20px;font-size:13px;color:#475569">${escapeHtml(expiryLabel)}: <strong>${escapeHtml(expiryTime)} (gio Viet Nam)</strong></p>` : ''}
     <p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">${ctaLabel}</a></p>
@@ -314,6 +338,68 @@ export function renderSignCompletedMail(
   return { text, html };
 }
 
+export function renderSignDelegatedMail(
+  raw: unknown,
+  context: {
+    publicUrl: string;
+    brand?: string;
+    orgSlug?: string | null;
+    fromName: string;
+    fromEmail: string | null;
+    delegateName: string;
+    delegateEmail: string;
+    reason: string | null;
+  },
+): RenderedSignMail {
+  const mail = zSignDelegatedMailPayload.parse(raw);
+  const brand = oneLine(context.brand ?? 'Ludy', 80);
+  const orgName = oneLine(mail.orgName, 200);
+  const title = oneLine(mail.docTitle, 300);
+  const roleLabel = oneLine(mail.roleLabel, 120);
+  const fromName = oneLine(context.fromName, 200);
+  const fromEmail = context.fromEmail ? oneLine(context.fromEmail, 254) : null;
+  const delegateName = oneLine(context.delegateName, 200);
+  const delegateEmail = oneLine(context.delegateEmail, 254);
+  const reason = context.reason ? oneLine(context.reason, 500) : null;
+  const orgSlug = context.orgSlug?.trim() || null;
+  const baseUrl = cleanBaseUrl(context.publicUrl);
+  const envelopeUrl = orgSlug
+    ? `${baseUrl}/o/${encodeURIComponent(orgSlug)}/sign/envelopes/${encodeURIComponent(mail.envelopeId)}`
+    : `${baseUrl}/`;
+  const fromDisplay = fromEmail ? `${fromName} (${fromEmail})` : fromName;
+  const delegateDisplay = `${delegateName} (${delegateEmail})`;
+
+  const text = [
+    `Thong bao uy quyen ky tai lieu "${title}"`,
+    '',
+    `Tai lieu "${title}" cua ${orgName} (vai tro: ${roleLabel}) vua duoc nguoi nhan uy quyen ky.`,
+    `Nguoi uy quyen: ${fromDisplay}`,
+    `Nguoi nhan moi: ${delegateDisplay}`,
+    ...(reason ? [`Ly do uy quyen: ${reason}`] : []),
+    '',
+    `Xem chi tiet phong bi ky: ${envelopeUrl}`,
+    '',
+    brand,
+  ].join('\n');
+
+  const html = `<!doctype html><html lang="vi"><body style="margin:0;padding:24px;background:#f8fafc;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:28px">
+    <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase">${escapeHtml(brand)}</p>
+    <h1 style="margin:0 0 14px;font-size:20px;color:#0f172a">Thong bao uy quyen ky tai lieu</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.6">Tai lieu <strong>${escapeHtml(title)}</strong> tu <strong>${escapeHtml(orgName)}</strong> (vai tro: ${escapeHtml(roleLabel)}) vua duoc uy quyen cho nguoi ky moi.</p>
+    <div style="margin:0 0 18px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;line-height:1.6;color:#334155">
+      <div><strong>Nguoi uy quyen:</strong> ${escapeHtml(fromDisplay)}</div>
+      <div><strong>Nguoi nhan moi:</strong> ${escapeHtml(delegateDisplay)}</div>
+      ${reason ? `<div><strong>Ly do:</strong> ${escapeHtml(reason)}</div>` : ''}
+    </div>
+    <p style="margin:0 0 18px"><a href="${escapeHtml(envelopeUrl)}" style="display:inline-block;padding:11px 20px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">Xem phong bi ky</a></p>
+    <p style="margin:0;font-size:12px;color:#64748b">Su kien uy quyen da duoc ghi nhan vao nhat ky kiem toan va chung thu xac thuc cua ${escapeHtml(brand)}.</p>
+  </div>
+</body></html>`;
+
+  return { text, html };
+}
+
 export async function queueSignInviteEmail(
   ctx: CommandContext,
   input: {
@@ -323,6 +409,7 @@ export async function queueSignInviteEmail(
     envelopeId: string;
     signerId: string;
     signerRole?: 'signer' | 'approver';
+    preExpiry?: boolean;
     to: string;
     docTitle: string;
     roleLabel: string;
@@ -335,6 +422,7 @@ export async function queueSignInviteEmail(
     envelopeId: input.envelopeId,
     signerId: input.signerId,
     ...(input.signerRole ? { signerRole: input.signerRole } : {}),
+    ...(input.preExpiry ? { preExpiry: true } : {}),
     docTitle: oneLine(input.docTitle, 300) || 'Tai lieu',
     roleLabel: oneLine(input.roleLabel, 120) || (input.signerRole === 'approver' ? 'Nguoi duyet' : 'Nguoi ky'),
     expiresAt: input.expiresAt,

@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
 import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
-import { zStockFactor } from './stock.ts';
+import { STOCK_SUGGEST_LINES_MAX, zStockAiState, zStockFactor } from './stock.ts';
 
 export const MARKETPLACE_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_STAGE_KEYS = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
@@ -109,6 +109,22 @@ export const zMarketplaceUnassignedLine = z.object({
 });
 export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLine>;
 
+// The finance coworker on the unassigned order lines (#2686, plan stock-and-marketplaces.md section 8.6): the item a line is most likely about. The lines asked about are at most STOCK_SUGGEST_LINES_MAX of one
+// legal entity, named by id only; the server reads the product name and the SKU text from the books, never from the request, and nothing else of the order (no order number, buyer, address, phone, date or
+// amount). `ai` is the stock coworker's: used, off, busy, budget, failed or quiet; without an answer the list works as it does with AI off. A suggestion only fills the item picker; assigning is the person's
+// own `assign`.
+export const zMarketplaceSuggestInput = z.strictObject({
+  legalEntityId: zId,
+  lineIds: z.array(zId).min(1).max(STOCK_SUGGEST_LINES_MAX),
+  lang: z.enum(['vi', 'en']).optional(),
+});
+export type MarketplaceSuggestInput = z.infer<typeof zMarketplaceSuggestInput>;
+export const zMarketplaceSuggested = z.object({
+  ai: zStockAiState,
+  suggestions: z.array(z.object({ lineId: zId, itemId: zId, reason: z.string() })),
+});
+export type MarketplaceSuggested = z.infer<typeof zMarketplaceSuggested>;
+
 // factor: how many of the item's units one unit of the report's is (a carton of 12). teach: remember the SKU for this platform and item, which makes every later report with it move that
 // item by itself at that factor. Off unless asked: a wrong item or factor cannot be undone yet (#2633), and a taught one would repeat on every report.
 export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(false) });
@@ -125,7 +141,7 @@ export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 // The platforms whose income files are read (Lazada has no profile until a real file decides its layout, #2521).
-export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop'] as const;
+export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const zMarketplaceIncomePlatform = z.enum(MARKETPLACE_INCOME_PLATFORM_KEYS);
 const zDecimal = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/, 'decimal string');
 
@@ -222,6 +238,9 @@ export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   sales: zJournalAmount,
   sellerDiscount: zJournalAmount,
   refund: zJournalAmount,
+  // A household seller's withheld tax is one amount the platform gave, split into VAT and PIT only as an estimate (research D1, #3711 slice 5): what the platform withheld, what the household's rate pair
+  // would take from the revenue, and the difference (negative when the platform withheld less). A fact beside the estimate for the annual certificate, never posted; absent for a seller with no withheld tax.
+  taxEstimate: z.strictObject({ withheld: zJournalAmount, expected: zJournalAmount, difference: z.string().regex(/^-?\d+(\.\d{1,4})?$/) }).optional(),
 });
 export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
 

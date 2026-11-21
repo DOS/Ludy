@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { Transcript } from '@crove/kernel-contract';
+import { TRANSCRIPT_SEGMENTS_MAX, type Transcript } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -37,15 +37,16 @@ const segment = (id: string, startSeconds: number, text: string, over: Partial<T
   text,
   stage: 'draft' as const,
   corrected: false,
+  source: 'ludy' as const,
   ...over,
 });
 
-function render(transcript: Transcript, locale: 'en' | 'vi' = 'en') {
+function render(transcript: Transcript, locale: 'en' | 'vi' = 'en', platformCut = false) {
   client.current.setQueryData(['meetings', 'transcript', 'get'], transcript);
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <MeetingTranscript meetingId="m1" />
+        <MeetingTranscript meetingId="m1" platformCut={platformCut} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -88,6 +89,43 @@ describe('MeetingTranscript', () => {
     expect(html).toContain(en.meetings.transcript.title);
     expect(html).not.toContain(en.meetings.transcript.draftTitle);
     expect(html).not.toContain('Correct the line');
+  });
+
+  it('says in words, with the platform\'s name, that imported lines are the platform\'s and not Ludy\'s, and when there are as many as a draft holds that the rest may be missing (C2, #3174; #3922)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const from = (n: number, source: 'ludy' | 'google_meet') => Array.from({ length: n }, (_, i) => segment(`s${i}`, i, `dòng ${i}`, { source }));
+      const some = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(3, 'google_meet') }, locale);
+      expect(some, locale).toContain(messages.meetings.transcript.platformSource.replace('{platform}', 'Google Meet'));
+      expect(some, locale).not.toContain('data-testid="transcript-cut"');
+      const full = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(TRANSCRIPT_SEGMENTS_MAX, 'google_meet') }, locale);
+      expect(full, locale).toContain('data-testid="transcript-cut"');
+      expect(full, locale).toContain('data-testid="transcript-platform"');
+      // Ludy's own transcription carries neither line, however long.
+      const own = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(TRANSCRIPT_SEGMENTS_MAX, 'ludy') }, locale);
+      expect(own, locale).not.toContain('data-testid="transcript-platform"');
+      expect(own, locale).not.toContain('data-testid="transcript-cut"');
+    }
+  });
+
+  it('says in words that the platform\'s transcript was cut when the meeting says so, to any reader and with fewer lines than a draft holds (#3922)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const from = (n: number, source: 'ludy' | 'google_meet') => Array.from({ length: n }, (_, i) => segment(`s${i}`, i, `dòng ${i}`, { source }));
+      const known = messages.meetings.transcript.platformCutKnown.replace('{platform}', 'Google Meet');
+      for (const isRecorder of [true, false]) {
+        const cut = render({ meetingId: 'm1', isRecorder, stage: isRecorder ? 'draft' : 'published', segments: from(3, 'google_meet') }, locale, true);
+        expect(cut, `${locale} ${isRecorder}`).toContain('data-testid="transcript-cut"');
+        expect(cut, `${locale} ${isRecorder}`).toContain(known);
+      }
+      // At the limit with the flag, the exact line replaces the guess, never both.
+      const both = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(TRANSCRIPT_SEGMENTS_MAX, 'google_meet') }, locale, true);
+      expect(both, locale).toContain(known);
+      expect(both.match(/data-testid="transcript-cut"/g)?.length, locale).toBe(1);
+      // No flag and fewer lines than the limit: nothing. The flag on Ludy's own lines: nothing either.
+      expect(render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(3, 'google_meet') }, locale), locale).not.toContain('data-testid="transcript-cut"');
+      expect(render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(3, 'ludy') }, locale, true), locale).not.toContain('data-testid="transcript-cut"');
+    }
   });
 
   it('says nothing to a reader when no transcript is shared, and tells the recorder the meeting works without one', () => {

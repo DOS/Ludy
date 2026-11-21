@@ -10,8 +10,16 @@ import {
   type SignEnvelopeStatus,
   type SignSealStatus,
 } from '@crove/db';
-import { SIGN_BY_SOURCE_MAX, zId, type SignEnvelopeBySourceItem } from '@crove/kernel-contract';
+import {
+  SIGN_BY_SOURCE_MAX,
+  zId,
+  zSignDrafterRenderPdfInput,
+  type SignDrafterRenderPdfResult,
+  type SignEnvelopeBySourceItem,
+} from '@crove/kernel-contract';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { isSignAiStoppedOnTrx } from './ai.ts';
+import { renderStarterContractPdf } from './contract-drafter.ts';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
 import {
@@ -21,7 +29,8 @@ import {
   isHrPrivilegedRole,
 } from './hr-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
-import { parseDetectedTags } from './shared.ts';
+import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
+import { SIGN_WRITERS, parseDetectedTags, parseSharedSummary } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -65,8 +74,10 @@ export const envelopeList = defineQuery({
         'certificate_code',
         'page_count',
         'expires_at',
+        'auto_remind_before_expiry',
         'sent_at',
         'completed_at',
+        'decline_acknowledged_at',
         'voided_at',
         'expired_at',
         'version',
@@ -142,8 +153,10 @@ export const envelopeList = defineQuery({
           certificateCode: r.certificate_code,
           pageCount: r.page_count,
           expiresAt: isoOrNull(r.expires_at),
+          autoRemindBeforeExpiry: r.auto_remind_before_expiry,
           sentAt: isoOrNull(r.sent_at),
           completedAt: isoOrNull(r.completed_at),
+          declineAcknowledgedAt: isoOrNull(r.decline_acknowledged_at),
           voidedAt: isoOrNull(r.voided_at),
           expiredAt: isoOrNull(r.expired_at),
           version: r.version,
@@ -337,6 +350,7 @@ export const envelopeGet = defineQuery({
         'require_email_otp',
         'status',
         'token_last_reminded_at',
+        'pre_expiry_reminded_at',
         'viewed_at',
         'signed_at',
         'declined_at',
@@ -344,6 +358,10 @@ export const envelopeGet = defineQuery({
         'otp_verified_at',
         'signature_kind',
         'consent_accepted_at',
+        'delegated_from_name',
+        'delegated_from_email',
+        'delegation_reason',
+        'delegation_count',
         'created_at',
         'updated_at',
       ])
@@ -353,6 +371,27 @@ export const envelopeGet = defineQuery({
       .orderBy('created_at', 'asc')
       .orderBy('id', 'asc')
       .execute();
+
+    const remindedSignerIds = signers
+      .filter((s) => s.pre_expiry_reminded_at !== null)
+      .map((s) => s.id);
+    const preExpiryMailStatusBySigner = new Map<string, string>();
+    if (remindedSignerIds.length > 0) {
+      const mailRows = await ctx.trx
+        .selectFrom('crove_kernel.mail_message')
+        .select(['source_id', 'status'])
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE)
+        .where('source_id', 'in', remindedSignerIds)
+        .orderBy('created_at', 'desc')
+        .orderBy('id', 'desc')
+        .execute();
+      for (const m of mailRows) {
+        if (m.source_id && !preExpiryMailStatusBySigner.has(m.source_id)) {
+          preExpiryMailStatusBySigner.set(m.source_id, m.status);
+        }
+      }
+    }
 
     const fields = await ctx.trx
       .selectFrom('crove_sign.field')
@@ -391,6 +430,7 @@ export const envelopeGet = defineQuery({
         message: env.message,
         status: env.status,
         routingMode: env.routing_mode,
+        allowDelegation: env.allow_delegation,
         sourceKind: env.source_kind,
         sourceId: env.source_id,
         sourceFileId: env.source_file_id,
@@ -400,6 +440,8 @@ export const envelopeGet = defineQuery({
         pageCount: env.page_count,
         pageDimensions: parseEventPayload(env.page_dimensions_json),
         detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
+        shareSummaryWithSigners: Boolean(env.share_summary_with_signers),
+        sharedSummary: parseSharedSummary(env.shared_summary_json, env.page_count),
         sealedFileId: env.sealed_file_id,
         sealedSha256: env.sealed_sha256,
         sealStatus: env.seal_status,
@@ -407,9 +449,11 @@ export const envelopeGet = defineQuery({
         certificateSha256: env.certificate_sha256,
         certificateCode: env.certificate_code,
         expiresAt: isoOrNull(env.expires_at),
+        autoRemindBeforeExpiry: env.auto_remind_before_expiry,
         sentAt: isoOrNull(env.sent_at),
         completedAt: isoOrNull(env.completed_at),
         declinedAt: isoOrNull(env.declined_at),
+        declineAcknowledgedAt: isoOrNull(env.decline_acknowledged_at),
         voidedAt: isoOrNull(env.voided_at),
         voidedBy: env.voided_by,
         voidReason: env.void_reason,
@@ -432,6 +476,19 @@ export const envelopeGet = defineQuery({
         requireEmailOtp: s.require_email_otp,
         status: s.status,
         tokenLastRemindedAt: isoOrNull(s.token_last_reminded_at),
+        preExpiryRemindedAt: isoOrNull(s.pre_expiry_reminded_at),
+        preExpiryRemindStatus:
+          (preExpiryMailStatusBySigner.get(s.id) as
+            | 'queued'
+            | 'sending'
+            | 'sent'
+            | 'delivered'
+            | 'bounced'
+            | 'complained'
+            | 'suppressed'
+            | 'failed'
+            | 'ambiguous'
+            | undefined) ?? null,
         viewedAt: isoOrNull(s.viewed_at),
         signedAt: isoOrNull(s.signed_at),
         declinedAt: isoOrNull(s.declined_at),
@@ -439,6 +496,10 @@ export const envelopeGet = defineQuery({
         otpVerifiedAt: isoOrNull(s.otp_verified_at),
         signatureKind: s.signature_kind,
         consentAcceptedAt: isoOrNull(s.consent_accepted_at),
+        delegatedFromName: s.delegated_from_name,
+        delegatedFromEmail: s.delegated_from_email,
+        delegationReason: s.delegation_reason,
+        delegationCount: s.delegation_count,
         createdAt: new Date(s.created_at).toISOString(),
         updatedAt: new Date(s.updated_at).toISOString(),
       })),
@@ -717,6 +778,9 @@ export const envelopeSealJobData = defineQuery({
         'otp_verified_at',
         'signature_kind',
         'signer_ip_hash',
+        'delegated_from_name',
+        'delegated_from_email',
+        'delegation_count',
         'created_at',
       ])
       .where('org_id', '=', ctx.orgId)
@@ -777,7 +841,90 @@ export const envelopeSealJobData = defineQuery({
   },
 });
 
+import { signAcceptanceQueries } from './acceptance.ts';
+import { signCaQueries } from './ca.ts';
 import { signTemplateQueries } from './templates.ts';
+import { signToday } from './today-and-reminders.ts';
+
+export interface SignDiffSourceResult {
+  aiStopped: boolean;
+}
+
+async function verifySignReadablePdfFile(ctx: QueryContext, fileId: string): Promise<void> {
+  const file = await ctx.trx
+    .selectFrom('crove_kernel.file')
+    .select(['id', 'source', 'content_type'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', fileId)
+    .executeTakeFirst();
+  if (!file) {
+    throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
+  }
+  if (!isHrPrivilegedRole(ctx.role)) {
+    const { rows } = await sql<{ allowed: boolean }>`
+      SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed
+    `.execute(ctx.trx);
+    if (!rows[0]?.allowed) {
+      throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
+    }
+  }
+  if (file.source !== 'sign_document') {
+    throw new DomainError('SIGN_INVALID_SOURCE_FILE', 422, 'Compared file must have source sign_document');
+  }
+  if (file.content_type !== 'application/pdf') {
+    throw new DomainError('SIGN_INVALID_FILE_TYPE', 422, 'Compared file must be application/pdf');
+  }
+}
+
+export const signDiffSource = defineQuery({
+  name: 'sign.diff.source',
+  input: z.strictObject({
+    fileIdV1: zId.optional(),
+    fileIdV2: zId.optional(),
+  }),
+  access: READERS,
+  handler: async (ctx, input): Promise<SignDiffSourceResult> => {
+    assertUser(ctx);
+    if (input.fileIdV1) {
+      await verifySignReadablePdfFile(ctx, input.fileIdV1);
+    }
+    if (input.fileIdV2) {
+      await verifySignReadablePdfFile(ctx, input.fileIdV2);
+    }
+    return {
+      aiStopped: await isSignAiStoppedOnTrx(ctx.trx, ctx.orgId),
+    };
+  },
+});
+
+export const signDrafterAiSource = defineQuery({
+  name: 'sign.drafter.ai_source',
+  input: z.strictObject({}),
+  access: SIGN_WRITERS,
+  handler: async (ctx): Promise<{ aiStopped: boolean }> => {
+    assertUser(ctx);
+    return {
+      aiStopped: await isSignAiStoppedOnTrx(ctx.trx, ctx.orgId),
+    };
+  },
+});
+
+export const signDrafterRenderPdf = defineQuery({
+  name: 'sign.drafter.render_pdf',
+  input: zSignDrafterRenderPdfInput,
+  access: SIGN_WRITERS,
+  handler: async (ctx, input): Promise<SignDrafterRenderPdfResult> => {
+    assertUser(ctx);
+    const rendered = renderStarterContractPdf(input);
+    return {
+      title: rendered.title,
+      filename: rendered.filename,
+      pdfBase64: Buffer.from(rendered.bytes).toString('base64'),
+      sha256: rendered.sha256,
+      pageCount: rendered.pageCount,
+    };
+  },
+});
 
 export const signQueries = [
   envelopeList,
@@ -787,5 +934,11 @@ export const signQueries = [
   envelopeVerify,
   envelopeInspectJobData,
   envelopeSealJobData,
+  signToday,
+  signDiffSource,
+  signDrafterAiSource,
+  signDrafterRenderPdf,
   ...signTemplateQueries,
+  ...signAcceptanceQueries,
+  ...signCaQueries,
 ];

@@ -49,7 +49,39 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   context, with no Hydrogen routing), so a PO on `Gemini 4 Carbon` runs its
   own independent security review without waiting on Claude Opus, while a PO
   on `Orchestrator (Carbon)` holds a protected-path PR's security-review gate
-  for a `Gemini 4 Carbon` or `Claude Opus` review (or owner acceptance).
+  for a `Gemini 4 Carbon` or `Claude Opus` review (or owner acceptance)
+  (updated 2026-11-21 below).
+- Owner decision 2026-11-18 (eSign PO chat, popup A2): "Sao mày chạy chỉ 1
+  subagent? 3-5 subagent/subession cơ mà?" and popup A2 choice "Cập nhật quy
+  tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự án". Raise
+  `sub_sessions_normal` and `sub_sessions_max` to 5 concurrent sub-sessions
+  per Product Owner across all lines, superseding the 2026-11-15 and
+  2026-11-16 cap of 3 and Engage's 2026-11-08 cap of 4, while keeping the
+  2026-11-17 local-resources rules intact (one heavy command at a time per
+  session, scoped `--filter` typechecks and touched-file test runs only, and
+  the shared `ludy-pg17-shared` Postgres container).
+- Owner decision 2026-11-21 (HRM PO chat,
+  https://github.com/DOS/Ludy/issues/1210#issuecomment-7048935611): accepted
+  merging PR #4191 (#2720) and PR #4194 (#2691) using their fresh-context
+  `Orchestrator (Neon)` (`TypeName: "research"`) independent security reviews,
+  and directed updating `AGENTS.md` and `docs/product-owner-config.md` ("Chấp
+  nhận gộp PR #4191 và PR #4194 bằng bản rà soát Neon này, đồng thời mở thêm 1
+  PR sửa AGENTS.md và docs/product-owner-config.md cho phép nhóm Gemini 4 cao
+  cấp (kể cả Neon) chạy rà soát bảo mật về sau" and "Hạn mức còn nhiều lắm, xài
+  Neon và làm tiếp đi đừng hỏi vụ này nữa"). On Antigravity, PO sessions, the
+  coordinator, workers (via `inherit`), and fresh-context independent security
+  reviews of protected-path PRs run at flagship capability tier across
+  Antigravity's Gemini 4 flagship and Orchestrator models (such as
+  `Gemini 4 Carbon`, `Gemini 4 Neon`, `Orchestrator (Carbon)`,
+  `Orchestrator (Neon)`) or `Claude Opus`, while independent security reviews
+  run in a fresh context (`TypeName: "research"` on Antigravity, no direct
+  `Hydrogen` downgrade/bypass) without needing an identical model codename
+  when newer Gemini 4 variants are used; on Antigravity, which has no session
+  effort API, the security review's stand-in for `xhigh` is a fresh-context
+  flagship-tier review via `TypeName: "research"` on Antigravity's Gemini 4
+  flagship or Orchestrator models such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`, or `Claude Opus`, with no
+  direct `Hydrogen` downgrade/bypass.
 
 ## Board
 
@@ -89,9 +121,9 @@ turn on `sprint_review` with `line_scopes`.
   Social, Ads, Hộp thư/Help Desk and the CRM folded in on 2026-11-03
   (DESIGN.md). On 2026-11-01 JOY said "Mở lại, làm FB + Zalo" (#236), which set
   the order of work, the Facebook Page and Zalo OA channels first.
-- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." The Engage
-  line may run up to 4 sub-sessions at once, an exception to the
-  repository-wide cap of 3 above for this line.
+- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." Allowed the
+  Engage line up to 4 sub-sessions when the cap was 3 (superseded by owner
+  decision 2026-11-18 raising every PO line to 5; see Sessions below).
 - Platform owns what every line builds on, not the features: a line's own
   feature stays with that line even when it adds a migration or a kernel
   command. Platform owns the shared core itself, the architecture (ADRs),
@@ -235,19 +267,26 @@ The DOS organization ids are the same in every DOS repository.
 - shared_core_review: `line:platform`: the paths in "Shared-core review"
   below.
 - agent_model: claude-sonnet-5-5 (Claude Code sub-sessions; Antigravity:
-  `inherit` on `Orchestrator (Carbon)` or `Gemini 4 Carbon`, or the PO's
-  flagship model; owner decision 2026-11-15, see above). PO sessions run on a
-  flagship model (`Claude Opus` on Claude Code; `Claude Opus`,
-  `Gemini 4 Carbon` or `Orchestrator (Carbon)` on Antigravity); independent
-  security reviews of protected-path PRs run only on `Gemini 4 Carbon` or
-  `Claude Opus` with fresh context and no Hydrogen routing (`Orchestrator
-  (Carbon)` stays allowed for PO sessions and workers).
+  `inherit` at flagship capability tier; owner decisions 2026-11-15 and
+  2026-11-21, see above). On Claude Code, PO sessions and fresh-context
+  independent security reviews of protected-path PRs run on a flagship model
+  (`Claude Opus`). On Antigravity, PO sessions, the coordinator, workers (via
+  `inherit`), and fresh-context independent security reviews of protected-path
+  PRs run at flagship capability tier across Antigravity's Gemini 4 flagship
+  and Orchestrator models (such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`) or `Claude Opus`, while
+  independent security reviews run in a fresh context (`TypeName: "research"`
+  on Antigravity, no direct `Hydrogen` downgrade/bypass) without needing an
+  identical model codename when newer Gemini 4 variants are used.
 - agent_effort: high (owner decisions 2026-10-27, 2026-10-30 and 2026-10-31;
   skipped on Antigravity, which has no session effort API). Exception: xhigh
   only for hard work (a protected-path security change, a migration, a
-  root-cause hunt); on Antigravity, the security review's stand-in for
-  `xhigh` is the no-delegation flagship model (`Gemini 4 Carbon` or
-  `Claude Opus`).
+  root-cause hunt); on Antigravity, which has no session effort API, the
+  security review's stand-in for `xhigh` is a fresh-context flagship-tier
+  review via `TypeName: "research"` on Antigravity's Gemini 4 flagship or
+  Orchestrator models such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`, or `Claude Opus`, with no
+  direct `Hydrogen` downgrade/bypass.
 - subagent_effort: high (passed to Codex CLI reviews as
   `-c model_reasoning_effort=high` on every host, Antigravity included).
 
@@ -319,14 +358,19 @@ naming the head it reviewed.
 
 ## Sessions
 
-- sub_sessions_normal: 3 (JOY instruction 2026-11-16 in Projects & Notes PO
-  chat: "Tạo tối đa được 3 phiên conn mà, sao mày tạo có 1 vậy"; each PO
-  keeps up to 3 concurrent sub-sessions running when independent tasks are
-  ready, matching `sub_sessions_max: 3`, while Engage keeps its 2026-11-08
-  4-sub-session exception; updates the 2026-10-31 default of 1)
-- sub_sessions_max: 3 (JOY clarification 2026-11-15: "Tao thấ mới có 2 phiên
-  con thôi mà. Tối đa 3 phiên con + 1 PO", up to 3 active sub-sessions + 1 PO
-  session; Engage keeps its 2026-11-08 4-sub-session exception)
+- sub_sessions_normal: 5 (owner decision 2026-11-18 in eSign PO chat: "Sao
+  mày chạy chỉ 1 subagent? 3-5 subagent/subession cơ mà?", popup A2: "Cập
+  nhật quy tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự
+  án"; each PO keeps up to 5 concurrent sub-sessions running when independent
+  tasks are ready, matching `sub_sessions_max: 5` and superseding the
+  2026-11-15/2026-11-16 cap of 3, Engage's 2026-11-08 cap of 4, and the
+  2026-10-31 default of 1, while keeping AGENTS.md's 2026-11-17
+  local-resources rules: one heavy command at a time per session, scoped
+  `--filter` typechecks and touched-file tests only)
+- sub_sessions_max: 5 (owner decision 2026-11-18 in eSign PO chat, popup A2:
+  up to 5 active sub-sessions + 1 PO session per line, superseding the
+  2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; local-resources
+  discipline from 2026-11-17 still applies to every session)
 
 A PO keeps its context small at natural breaks. With a warm cache, it uses
 `/compact` with a focus. After a long idle, such as overnight, it starts a

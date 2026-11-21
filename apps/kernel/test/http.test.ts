@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@crove/kernel';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@crove/kernel-contract';
 import {
   BlobConflictError,
@@ -67,6 +68,14 @@ describe('configuration guards', () => {
     // The sandbox bank feed (ADR-0039): made-up bank lines, never on a deployment others reach.
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
+    // The Tingee bank feed (ADR-0039, #2045): off by default; it seals each org's credential, so it needs the credential key; its UAT host is for the UAT run, never a public deployment.
+    expect(loadConfig({ ...base }).BANK_FEED_TINGEE).toBe('false');
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true' })).toThrow(/CREDENTIAL_KEY/);
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') })).not.toThrow();
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE_UAT: 'true' })).toThrow(/BANK_FEED_TINGEE_UAT/);
+    const tingee = { ...base, BANK_FEED_TINGEE: 'true', BANK_FEED_TINGEE_UAT: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') };
+    expect(() => loadConfig(tingee)).not.toThrow();
+    expect(() => loadConfig({ ...tingee, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).toThrow(/BANK_FEED_TINGEE_UAT/);
     // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
     // runs the ads module. Unset, it is off on a public URL.
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
@@ -1245,5 +1254,44 @@ describe('export slots', () => {
     } finally {
       failure = null;
     }
+  });
+});
+
+describe('org export owner-run route (#4137)', () => {
+  const orgId = randomUUID();
+  const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
+  const view: OrgExportView = { status: 'active', requestedAt: null, ownerRunTables: [], export: null };
+  const stream = vi.fn();
+  const app = createHttpApp({
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    runtime: {
+      installed: () => true,
+      modules: () => ['kernel'],
+      forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      query: async (name: string) => {
+        if (name === 'kernel.org.export.get') return view;
+        throw new Error(`unexpected query ${name}`);
+      },
+      execute: async () => ({}),
+      stream,
+    } as unknown as Runtime,
+    store: {} as BlobStore,
+    authenticate: async () => owner,
+    pool: {} as pg.Pool,
+    aiEnabled: false,
+  });
+
+  it('refuses owner-run export tables on an active org with the shared ORG_NOT_OFFBOARDING message', async () => {
+    for (const table of ['meetings.glossary_term', 'hr.payroll_employee']) {
+      const response = await app.request(`/api/org-export/${table}`, {
+        headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme' },
+      });
+      expect(response.status, table).toBe(409);
+      expect(await response.json(), table).toEqual({
+        code: ORG_NOT_OFFBOARDING,
+        message: 'Chỉ tải được các tệp này khi tổ chức đang được đóng',
+      });
+    }
+    expect(stream).not.toHaveBeenCalled();
   });
 });

@@ -86,7 +86,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   const periodTo = String(settlement.period_end).slice(0, 10);
   // The chart of the entity on the day the entry is dated (the day of the transfer), then the gate: the accountant has not confirmed the map, nothing is requested or posted.
   const regime = (await booksOn(ctx, settlement.legal_entity_id, line.date)).regime;
-  const map = requireConfirmedMarketplaceMap(regime, maps);
+  // The early gate asks for the payout path; payoutProposal asks again for the household tax rows when the settlement posted tax lines.
+  const map = requireConfirmedMarketplaceMap(regime, maps, ['payout']);
   if (lock) {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
     await lockBankLine(ctx, line.id);

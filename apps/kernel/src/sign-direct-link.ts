@@ -22,6 +22,7 @@ import {
   generateRawSigningToken,
   hashSigningToken,
   normalizeSignPageDimensions,
+  parseSharedSummary,
   sanitizeSignUserAgent,
 } from '@crove/mod-sign';
 import {
@@ -82,6 +83,7 @@ type SqlDirectResolveRow =
       pageCount: number;
       pageDimensions: unknown;
       fieldCount: number;
+      sharedSummary?: unknown;
     };
 
 function toErrorStatus(status: number | undefined): ErrorStatus {
@@ -229,6 +231,7 @@ export async function runSignDirectView(
       pageCount: resolved.pageCount,
       pageDimensions: normalizeSignPageDimensions(resolved.pageDimensions),
       fieldCount: resolved.fieldCount,
+      sharedSummary: parseSharedSummary(resolved.sharedSummary ?? null, resolved.pageCount),
     },
   };
 }

@@ -102,8 +102,8 @@ suite('crove_jobs from committed migrations', () => {
       expect(queues.rows).toEqual(
         [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].sort().map((name) => ({
           name,
-          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give. The marketplace poll queue is exclusive for the same reason: one poll per connection at a time (#2519). Sign PDF inspect and seal queues are exclusive so outbox replays and recovery sweeps coalesce per envelope (#3323).
-          policy: name === QUEUES.einvoiceIssue || name === QUEUES.marketplacePoll || name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || name === QUEUES.mcpWake || name === QUEUES.meetingHook || name === QUEUES.meetingChat || name === QUEUES.meetingsImport || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
+          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give. The marketplace poll queue is exclusive for the same reason: one poll per connection at a time (the MISA AMIS test queue too: one test per connection at a time, #3885) (#2519). Sign PDF inspect, seal and CA reconcile queues are exclusive so outbox replays and recovery sweeps coalesce per envelope or request (#3323, #3554).
+          policy: name === QUEUES.einvoiceIssue || name === QUEUES.marketplacePoll || name === QUEUES.misaAmisTest || name === QUEUES.misaAmisMatch || name === QUEUES.marketplaceColumns || name === QUEUES.misaAmisPush || name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal || name === QUEUES.signCaReconcile ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || name === QUEUES.mcpWake || name === QUEUES.meetingHook || name === QUEUES.meetingChat || name === QUEUES.meetingsImport || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
           dead_letter: name === QUEUES.deadLetter ? null : QUEUES.deadLetter,
         })),
       );
@@ -143,7 +143,7 @@ suite('crove_jobs from committed migrations', () => {
       expect(job?.id).toBe(id);
       expect(job?.data).toEqual({ probe: true });
 
-      for (const exclusiveQueue of [QUEUES.signPdfInspect, QUEUES.signPdfSeal]) {
+      for (const exclusiveQueue of [QUEUES.signPdfInspect, QUEUES.signPdfSeal, QUEUES.signCaReconcile]) {
         const key = `00000000-0000-4000-8000-000000000001:${exclusiveQueue}:00000000-0000-4000-8000-000000000002`;
         const firstId = await boss.send(exclusiveQueue, { orgId: 'o', envelopeId: 'e' }, { singletonKey: key });
         expect(firstId).toBeTruthy();

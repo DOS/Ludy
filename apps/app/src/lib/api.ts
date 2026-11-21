@@ -5,7 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@crove/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, type contract, type NoteAttachment, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -157,6 +157,40 @@ export async function fetchConversationImage(attachmentId: string): Promise<Blob
   return (await apiFetch(`/api/conversations/attachments/${attachmentId}`)).blob();
 }
 
+export async function uploadNoteAttachment(
+  noteId: string,
+  file: File,
+  orgSlug?: string | null,
+): Promise<NoteAttachment> {
+  if (file.size === 0) {
+    throw new ClientError('notes.attachments.emptyFile', (t) => t('notes.attachments.emptyFile'));
+  }
+  if (file.size > NOTE_ATTACHMENT_MAX_BYTES) {
+    throw new ClientError('notes.attachments.fileTooLarge', (t) =>
+      t('notes.attachments.fileTooLarge', { name: file.name || 'dinh-kem' }),
+    );
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'dinh-kem');
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/notes/${encodeURIComponent(noteId)}/attachments`, {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  const data = (await response.json()) as { attachment: NoteAttachment };
+  return data.attachment;
+}
+
+export async function fetchNoteAttachmentBlob(
+  attachmentId: string,
+  orgSlug?: string | null,
+): Promise<Blob> {
+  const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, orgSlug === undefined ? {} : { orgSlug });
+  return response.blob();
+}
+
 type Uploaded = { fileId: string; duplicate: boolean };
 
 // A Social upload may be a video of up to 100 MB (#409); the server checks each type's own limit.
@@ -245,6 +279,19 @@ export async function claimImportedMedia(meetingId: string, recordingId: string)
     }),
   );
   return (await response.json()) as { fileId: string };
+}
+
+// Claims the transcript Ludy's worker read from a meeting platform for a recording that has nothing else (C2, #3174): the server takes the staged lines, writes them as the recorder's draft (tainted, labelled
+// with the platform) and ends the meeting. Like claimImportedMedia, a row that is not staged, or is another member's, is refused there.
+export async function claimImportedTranscript(meetingId: string, recordingId: string): Promise<{ meetingId: string; stored: number }> {
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/transcript-import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ importId: recordingId }),
+    }),
+  );
+  return (await response.json()) as { meetingId: string; stored: number };
 }
 
 // One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in

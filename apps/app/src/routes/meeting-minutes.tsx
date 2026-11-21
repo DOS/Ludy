@@ -15,6 +15,7 @@ import { ErrorText, ListSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { buildMinutes, type MinutesModel } from '../lib/minutes.ts';
 import { usePrintInLight } from '../lib/print.ts';
+import { useScreenTitle } from '../lib/screen-title.ts';
 
 // Reading the results is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
@@ -27,7 +28,7 @@ export function MinutesSheet({ model, company, title, place, template }: { model
     ? t('minutes.timeRange', { from: m.from.time, to: m.to.time, day: m.from.day, month: m.from.month, year: m.from.year })
     : t('minutes.timeStart', { from: m.from.time, day: m.from.day, month: m.from.month, year: m.from.year });
   return (
-    <article className="minutes-sheet mx-auto max-w-[210mm] space-y-4 bg-card p-8 text-[13px] leading-relaxed text-card-foreground shadow-sm print:p-0 print:shadow-none" data-testid="minutes-sheet">
+    <article className="minutes-sheet mx-auto max-w-[210mm] space-y-4 bg-card p-4 text-[13px] sm:p-8 leading-relaxed text-card-foreground shadow-sm print:p-0 print:shadow-none" data-testid="minutes-sheet">
       <header className="space-y-3">
         <p className="text-sm font-semibold uppercase">{company}</p>
         <div className="text-center">
@@ -48,7 +49,7 @@ export function MinutesSheet({ model, company, title, place, template }: { model
         </div>
         <div className="flex gap-2">
           <dt className="font-semibold">{t('minutes.place')}:</dt>
-          <dd data-testid="minutes-place">{place.trim() === '' ? DOTS : place.trim()}</dd>
+          <dd className="min-w-0 [overflow-wrap:anywhere]" data-testid="minutes-place">{place.trim() === '' ? DOTS : place.trim()}</dd>
         </div>
         <div>
           <dt className="font-semibold">{t('minutes.attendees')}:</dt>
@@ -104,19 +105,19 @@ export function MinutesSheet({ model, company, title, place, template }: { model
               <table className="w-full border-collapse border border-foreground">
                 <thead>
                   <tr>
-                    <th className="w-12 border border-foreground px-2 py-1 text-center">{t('minutes.colNo')}</th>
-                    <th className="border border-foreground px-2 py-1 text-left">{t('minutes.colTask')}</th>
-                    <th className="w-40 border border-foreground px-2 py-1 text-left">{t('minutes.colOwner')}</th>
-                    <th className="w-32 border border-foreground px-2 py-1 text-left">{t('minutes.colDue')}</th>
+                    <th scope="col" className="w-10 border border-foreground px-2 py-1 text-center sm:w-12">{t('minutes.colNo')}</th>
+                    <th scope="col" className="border border-foreground px-2 py-1 text-left">{t('minutes.colTask')}</th>
+                    <th scope="col" className="w-28 border border-foreground px-2 py-1 text-left sm:w-40">{t('minutes.colOwner')}</th>
+                    <th scope="col" className="w-24 border border-foreground px-2 py-1 text-left sm:w-32">{t('minutes.colDue')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {m.actions.map((a, i) => (
                     <tr key={`${i}-${a.title}`} className="break-inside-avoid" data-testid="minutes-action">
                       <td className="border border-foreground px-2 py-1 text-center">{i + 1}</td>
-                      <td className="border border-foreground px-2 py-1">{a.title}</td>
-                      <td className="border border-foreground px-2 py-1">{a.owner ?? DOTS}</td>
-                      <td className="border border-foreground px-2 py-1">{a.due ?? DOTS}</td>
+                      <td className="border border-foreground px-2 py-1 [overflow-wrap:anywhere]">{a.title}</td>
+                      <td className="border border-foreground px-2 py-1 [overflow-wrap:anywhere]">{a.owner ?? DOTS}</td>
+                      <td className="border border-foreground px-2 py-1 [overflow-wrap:anywhere]">{a.due ?? DOTS}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -149,16 +150,18 @@ export function MeetingMinutesPage() {
   const [place, setPlace] = useState('');
   // Paper gets the light theme while printing, whatever the screen uses.
   usePrintInLight();
+  // Outside the shell nothing else names the tab (WCAG 2.4.2, DESIGN.md section 7).
+  useScreenTitle(t('minutes.pageTitle'));
   const meeting = useQuery(orpc.meetings.get.queryOptions({ input: { meetingId: id } }));
   const results = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId: id } }), ...READ_ONCE });
   const org = useQuery(orpc.org.get.queryOptions());
   const back = (
     <Link to="/o/$slug/meetings/$id" params={{ slug, id }} className="text-sm text-link underline">
-      &larr; {t('minutes.back')}
+      <span aria-hidden="true">&larr;</span> {t('minutes.back')}
     </Link>
   );
-  // Outside the org's frame: the page lays out its own margins, and the toolbar leaves the paper.
-  const frame = (body: ReactNode) => <div className="min-h-screen bg-background px-4 py-6 text-foreground print:p-0">{body}</div>;
+  // Outside the org's frame: the page lays out its own margins, and the toolbar leaves the paper. It is its own <main>, the one landmark of a page the shell does not wrap.
+  const frame = (body: ReactNode) => <main className="min-h-screen bg-background px-4 py-6 text-foreground print:p-0">{body}</main>;
   if (meeting.isPending || results.isPending || org.isPending) return frame(<ListSkeleton />);
   const failure = meeting.error ?? results.error ?? org.error;
   if (failure || !meeting.data || !results.data || !org.data) {

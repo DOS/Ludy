@@ -17,17 +17,44 @@ export type NoteListView = (typeof NOTE_LIST_VIEWS)[number];
 
 export const NOTE_TITLE_MAX = 200;
 export const NOTE_BODY_MAX = 100_000;
+export const NOTE_TEMPLATE_NAME_MAX = 120;
+export const NOTE_VERSION_RETENTION = 20;
 export const NOTE_CLIP_SOURCE_URL_MAX = 2048;
 export const NOTE_TAGS_MAX = 20;
 export const NOTE_TAG_MAX = 40;
+export const NOTEBOOK_NAME_MAX = 120;
+export const NOTEBOOK_STACK_MAX = 80;
+export const NOTEBOOKS_MAX = 200;
 // Links one note keeps: each read of the note checks every link through its module (#1672).
 export const NOTE_LINKS_MAX = 50;
+// Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3): <= 25 MiB per file.
+export const NOTE_ATTACHMENT_MAX_BYTES = 26_214_400;
+export const NOTE_ATTACHMENTS_PER_NOTE_MAX = 50;
+export const NOTE_ATTACHMENT_FILENAME_MAX = 255;
+export const NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX = 200_000;
+export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
+export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
+export const NOTE_ATTACHMENT_INLINE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+  'audio/mp4',
+  'audio/webm',
+] as const;
+export type NoteAttachmentInlineType = (typeof NOTE_ATTACHMENT_INLINE_TYPES)[number];
 // Days a deleted note stays in the trash, and a former member's private notes stay sealed (ADR-0037 §4).
 export const NOTE_TRASH_DAYS = 30;
 export const NOTE_MEMBER_PURGE_DAYS = 30;
 
 const zTitle = z.string().trim().min(1).max(NOTE_TITLE_MAX);
 const zBody = z.string().max(NOTE_BODY_MAX);
+const zNotebookName = z.string().trim().min(1).max(NOTEBOOK_NAME_MAX);
+const zNotebookStack = z.string().trim().min(1).max(NOTEBOOK_STACK_MAX);
 // Lower case, trimmed, each once, at most NOTE_TAGS_MAX.
 const zTags = z
   .array(z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX))
@@ -93,13 +120,90 @@ export function formatClippedNoteBody(body: string, sourceUrl: string | null): s
 export const zNoteLinkTarget = z.strictObject({ targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export type NoteLinkTargetInput = z.infer<typeof zNoteLinkTarget>;
 
+// Notebooks and 2-level stacks (#3559, notes-v2.md V2-4 / E1): private to their author or shared with the org.
+export const zNotebookCreate = z.strictObject({
+  name: zNotebookName,
+  stackName: zNotebookStack.nullable().default(null),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  pinned: z.boolean().default(false),
+});
+export type NotebookCreateInput = z.input<typeof zNotebookCreate>;
+
+export const zNotebookReorder = z.strictObject({
+  place: z.enum(['before', 'after']),
+  anchorId: zId,
+});
+export type NotebookReorderInput = z.input<typeof zNotebookReorder>;
+
+export const zNotebookUpdate = z
+  .strictObject({
+    notebookId: zId,
+    revision: z.number().int().positive(),
+    name: zNotebookName.optional(),
+    stackName: zNotebookStack.nullable().optional(),
+    visibility: z.enum(NOTE_VISIBILITIES).optional(),
+    pinned: z.boolean().optional(),
+    reorder: zNotebookReorder.optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.stackName !== undefined ||
+      v.visibility !== undefined ||
+      v.pinned !== undefined ||
+      v.reorder !== undefined,
+    { message: 'At least one notebook change is required' },
+  )
+  .refine((v) => !v.reorder || v.reorder.anchorId !== v.notebookId, {
+    message: 'A notebook is not moved next to itself',
+    path: ['reorder', 'anchorId'],
+  });
+export type NotebookUpdateInput = z.input<typeof zNotebookUpdate>;
+
+export const zNotebookRef = z.strictObject({ notebookId: zId });
+export const zNotebookWritten = z.object({ notebookId: z.string(), revision: z.number().int() });
+export type NotebookWritten = z.infer<typeof zNotebookWritten>;
+export const zNotebookDeleted = z.object({ notebookId: z.string() });
+export type NotebookDeleted = z.infer<typeof zNotebookDeleted>;
+
+export const zNotebookView = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  editable: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  stackName: z.string().nullable(),
+  pinned: z.boolean(),
+  sortKey: z.string(),
+  noteCount: z.number().int().nonnegative(),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NotebookSummary = z.infer<typeof zNotebookView>;
+
+export const zNotebooksResponse = z.object({
+  notebooks: z.array(zNotebookView),
+  allCount: z.number().int().nonnegative(),
+  unfiledCount: z.number().int().nonnegative(),
+});
+export type NotebooksResponse = z.infer<typeof zNotebooksResponse>;
+
+export const zNoteBacklinksInput = z.strictObject({
+  noteId: zId,
+  limit: z.number().int().min(1).max(100).default(50),
+});
+export type NoteBacklinksInput = z.input<typeof zNoteBacklinksInput>;
+
 // A new note: private unless the caller shares it (a panel on a record shares by default, notes.md decision N-7),
-// optionally linked to one record at once.
+// optionally filed in a notebook and linked to one record at once.
 export const zNoteCreate = z.strictObject({
   title: zTitle,
   body: zBody.default(''),
   tags: zTags.default([]),
   visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  notebookId: zId.nullable().optional(),
   tainted: z.boolean().optional(),
   link: zNoteLinkTarget.optional(),
 });
@@ -112,8 +216,20 @@ export const zNoteClip = z.strictObject({
   sourceUrl: zClipSourceUrl.nullable().optional(),
 });
 export type NoteClipInput = z.input<typeof zNoteClip>;
-// The author's edit of the text, against the revision they read (NOTES.REVISION_CONFLICT when it moved on).
-export const zNoteUpdate = z.strictObject({ noteId: zId, revision: z.number().int().positive(), title: zTitle, body: zBody, tags: zTags });
+// The author's edit of the text (or notebook assignment), against the revision they read (NOTE_REVISION_CONFLICT when it moved on).
+export const zNoteUpdate = z
+  .strictObject({
+    noteId: zId,
+    revision: z.number().int().positive(),
+    title: zTitle.optional(),
+    body: zBody.optional(),
+    tags: zTags.optional(),
+    notebookId: zId.nullable().optional(),
+  })
+  .refine(
+    (v) => v.title !== undefined || v.body !== undefined || v.tags !== undefined || v.notebookId !== undefined,
+    { message: 'At least one note field is required' },
+  );
 export type NoteUpdateInput = z.input<typeof zNoteUpdate>;
 export const zNoteSetVisibility = z.strictObject({ noteId: zId, visibility: z.enum(NOTE_VISIBILITIES) });
 export const zNoteRef = z.strictObject({ noteId: zId });
@@ -123,6 +239,8 @@ export const zNoteLinkAdd = z.strictObject({ noteId: zId, targetType: z.enum(NOT
 export const zNoteLinkRemove = z.strictObject({ linkId: zId });
 export const zNoteList = z.strictObject({
   view: z.enum(NOTE_LIST_VIEWS),
+  notebookId: z.union([zId, z.literal('unfiled')]).optional(),
+  stackName: zNotebookStack.optional(),
   tag: z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX).optional(),
   target: zNoteLinkTarget.optional(),
   limit: z.number().int().min(1).max(200).default(100),
@@ -140,6 +258,7 @@ export const zNoteSummary = z.object({
   id: z.string(),
   authorUserId: z.string(),
   mine: z.boolean(),
+  notebookId: z.string().nullable().optional(),
   visibility: z.enum(NOTE_VISIBILITIES),
   title: z.string(),
   tags: z.array(z.string()),
@@ -158,12 +277,126 @@ export type NoteSummary = z.infer<typeof zNoteSummary>;
 export const zNoteLinkView = z.object({ id: z.string(), targetType: z.enum(NOTE_LINK_TARGETS), targetId: z.string(), createdAt: z.string(), available: z.boolean() });
 export type NoteLink = z.infer<typeof zNoteLinkView>;
 
-export const zNote = zNoteSummary.extend({ body: z.string(), links: z.array(zNoteLinkView) });
+export const zNoteAttachment = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  filename: z.string(),
+  contentType: z.string(),
+  sizeBytes: z.number().int(),
+  sha256: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachment = z.infer<typeof zNoteAttachment>;
+
+export const zNoteAttachmentRef = z.strictObject({ attachmentId: zId });
+export type NoteAttachmentRefInput = z.input<typeof zNoteAttachmentRef>;
+
+export const zNoteAttachmentCreate = z.strictObject({
+  attachmentId: zId,
+  noteId: zId,
+  filename: z.string().trim().min(1).max(NOTE_ATTACHMENT_FILENAME_MAX),
+  contentType: z.string().trim().min(1).max(128),
+  sizeBytes: z.number().int().min(1).max(NOTE_ATTACHMENT_MAX_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  storageKey: z.string().min(1).max(128),
+  extractStatus: z.enum(['pending', 'skipped']),
+});
+export type NoteAttachmentCreateInput = z.input<typeof zNoteAttachmentCreate>;
+
+export const zNoteAttachmentCreated = z.object({
+  attachmentId: z.string(),
+  noteId: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachmentCreated = z.infer<typeof zNoteAttachmentCreated>;
+
+export const zNoteAttachmentDeleted = z.object({
+  noteId: z.string(),
+  attachmentId: z.string(),
+});
+export type NoteAttachmentDeleted = z.infer<typeof zNoteAttachmentDeleted>;
+
+export const zNote = zNoteSummary.extend({
+  body: z.string(),
+  links: z.array(zNoteLinkView),
+  attachments: z.array(zNoteAttachment).optional(),
+});
 export type Note = z.infer<typeof zNote>;
 
 // How many private notes a member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zNotePrivateCount = z.object({ userId: z.string(), notes: z.number().int() });
 export type NotePrivateCount = z.infer<typeof zNotePrivateCount>;
+
+// Quick note templates and rolling 20-snapshot version history (#3562, Notes v2 E3).
+const zTemplateName = z.string().trim().min(1).max(NOTE_TEMPLATE_NAME_MAX);
+const zTemplateTitle = z.string().trim().max(NOTE_TITLE_MAX);
+
+export const zNoteTemplateCreate = z.strictObject({
+  name: zTemplateName,
+  title: zTemplateTitle.default(''),
+  body: zBody.default(''),
+  tags: zTags.default([]),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+});
+export type NoteTemplateCreateInput = z.input<typeof zNoteTemplateCreate>;
+
+export const zNoteTemplateUpdate = z.strictObject({
+  templateId: zId,
+  revision: z.number().int().positive(),
+  name: zTemplateName,
+  title: zTemplateTitle,
+  body: zBody,
+  tags: zTags,
+  visibility: z.enum(NOTE_VISIBILITIES),
+});
+export type NoteTemplateUpdateInput = z.input<typeof zNoteTemplateUpdate>;
+
+export const zNoteTemplateRef = z.strictObject({ templateId: zId });
+export type NoteTemplateRefInput = z.input<typeof zNoteTemplateRef>;
+
+export const zNoteTemplateWritten = z.object({ templateId: z.string(), revision: z.number().int() });
+export type NoteTemplateWritten = z.infer<typeof zNoteTemplateWritten>;
+
+export const zNoteTemplateDeleted = z.object({ templateId: z.string() });
+export type NoteTemplateDeleted = z.infer<typeof zNoteTemplateDeleted>;
+
+export const zNoteTemplate = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NoteTemplate = z.infer<typeof zNoteTemplate>;
+
+export const zNoteVersion = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  revision: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  tainted: z.boolean(),
+  createdAt: z.string(),
+});
+export type NoteVersion = z.infer<typeof zNoteVersion>;
+
+export const zNoteRestoreVersion = z.strictObject({
+  noteId: zId,
+  revision: z.number().int().positive(),
+  versionId: zId,
+});
+export type NoteRestoreVersionInput = z.input<typeof zNoteRestoreVersion>;
 
 // ---------------------------------------------------------------------------
 // Personal to-dos (#1673, notes.md §3.2, §3.8 and step N4): a member's own list, always private (ADR-0037). A to-do
@@ -756,6 +989,7 @@ export const zNotesExport = z.object({
   notes: z.array(
     z.object({
       id: z.string(),
+      notebookId: z.string().nullable().optional(),
       visibility: z.enum(NOTE_VISIBILITIES),
       title: z.string(),
       body: z.string(),
@@ -766,8 +1000,35 @@ export const zNotesExport = z.object({
       archivedAt: z.string().nullable(),
       deletedAt: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
+      attachments: z
+        .array(
+          z.object({
+            id: z.string(),
+            filename: z.string(),
+            contentType: z.string(),
+            sizeBytes: z.number().int(),
+            sha256: z.string(),
+            extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+            createdAt: z.string(),
+          }),
+        )
+        .optional(),
     }),
   ),
+  notebooks: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        stackName: z.string().nullable(),
+        pinned: z.boolean(),
+        sortKey: z.string(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   todos: z.array(
     z.object({
       id: z.string(),
@@ -807,6 +1068,20 @@ export const zNotesExport = z.object({
       deletedAt: z.string().nullable(),
     }),
   ),
+  templates: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        title: z.string(),
+        body: z.string(),
+        tags: z.array(z.string()),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   truncated: z.boolean(),
 });
 export type NotesExport = z.infer<typeof zNotesExport>;
@@ -814,6 +1089,73 @@ export type NotesExport = z.infer<typeof zNotesExport>;
 // Member-scoped Vy for Notes (N8, #1677, ADR-0037, ADR-0049): summarize a readable note and suggest personal to-dos.
 export const NOTE_VY_DISABLED_REASONS = ['off', 'paused', 'budget', 'forbidden'] as const;
 export type NoteVyDisabledReason = (typeof NOTE_VY_DISABLED_REASONS)[number];
+
+export const zTodoPlanInput = z.strictObject({
+  timeZone: zTimeZone.optional(),
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type TodoPlanInput = z.infer<typeof zTodoPlanInput>;
+
+export const zTodoPlanFocusItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  priority: zTodoPriority,
+  dueOn: zDay.nullable(),
+  dueTime: zTime.nullable(),
+  overdue: z.boolean(),
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanFocusItem = z.infer<typeof zTodoPlanFocusItem>;
+
+export const zTodoPlanRescheduleItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  currentDueOn: zDay.nullable(),
+  dueOn: zDay,
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanRescheduleItem = z.infer<typeof zTodoPlanRescheduleItem>;
+
+export const zTodoPlanResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  today: zDay,
+  focus: z.array(zTodoPlanFocusItem),
+  reschedules: z.array(zTodoPlanRescheduleItem),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type TodoPlanResult = z.infer<typeof zTodoPlanResult>;
+
+export const zNoteOrganizeInput = z.strictObject({
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type NoteOrganizeInput = z.infer<typeof zNoteOrganizeInput>;
+
+export const zNoteOrganizeSuggestion = z.object({
+  noteId: zId,
+  title: z.string(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  revision: z.number().int().min(1),
+  existingTags: zTags,
+  notebookId: zId.nullable(),
+  notebookName: z.string().nullable(),
+  tags: zTags,
+  reason: z.string(),
+  canEditTags: z.boolean(),
+});
+export type NoteOrganizeSuggestion = z.infer<typeof zNoteOrganizeSuggestion>;
+
+export const zNoteOrganizeResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  suggestions: z.array(zNoteOrganizeSuggestion),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type NoteOrganizeResult = z.infer<typeof zNoteOrganizeResult>;
 
 export const zNoteVyStatus = z.object({
   available: z.boolean(),

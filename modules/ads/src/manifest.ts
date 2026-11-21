@@ -43,6 +43,12 @@ export const adsManifest = defineModule({
         // The person's request to run a launch that needs attention again (W2-4b): who asked and when; the launch job takes it with the move.
         'retry_requested_at', 'retry_requested_by',
       ]),
+      // The changes of a running ad (W4, #3835): what a person asked (pause, resume, archive, a lower or raised daily budget, a shorter or longer schedule) for a live launch's
+      // campaign, ad set or ad, and where it stands. Ids, amounts, dates and codes only, never text; in the account's legal entity.
+      ad_manage_change: columns([
+        'org_id', 'id', 'seq', 'ad_account_id', 'legal_entity_id', 'launch_id', 'kind', 'slot', 'level', 'object_id', 'family', 'state', 'from_budget', 'to_budget',
+        'from_end_on', 'to_end_on', 'proposal_id', 'code', 'settled_on', 'requested_by', 'created_at', 'updated_at', 'settled_at',
+      ]),
       // What a launch created at the platform (W2-3, #2296): the platform's ids of the campaign, ad set, creatives and ads, and the names sent (business text
       // that carries the launch's tag), in the account's legal entity. What the platform last reported about each (W2-4's sync) is a status and a reason.
       ad_object: columns([
@@ -87,6 +93,8 @@ export const adsManifest = defineModule({
     { type: 'ads.ad_campaign_request', table: 'ad_campaign_request', legalEntityScoped: true, audit: 'command' },
     // The launch ledger row, which the launch job's two commands name as their audit target (W2-3).
     { type: 'ads.ad_launch', table: 'ad_launch', legalEntityScoped: true, audit: 'command' },
+    // The change of a running ad, which the manage job's two commands name as their audit target (W4).
+    { type: 'ads.ad_manage_change', table: 'ad_manage_change', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.ads,
