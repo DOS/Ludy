@@ -63,6 +63,7 @@ import { parseJournalSearch, parseTextSearch } from './lib/search.ts';
 import { parseTasksSearch } from './lib/agents.ts';
 import { parseNotesSearch } from './lib/notes.ts';
 import { parseAdsSearch } from './lib/ads.ts';
+import { parseSalesInvoiceHandoffSearch } from './lib/project-acceptance-pdf.ts';
 import { parseCampaignsSearch } from './lib/ads-campaigns.ts';
 import { parseReportsSearch } from './lib/reports.ts';
 import { parseLedgerSearch } from './lib/ledger.ts';
@@ -494,8 +495,16 @@ const customersRoute = createRoute({
 const accountingOverviewRoute = createRoute({ getParentRoute: () => orgRoute, path: 'accounting', component: AccountingOverviewPage });
 // The overdue customers and their reminder mails (#2488).
 const paymentRemindersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'payment-reminders', component: PaymentRemindersPage });
-// The drafts of the sales e-invoices (#2500).
-const salesInvoicesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sales-invoices', component: SalesInvoicesPage });
+// The drafts of the sales e-invoices (#2500), plus ADR-0050 browser handoff search params (#3812).
+const salesInvoicesRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'sales-invoices',
+  validateSearch: parseSalesInvoiceHandoffSearch,
+  component: function SalesInvoicesRoutePage() {
+    const search = salesInvoicesRoute.useSearch();
+    return <SalesInvoicesPage prefill={search} />;
+  },
+});
 const stockRoute = createRoute({ getParentRoute: () => orgRoute, path: 'stock', component: StockPage });
 const householdRoute = createRoute({ getParentRoute: () => orgRoute, path: 'household', component: HouseholdPage });
 const marketplaceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'marketplace', component: MarketplaceBalancePage });
