@@ -37,7 +37,24 @@ export {
   cleanUserAgent as sanitizeSignUserAgent,
   normalizePageDimensions as normalizeSignPageDimensions,
 } from './public-commands.ts';
-export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export { parseSharedSummary, sanitizeSharedSummaryForWrite } from './shared.ts';
+export { signQueries, type SignDiffSourceResult, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  computeSignVersionDiff,
+  splitPageIntoClauses,
+  type SignDiffPageText,
+} from './version-diff.ts';
+export {
+  STARTER_CONTRACT_TEMPLATES,
+  buildStarterContractClauses,
+  buildStarterContractFilename,
+  buildStarterContractTitle,
+  formatContractDecimalAmount,
+  neutralizeContractInputText,
+  renderStarterContractPdf,
+  type RenderedStarterContractPdf,
+  type StarterTemplateMeta,
+} from './contract-drafter.ts';
 export {
   signTemplateCommands,
   signTemplateQueries,

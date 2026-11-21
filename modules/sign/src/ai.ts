@@ -1291,7 +1291,7 @@ function toAnalysisRecord(
   };
 }
 
-async function isSignAiStoppedOnTrx(
+export async function isSignAiStoppedOnTrx(
   trx: QueryContext['trx'] | CommandContext['trx'],
   orgId: string,
 ): Promise<boolean> {
