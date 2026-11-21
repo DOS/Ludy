@@ -15,6 +15,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
@@ -29,6 +30,7 @@ import {
   type SignAiAnalysis,
   type SignFieldRecord,
   type SignProposedField,
+  type SignSharedSummary,
   type SignSignerRecord,
 } from '../lib/sign-api.ts';
 import {
@@ -405,6 +407,41 @@ export function SignEnvelopeDetailPage() {
       setVoidDialogOpen(false);
       setVoidReason('');
       toast(t('voidDialog.voidedToast'));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+
+  const canEditSharedSummary = useMemo(() => {
+    if (!envelope) return false;
+    if (envelope.status !== 'draft' && envelope.status !== 'sent' && envelope.status !== 'in_progress') {
+      return false;
+    }
+    const me = meQuery.data;
+    if (!me) return true;
+    const orgSummary = me.orgs.find((o) => o.slug === slug);
+    if (!orgSummary) return false;
+    if (orgSummary.role === 'owner' || orgSummary.role === 'admin') return true;
+    return orgSummary.role === 'member' && envelope.createdBy !== null && me.userId === envelope.createdBy;
+  }, [envelope, meQuery.data, slug]);
+
+  const sharedSummaryMutation = useMutation({
+    mutationFn: (payload: { shareSummaryWithSigners: boolean; sharedSummary: SignSharedSummary | null }) =>
+      signApi.setEnvelopeSharedSummary({
+        envelopeId: id,
+        shareSummaryWithSigners: payload.shareSummaryWithSigners,
+        sharedSummary: payload.sharedSummary,
+        ...(envelope ? { expectedVersion: envelope.version } : {}),
+      }),
+    onSuccess: async () => {
+      toast(t('sharedSummary.savedToast'));
       await invalidateAll();
     },
     onError: (err) => toast(errorMessage(err), 'error'),
@@ -1009,6 +1046,19 @@ export function SignEnvelopeDetailPage() {
             onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
             onApplyAllProposals={handleApplyAllProposals}
           />
+
+          {canEditSharedSummary || Boolean(envelope.sharedSummary) || Boolean(envelope.shareSummaryWithSigners) ? (
+            <SenderSharedSummaryEditor
+              recordKey={`env-${envelope.id}`}
+              initialShare={Boolean(envelope.shareSummaryWithSigners)}
+              initialSummary={envelope.sharedSummary ?? null}
+              pageCount={envelope.pageCount ?? detectedPages}
+              aiAnalysis={effectiveAi}
+              editable={canEditSharedSummary}
+              saving={sharedSummaryMutation.isPending}
+              onSave={(payload) => sharedSummaryMutation.mutateAsync(payload)}
+            />
+          ) : null}
 
           {isDraft && selectedField ? (
             <Card data-testid="field-inspector-card">

@@ -72,7 +72,13 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
+import {
+  compareSignPdfVersions,
+  proposeEnvelopeAnalysis,
+  proposeSignContractDraftClauses,
+  signAi,
+  type SignAi,
+} from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
@@ -565,6 +571,8 @@ export function createRpcHandler(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
     suggestionBudget(),
   );
+  const signDiffCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
+  const signDrafterCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -1123,6 +1131,7 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
           severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
+          job_loss: os.hr.payroll.employees.job_loss.handler(hrQuery('hr.payroll.employee.job_loss')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -1182,8 +1191,14 @@ export function createRpcHandler(
           edit: os.hr.recruiting.candidates.edit.handler(hrCommand('hr.recruiting.candidate.edit')),
           moveStage: os.hr.recruiting.candidates.moveStage.handler(hrCommand('hr.recruiting.candidate.move_stage')),
           scheduleInterview: os.hr.recruiting.candidates.scheduleInterview.handler(hrCommand('hr.recruiting.candidate.schedule_interview')),
+          cancelInterview: os.hr.recruiting.candidates.cancelInterview.handler(hrCommand('hr.recruiting.candidate.cancel_interview')),
           hire: os.hr.recruiting.candidates.hire.handler(hrCommand('hr.recruiting.candidate.hire')),
           erase: os.hr.recruiting.candidates.erase.handler(hrCommand('hr.recruiting.candidate.erase')),
+        },
+        interviewers: {
+          list: os.hr.recruiting.interviewers.list.handler(({ context }) =>
+            inHr(context, (orgId, actor) => runtime.query('hr.recruiting.interviewers.list', {}, { actor, orgId })),
+          ),
         },
         interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
         brief: os.hr.recruiting.brief.handler(({ context, input }) =>
@@ -4523,6 +4538,7 @@ export function createRpcHandler(
         verify: os.sign.envelope.verify.handler(signQuery('sign.envelope.verify')),
         create: os.sign.envelope.create.handler(signCommand('sign.envelope.create')),
         update: os.sign.envelope.update.handler(signCommand('sign.envelope.update')),
+        shared_summary_set: os.sign.envelope.shared_summary_set.handler(signCommand('sign.envelope.shared_summary_set')),
         send: os.sign.envelope.send.handler(signNoIdempotencyCommand('sign.envelope.send')),
         remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
         void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
@@ -4570,6 +4586,37 @@ export function createRpcHandler(
           ),
         ),
       },
+      diff: {
+        compare: os.sign.diff.compare.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            compareSignPdfVersions({
+              ai: signDiffCoworker,
+              runtime,
+              orgId,
+              actor,
+              input,
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+      },
+      drafter: {
+        proposeClauses: os.sign.drafter.proposeClauses.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeSignContractDraftClauses({
+              ai: signDrafterCoworker,
+              runtime,
+              orgId,
+              actor,
+              input,
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        renderPdf: os.sign.drafter.renderPdf.handler(signQuery('sign.drafter.render_pdf')),
+      },
       template: {
         list: os.sign.template.list.handler(signQuery('sign.template.list')),
         get: os.sign.template.get.handler(({ context, input }) =>
@@ -4587,6 +4634,7 @@ export function createRpcHandler(
         ),
         create: os.sign.template.create.handler(signCommand('sign.template.create')),
         update: os.sign.template.update.handler(signCommand('sign.template.update')),
+        shared_summary_set: os.sign.template.shared_summary_set.handler(signCommand('sign.template.shared_summary_set')),
         roles_set: os.sign.template.roles_set.handler(signCommand('sign.template.roles_set')),
         fields_set: os.sign.template.fields_set.handler(signCommand('sign.template.fields_set')),
         archive: os.sign.template.archive.handler(signCommand('sign.template.archive')),

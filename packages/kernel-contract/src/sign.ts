@@ -86,6 +86,21 @@ export interface SignPageDimension {
   heightPt: number;
 }
 
+export const SIGN_SHARED_SUMMARY_MAX_CHARS = 3000;
+export const SIGN_SHARED_KEY_TERMS_MAX = 20;
+
+export interface SignSharedKeyTerm {
+  label: string;
+  value: string;
+  pageNumber: number | null;
+  quoteExcerpt: string | null;
+}
+
+export interface SignSharedSummary {
+  summaryText: string | null;
+  keyTerms: SignSharedKeyTerm[];
+}
+
 export type SignPublicView =
   | {
       state: 'otp_required';
@@ -107,6 +122,7 @@ export type SignPublicView =
       requireEmailOtp: boolean;
       otpVerified: boolean;
       fields: SignPublicField[];
+      sharedSummary?: SignSharedSummary | null;
     };
 
 export interface SignPublicOtpRequestResult {
@@ -211,6 +227,7 @@ export type SignDirectView =
       pageCount: number;
       pageDimensions: SignPageDimension[];
       fieldCount: number;
+      sharedSummary?: SignSharedSummary | null;
     };
 
 export interface SignDirectOtpRequestResult {
@@ -405,6 +422,29 @@ export const zSignEnvelopeBySourceResult = z.strictObject({
   items: z.array(zSignEnvelopeBySourceItem),
 });
 
+export const zSignSharedKeyTerm = z.strictObject({
+  label: z.string().trim().min(1).max(160),
+  value: z.string().trim().min(1).max(600),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable().default(null),
+  quoteExcerpt: z.string().trim().max(1000).nullable().default(null),
+});
+
+export const zSignSharedSummary = z
+  .strictObject({
+    summaryText: z.string().trim().max(SIGN_SHARED_SUMMARY_MAX_CHARS).nullable().default(null),
+    keyTerms: z.array(zSignSharedKeyTerm).max(SIGN_SHARED_KEY_TERMS_MAX).default([]),
+  })
+  .superRefine((val, ctx) => {
+    const hasSummary = Boolean(val.summaryText && val.summaryText.trim().length > 0);
+    if (!hasSummary && val.keyTerms.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['summaryText'],
+        message: 'Provide summaryText or at least one keyTerm',
+      });
+    }
+  });
+
 export const zSignEnvelopeDetail = z.strictObject({
   envelope: z.strictObject({
     id: zId,
@@ -422,6 +462,8 @@ export const zSignEnvelopeDetail = z.strictObject({
     pageCount: z.number().int().nullable(),
     pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
     detectedTags: z.array(zSignDetectedTag).default([]),
+    shareSummaryWithSigners: z.boolean().default(false),
+    sharedSummary: zSignSharedSummary.nullable().default(null),
     sealedFileId: zId.nullable(),
     sealedSha256: z.string().nullable(),
     sealStatus: zSignSealStatus.nullable(),
@@ -853,6 +895,8 @@ export const zSignTemplateDetail = z.strictObject({
     pageCount: z.number().int().nullable(),
     pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
     detectedTags: z.array(zSignDetectedTag).default([]),
+    shareSummaryWithSigners: z.boolean().default(false),
+    sharedSummary: zSignSharedSummary.nullable().default(null),
     version: z.number().int(),
     archivedAt: z.string().nullable(),
     createdBy: zId,
@@ -1057,3 +1101,216 @@ export const zSignAcceptanceDraftResult = z.strictObject({
   bullets: z.array(zSignAcceptanceDraftBullet),
 });
 export type SignAcceptanceDraftResult = z.infer<typeof zSignAcceptanceDraftResult>;
+
+// eSign Slice 4f (#3822):
+// 1) Sender-approved counterparty summary (share_summary_with_signers)
+// 2) Deterministic PDF contract version diff + optional metered Vy risk delta
+// 3) Vietnamese SME starter contract drafter + optional metered Vy clause customization
+
+export const zSignEnvelopeSharedSummarySetInput = z
+  .strictObject({
+    envelopeId: zId,
+    shareSummaryWithSigners: z.boolean(),
+    sharedSummary: zSignSharedSummary.nullable(),
+    expectedVersion: z.number().int().positive().optional(),
+    idempotencyKey: zId.optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.shareSummaryWithSigners && !input.sharedSummary) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sharedSummary'],
+        message: 'sharedSummary is required when shareSummaryWithSigners is true',
+      });
+    }
+  });
+
+export const zSignEnvelopeSharedSummarySetResult = z.strictObject({
+  envelopeId: zId,
+  shareSummaryWithSigners: z.boolean(),
+  sharedSummary: zSignSharedSummary.nullable(),
+  version: z.number().int(),
+});
+
+export const zSignTemplateSharedSummarySetInput = z
+  .strictObject({
+    templateId: zId,
+    shareSummaryWithSigners: z.boolean(),
+    sharedSummary: zSignSharedSummary.nullable(),
+    idempotencyKey: zId.optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.shareSummaryWithSigners && !input.sharedSummary) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sharedSummary'],
+        message: 'sharedSummary is required when shareSummaryWithSigners is true',
+      });
+    }
+  });
+
+export const zSignTemplateSharedSummarySetResult = z.strictObject({
+  templateId: zId,
+  shareSummaryWithSigners: z.boolean(),
+  sharedSummary: zSignSharedSummary.nullable(),
+  version: z.number().int(),
+});
+
+export const SIGN_DIFF_CHANGE_KINDS = ['unchanged', 'added', 'removed', 'modified'] as const;
+export type SignDiffChangeKind = (typeof SIGN_DIFF_CHANGE_KINDS)[number];
+export const zSignDiffChangeKind = z.enum(SIGN_DIFF_CHANGE_KINDS);
+
+export const zSignDiffHunk = z.strictObject({
+  index: z.number().int().min(0),
+  kind: zSignDiffChangeKind,
+  pageV1: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  pageV2: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  beforeText: z.string().nullable(),
+  afterText: z.string().nullable(),
+});
+export type SignDiffHunk = z.infer<typeof zSignDiffHunk>;
+
+export const zSignVersionDiffSummary = z.strictObject({
+  totalHunks: z.number().int().min(0),
+  addedCount: z.number().int().min(0),
+  removedCount: z.number().int().min(0),
+  modifiedCount: z.number().int().min(0),
+  unchangedCount: z.number().int().min(0),
+  identical: z.boolean(),
+});
+export type SignVersionDiffSummary = z.infer<typeof zSignVersionDiffSummary>;
+
+export const zSignVersionDiffResult = z.strictObject({
+  pageCountV1: z.number().int().min(0),
+  pageCountV2: z.number().int().min(0),
+  stats: zSignVersionDiffSummary,
+  hunks: z.array(zSignDiffHunk),
+});
+export type SignVersionDiffResult = z.infer<typeof zSignVersionDiffResult>;
+
+export const zSignAiRiskDeltaItem = z.strictObject({
+  title: z.string(),
+  severity: zSignAiSeverity,
+  pageV1: z.number().int().nullable(),
+  pageV2: z.number().int().nullable(),
+  beforeQuote: z.string().nullable(),
+  afterQuote: z.string().nullable(),
+  explanation: z.string(),
+  proposedByAi: z.literal(true),
+});
+export type SignAiRiskDeltaItem = z.infer<typeof zSignAiRiskDeltaItem>;
+
+const zSignDiffPageInput = z.strictObject({
+  page: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  text: z.string().max(250_000),
+});
+
+export const zSignDiffCompareInput = z.strictObject({
+  titleV1: z.string().trim().max(300).optional(),
+  titleV2: z.string().trim().max(300).optional(),
+  fileIdV1: zId.optional(),
+  fileIdV2: zId.optional(),
+  pagesV1: z.array(zSignDiffPageInput).min(1).max(SIGN_MAX_PAGES),
+  pagesV2: z.array(zSignDiffPageInput).min(1).max(SIGN_MAX_PAGES),
+  includeAi: z.boolean().default(true),
+});
+export type SignDiffCompareInput = z.infer<typeof zSignDiffCompareInput>;
+
+export const SIGN_DIFF_AI_STATES = ['used', 'off', 'budget', 'busy', 'no_changes', 'no_text', 'failed'] as const;
+export type SignDiffAiState = (typeof SIGN_DIFF_AI_STATES)[number];
+export const zSignDiffAiState = z.enum(SIGN_DIFF_AI_STATES);
+
+export const zSignDiffCompareResult = z.strictObject({
+  diff: zSignVersionDiffResult,
+  ai: zSignDiffAiState,
+  summaryText: z.string().nullable(),
+  riskDeltas: z.array(zSignAiRiskDeltaItem),
+});
+export type SignDiffCompareResult = z.infer<typeof zSignDiffCompareResult>;
+
+export const SIGN_STARTER_TEMPLATE_KINDS = [
+  'nda_mutual',
+  'service_agreement',
+  'acceptance_minutes',
+  'liquidation_minutes',
+  'freelancer_contract',
+] as const;
+export type SignStarterTemplateKind = (typeof SIGN_STARTER_TEMPLATE_KINDS)[number];
+export const zSignStarterTemplateKind = z.enum(SIGN_STARTER_TEMPLATE_KINDS);
+
+export const SIGN_CONTRACT_CURRENCIES = ['VND', 'USD'] as const;
+export type SignContractCurrency = (typeof SIGN_CONTRACT_CURRENCIES)[number];
+export const zSignContractCurrency = z.enum(SIGN_CONTRACT_CURRENCIES);
+
+export const SIGN_CONTRACT_DECIMAL_VALUE_PATTERN = /^(?:0|[1-9]\d{0,17})(?:\.\d{1,4})?$/;
+export const zSignContractDecimalValue = z
+  .string()
+  .trim()
+  .regex(SIGN_CONTRACT_DECIMAL_VALUE_PATTERN, 'Contract value must be a non-negative decimal string');
+
+export const zSignContractPartyInput = z.strictObject({
+  name: z.string().trim().min(1).max(200),
+  taxCode: z.string().trim().max(32).nullable().optional(),
+  address: z.string().trim().max(300).nullable().optional(),
+  representative: z.string().trim().max(160).nullable().optional(),
+  roleTitle: z.string().trim().max(120).nullable().optional(),
+});
+export type SignContractPartyInput = z.infer<typeof zSignContractPartyInput>;
+
+export const zSignContractClauseItem = z.strictObject({
+  heading: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1).max(3000),
+  proposedByAi: z.boolean().default(false),
+});
+export type SignContractClauseItem = z.infer<typeof zSignContractClauseItem>;
+
+export const zSignContractDraftVariables = z.strictObject({
+  templateKind: zSignStarterTemplateKind,
+  contractNumber: z.string().trim().max(80).nullable().optional(),
+  partyA: zSignContractPartyInput,
+  partyB: zSignContractPartyInput,
+  scopeSummary: z.string().trim().min(1).max(3000),
+  contractValue: zSignContractDecimalValue.nullable().optional(),
+  currency: zSignContractCurrency.default('VND'),
+  effectiveDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveDate must be YYYY-MM-DD'),
+  expiryDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expiryDate must be YYYY-MM-DD').nullable().optional(),
+  customClauses: z.array(zSignContractClauseItem).max(15).default([]),
+});
+export type SignContractDraftVariables = z.infer<typeof zSignContractDraftVariables>;
+
+export const zSignDrafterProposeInput = z.strictObject({
+  variables: zSignContractDraftVariables,
+  instructions: z.string().trim().min(1).max(1500),
+});
+export type SignDrafterProposeInput = z.infer<typeof zSignDrafterProposeInput>;
+
+export const zSignProposedClause = z.strictObject({
+  heading: z.string(),
+  body: z.string(),
+  rationale: z.string().nullable(),
+  proposedByAi: z.literal(true),
+});
+export type SignProposedClause = z.infer<typeof zSignProposedClause>;
+
+export const SIGN_DRAFTER_AI_STATES = ['used', 'off', 'budget', 'busy', 'failed'] as const;
+export type SignDrafterAiState = (typeof SIGN_DRAFTER_AI_STATES)[number];
+export const zSignDrafterAiState = z.enum(SIGN_DRAFTER_AI_STATES);
+
+export const zSignDrafterProposeResult = z.strictObject({
+  ai: zSignDrafterAiState,
+  summaryNote: z.string().nullable(),
+  proposedClauses: z.array(zSignProposedClause),
+});
+export type SignDrafterProposeResult = z.infer<typeof zSignDrafterProposeResult>;
+
+export const zSignDrafterRenderPdfInput = zSignContractDraftVariables.extend({});
+export type SignDrafterRenderPdfInput = z.infer<typeof zSignDrafterRenderPdfInput>;
+
+export const zSignDrafterRenderPdfResult = z.strictObject({
+  title: z.string(),
+  filename: z.string(),
+  pdfBase64: z.string(),
+  sha256: z.string(),
+  pageCount: z.number().int().min(1),
+});
+export type SignDrafterRenderPdfResult = z.infer<typeof zSignDrafterRenderPdfResult>;

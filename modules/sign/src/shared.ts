@@ -8,10 +8,15 @@ import {
   SIGN_MAX_DETECTED_TAGS,
   SIGN_MAX_PAGES,
   SIGN_NORM_SCALE,
+  SIGN_SHARED_KEY_TERMS_MAX,
+  SIGN_SHARED_SUMMARY_MAX_CHARS,
   tableWrite,
   zSignDetectedTag,
   zSignEnvelopePageDimension,
+  zSignSharedSummary,
   type SignDetectedTag,
+  type SignSharedKeyTerm,
+  type SignSharedSummary,
 } from '@crove/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
@@ -245,6 +250,97 @@ export function parseDetectedTags(raw: unknown, pageCount?: number | null): Sign
     out.push(parsed.data);
   }
   return out;
+}
+
+const SHARED_SUMMARY_CONTROL_RE = /\p{Cf}+/gu;
+
+function cleanSummaryText(raw: string, max: number, singleLine: boolean): string {
+  const base = raw
+    .replace(SHARED_SUMMARY_CONTROL_RE, '')
+    .replace(/(?![\t\n\r])\p{Cc}/gu, ' ')
+    .replace(/[\u2013\u2014]/g, '-');
+  const collapsed = singleLine ? base.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ') : base;
+  const trimmed = collapsed.trim();
+  if (trimmed.length <= max) return trimmed;
+  return Array.from(trimmed).slice(0, max).join('').trimEnd();
+}
+
+export function sanitizeSharedSummaryForWrite(
+  raw: SignSharedSummary | null | undefined,
+  pageCount: number | null,
+): SignSharedSummary | null {
+  if (!raw) return null;
+  const summaryTextRaw = typeof raw.summaryText === 'string' ? cleanSummaryText(raw.summaryText, SIGN_SHARED_SUMMARY_MAX_CHARS, false) : '';
+  const summaryText = summaryTextRaw.length > 0 ? summaryTextRaw : null;
+
+  const keyTerms: SignSharedKeyTerm[] = [];
+  for (const item of raw.keyTerms.slice(0, SIGN_SHARED_KEY_TERMS_MAX)) {
+    const label = cleanSummaryText(item.label, 160, true);
+    const value = cleanSummaryText(item.value, 600, true);
+    if (!label || !value) continue;
+    const pageNumber = item.pageNumber ?? null;
+    if (pageNumber !== null) {
+      if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > SIGN_MAX_PAGES) {
+        throw new DomainError('SIGN_FIELD_OUT_OF_BOUNDS', 422, 'Summary key term pageNumber must stay in 1..200');
+      }
+      if (pageCount !== null && pageNumber > pageCount) {
+        throw new DomainError(
+          'SIGN_FIELD_OUT_OF_BOUNDS',
+          422,
+          `Summary key term pageNumber ${pageNumber} exceeds document page count ${pageCount}`,
+        );
+      }
+    }
+    const quoteRaw = typeof item.quoteExcerpt === 'string' ? cleanSummaryText(item.quoteExcerpt, 1000, false) : '';
+    keyTerms.push({
+      label,
+      value,
+      pageNumber,
+      quoteExcerpt: quoteRaw.length > 0 ? quoteRaw : null,
+    });
+  }
+
+  if (summaryText === null && keyTerms.length === 0) {
+    return null;
+  }
+  return { summaryText, keyTerms };
+}
+
+export function parseSharedSummary(raw: unknown, pageCount?: number | null): SignSharedSummary | null {
+  if (raw === null || raw === undefined) return null;
+  let candidate: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      candidate = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const parsed = zSignSharedSummary.safeParse(candidate);
+  if (!parsed.success) return null;
+  const summaryTextRaw = parsed.data.summaryText
+    ? cleanSummaryText(parsed.data.summaryText, SIGN_SHARED_SUMMARY_MAX_CHARS, false)
+    : '';
+  const summaryText = summaryTextRaw.length > 0 ? summaryTextRaw : null;
+  const keyTerms: SignSharedKeyTerm[] = [];
+  for (const item of parsed.data.keyTerms.slice(0, SIGN_SHARED_KEY_TERMS_MAX)) {
+    const label = cleanSummaryText(item.label, 160, true);
+    const value = cleanSummaryText(item.value, 600, true);
+    if (!label || !value) continue;
+    let pageNumber = item.pageNumber ?? null;
+    if (pageNumber !== null && typeof pageCount === 'number' && pageCount >= 1 && pageNumber > pageCount) {
+      pageNumber = null;
+    }
+    const quoteRaw = item.quoteExcerpt ? cleanSummaryText(item.quoteExcerpt, 1000, false) : '';
+    keyTerms.push({
+      label,
+      value,
+      pageNumber,
+      quoteExcerpt: quoteRaw.length > 0 ? quoteRaw : null,
+    });
+  }
+  if (summaryText === null && keyTerms.length === 0) return null;
+  return { summaryText, keyTerms };
 }
 
 export async function sendDraftEnvelope(
