@@ -71,6 +71,8 @@ const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (
 void ABOUT_KEYS_ARE_ALL;
 const STATE_KEYS = ['draft', 'sent', 'accepted', 'declined', 'superseded', 'queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled', 'applied', 'unclear'] as const;
 const CHANGE_KINDS = ['resume', 'budget_raise', 'schedule_extend', 'pause', 'archive', 'budget_lower', 'schedule_shorten'] as const;
+const SLOT_KEYS = ['campaign', 'ad_set', 'ad_1', 'ad_2', 'ad_3'] as const;
+const isSlotKey = (value: string): value is (typeof SLOT_KEYS)[number] => (SLOT_KEYS as readonly string[]).includes(value);
 const isChangeKind = (value: string): value is (typeof CHANGE_KINDS)[number] => (CHANGE_KINDS as readonly string[]).includes(value);
 const isStateKey = (value: string): value is (typeof STATE_KEYS)[number] => (STATE_KEYS as readonly string[]).includes(value);
 const isKindKey = (key: string): key is (typeof KIND_KEYS)[number] => (KIND_KEYS as readonly string[]).includes(key);
@@ -85,6 +87,8 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
   const aboutValue = (a: { label: string; value: string }): string => {
     if (a.label === 'bookingTime' && ISO_INSTANT.test(a.value)) return `${fmt.dateTime(a.value)} (${a.value})`;
     if ((a.label === 'quoteStatus' || a.label === 'launchState' || a.label === 'changeState') && isStateKey(a.value)) return t(`engageAboutValue.${a.value}`);
+    // A resume sets no number or day: the part of the ad it would start again, in words.
+    if (a.label === 'changeTo' && isSlotKey(a.value)) return t(`engageAboutValue.slot_${a.value}`);
     if (a.label === 'changeKind' && isChangeKind(a.value)) return t(`engageAboutValue.change_${a.value}`);
     return a.value;
   };

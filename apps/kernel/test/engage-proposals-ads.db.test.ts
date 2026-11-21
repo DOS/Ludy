@@ -222,13 +222,19 @@ suite('the Ads proposal twins (#3863)', () => {
   });
 
   // A raise a person's approved proposal queued, as the table holds it: the insert guard asks the raise's own approved proposal, so it is set aside for the one statement (the cancel's checks are the cancel's own).
-  async function queuedRaise(r: Rig): Promise<string> {
+  async function queuedRaise(r: Rig, kind: 'budget_raise' | 'schedule_extend' | 'resume' = 'budget_raise'): Promise<string> {
     const id = randomUUID();
+    const shape: Record<typeof kind, { slot: string; level: string; columns: string; values: unknown[] }> = {
+      budget_raise: { slot: 'ad_set', level: 'ad_set', columns: 'from_budget, to_budget', values: [100000, 150000] },
+      schedule_extend: { slot: 'ad_set', level: 'ad_set', columns: 'from_end_on, to_end_on', values: [r.end, D(20)] },
+      resume: { slot: 'ad_1', level: 'ad', columns: 'from_budget', values: [null] },
+    };
+    const { slot, level, columns, values } = shape[kind];
     await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
       await c.query(
-        `INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, proposal_id, requested_by, state)
-         VALUES ($1, $2, $3, $4, 'budget_raise', 'ad_set', 'ad_set', $5, 100000, 150000, $6, $7, 'queued')`,
-        [h.orgId, id, r.account, r.launch, `set-${id.slice(0, 8)}`, randomUUID(), h.owner],
+        `INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, proposal_id, requested_by, ${columns})
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ${values.map((_, i) => `$${i + 11}`).join(', ')})`,
+        [h.orgId, id, r.account, r.launch, kind, slot, level, `obj-${id.slice(0, 8)}`, randomUUID(), h.owner, ...values],
       );
     });
     return id;
@@ -275,7 +281,21 @@ suite('the Ads proposal twins (#3863)', () => {
     expect(await stateOf(begun)).toBe('queued');
   });
 
-  it('ads.manage.cancel: never cancels a waiting change that would REDUCE spend: a pause, a lower budget and a shorter schedule stay queued and the proposal stays pending (#4181)', async () => {
+  it('ads.manage.cancel: cancels a waiting resume and a waiting longer schedule once approved, as it does a raised budget: every kind that would start or raise spend (#4181)', async () => {
+    const c: Case = { twin: 'ads.manage.cancel_approved', original: 'ads.manage.cancel', kind: 'ads.manage_cancel' };
+    for (const kind of ['resume', 'schedule_extend'] as const) {
+      const waiting = await queuedRaise(await rig(), kind);
+      const made = await asked(c.twin, { changeId: waiting });
+      expect(made.status, kind).toBe('pending');
+      expect(await stateOf(waiting), kind).toBe('queued');
+      await h.approve(made.proposalId);
+      expect((await h.proposal(made.proposalId)).status, kind).toBe('executed');
+      expect(await h.executions(c.original, made.proposalId), kind).toBe(1);
+      expect(await stateOf(waiting), kind).toBe('cancelled');
+    }
+  });
+
+  it('ads.manage.cancel: never cancels a waiting change that would REDUCE spend: a pause, an archive, a lower budget and a shorter schedule stay queued and the proposal stays pending (#4181)', async () => {
     const c: Case = { twin: 'ads.manage.cancel_approved', original: 'ads.manage.cancel', kind: 'ads.manage_cancel' };
     const r = await rig();
     const ranBefore = await h.ran(c.original);
@@ -283,8 +303,9 @@ suite('the Ads proposal twins (#3863)', () => {
     await h.runtime.execute('ads.object.pause', { launchId: r.launch, slot: 'ad_1' }, { actor: h.person(h.owner), orgId: h.orgId });
     await h.runtime.execute('ads.budget.lower', { launchId: r.launch, dailyBudget: '60000' }, { actor: h.person(h.owner), orgId: h.orgId });
     await h.runtime.execute('ads.schedule.shorten', { launchId: r.launch, endOn: D(5) }, { actor: h.person(h.owner), orgId: h.orgId });
-    const queued = (await h.q<{ id: string; kind: string }>(`SELECT id, kind FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND state = 'queued'`, [h.orgId, r.launch])).rows;
-    expect(queued.map((x) => x.kind).sort()).toEqual(['budget_lower', 'pause', 'schedule_shorten']);
+    await h.runtime.execute('ads.object.archive', { launchId: r.launch, slot: 'campaign' }, { actor: h.person(h.owner), orgId: h.orgId });
+    const queued =(await h.q<{ id: string; kind: string }>(`SELECT id, kind FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND state = 'queued'`, [h.orgId, r.launch])).rows;
+    expect(queued.map((x) => x.kind).sort()).toEqual(['archive', 'budget_lower', 'pause', 'schedule_shorten']);
     for (const change of queued) {
       const made = await asked(c.twin, { changeId: change.id });
       expect(made.status).toBe('pending');
