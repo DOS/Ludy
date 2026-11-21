@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '@crove/kernel-runtime';
+import { money, sum, toMoney } from '@crove/l10n-vn';
 import type { MarketplacePayoutAdjustment, MarketplacePayoutProposal } from '@crove/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { payoutPaths, payoutProposal, type PayoutPostingLine, type PayoutProposalInput } from '../src/marketplace-payout-posting.ts';
@@ -88,7 +89,7 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
   const ids = (n: number) => lineId(900 + n);
   const incentive = (n: number, amount: string): MarketplacePayoutAdjustment => ({ kind: 'incentive', lineId: ids(n), amount });
   const compensation = (n: number, amount: string, costAmount: string): MarketplacePayoutAdjustment => ({ kind: 'carrier_compensation', lineId: ids(n), amount, costAmount });
-  const lost = (n: number, amount: string, tax = '0'): PayoutPostingLine => line({ id: ids(n), other: amount, net: String(100000 + Number(amount) - Number(tax)), taxWithheld: tax });
+  const lost = (n: number, amount: string, tax = '0'): PayoutPostingLine => line({ id: ids(n), other: amount, net: toMoney(money('100000').plus(amount).minus(tax)), taxWithheld: tax });
   const accounts = (p: ReturnType<typeof payoutProposal>) => p.lines.map((l) => [l.account, l.debit, l.credit, l.partyId]);
   const withAdj = (lines: PayoutPostingLine[], adjustments: MarketplacePayoutAdjustment[], over: Partial<PayoutProposalInput> = {}) => input(lines, { adjustments, ...over });
 
@@ -112,8 +113,8 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
     expect(p.lines.filter((l) => l.credit !== '0' && l.account !== '131').map((l) => [l.account, l.credit, l.memo.split(', ')[1]])).toEqual([['711', '1000', 'khoản thưởng của sàn'], ['632', '3500', 'bồi thường mất hàng'], ['711', '1500', 'bồi thường vượt giá vốn']]);
     expect(p).toMatchObject({ incentive: '1000', compensation: '5000', compensationCost: '3500' });
     // The debits equal the credits and the total says so.
-    expect(p.lines.reduce((a, l) => a + Number(l.debit), 0)).toBe(Number(p.total));
-    expect(p.lines.reduce((a, l) => a + Number(l.credit), 0)).toBe(Number(p.total));
+    expect(toMoney(sum(p.lines.map((l) => l.debit)))).toBe(p.total);
+    expect(toMoney(sum(p.lines.map((l) => l.credit)))).toBe(p.total);
   });
   it('debits 1388 under the platform for tax withheld from a seller that is no household, in place of 3331 and 3335', () => {
     const lines = [lost(1, '0', '2000')];
@@ -230,16 +231,6 @@ describe('the stored payout proposal against the rebuilt one', () => {
     // A line that must name the party and does not, or one that must not and does.
     expect(with_((p) => { p.lines[2]!.party = null; })).toBe('party');
     expect(with_((p) => { p.lines[0]!.party = { id: PARTY, name: 'Shopee', taxCode: null }; })).toBe('party');
-  });
-  it('names a classification that differs: another kind, amount, cost or line, in any order', () => {
-    const adj = (over: Partial<MarketplacePayoutAdjustment> = {}) => ({ kind: 'carrier_compensation', lineId: LINE_ID, amount: '10000', costAmount: '6000', ...over }) as MarketplacePayoutAdjustment;
-    const two = [adj(), { kind: 'incentive', lineId: ID, amount: '500' } as MarketplacePayoutAdjustment];
-    const stored = { ...built(), adjustments: two };
-    expect(payoutProposalMismatch(stored, { ...built(), adjustments: [two[1]!, two[0]!] })).toBeNull();
-    expect(payoutProposalMismatch({ ...built(), adjustments: [adj({ amount: '10000.0000' })] }, { ...built(), adjustments: [adj()] })).toBeNull();
-    for (const other of [[], [adj({ costAmount: '5000' })], [adj({ kind: 'incentive', costAmount: undefined } as never)], [adj({ lineId: ID })], [adj({ amount: '10001' })], two]) {
-      expect(payoutProposalMismatch({ ...built(), adjustments: [adj()] }, { ...built(), adjustments: other as MarketplacePayoutAdjustment[] })).toBe('adjustments');
-    }
   });
 });
 

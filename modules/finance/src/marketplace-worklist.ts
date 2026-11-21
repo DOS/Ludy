@@ -34,20 +34,26 @@ const MAX_CANDIDATES = 8;
 const MAX_INVOICES = 30;
 
 // The lines of a posted settlement a person must classify before its payout can be asked for (#4303 S4): `other` above zero (only when the settlement's `other` adds up to something: an offsetting pair is no
-// adjustment), and the tax withheld when the seller is no household. A line with a fraction of a dong cannot be classified (an adjustment is whole dong) and is not offered. Null when there are more than the
-// request can carry (the accountant handles that settlement, as an unexplained one was before).
+// adjustment), and the tax withheld when the seller is no household. A line with a fraction of a dong cannot be classified (an adjustment is whole dong), so such a settlement is not offered, as an unexplained one
+// was not before. Null too when there are more lines than the request can carry (the accountant handles that settlement).
 async function adjustableOf(ctx: QueryContext, settlementId: string, household: boolean, withOther: boolean): Promise<MarketplaceWorklist['payouts'][number]['adjustable'] | null> {
   const rows = (
     await sql<{ id: string; other: string; tax_withheld: string }>`
       SELECT id, other::text, tax_withheld::text FROM crove_finance.channel_settlement_line
       WHERE org_id = ${ctx.orgId}::uuid AND settlement_id = ${settlementId}::uuid
-        AND ((${withOther} AND other > 0 AND other = trunc(other)) OR (NOT ${household} AND tax_withheld > 0 AND tax_withheld = trunc(tax_withheld)))
+        AND ((${withOther} AND other > 0) OR (NOT ${household} AND tax_withheld > 0))
       ORDER BY id LIMIT ${MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX + 1}`.execute(ctx.trx)
   ).rows;
   const out: MarketplaceWorklist['payouts'][number]['adjustable'] = [];
   for (const r of rows) {
-    if (withOther && money(r.other).greaterThan(0) && money(r.other).isInteger()) out.push({ lineId: r.id, source: 'other', amount: toMoney(money(r.other)) });
-    if (!household && money(r.tax_withheld).greaterThan(0) && money(r.tax_withheld).isInteger()) out.push({ lineId: r.id, source: 'withheld', amount: toMoney(money(r.tax_withheld)) });
+    if (withOther && money(r.other).greaterThan(0)) {
+      if (!money(r.other).isInteger()) return null;
+      out.push({ lineId: r.id, source: 'other', amount: toMoney(money(r.other)) });
+    }
+    if (!household && money(r.tax_withheld).greaterThan(0)) {
+      if (!money(r.tax_withheld).isInteger()) return null;
+      out.push({ lineId: r.id, source: 'withheld', amount: toMoney(money(r.tax_withheld)) });
+    }
   }
   return out.length > MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX ? null : out;
 }

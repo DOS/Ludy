@@ -126,6 +126,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .execute();
   // A household's withheld tax is the settlement's 3331 and 3335; only a seller that is no household can have tax withheld by mistake (#4303 S4).
   const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', settlement.legal_entity_id).executeTakeFirst();
+  // No row is no answer: never read as "not a household" (that would open the tax-withheld-by-mistake classification).
+  if (!entity) throw notPostable('Không tìm thấy pháp nhân của kỳ đối soát', { reason: 'ENTITY' });
   // The settlement's posting created the platform's party and its link, so a settlement whose posting stands has one; without it the stored books are not as the posting left them.
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
@@ -148,7 +150,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
       partyId: link.id,
       cashAccount: line.bankAccount,
       adjustments,
-      household: entity?.kind === 'household',
+      household: entity.kind === 'household',
       lines: lines.map((l) => ({
         id: l.id,
         sales: l.sales,
@@ -215,15 +217,6 @@ function proposalPayload(built: Built): MarketplacePayoutProposal {
   });
 }
 
-// The classification of two proposals is the same: the same lines, kinds and amounts, in any order (the cost a person stated for a compensation counts too).
-function sameAdjustments(a: readonly MarketplacePayoutAdjustment[], b: readonly MarketplacePayoutAdjustment[]): boolean {
-  if (a.length !== b.length) return false;
-  const key = (x: MarketplacePayoutAdjustment) => `${x.lineId.toLowerCase()}|${x.kind}|${money(x.amount).toFixed()}|${x.kind === 'carrier_compensation' ? money(x.costAmount).toFixed() : ''}`;
-  const left = a.map(key).sort();
-  const right = b.map(key).sort();
-  return left.every((k, i) => k === right[i]);
-}
-
 // What a stored proposal holds that the settlement and the bank line, rebuilt now, do not: the first difference, or null when they are the same. A line naming a party must be the line the rebuilt one
 // names, with the party the link holds now; the other lines name none.
 export function payoutProposalMismatch(stored: MarketplacePayoutProposal, built: MarketplacePayoutProposal): string | null {
@@ -234,7 +227,6 @@ export function payoutProposalMismatch(stored: MarketplacePayoutProposal, built:
   if (stored.periodFrom !== built.periodFrom || stored.periodTo !== built.periodTo || stored.date !== built.date) return 'period';
   if (stored.description !== built.description) return 'description';
   for (const key of ['received', 'fees', 'taxWithheld', 'total'] as const) if (!money(stored[key]).equals(money(built[key]))) return key;
-  if (!sameAdjustments(stored.adjustments, built.adjustments)) return 'adjustments';
   if (stored.lines.length !== built.lines.length) return 'lines';
   for (const [i, line] of built.lines.entries()) {
     const have = stored.lines[i];
@@ -275,6 +267,8 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
       if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
       // The entry is built again from the stored settlement and bank line, in the approver's context, and the stored proposal must equal it: a proposal row not written by the preparer (raw SQL) cannot
       // post lines the settlement does not hold, nor into another entity, nor settle a line the transfer does not match.
+      // The stored classification is an input, so it is not compared with itself: buildPayout checks it against the stored lines again (exact amounts, one kind per line, no household), and the entry it builds is
+      // compared line by line with the stored one below, so a changed cost, amount or kind that no longer yields the stored lines is refused.
       const built = await buildPayout(ctx, maps, payload.settlementId, payload.bankLineId, true, payload.adjustments);
       const rebuilt = proposalPayload(built);
       const wrong = payoutProposalMismatch(payload, rebuilt);

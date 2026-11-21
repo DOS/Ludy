@@ -673,10 +673,16 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(await rows("SELECT 1 FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333')", [o.orgId])).toHaveLength(0);
     });
 
-    it('refuses a tax classified as withheld in error on a household, whose withheld tax goes through 3331 and 3335, at the request and the approval', async () => {
+    it('refuses a tax classified as withheld in error on a household, whose withheld tax goes through 3331 and 3335, at the request and at the approval of a forged proposal', async () => {
       const { o, settlement, line } = await posted();
       const ids = await lineIdsOf(o, settlement);
       await expect(askWith(o, settlement, line, [{ kind: 'withheld_in_error', lineId: ids[1], amount: '3000' }])).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'ADJUSTMENT_HOUSEHOLD' } });
+      // The approval: a normal proposal whose stored classification was edited to call the household's tax a mistake is refused when it is built again, and nothing posts.
+      const forged = (await ask(o, settlement, line)).proposalId;
+      await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{adjustments}', jsonb_build_array(jsonb_build_object('kind', 'withheld_in_error', 'lineId', $3::text, 'amount', '3000'))) WHERE org_id = $1 AND id = $2`, [o.orgId, forged, ids[1]]);
+      await expect(approve(o, forged)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'ADJUSTMENT_HOUSEHOLD' } });
+      expect(await payoutsOf(o, settlement)).toHaveLength(0);
+      await rt.execute('kernel.proposal.reject', { id: forged }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       // The normal payout still posts on the same settlement.
       await expect(approve(o, (await ask(o, settlement, line)).proposalId)).resolves.toMatchObject({ voucherId: expect.any(String) });
     });

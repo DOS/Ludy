@@ -354,6 +354,12 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     await post(pair, s3);
     await bankLine(pair, '2026-10-20', '150000');
     expect((await worklist(pair)).payouts.map((p) => [p.settlementId, p.adjustable])).toEqual([[s3, []]]);
+    // A line with a fraction of a dong cannot be classified (an adjustment is whole dong): the settlement is not offered, never a request that fails validation.
+    const frac = await org('tt133', false);
+    const s5 = await seed(frac, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '6000.5' }]);
+    await post(frac, s5);
+    await bankLine(frac, '2026-10-20', '106000.5');
+    expect((await worklist(frac)).payouts).toEqual([]);
     // More lines than a request can carry: not offered (an accountant's), never cut short.
     const many = await org('tt133', false);
     const s4 = await seed(many, 'shopee', '2026-10-01', '2026-10-15', Array.from({ length: 101 }, () => ({ sales: '1000', other: '10' })));

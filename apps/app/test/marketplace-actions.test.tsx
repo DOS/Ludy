@@ -145,6 +145,11 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     // Nothing is chosen yet: the request is disabled, and no cost field shows before a compensation is picked.
     expect(disabled(html, 'marketplace-record')).toBe(true);
     expect(html).not.toContain('marketplace-adjustment-cost');
+    // The reason the request waits is said in words, the platform-voucher doubt is marked, and the controls are 44 px high on a phone.
+    expect(html).toContain('data-testid="marketplace-adjustment-pending"');
+    expect(html).toContain('Choose a kind for every line');
+    expect(html).toContain('Uncertain (#2520)');
+    expect(html.match(/max-md:min-h-11/g)!.length).toBeGreaterThanOrEqual(3);
     // A payout with nothing to classify has no such row and its request stays enabled.
     const plain = render(FULL());
     expect(plain).not.toContain('marketplace-payout-adjustments');

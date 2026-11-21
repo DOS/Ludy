@@ -92,6 +92,17 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
 // household is a mistake of the platform. The server checks each against the stored line again, when asked and when approved; nothing is guessed here, and the request waits until every line has a kind.
 const KINDS = { other: ['incentive', 'carrier_compensation'], withheld: ['withheld_in_error'] } as const;
 const WHOLE_DONG = /^\d{1,15}$/;
+// The cost a person types: whole dong, with thousands separators allowed only where they group three digits ("1.500.000", "1,500,000", "1 500 000"); anything else with a separator is not guessed at (1.5 is not 15).
+const GROUPED = /^\d{1,3}([.,\s]\d{3})+$/;
+function parseCost(raw: string): string | null {
+  const v = raw.trim();
+  if (WHOLE_DONG.test(v)) return v;
+  if (GROUPED.test(v)) {
+    const digits = v.replace(/[.,\s]/g, '');
+    return WHOLE_DONG.test(digits) ? digits : null;
+  }
+  return null;
+}
 
 function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) {
   const t = useTranslations('marketplaceActions');
@@ -109,8 +120,8 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
     const allowed: readonly string[] = KINDS[a.source];
     if (!allowed.includes(kind)) ready = false;
     else if (kind === 'carrier_compensation') {
-      const costAmount = (costs[slot(a)] ?? '').trim();
-      if (WHOLE_DONG.test(costAmount)) adjustments.push({ kind: 'carrier_compensation', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, ''), costAmount });
+      const costAmount = parseCost(costs[slot(a)] ?? '');
+      if (costAmount !== null) adjustments.push({ kind: 'carrier_compensation', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, ''), costAmount });
       else ready = false;
     } else adjustments.push({ kind: kind as 'incentive' | 'withheld_in_error', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, '') });
   }
@@ -126,7 +137,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
               {t('noCandidates')}
             </span>
           ) : (
-            <NativeSelect value={bankLineId} onChange={(e) => setChosen(e.target.value)} aria-label={t('pickLine')} data-testid="marketplace-line-select">
+            <NativeSelect value={bankLineId} onChange={(e) => setChosen(e.target.value)} aria-label={t('pickLine')} className="max-md:min-h-11" data-testid="marketplace-line-select">
               {p.candidates.map((c) => (
                 <NativeSelectOption key={c.id} value={c.id}>
                   {[c.date, f.money(c.amount), c.reference].filter((x) => x !== null && x !== '').join(' - ')}
@@ -155,6 +166,12 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
         <TableRow data-testid="marketplace-payout-adjustments">
           <TableCell colSpan={5} className="px-4 py-3">
             <p className="mb-2 text-sm text-subtle-foreground">{t('adjustHint')}</p>
+            {p.adjustable.some((a) => a.source === 'other') && <p className="mb-2 text-sm text-subtle-foreground" data-testid="marketplace-adjustment-note">{t('adjustIncentiveNote')}</p>}
+            {!ready && (
+              <p className="mb-2 text-sm text-subtle-foreground" role="status" data-testid="marketplace-adjustment-pending">
+                {t('adjustPending')}
+              </p>
+            )}
             <ul className="flex flex-col gap-2">
               {p.adjustable.map((a) => {
                 const kind = kinds[slot(a)] ?? '';
@@ -165,6 +182,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
                       value={kind}
                       onChange={(e) => setKinds({ ...kinds, [slot(a)]: e.target.value })}
                       aria-label={t('adjustKindLabel', { amount: f.money(a.amount) })}
+                      className="max-md:min-h-11"
                       data-testid="marketplace-adjustment-kind"
                     >
                       <NativeSelectOption value="">{t('adjustChoose')}</NativeSelectOption>
@@ -175,16 +193,24 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
                       ))}
                     </NativeSelect>
                     {kind === 'carrier_compensation' && (
-                      <Input
-                        inputMode="numeric"
-                        value={costs[slot(a)] ?? ''}
-                        onChange={(e) => setCosts({ ...costs, [slot(a)]: e.target.value })}
-                        aria-label={t('adjustCostLabel', { amount: f.money(a.amount) })}
-                        aria-invalid={(costs[slot(a)] ?? '').trim() !== '' && !WHOLE_DONG.test((costs[slot(a)] ?? '').trim())}
-                        placeholder={t('adjustCost')}
-                        className="w-48"
-                        data-testid="marketplace-adjustment-cost"
-                      />
+                      <>
+                        <Input
+                          inputMode="numeric"
+                          value={costs[slot(a)] ?? ''}
+                          onChange={(e) => setCosts({ ...costs, [slot(a)]: e.target.value })}
+                          aria-label={t('adjustCostLabel', { amount: f.money(a.amount) })}
+                          aria-invalid={(costs[slot(a)] ?? '').trim() !== '' && parseCost(costs[slot(a)] ?? '') === null}
+                          aria-describedby={`${slot(a)}-cost-error`}
+                          placeholder={t('adjustCost')}
+                          className="w-48 max-md:min-h-11"
+                          data-testid="marketplace-adjustment-cost"
+                        />
+                        {(costs[slot(a)] ?? '').trim() !== '' && parseCost(costs[slot(a)] ?? '') === null && (
+                          <span id={`${slot(a)}-cost-error`} role="alert" className="text-xs text-destructive" data-testid="marketplace-adjustment-cost-error">
+                            {t('adjustCostInvalid')}
+                          </span>
+                        )}
+                      </>
                     )}
                   </li>
                 );
