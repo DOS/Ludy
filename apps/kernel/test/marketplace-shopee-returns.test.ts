@@ -141,6 +141,11 @@ describe('line identity and paging', () => {
     const { page, fake } = await poll([twin], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })]);
     expect(stagesOf(page, 'A1')).toEqual(['completed:SAME+SAME']);
     expect(detailCalls(fake)).toHaveLength(0);
+    // The intake's own base key: a SKU `A|` and a line with no SKU named `A` both become `A|`, so that order is not split either.
+    const crossed = order('A1', { items: [item({ modelSku: 'A|', itemSku: '', quantity: 1, name: 'Khác', modelName: '' }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: '', itemSku: '', name: 'A', modelName: '', quantity: 2 })] });
+    const second = await poll([crossed], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })]);
+    expect(stagesOf(second.page, 'A1')).toEqual(['completed:A|+']);
+    expect(detailCalls(second.fake)).toHaveLength(0);
     // The same two lines under different SKUs are split as usual.
     const distinct = order('A1', { items: [item({ modelSku: 'ONE', quantity: 1 }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: 'TWO', quantity: 2 })] });
     expect(stagesOf((await poll([distinct], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })])).page, 'A1')).toEqual(['returned:TWO', 'completed:ONE']);
