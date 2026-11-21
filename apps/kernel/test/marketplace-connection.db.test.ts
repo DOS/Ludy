@@ -662,6 +662,29 @@ suite('marketplace connections (#2519)', () => {
     expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_pending' });
     // A person cannot call the worker's commands.
     await expect(rt.execute('finance.marketplace_connection.authorize_record', { id, outcome: 'authorized' }, { ...as(owner), idempotencyKey: randomUUID() })).rejects.toBeDefined();
+    // A state belongs to its own connection only: with two connections each pending, finishing one touches the other not at all, and a state cannot be moved to the other by anything the caller sends.
+    const entityB = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh cấp quyền B', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const sealedB = vault.seal(JSON.stringify({ appKey: '777777', appSecret: 'otherSecret' }), { orgId, provider: 'marketplace_lazada', externalAccountId: `${entityB}:lazada` });
+    const other = await exec<{ id: string }>(
+      'finance.marketplace_connection.connect',
+      { adapter: 'lazada', platform: 'lazada', legalEntityId: entityB, displayName: 'lazada (lazada)', credential: { keyId: sealedB.keyId, envelope: sealedB.envelope.toString('base64') }, appKey: '777777' },
+      owner,
+    );
+    const stateA = hashOf();
+    const stateB = hashOf();
+    await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: stateA }, owner);
+    await exec('finance.marketplace_connection.authorize_begin', { id: other.id, stateHash: stateB }, owner);
+    expect(await finish(stateA, owner)).toEqual({ id });
+    const rowOf = async (connectionId: string) => (await rows<Record<string, unknown>>('SELECT authorize_state, authorize_state_hash, authorize_code_envelope FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0];
+    expect(await rowOf(id)).toMatchObject({ authorize_state: 'pending', authorize_state_hash: null });
+    expect(await rowOf(other.id)).toMatchObject({ authorize_state: null, authorize_state_hash: stateB, authorize_code_envelope: null });
+    expect(await rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: stateB }, as(owner))).toMatchObject({ id: other.id, externalAccountId: `${entityB}:lazada` });
+    // The worker records the first only; the second has no pending code.
+    expect(await worker.query('finance.marketplace_connection.authorize_target', { id: other.id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_pending' });
+    expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, outcome: 'refused' }, { actor: SYSTEM, orgId })).toEqual({ recorded: true });
+    expect(await rowOf(id)).toMatchObject({ authorize_state: 'refused', authorize_code_envelope: null });
+    expect(await rowOf(other.id)).toMatchObject({ authorize_state: null, authorize_state_hash: stateB });
+    expect((await call('connections/disconnect', owner, { id: other.id })).body).toEqual({ removed: true });
     // A reconnect ends the authorization with the credential it belonged to.
     await exec('finance.marketplace_connection.connect', { adapter: 'lazada', platform: 'lazada', legalEntityId: entity, displayName: 'lazada (lazada)', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') }, appKey: '654321' }, owner);
     expect(await row()).toMatchObject({ app_key: '654321', authorize_state: null, reauthorize_by: null });
