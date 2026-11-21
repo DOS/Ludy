@@ -255,6 +255,41 @@ describe('TiktokRefresher', () => {
     expect(calls).toBe(1);
   });
 
+  it('does not ask again within six hours after a verdict it cannot read as a refusal (the gap runs from the last success, so this is what stops a call at every sweep), and asks at once again after a network trouble', async () => {
+    let clock = NOW;
+    let calls = 0;
+    let answer: 'verdict' | 'unreadable' | 'network' = 'verdict';
+    const fetchImpl = hostBoundFetch(TIKTOK_TOKEN_HOSTS, async (url) => {
+      calls += 1;
+      if (answer === 'network') throw new Error(`boom ${url}`);
+      return answer === 'verdict' ? json({ code: 99999, message: PLANTED }) : json({ code: 0, data: {} });
+    });
+    const refresher = new TiktokRefresher({ fetch: fetchImpl, now: () => new Date(clock) });
+    // A verdict: asked once, then held back for six hours (every ten-minute sweep in between is a `RECENT` failure with no call).
+    expect(await refresher.refresh(secretOf())).toEqual({ failed: '99999' });
+    for (let sweep = 1; sweep <= 35; sweep += 1) {
+      clock = NOW + sweep * 10 * 60_000;
+      expect(await refresher.refresh(secretOf())).toEqual({ failed: 'RECENT' });
+    }
+    expect(calls).toBe(1);
+    clock = NOW + 6 * HOUR + 60_000;
+    expect(await refresher.refresh(secretOf())).toEqual({ failed: '99999' });
+    expect(calls).toBe(2);
+    // The hold is for that refresh token: a connection with another one is asked at once.
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R9' }))).toEqual({ failed: '99999' });
+    expect(calls).toBe(3);
+    // A success it cannot read is a verdict too.
+    answer = 'unreadable';
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R8' }))).toEqual({ failed: 'BAD_ANSWER' });
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R8' }))).toEqual({ failed: 'RECENT' });
+    expect(calls).toBe(4);
+    // A network trouble is not a verdict: the next sweep asks again.
+    answer = 'network';
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R7' }))).toEqual({ failed: 'NETWORK' });
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R7' }))).toEqual({ failed: 'NETWORK' });
+    expect(calls).toBe(6);
+  });
+
   it('puts no secret, token, code, address or TikTok sentence in any result', async () => {
     const results = [
       await setup({ fetch: async () => json({ code: 99999, message: PLANTED }) }).refresher.refresh(secretOf()),

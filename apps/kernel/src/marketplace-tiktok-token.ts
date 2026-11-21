@@ -8,7 +8,7 @@
 //     duration the user granted"), `open_id`, `seller_base_region`, `user_type`, `granted_scopes`;
 //   - an authorization code lives 30 minutes and works once; a bad, used or expired one is 36004004.
 // Not confirmed, for the live check: whether the refresh answer changes the refresh token (the whole answer is re-sealed either way), the code a dead refresh token gets (none is documented, so a refused
-// refresh is recognised only locally, by the dates, and every other trouble is a failure tried again at the next sweep, at most every six hours), and the real lifetimes.
+// refresh is recognised only locally, by the dates, and every other trouble is a failure: a network trouble is tried again at the next sweep, a verdict TikTok gives that this module cannot read as a refusal is not asked again for six hours, kept in memory), and the real lifetimes.
 //
 // THE SECRET IN THE ADDRESS. A GET puts the app secret and the code or the refresh token in the URL, so the URL is built in ONE function (`getToken`), handed only to the host-bound fetch and never kept,
 // logged or put in an error: every failure of the call ends as a short closed word ("NETWORK", "BAD_ANSWER", an HTTP status or a documented code), never the error object, the URL or TikTok's text (a fetch
@@ -16,6 +16,7 @@
 //
 // One call, to one host, never repeated: a call that was sent and whose answer was lost may already have spent the refresh token or the single-use code, so asking again could not help and a refusal would
 // then expire a connection that was fine. A lost answer ends as the seller authorizing again.
+import { createHash } from 'node:crypto';
 import type { Refresher } from '@crove/channel';
 import { readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
@@ -164,6 +165,10 @@ export class TiktokRefresher implements Refresher {
   readonly horizonSeconds = TIKTOK_REFRESH_HORIZON_SECONDS;
   private readonly fetchImpl: Fetch;
   private readonly now: () => Date;
+  // When TikTok last gave a VERDICT (an answer with an error code this module cannot read as a refusal, or a success it cannot read) for a connection's refresh token, by a hash of the app key and the token.
+  // The six hour gap above runs from the last SUCCESSFUL refresh, so without this a verdict that never changes would be asked again at every ten-minute sweep. It lives in memory (a restart asks once more) and
+  // never holds a token: only a hash. A network trouble or a 429 or 5xx is not a verdict and is tried again at the next sweep.
+  private readonly verdicts = new Map<string, number>();
 
   constructor(options: TiktokTokenOptions) {
     this.fetchImpl = options.fetch;
@@ -193,11 +198,23 @@ export class TiktokRefresher implements Refresher {
     const accessExpired = !Number.isNaN(accessEnd) && accessEnd <= now;
     if (!accessExpired && !Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
 
+    // A verdict TikTok gave for this very refresh token a moment ago is not asked again yet (see `verdicts`); old entries are dropped here.
+    for (const [seen, at] of this.verdicts) if (now < at || now - at >= MIN_REFRESH_GAP_MS) this.verdicts.delete(seen);
+    const key = createHash('sha256').update(`${old.appKey}\n${old.refreshToken}`).digest('hex');
+    if (this.verdicts.has(key)) return { failed: 'RECENT' };
+
     const called = await getToken(this.fetchImpl, REFRESH_PATH, { app_key: old.appKey, app_secret: old.appSecret, refresh_token: old.refreshToken, grant_type: 'refresh_token' });
     if ('failed' in called) return called;
-    if (called.code !== '0') return REFRESH_REFUSED_CODES.has(called.code) ? { refused: called.code } : { failed: safeCode(called.code, 'UNKNOWN') };
+    if (called.code !== '0') {
+      if (REFRESH_REFUSED_CODES.has(called.code)) return { refused: called.code };
+      this.verdicts.set(key, now);
+      return { failed: safeCode(called.code, 'UNKNOWN') };
+    }
     const tokens = tokensOf(called.answer.data, now);
-    if (!tokens) return { failed: 'BAD_ANSWER' };
+    if (!tokens) {
+      this.verdicts.set(key, now);
+      return { failed: 'BAD_ANSWER' };
+    }
 
     // The access life restarts; the authorization end does not: the date kept is the earlier of the one we had and the one the answer implies, so no later date is ever believed. The scopes of the answer
     // replace the old ones when it lists any.
