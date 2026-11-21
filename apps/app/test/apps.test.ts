@@ -20,7 +20,7 @@ describe('apps of the shell (#1528, #3225)', () => {
     for (const path of ['tasks', 'tasks/0190-abc', 'projects', 'projects/0190-abc', 'my-work', 'notes', 'meetings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('teamwork');
     for (const path of ['agents', 'ai-usage', 'ai-connections']) expect(appOfPath(`/o/acme/${path}`), path).toBe('ai');
     expect(appOfPath('/o/acme/hr/employees')).toBe('hr');
-    for (const path of ['sign/envelopes', 'sign/envelopes/0190-abc', 'sign/verify']) expect(appOfPath(`/o/acme/${path}`), path).toBe('sign');
+    for (const path of ['sign/envelopes', 'sign/envelopes/0190-abc', 'sign/templates', 'sign/verify', 'sign/settings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('sign');
     expect(appOfPath('/o/acme/social')).toBe('engage');
     expect(appOfPath('/o/acme/social/channels')).toBe('engage');
     // The CRM's screens are in the Engage app (#2435).

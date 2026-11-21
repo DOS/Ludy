@@ -1,5 +1,5 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
@@ -7,6 +7,9 @@ import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
+import { assertSignCaProviderAllowed } from '@crove/mod-sign';
+import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@crove/sign';
+import type { SignCaConnectionRecord, SignCaSettingsResult } from '@crove/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
@@ -4641,6 +4644,109 @@ export function createRpcHandler(
         instantiate: os.sign.template.instantiate.handler(signNoIdempotencyCommand('sign.template.instantiate')),
         direct_link_set: os.sign.template.direct_link_set.handler(signNoIdempotencyCommand('sign.template.direct_link_set')),
         direct_link_rotate: os.sign.template.direct_link_rotate.handler(signNoIdempotencyCommand('sign.template.direct_link_rotate')),
+      },
+      ca: {
+        settings: os.sign.ca.settings.handler(({ context }) =>
+          inSign(context, (orgId, actor) => runtime.query<SignCaSettingsResult>('sign.ca.settings', {}, { actor, orgId })),
+        ),
+        save_connection: os.sign.ca.save_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấu hình được chữ ký số');
+            assertSignCaProviderAllowed(input.provider);
+            const certRef = input.certRef?.trim() || (input.provider === 'sandbox' ? 'sandbox-default' : `${input.provider}-default`);
+            if (input.provider === 'sandbox') {
+              return runtime.execute<SignCaConnectionRecord>(
+                'sign.ca.connection.save',
+                {
+                  provider: 'sandbox',
+                  label: input.label,
+                  certRef,
+                  status: input.status,
+                  keyId: 'sandbox-local',
+                  secretEnvelope: 'sandbox-offline',
+                },
+                { actor, orgId },
+              );
+            }
+            if (input.status === 'disabled') {
+              return runtime.execute<SignCaConnectionRecord>(
+                'sign.ca.connection.save',
+                {
+                  provider: input.provider,
+                  label: input.label,
+                  certRef,
+                  status: 'disabled',
+                  keyId: 'disabled',
+                  secretEnvelope: 'disabled',
+                },
+                { actor, orgId },
+              );
+            }
+            if (!input.credentials || input.credentials.provider !== input.provider) {
+              throw new DomainError('SIGN_CA_CREDENTIALS_REQUIRED', 422, 'Provider credentials matching the selected CA are required');
+            }
+            if (!channels?.broker) {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Credential broker is not configured');
+            }
+            const lookup = await runtime.query<{ id: string | null }>(
+              'sign.ca.connection.lookup_id',
+              { provider: input.provider },
+              { actor, orgId },
+            );
+            const targetId = lookup.id ?? randomUUID();
+            const { provider: _providerTag, ...credentialFields } = input.credentials;
+            const sealed = channels.broker.seal(JSON.stringify(credentialFields), {
+              orgId,
+              provider: `sign_ca:${input.provider}`,
+              externalAccountId: targetId,
+            });
+            return runtime.execute<SignCaConnectionRecord>(
+              'sign.ca.connection.save',
+              {
+                id: targetId,
+                provider: input.provider,
+                label: input.label,
+                certRef,
+                status: input.status,
+                keyId: sealed.keyId,
+                secretEnvelope: sealed.envelope.toString('base64'),
+              },
+              { actor, orgId },
+            );
+          }),
+        ),
+        disable_connection: os.sign.ca.disable_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tắt được kết nối chữ ký số');
+            return runtime.execute<SignCaConnectionRecord>('sign.ca.connection.disable', input, { actor, orgId });
+          }),
+        ),
+        test_connection: os.sign.ca.test_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối chữ ký số');
+            const settings = await runtime.query<SignCaSettingsResult>('sign.ca.settings', {}, { actor, orgId });
+            const conn = settings.connections.find((c) => c.id === input.connectionId);
+            if (!conn) {
+              throw new DomainError('SIGN_CA_CONNECTION_NOT_FOUND', 404, 'CA connection not found');
+            }
+            assertSignCaProviderAllowed(conn.provider);
+            if (conn.provider !== 'sandbox') {
+              throw new DomainError(
+                'SIGN_CA_PROVIDER_NOT_READY',
+                503,
+                'Live CA connection checks run through the background worker once #62 is enabled',
+              );
+            }
+            const state = await createSandboxCaAdapter().adapter.testConnection(SANDBOX_CA_SECRET);
+            return runtime.execute<SignCaConnectionRecord>(
+              'sign.ca.connection.record_test',
+              { connectionId: conn.id, state },
+              { actor, orgId },
+            );
+          }),
+        ),
+        list_requests: os.sign.ca.list_requests.handler(signQuery('sign.ca.requests.by_envelope')),
+        initiate_request: os.sign.ca.initiate_request.handler(signCommand('sign.ca.request.initiate')),
       },
     },
   });

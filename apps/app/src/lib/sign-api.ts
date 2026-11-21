@@ -519,7 +519,77 @@ export const signApi = {
     maxUses?: number | null;
     expiresAt?: string | null;
   }) => client.sign.template.direct_link_rotate(input),
+  getCaSettings: () => client.sign.ca.settings(),
+  saveCaConnection: (input: {
+    provider: SignCaProvider;
+    label: string;
+    certRef?: string;
+    status?: SignCaConnectionStatus;
+    credentials?: SignCaCredentialsInput;
+  }) => client.sign.ca.save_connection({ status: 'active', ...input }),
+  disableCaConnection: (connectionId: string) => client.sign.ca.disable_connection({ connectionId }),
+  testCaConnection: (connectionId: string) => client.sign.ca.test_connection({ connectionId }),
+  listCaRequests: (envelopeId: string) => client.sign.ca.list_requests({ envelopeId }),
+  initiateCaRequest: (input: { envelopeId: string; caConnectionId?: string; signerId?: string }) =>
+    client.sign.ca.initiate_request({ ...input, idempotencyKey: crypto.randomUUID() }),
 };
+
+export type SignCaProvider = 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign';
+export type SignCaConnectionStatus = 'active' | 'disabled';
+export type SignCaCredentialsInput =
+  | {
+      provider: 'vnpt_smartca';
+      spId: string;
+      spPassword: string;
+      userId: string;
+      serialNumber?: string;
+      baseUrl?: string;
+    }
+  | {
+      provider: 'viettel_mysign';
+      clientId: string;
+      clientSecret: string;
+      userId: string;
+      profileId: string;
+      baseUrl?: string;
+    }
+  | {
+      provider: 'misa_wesign';
+      clientId: string;
+      clientKey: string;
+      username: string;
+      password: string;
+      taxCode?: string;
+      userId?: string;
+      baseUrl?: string;
+    };
+export type SignCaTestState =
+  | 'works'
+  | 'wrong_credentials'
+  | 'api_not_enabled'
+  | 'ip_not_allowed'
+  | 'unreachable'
+  | 'signing_needs_person'
+  | 'usb_token_unsupported';
+
+export interface SignCaConnectionRecord {
+  id: string;
+  provider: SignCaProvider;
+  label: string;
+  certRef: string;
+  status: SignCaConnectionStatus;
+  lastTestState: SignCaTestState | null;
+  lastTestedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignCaSettingsResult {
+  liveCaEnabled: boolean;
+  brokerAvailable: boolean;
+  connections: SignCaConnectionRecord[];
+}
 
 export type SignTemplateStatus = 'draft' | 'active' | 'archived';
 
