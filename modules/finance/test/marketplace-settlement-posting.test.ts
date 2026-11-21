@@ -24,7 +24,7 @@ describe('marketplace posting map and gate', () => {
     expect(map.status).toBe('commentary');
     for (const r of [map.receivable, map.revenue, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity]) expect(r.status).toBe('commentary');
     expect([map.vatPayable.code, map.pitPayable.code, map.pitOwnerEquity.code]).toEqual(['3331', '3335', '4212']);
-    expect([map.receivable.code, map.revenue.code, map.cash.code, map.feePayable.code, map.feeAwaitingInvoice.code, map.taxWithheld.code]).toEqual(['131', '511', '112', '331', '1388', '333']);
+    expect([map.receivable.code, map.revenue.code, map.cash.code, map.feePayable.code, map.feeAwaitingInvoice.code, map.taxWithheld.code]).toEqual(['131', '5111', '112', '331', '1388', '333']);
     expect(code(() => requireConfirmedMarketplaceMap('tt133'))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
@@ -42,12 +42,12 @@ describe('settlement proposal', () => {
   const maps = confirmed();
   const two = [{ sales: '100000', sellerDiscount: '5000', refund: '0' }, { sales: '250000', sellerDiscount: '10000', refund: '0' }];
 
-  it('builds Dr 131 / Cr 511 for sales net of seller discounts, two lines, only 131 and 511', () => {
+  it('builds Dr 131 / Cr 5111 for sales net of seller discounts, two lines, only 131 and 5111', () => {
     const p = settlementProposal(input(two, { partyId: 'party-1' }), maps);
     expect(p.lines).toHaveLength(2);
     expect(p.lines[0]).toMatchObject({ account: '131', debit: '335000', credit: '0', partyId: 'party-1' });
-    expect(p.lines[1]).toMatchObject({ account: '511', debit: '0', credit: '335000', partyId: null });
-    expect(p.lines.map((l) => l.account)).toEqual(['131', '511']);
+    expect(p.lines[1]).toMatchObject({ account: '5111', debit: '0', credit: '335000', partyId: null });
+    expect(p.lines.map((l) => l.account)).toEqual(['131', '5111']);
     expect(p.total).toBe('335000');
   });
   it('keeps decimals exact without JS numbers', () => {
@@ -58,22 +58,22 @@ describe('settlement proposal', () => {
   it('allows a null party for the later slice to fill', () => {
     expect(settlementProposal(input(two), maps).lines[0]!.partyId).toBeNull();
   });
-  it('reduces 511 and 131 by a refunded order and keeps the refund visible', () => {
+  it('reduces 5111 and 131 by a refunded order and keeps the refund visible', () => {
     const lines = [...two, { sales: '80000', sellerDiscount: '0', refund: '80000' }, { sales: '0', sellerDiscount: '0', refund: '15000' }];
     const p = settlementProposal(input(lines), maps);
     expect(p.lines[0]).toMatchObject({ account: '131', debit: '320000', credit: '0' });
-    expect(p.lines[1]).toMatchObject({ account: '511', debit: '0', credit: '320000' });
+    expect(p.lines[1]).toMatchObject({ account: '5111', debit: '0', credit: '320000' });
     expect(p.sales).toBe('430000');
     expect(p.sellerDiscount).toBe('15000');
     expect(p.refund).toBe('95000');
     expect(p.total).toBe('320000');
   });
   it('marks the refund rule commentary beside the map', () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '511', status: 'commentary' });
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '5111', status: 'commentary' });
   });
   it('posts the other way when refunds and discounts exceed the sales', () => {
     const p = settlementProposal(input([{ sales: '1000', sellerDiscount: '500', refund: '8500' }], { partyId: 'party-1' }), maps);
-    expect(p.lines[0]).toMatchObject({ account: '511', debit: '8000', credit: '0', partyId: null });
+    expect(p.lines[0]).toMatchObject({ account: '5111', debit: '8000', credit: '0', partyId: null });
     expect(p.lines[1]).toMatchObject({ account: '131', debit: '0', credit: '8000', partyId: 'party-1' });
     expect(p.total).toBe('8000');
     expect(p.refund).toBe('8500');
@@ -164,8 +164,10 @@ describe('the TT99 map (#3711 slice 4)', () => {
     expect([tt99.feePayable.code, tt99.feeExpense.code, tt99.accruedExpense.code, tt99.salesReturn.code]).toEqual(['331', '6417', '335', '521']);
     // The rows tt133 and tt99 share are the same accounts.
     const tt133 = MARKETPLACE_POSTING_MAPS.tt133!;
-    for (const key of ['receivable', 'revenue', 'cash', 'feePayable', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'accruedExpense'] as const) expect(tt99[key].code, key).toBe(tt133[key].code);
+    for (const key of ['receivable', 'cash', 'feePayable', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'accruedExpense'] as const) expect(tt99[key].code, key).toBe(tt133[key].code);
     expect(tt133.feeExpense.code).toBe('6421');
+    // Revenue is the one row the regimes name differently: 5111 in the TT133 chart, 511 in the TT99 chart (which has no 5111); a return is 5111 under TT133 (no 521) and 521 under TT99 (research file, rule 8).
+    expect([tt133.revenue.code, tt133.salesReturn.code, tt99.revenue.code, tt99.salesReturn.code]).toEqual(['5111', '5111', '511', '521']);
   });
   it('posts a TT99 settlement without a refund as 131 against 511', () => {
     const p = settlementProposal(input([{ sales: '200000', sellerDiscount: '0', refund: '0' }], { regime: 'tt99' }), confirmedTt99());
@@ -173,14 +175,14 @@ describe('the TT99 map (#3711 slice 4)', () => {
   });
   const rows = (p: ReturnType<typeof settlementProposal>) => p.lines.map((l) => [l.account, l.debit, l.credit]);
   const balanced = (p: ReturnType<typeof settlementProposal>) => p.lines.reduce((a, l) => a.plus(l.debit), money('0')).equals(p.lines.reduce((a, l) => a.plus(l.credit), money('0')));
-  it('books a refund of a TT99 settlement as its own debit on 521, and TT133 still nets it into 511 (#4017)', () => {
+  it('books a refund of a TT99 settlement as its own debit on 521, and TT133 still nets it into 5111 (#4017)', () => {
     const refunded = input([{ sales: '200000', sellerDiscount: '0', refund: '30000' }], { regime: 'tt99' });
     const p = settlementProposal(refunded, confirmedTt99());
     expect(rows(p)).toEqual([['131', '170000', '0'], ['521', '30000', '0'], ['511', '0', '200000']]);
     expect(p.refund).toBe('30000');
     expect(p.total).toBe('200000');
     expect(balanced(p)).toBe(true);
-    expect(rows(settlementProposal({ ...refunded, regime: 'tt133' }, confirmed()))).toEqual([['131', '170000', '0'], ['511', '0', '170000']]);
+    expect(rows(settlementProposal({ ...refunded, regime: 'tt133' }, confirmed()))).toEqual([['131', '170000', '0'], ['5111', '0', '170000']]);
   });
   it('credits 511 with the sales less the seller discounts and debits 131 with what the platform owes after the discounts and the refund', () => {
     const p = settlementProposal(input([{ sales: '200000', sellerDiscount: '20000', refund: '30000' }], { regime: 'tt99' }), confirmedTt99());
@@ -219,11 +221,11 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
   const taxed = (tax: string, over: Partial<SettlementProposalInput> = {}) =>
     input([{ sales: '10000000', sellerDiscount: '0', refund: '0', taxWithheld: tax }], { tax: { vatPercent: '1', pitPercent: '0.5' }, ...over });
   const maps = confirmed();
-  it('splits the tax by the rate pair, VAT against 511 and PIT against the owner\'s equity row, and balances', () => {
+  it('splits the tax by the rate pair, VAT against 5111 and PIT against the owner\'s equity row, and balances', () => {
     const p = settlementProposal(taxed('150000'), maps);
     expect(p.taxWithheld).toBe('150000');
     expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([
-      ['131', '10000000', '0'], ['511', '0', '10000000'], ['511', '100000', '0'], ['3331', '0', '100000'], ['4212', '50000', '0'], ['3335', '0', '50000'],
+      ['131', '10000000', '0'], ['5111', '0', '10000000'], ['5111', '100000', '0'], ['3331', '0', '100000'], ['4212', '50000', '0'], ['3335', '0', '50000'],
     ]);
     expect(p.total).toBe('10150000');
     expect(p.lines.reduce((a, l) => a.plus(l.debit), money('0')).equals(p.lines.reduce((a, l) => a.plus(l.credit), money('0')))).toBe(true);
@@ -243,14 +245,14 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
   it('posts only the tax lines for a month whose net is zero but whose lines carry withheld tax, and still refuses a zero net with no tax', () => {
     const zero = input([{ sales: '40000', sellerDiscount: '0', refund: '0', taxWithheld: '600' }, { sales: '0', sellerDiscount: '0', refund: '40000', taxWithheld: '0' }], { tax: { vatPercent: '1', pitPercent: '0.5' } });
     const p = settlementProposal(zero, maps);
-    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '400', '0'], ['3331', '0', '400'], ['4212', '200', '0'], ['3335', '0', '200']]);
+    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['5111', '400', '0'], ['3331', '0', '400'], ['4212', '200', '0'], ['3335', '0', '200']]);
     expect(p.total).toBe('600');
     expect(code(() => settlementProposal({ ...zero, tax: null }, maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
   it('marks the split as an estimate in the memo of the tax lines and carries the difference to what the rate pair would withhold (research D1)', () => {
     const exact = settlementProposal(taxed('150000'), maps);
     expect(exact.taxEstimate).toEqual({ withheld: '150000', expected: '150000', difference: '0' });
-    for (const l of exact.lines.filter((x) => ['3331', '3335', '4212'].includes(x.account) || (x.account === '511' && x.debit !== '0' && x.debit !== exact.sales))) expect(l.memo).toContain('ước tính');
+    for (const l of exact.lines.filter((x) => ['3331', '3335', '4212'].includes(x.account) || (x.account === '5111' && x.debit !== '0' && x.debit !== exact.sales))) expect(l.memo).toContain('ước tính');
     expect(exact.lines.filter((l) => l.account === '131').every((l) => !l.memo.includes('ước tính'))).toBe(true);
     // The platform withheld less than the pair would: a negative difference. More: a positive one.
     expect(settlementProposal(taxed('140000'), maps).taxEstimate).toEqual({ withheld: '140000', expected: '150000', difference: '-10000' });
@@ -281,5 +283,32 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
       one.tt133 = { ...one.tt133!, [row]: { ...one.tt133![row], status: 'commentary' as const } };
       expect(code(() => requireConfirmedMarketplaceMap('tt133', one))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     }
+  });
+});
+
+describe('the rows of the researched rules (#4303 S2)', () => {
+  const NEW = ['outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
+  const CODES = ['33311', '1331', '1388', '1381', '632', '711', '811'];
+  it('names the same accounts in both regimes, every one still `commentary`', () => {
+    for (const regime of ['tt133', 'tt99']) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      expect(NEW.map((key) => map[key].code), regime).toEqual(CODES);
+      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe('commentary');
+    }
+  });
+  it('does not open any path by itself: the rows are gated by the paths that post them (S3, S4), and the retired no-path gate still asks for the original twelve only', () => {
+    for (const regime of ['tt133', 'tt99']) {
+      for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    }
+    const original = confirmed();
+    expect(requireConfirmedMarketplaceMap('tt133', original).regime).toBe('tt133');
+  });
+  it('keeps every point the research leaves open findable in the row that applies it (an "Uncertain (#2520)" comment), and cites the research file or the first regime', () => {
+    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'otherIncome', 'otherExpense'] as const;
+    for (const regime of ['tt133', 'tt99']) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      for (const key of MARKED) expect(map[key].comment, `${regime} ${key}`).toContain('Uncertain (#2520');
+    }
+    for (const key of NEW) expect(MARKETPLACE_POSTING_MAPS.tt133![key].comment, key).toMatch(/Rule \d|Rules \d/);
   });
 });
