@@ -6,10 +6,11 @@ import type { ChartAccount } from './accounts.ts';
 
 // A bank feed adapter this deployment offers (`/api/config` bankFeeds): none, and the card is not drawn at all, so
 // `docker compose up` shows nothing about banks.
-export const bankFeedOffered = (config: { bankFeeds?: { sandbox: boolean } | undefined }): boolean => Boolean(config.bankFeeds?.sandbox);
+type BankFeedConfig = { sandbox: boolean; tingee?: boolean | undefined };
+export const bankFeedOffered = (config: { bankFeeds?: BankFeedConfig | undefined }): boolean => Boolean(config.bankFeeds?.sandbox || config.bankFeeds?.tingee);
 
 // Whether Settings draws the card: the finance module is on and the deployment offers a feed.
-export const showsBankFeeds = (config: { modules: readonly string[]; bankFeeds?: { sandbox: boolean } | undefined }): boolean => config.modules.includes('finance') && bankFeedOffered(config);
+export const showsBankFeeds = (config: { modules: readonly string[]; bankFeeds?: BankFeedConfig | undefined }): boolean => config.modules.includes('finance') && bankFeedOffered(config);
 
 // The org's bank accounts a feed can fill: TT133 accounts under 112 and their sub-accounts (the 112 group itself holds
 // none), those in use, plus the one already mapped even if it was deactivated since, so the picker is never blank.
@@ -49,4 +50,37 @@ export function feedFromMin(provider: string, mapped: BankFeedAccountView | null
   if (mapped) return mapped.feedFromEarliest ?? undefined;
   const days = BANK_FEED_FIRST_PULL_DAYS[provider] ?? 0;
   return new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+// The address a business pastes in its Tingee portal as the webhook (#4204): the API's origin plus the provider's hook path and the key
+// (22 base64url characters, so nothing in it needs escaping). A trailing slash on the origin is dropped.
+export const hookAddress = (origin: string, provider: string, key: string): string => `${origin.replace(/\/+$/, '')}/api/bank-feed/${provider}/webhook/${key}`;
+
+// The most recent sync among a connection's mapped accounts (ISO strings compare in time order), or null when none has pulled yet.
+export const latestSync = (mapped: readonly BankFeedAccountView[]): string | null =>
+  mapped.reduce<string | null>((latest, m) => (m.lastSyncedAt && (latest === null || m.lastSyncedAt > latest) ? m.lastSyncedAt : latest), null);
+
+// What the webhook block shows of a rotation (#4204): the one-time address while it is on screen, whether the answer said it replaced a
+// key that already existed (`created: false`, e.g. another admin made one meanwhile), and whether the replace confirmation is open.
+export interface HookView {
+  address: string | null;
+  replaced: boolean;
+  confirming: boolean;
+}
+export type HookAction = { type: 'ask' } | { type: 'cancel' } | { type: 'start' } | { type: 'hide' } | { type: 'made'; address: string; created: boolean };
+export const hookViewStart: HookView = { address: null, replaced: false, confirming: false };
+export function hookReduce(view: HookView, action: HookAction): HookView {
+  switch (action.type) {
+    case 'ask':
+      return { ...view, confirming: true };
+    case 'cancel':
+      return { ...view, confirming: false };
+    // A new rotation drops whatever address was on screen: the old key is dead the moment the new one is made.
+    case 'start':
+      return { address: null, replaced: false, confirming: view.confirming };
+    case 'hide':
+      return hookViewStart;
+    case 'made':
+      return { address: action.address, replaced: !action.created, confirming: false };
+  }
 }

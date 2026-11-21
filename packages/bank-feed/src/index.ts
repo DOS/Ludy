@@ -7,7 +7,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { TINGEE_PRODUCTION_HOST, TINGEE_UAT_HOST, tingeeBankFeed } from './tingee.ts';
 
-export { TINGEE_HOSTS, TINGEE_PRODUCTION_HOST, TINGEE_UAT_HOST, TingeeError, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type TingeeErrorKind, type TingeeOptions } from './tingee.ts';
+export { TINGEE_HOSTS, TINGEE_PRODUCTION_HOST, TINGEE_UAT_HOST, TingeeError, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, minifyJson, type TingeeErrorKind, type TingeeOptions } from './tingee.ts';
 
 export const BANK_FEED_PROVIDERS = ['bank_sandbox', 'bank_tingee'] as const;
 export type BankFeedProviderId = (typeof BANK_FEED_PROVIDERS)[number];
@@ -67,6 +67,17 @@ export class BankFeedWebhookRejected extends Error {
   }
 }
 
+// A notice a provider signs with the customer's OWN secret (Tingee, ADR-0039 as amended by #4203): it names no org, so the API stores the raw notice under the hook key of one connection, and the worker verifies it
+// with that connection's sealed secret. `timestamp` and `signature` are the provider's headers as sent, `body` the raw text.
+export interface BankFeedHookNotice {
+  timestamp: string;
+  signature: string;
+  body: string;
+}
+
+// signature: the HMAC does not match (a bad key, a changed body); client: it matches but the body names another client than the connection's; malformed: the body is not one the adapter reads.
+export type BankFeedHookVerdict = 'ok' | 'signature' | 'client' | 'malformed';
+
 export interface BankFeedProvider {
   readonly id: BankFeedProviderId;
   // The hosts this adapter's fetch is bound to.
@@ -79,6 +90,10 @@ export interface BankFeedProvider {
   // more than WEBHOOK_MAX_ACCOUNTS. Throws BankFeedWebhookRejected. The notice is only a hint to pull: nothing in its
   // body is stored as a transaction. An adapter without one takes no notices.
   verifyWebhook?(request: BankFeedWebhookRequest, now: number): string[];
+  // For an adapter whose notices are signed with each customer's own secret: whether the notice's timestamp is within the provider's window (the API refuses a stale one before it stores anything, with no secret), and the
+  // worker's check of the signature (HMAC, constant-time) and of the client the body names against the connection's own, with the connection's opened secret. It throws when the stored credential cannot be read.
+  hookTimestampFresh?(timestamp: string, now: number): boolean;
+  verifyHook?(secret: string, notice: BankFeedHookNotice): BankFeedHookVerdict;
 }
 
 // A control character in an id (a NUL makes the database refuse the whole batch) is not one a provider sends.

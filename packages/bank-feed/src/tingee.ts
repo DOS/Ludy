@@ -4,8 +4,8 @@
 // It reads two endpoints: the accounts a credential reaches and the transactions of one account in a window. It calls nothing else: the interface has no capability that
 // moves money, and this file names no path of any other Tingee product (a test reads this source to keep it so; it is a guard rail, and review is what holds the line).
 // Every call goes through the fetch it is given, which the caller binds to the hosts below (allowlistedFetch(TINGEE_HOSTS)).
-import { createHmac } from 'node:crypto';
-import type { BankFeedAccount, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { BankFeedAccount, BankFeedHookNotice, BankFeedHookVerdict, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
 
 export const TINGEE_PRODUCTION_HOST = 'open-api.tingee.vn';
 const PRODUCTION_HOST = TINGEE_PRODUCTION_HOST;
@@ -41,22 +41,27 @@ export type TingeeErrorKind =
   | 'clock'
   // Too many calls from this address (code 1001): the job retries later.
   | 'rate_limited'
-  // A page the adapter will not store: a bad line, or more lines than one pull may carry. The cursor stays where it was.
+  // A page the adapter will not store: a line it cannot read. The cursor stays where it was.
   | 'bad_page'
+  // A single day has more transactions than one pull may carry (a smaller window cannot help). The cursor stays where it was.
+  | 'too_many_lines'
   // Tingee answered something else, or not at all (an HTTP error, a code the adapter does not know, a duplicate request).
   | 'upstream'
   // The adapter was asked something it cannot do (a malformed credential or cursor, a host that is not Tingee's).
   | 'config';
 
 // An error about a call or a page. Its message carries Tingee's numeric code and the position of a bad item, never the credential, a response body or a transaction's text.
+// `itemIndex` is that position as a number (0-based, counted across the whole pull window, not within one page; null when the error is not about one item), so a screen can show it without reading the message.
 export class TingeeError extends Error {
   readonly kind: TingeeErrorKind;
   readonly tingeeCode: string | null;
-  constructor(kind: TingeeErrorKind, message: string, tingeeCode: string | null = null) {
+  readonly itemIndex: number | null;
+  constructor(kind: TingeeErrorKind, message: string, tingeeCode: string | null = null, itemIndex: number | null = null) {
     super(message);
     this.name = 'TingeeError';
     this.kind = kind;
     this.tingeeCode = tingeeCode;
+    this.itemIndex = itemIndex;
   }
 }
 
@@ -98,6 +103,37 @@ export function signTingeeRequest(secretToken: string, timestamp: string, body: 
   return createHmac('sha512', secretToken).update(`${timestamp}:${body}`, 'utf8').digest('hex');
 }
 
+// A webhook's timestamp is yyyyMMddHHmmssSSS in Vietnam time, as for a request. Fresh: at most 90 seconds ahead of this clock and at most 10 minutes behind it (the stricter of the two readings of Tingee's pages).
+const HOOK_AHEAD_MS = 90_000;
+const HOOK_BEHIND_MS = 10 * 60_000;
+
+// The same text without the whitespace between tokens, and nothing else touched: a number keeps the digits Tingee wrote (a parse and a stringify would turn 12345678901234567890 into a JS number). The caller has checked it parses.
+export function minifyJson(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// A hex signature compared in constant time; anything that is not 128 hex digits (the length of a SHA-512 digest) is not one.
+function sameSignature(expected: string, given: string): boolean {
+  if (!/^[0-9a-fA-F]{128}$/.test(given)) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(given, 'hex'));
+}
+
 const pad = (n: number, width: number) => String(n).padStart(width, '0');
 
 // A clock reading in Vietnam time (UTC+7) as digits: yyyyMMddHHmmss, with the milliseconds when asked.
@@ -129,7 +165,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 // One transaction as Tingee reports it, as a line; a message names what is wrong with it (never its content).
 function toLine(item: unknown, index: number): BankFeedTransaction | null {
   const bad = (what: string): never => {
-    throw new TingeeError('bad_page', `tingee: transaction ${index} of the page has ${what}`);
+    throw new TingeeError('bad_page', `tingee: transaction ${index} of the page has ${what}`, null, index);
   };
   if (!isRecord(item)) return bad('an unreadable shape');
   const type = item.type;
@@ -255,6 +291,33 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
       if (!Array.isArray(data.items)) throw new TingeeError('upstream', 'tingee: the account list has an unexpected shape');
     },
 
+    // The timestamp of a webhook, checked by the API before it stores anything (no secret needed).
+    hookTimestampFresh(timestamp: string, nowMs: number): boolean {
+      const m = /^(\d{14})(\d{3})$/.exec(timestamp);
+      if (!m) return false;
+      const at = parseStamp(m[1] as string);
+      if (at === null) return false;
+      const stamped = at + Number(m[2]);
+      return stamped <= nowMs + HOOK_AHEAD_MS && stamped >= nowMs - HOOK_BEHIND_MS;
+    },
+
+    // The worker's check of a stored notice: HMAC-SHA512 over `timestamp:body` with the connection's Secret Token, on the raw bytes first and on the minified form second (whether Tingee signs the bytes it sends or its own
+    // minified text is settled by the UAT run), then a consistency check that the body names the connection's own Client ID. Never throws for a bad notice, only for a credential that cannot be read.
+    verifyHook(secret: string, notice: BankFeedHookNotice): BankFeedHookVerdict {
+      const credential = parseTingeeSecret(secret);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(notice.body);
+      } catch {
+        parsed = undefined;
+      }
+      const raw = sameSignature(signTingeeRequest(credential.secretToken, notice.timestamp, notice.body), notice.signature);
+      const minified = !raw && parsed !== undefined && sameSignature(signTingeeRequest(credential.secretToken, notice.timestamp, minifyJson(notice.body)), notice.signature);
+      if (!raw && !minified) return 'signature';
+      if (!isRecord(parsed) || typeof parsed.clientId !== 'string') return 'malformed';
+      return parsed.clientId === credential.clientId ? 'ok' : 'client';
+    },
+
     async accounts(secret: string): Promise<BankFeedAccount[]> {
       const credential = parseTingeeSecret(secret);
       const found = new Map<string, BankFeedAccount>();
@@ -324,7 +387,7 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
           if (page === MAX_PAGES - 1) throw new TingeeError('upstream', 'tingee: the transaction list never ended');
         }
         if (tooMany) {
-          if (days <= 1) throw new TingeeError('bad_page', 'tingee: a single day has more transactions than one pull may carry');
+          if (days <= 1) throw new TingeeError('too_many_lines', 'tingee: a single day has more transactions than one pull may carry');
           days = Math.max(1, Math.floor(days / 2));
           continue;
         }

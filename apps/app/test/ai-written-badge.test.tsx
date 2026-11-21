@@ -37,6 +37,16 @@ describe('the AI-written mark', () => {
     expect(render({ actorOrigin: 'ui', showHint: true })).toBe('');
   });
 
+  it('titles each badge with its own hint, so an "edited" badge never carries the "written" sentence (#4168)', () => {
+    const titleOf = (html: string) => /title="([^"]*)"/.exec(html)?.[1];
+    for (const locale of ['vi', 'en'] as const) {
+      const messages = catalog(locale).aiWritten as Record<string, string>;
+      expect(titleOf(render({ actorOrigin: 'mcp', tainted: true }, locale))).toBe(messages.hint);
+      expect(titleOf(render({ actorOrigin: 'ui', tainted: true }, locale))).toBe(messages.hintEdited);
+      expect(titleOf(render({ actorOrigin: 'ui', tainted: true, showHint: true }, locale))).toBe(messages.hintEdited);
+    }
+  });
+
   it('shows nothing on a person\'s own row', () => {
     expect(render({ actorOrigin: 'ui' })).toBe('');
     expect(render({ actorOrigin: 'ui', tainted: false }, 'en')).toBe('');

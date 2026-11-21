@@ -593,7 +593,7 @@ export function InboxPage() {
       {tab === 'pending' && <HiddenByApps />}
       <IntakePanel intake={intake} />
       {installedModules().includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {installedModules().includes('finance') && <StagedMarketplaceColumns canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplaceColumns canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} canSave={org.data?.role === 'owner' || org.data?.role === 'admin'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {installedModules().includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {installedModules().includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}

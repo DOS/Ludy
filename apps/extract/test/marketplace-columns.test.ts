@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The marketplace_columns kind of the sandbox (#4035, #3850 slice 1b): the masked sheet of an order report no platform profile fits, and the check of a column mapping on the real file. The files are
 // made in code with made-up buyers, planted in columns the headers flag as the buyer's AND in columns they do not: none of their values, and none of the headers of the flagged columns, may be in any answer.
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   COLUMN_REFUSAL_REASONS,
@@ -72,6 +73,29 @@ describe('readMarketplaceColumns, without a mapping', () => {
     expect(date).toEqual({ index: 1, header: 'Ngày tạo', samples: ['9999-99-99', '9999-99-99', '9999-99-99'], buyer: false });
     expect(columns.find((c) => c.index === 6)?.samples).toEqual(['9', '9', '9']);
     noBuyerIn(answer);
+  });
+
+  // The header digest (#4037): sha-256 of the header row's non-empty cells (NFC, lower case, white space as one space, joined by a line feed), buyer columns' header words included, so a saved mapping is
+  // found again for a file with the same header row. Only the hash is in the answer.
+  const digestOf = (cells: XlsxCell[]) => createHash('sha256').update(cells.map((c) => String(c).normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()).filter((t) => t !== '').join('\n'), 'utf8').digest('hex');
+
+  it('returns the digest of the whole header row, the same for another file with the same header row and not for another one', () => {
+    const answer = readMarketplaceColumns(envelope(buildXlsx(report())));
+    expect(answer.sheet?.headerDigest).toBe(digestOf(HEAD));
+    // The buyer columns' header words are in the hash (they are headers, not values), and nothing else of them is in the answer.
+    expect(answer.sheet?.headerDigest).toMatch(/^[0-9a-f]{64}$/);
+    noBuyerIn(answer);
+    // Other rows below the same header: the same digest (a data cell never reaches it).
+    const other = readMarketplaceColumns(envelope(buildXlsx([['Tiêu đề khác'], HEAD, row('1234', 'Đã hủy', 9, 1), row('5678', 'Hoàn thành', 1, 2)])));
+    expect(other.sheet?.headerDigest).toBe(answer.sheet?.headerDigest);
+    // A changed header word, or an extra column, is another layout.
+    const renamed = [...HEAD];
+    renamed[1] = 'Ngày đặt';
+    expect(readMarketplaceColumns(envelope(buildXlsx([['Báo cáo của cửa hàng'], renamed, row('9001', 'Hoàn thành', 2, 50000)]))).sheet?.headerDigest).not.toBe(answer.sheet?.headerDigest);
+    // Case and spacing of a header do not change it.
+    const spaced = [...HEAD];
+    spaced[0] = '  SỐ  HIỆU ĐƠN ';
+    expect(readMarketplaceColumns(envelope(buildXlsx([['Báo cáo của cửa hàng'], spaced, row('9001', 'Hoàn thành', 2, 50000)]))).sheet?.headerDigest).toBe(answer.sheet?.headerDigest);
   });
 
   it('shows no value of an unflagged column that holds a phone, an email or a name: only its shape', () => {
@@ -169,7 +193,7 @@ describe('the envelope and the contract', () => {
 
   it('holds a sample to a shape and a buyer column to nothing: a value does not pass the schema', () => {
     const column = { index: 0, header: 'Tham chiếu', samples: ['9999999999'], buyer: false };
-    const ok = (c: object) => zExtractedMarketplaceColumns.safeParse({ sheet: { headerRow: 1, columns: [c] }, check: null }).success;
+    const ok = (c: object) => zExtractedMarketplaceColumns.safeParse({ sheet: { headerRow: 1, headerDigest: 'a'.repeat(64), columns: [c] }, check: null }).success;
     expect(ok(column)).toBe(true);
     // A digit other than 9, a letter other than a, a non-Latin letter: not a shape.
     expect(ok({ ...column, samples: ['0900000007'] })).toBe(false);
