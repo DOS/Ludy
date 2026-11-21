@@ -350,3 +350,34 @@ describe('a connection whose polls fail backs off (#4238)', () => {
     expect((await withState('unreachable', ago(1000), []).run()).state).toBe('ok');
   });
 });
+
+describe('every page asks again whether the credential may still be used (#4238)', () => {
+  it('ends the run, recording `credentials`, when the connection stops being usable between two pages', async () => {
+    const { DomainError } = await import('@crove/kernel-runtime');
+    let opens = 0;
+    let asked = 0;
+    const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const runtime = {
+      query: async (name: string) => {
+        if (name === 'kernel.channel.credential') {
+          opens += 1;
+          if (opens > 1) throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'x');
+          return { provider: 'marketplace_lazada', externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') };
+        }
+        return { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null };
+      },
+      execute: async (name: string, input: Record<string, unknown>) => {
+        executed.push({ name, input });
+        return name === 'kernel.file.ingest' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
+      },
+    } as unknown as Runtime;
+    const store = { put: async (_k: string, bytes: Uint8Array) => `content:${sha256Hex(bytes)}` } as unknown as BlobStore;
+    const page = (n: number): MarketplaceOrderPage => ({ ...goodPage(), orders: [{ ...goodPage().orders[0]!, orderNo: `9103${String(n).padStart(6, '0')}` }], nextCursor: `p:${n}`, more: true });
+    const provider = { id: 'lazada', hosts: ['api.lazada.vn'], connectFields: [], capabilities: { platforms: {} }, testConnection: async () => 'works', listOrders: async () => page((asked += 1)), orderFinance: async () => null, listStock: async () => [] } as unknown as MarketplaceProvider;
+    const outcome = await runMarketplacePoll({ runtime, broker: { open: () => '{}' } as unknown as CredentialBroker, store, providers: { lazada: provider } }, { orgId: ORG, connectionId: CONNECTION });
+    // One page was read and recorded; the second page's check refused, so Lazada was not asked again.
+    expect(asked).toBe(1);
+    expect(outcome).toEqual({ state: 'credentials', orders: 1, staged: true });
+    expect(executed.filter((e) => e.name === 'finance.marketplace_connection.record_poll').map((e) => e.input.state)).toEqual(['ok', 'credentials']);
+  });
+});

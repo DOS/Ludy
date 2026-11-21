@@ -1638,7 +1638,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (finance && marketplaceProviders && marketplaceBroker && Object.keys(marketplaceProviders).length > 0) {
     await boss.work<MarketplacePollJob | { sweep: true }>(QUEUES.marketplacePoll, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      if ('sweep' in job.data) {
+      // Only the exact scheduled `{ sweep: true }` is the sweep; any other payload (a null, `{ sweep: false }`) is checked below as a poll or a test, and refused when it is neither.
+      const isSweep = typeof job.data === 'object' && job.data !== null && Object.keys(job.data).length === 1 && (job.data as { sweep?: unknown }).sweep === true;
+      if (isSweep) {
         let after: { orgId: string; id: string } | null = null;
         for (;;) {
           const page = await marketplacePollDue(deps.workerDb, after);

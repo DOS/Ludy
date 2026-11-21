@@ -151,7 +151,14 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
   let staged = false;
   let last: MarketplacePageResult = { outcome: { state: 'ok', orders: 0, staged: false }, more: false };
   for (let pages = 0; pages < Math.max(1, maxPages); pages++) {
-    last = await pollPage({ deps, job, target, provider, secret, record, held, options });
+    // Before every page after the first, the same gate as the first: a member who has left, or a connection closed meanwhile, ends the run (the credential is opened again, never kept past that).
+    const current = pages === 0 ? secret : await openSecret(deps, provider, job.orgId, target.channelConnectionId, options);
+    if (current === null) {
+      await record({ state: 'credentials' });
+      last = { outcome: { state: 'credentials', orders: 0, staged: false }, more: false };
+      break;
+    }
+    last = await pollPage({ deps, job, target, provider, secret: current, record, held, options });
     orders += last.outcome.orders;
     staged = staged || last.outcome.staged;
     if (!last.more) break;

@@ -102,6 +102,16 @@ export const marketplaceConnectionConnect = defineCommand({
       const id =
         row?.id ??
         (await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
+      // A new credential for an account that was already connected ends what the old one earned: the back-off after its refused polls and its last test no longer describe this credential, so the next
+      // poll runs at once. (A poll that began with the old credential and ends after this can still record its own failure; the next good poll clears it.)
+      if (!row) {
+        await ctx.trx
+          .updateTable('crove_finance.marketplace_connection')
+          .set({ last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', id)
+          .execute();
+      }
       ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, provider: channelProvider, platform: input.platform, reconnected: channel.reconnected });
       return { id, existing: !row };
     } catch (error) {

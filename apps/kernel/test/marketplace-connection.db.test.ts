@@ -234,8 +234,11 @@ suite('marketplace connections (#2519)', () => {
     expect(connected.status).toBe(200);
     const id = String(connected.body.id);
     expect(await rows('SELECT provider, connected_by FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ provider: 'marketplace_sandbox', connected_by: adminUser.userId }]);
+    // A refused poll and a test leave their marks (and the back-off they start); connecting the same account again with a new credential clears them, so the next poll is not held back by the old one.
+    await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_test_state = 'wrong_credentials', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
     // The same account again is the same connection.
     expect((await call('connections/connect', owner, connectInput())).body).toEqual({ id });
+    expect(await rows('SELECT last_poll_state, last_polled_at, last_test_state, last_tested_at FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null }]);
     expect((await call('connections/list', viewer)).body).toEqual([
       {
         id,
