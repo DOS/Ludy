@@ -137,7 +137,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
       [0, 10, 'Hôm nay bàn việc đẩy chứng từ từ MISA AMIS sang Crove.'],
       [10, 20, 'Hà sẽ gửi báo cáo trước thứ sáu.'],
     ];
-    if (recorder !== 'viewer' && segs.length > 0) {
+    if (recorder !== 'viewer' && retentionOffset > 0 && segs.length > 0) {
       await exec(
         recorder,
         'meetings.transcript.draft_store',
@@ -236,10 +236,10 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     expect(prompts[0]?.system).not.toContain('MISA AMIS');
     expect(prompts[0]?.user).toContain('GLOSSARY:\n["Crove","MISA AMIS"]');
     await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: sumRes.runId });
-    const sumView = await query<{ draft: { summary: string; decisions: string[]; items: Array<{ title: string }> } | null }>('recorder', 'meetings.result.get', { meetingId });
+    const sumView = await query<{ draft: { summary: string; decisions: string[] } | null; items: Array<{ stage: string; title: string }> }>('recorder', 'meetings.result.get', { meetingId });
     expect(sumView.draft?.summary).toBe('Đẩy chứng từ từ MISA AMIS sang Crove.');
     expect(sumView.draft?.decisions).toEqual(['Chọn Crove']);
-    expect(sumView.draft?.items[0]?.title).toBe('Nối MISA AMIS');
+    expect(sumView.items.find((i) => i.stage === 'draft')?.title).toBe('Nối MISA AMIS');
 
     // 2. Chapters for recorder
     prompts = [];
@@ -281,14 +281,14 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     const recDropView = await query<Translations>('recorder', 'meetings.translation.get', { meetingId });
     expect(recDropView.translations[0]?.segments[0]).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
 
-    // 5. Transcript translation for recorder: receives glossary once per run and flags dropped term.
+    // 5. Transcript translation for recorder: receives glossary once per run and spells terms.
     prompts = [];
     const recLineRes = await runTranscriptTranslation(translationDeps(recTransModel), orgId, asUser('recorder'), meetingId);
     expect(recLineRes.state).toBe('ready');
     expect(prompts[0]?.system).toContain('The data has GLOSSARY, a JSON list of terms');
     expect(prompts[0]?.user).toContain('GLOSSARY:\n["Crove","MISA AMIS"]');
     const recLineView = await query<TranscriptTranslationView>('recorder', 'meetings.translation.transcript_get', { meetingId });
-    expect(recLineView.parts[0]).toMatchObject({ t: 'Pushed invoices via MISA AMIS and Crove.', s: 'ok' });
+    expect(recLineView.parts[0]).toMatchObject({ text: 'Pushed invoices via MISA AMIS and Crove.', state: 'ok', codes: [] });
 
     // 6. Non-recorder attendee AND non-recorder owner on the same org-visible meeting translate summary and transcript cleanly with ZERO glossary exposure.
     const auditBeforeNonRecorder = (
@@ -312,7 +312,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
       expect(prompts[0]?.system).not.toContain('The data has GLOSSARY');
       expect(prompts[0]?.user).not.toContain('GLOSSARY:');
       const nonRecLineView = await query<TranscriptTranslationView>(nonRecorder, 'meetings.translation.transcript_get', { meetingId });
-      expect(nonRecLineView.parts[0]).toMatchObject({ t: 'Connected tool on Friday.', s: 'ok', c: [] });
+      expect(nonRecLineView.parts[0]).toMatchObject({ text: 'Connected tool on Friday.', state: 'ok', codes: [] });
     }
 
     // Non-recorder translations never queried meetings.glossary.for_meeting (neither ok nor denied), and recorder audits hold no term text.

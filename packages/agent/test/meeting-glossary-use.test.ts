@@ -61,7 +61,7 @@ describe('summary', () => {
   it('is the same call with no glossary, an empty one or only terms that are not terms', async () => {
     const base = fakeModel(answer);
     await summarizeMeeting({ segments: SEGMENTS, language: 'vi' }, base.ports);
-    for (const glossary of [[], ['', 'a@b.vn', 'https://x.vn', '12345']]) {
+    for (const glossary of [[], ['', 'an@example.com', 'https://example.invalid', '12345']]) {
       const other = fakeModel(answer);
       const out = await summarizeMeeting({ segments: SEGMENTS, language: 'vi', glossary }, other.ports);
       expect(noNonce(other.seen[0])).toEqual(noNonce(base.seen[0]));

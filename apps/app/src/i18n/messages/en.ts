@@ -16448,6 +16448,7 @@ export const en = {
       },
       glossary: {
         add: 'Add a term to the glossary of the organization',
+        for_meeting: 'Read the glossary of the organization for a meeting Vy run',
         list: 'See the glossary of the organization',
         remove: 'Remove a term from the glossary of the organization',
         update: 'Edit a term in the glossary of the organization',
