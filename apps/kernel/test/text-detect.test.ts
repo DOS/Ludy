@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit checks for the SQL redaction detector (#4001, Slice 1):
-// - Migration 20270202150000 defines pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions pinned to pg_catalog, pg_temp,
+// - Migration 20270204020000 defines pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions pinned to pg_catalog, pg_temp,
 //   revoked from PUBLIC, and granted to crove_tenant (matching crove_kernel.text_mentions).
 // - Character constants stay aligned with 20261122040000_crove_kernel_text_mention_long_digits.sql.
 // - No duplicate TypeScript regex detector was introduced outside SQL.
@@ -14,7 +14,7 @@ const readMigration = (name: string) =>
   readFileSync(fileURLToPath(new URL(`../../../supabase/migrations/${name}`, import.meta.url)), 'utf8');
 
 describe('crove_kernel.text_detect migration contract (#4001 Slice 1)', () => {
-  const detectSql = readMigration('20270202150000_crove_kernel_text_detect.sql');
+  const detectSql = readMigration('20270204020000_crove_kernel_text_detect.sql');
   const patternSql = readMigration('20261122040000_crove_kernel_text_mention_long_digits.sql');
 
   it('declares pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions with pinned search_path and crove_tenant-only EXECUTE', () => {
