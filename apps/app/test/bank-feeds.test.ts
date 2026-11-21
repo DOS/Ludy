@@ -25,11 +25,15 @@ describe('bank feed gate', () => {
     expect(bankFeedOffered({})).toBe(false);
     expect(bankFeedOffered({ bankFeeds: { sandbox: false } })).toBe(false);
     expect(bankFeedOffered({ bankFeeds: { sandbox: true } })).toBe(true);
+    // Tingee alone is an offer too, and an older server that sends no tingee flag offers nothing more than the sandbox.
+    expect(bankFeedOffered({ bankFeeds: { sandbox: false, tingee: true } })).toBe(true);
+    expect(bankFeedOffered({ bankFeeds: { sandbox: false, tingee: false } })).toBe(false);
   });
 
   it('needs the finance module too', () => {
     expect(showsBankFeeds({ modules: ['finance'], bankFeeds: { sandbox: true } })).toBe(true);
     expect(showsBankFeeds({ modules: ['crm'], bankFeeds: { sandbox: true } })).toBe(false);
+    expect(showsBankFeeds({ modules: ['finance'], bankFeeds: { sandbox: false, tingee: true } })).toBe(true);
     expect(showsBankFeeds({ modules: ['finance'], bankFeeds: { sandbox: false } })).toBe(false);
     expect(showsBankFeeds({ modules: ['finance'] })).toBe(false);
   });

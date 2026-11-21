@@ -477,8 +477,9 @@ suite('bank statement import (#326)', () => {
     runBankFeedSync({ runtime: worker, broker: vault, providers: bankFeedProviders({ sandbox: true, now: SYNC_NOW }) }, { orgId: org, connectionId });
 
   it('offers the sandbox bank feed only where the deployment turns it on', async () => {
-    expect(((await (await feedApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: true });
-    expect(((await (await app.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false });
+    expect(((await (await feedApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: true, tingee: false });
+    expect(((await (await app.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false, tingee: false });
+    expect(((await (await tingeeApp.request('/api/config')).json()) as { bankFeeds: unknown }).bankFeeds).toEqual({ sandbox: false, tingee: true });
     expect(await rpc('bankFeeds/connectSandbox', await tokenFor(owner), { displayName: 'Ngân hàng thử' })).toMatchObject({ status: 404, body: { code: 'BANK_FEED_DISABLED' } });
   });
 
