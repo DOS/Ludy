@@ -1994,7 +1994,7 @@ async function storeNotesVyReady(
 
 // Member-scoped Vy daily focus planner & overdue reschedule proposals for My Work (Notes v2 T4b, #3563, ADR-0049):
 // reads only caller's own open to-dos via notes.vy.plan_inputs, runs pure model outside transaction, stores counts
-// only in member_vy_result, re-verifies items before returning, and never mutates crove_notes.todo during generation.
+// only in member_vy_result, re-verifies items before returning, and never mutates personal to-do rows during generation.
 export async function runNotesTodoPlan(
   deps: MeetingSummaryDeps,
   orgId: string,
