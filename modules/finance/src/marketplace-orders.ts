@@ -50,7 +50,7 @@ export function canAdvance(from: Stage, to: Stage): boolean {
   return false;
 }
 
-// The stages that move stock: a shipment takes it out, a return brings it back; a placed or cancelled order moves nothing.
+// The stages that move stock: a shipment takes it out, a return brings it back; a placed order moves nothing, and a cancelled one only if it had shipped (it brings the stock back, see moveLineStock).
 const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'returned']);
 
 // The summary a staged read keeps: the file's own figures, nothing of the orders' content beyond counts.

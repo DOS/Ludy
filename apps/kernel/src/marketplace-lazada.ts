@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Lazada marketplace adapter (#2524, S1 = #4237; ADR-0045 point 7; design note https://github.com/DOS/Ludy/issues/2524#issuecomment-7056731894). S2a (#4238) wires it: MARKETPLACE_PROVIDERS=lazada
-// builds it in kernel.ts for the API and the worker, and the worker tests and polls a connection with it; the authorize step that adds the access token is S2b. Built from Lazada Open Platform's documentation as mirrored on open.alitrip.com (articleIds 108068 signature, 108065 hosts, 108260 and 121098 tokens and apps, 108297 masking,
-// 121327 order paging) and the GitHub mirror of the API reference (xKeNcHii/lazada-sdk, docs/api/order-api.md), read 2026-11-21. open.lazada.com itself could not be read, so every name below is a
-// pointer for the live check (#2522), not a verified one.
+// The Lazada marketplace adapter (#2524, S1 = #4237; ADR-0045 point 7; design note https://github.com/DOS/Ludy/issues/2524#issuecomment-7056731894). S2a (#4238) wires it: MARKETPLACE_PROVIDERS=lazada builds it in kernel.ts for the API and the worker, and the
+// worker tests and polls a connection with it; the authorize step that adds the access token is S2b. First built from Lazada Open Platform's documentation as mirrored on open.alitrip.com and the GitHub mirror of the API reference (xKeNcHii/lazada-sdk), then checked against the
+// OFFICIAL pages of open.lazada.com, which load in a headless browser (read 2026-11-21; the table of what matched is https://github.com/DOS/Ludy/issues/2522#issuecomment-7058540099): the paths, the
+// parameters, the host, the signature and the item fields below were confirmed; what stays for the live check (#2522, a person with a seller account) is what the pages do not say (the rate-limit codes,
+// what masking does to an amount, the token lifetimes, and the status word of a finished return).
 //
 // The seller registers an "In-house app" on their own Lazada developer account and types its App Key and App Secret; the authorize step adds the tokens (a later slice). The credential is the
 // sealed JSON of the connection and reaches this adapter only as the opaque secret of a call. The adapter READS only: two paths, both GET (a test reads this source to keep it so). Every call goes
@@ -22,7 +23,7 @@ import {
 import { cleanLabel, isoDay, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const LAZADA_API_HOST = 'api.lazada.vn';
-// The hosts the adapter's fetch is bound to. Authorization (auth.lazada.com) joins in the authorize slice (S2b): nothing here calls it.
+// The hosts the adapter's fetch is bound to. Token create and refresh (auth.lazada.com) are the token module's (marketplace-lazada-token.ts), with a fetch of its own: nothing here calls it.
 export const LAZADA_HOSTS: readonly string[] = [LAZADA_API_HOST];
 
 // The only two paths this adapter calls, both GET: the orders changed since a time, and the items of up to 50 orders.
@@ -57,8 +58,12 @@ const ORDER_FIELDS = ['order_id', 'order_number', 'created_at', 'updated_at'] as
 const ID_KEYS = ['order_id', 'order_item_id'] as const;
 const ITEM_FIELDS = ['order_item_id', 'order_id', 'sku', 'name', 'item_price', 'paid_price', 'status', 'currency'] as const;
 
-// The stage of an order item by Lazada's status word (lower case, as the order API returns it). CLOSED: a status not in this table makes the page `not_recognized` and nothing is stored (no
-// complete official list of item statuses could be read; the table is checked in the live trial). `failed` and `lost` are no sale; the stages are the five of the port.
+// The stage of an order item by Lazada's status word (lower case, as the order API returns it). CLOSED: a status not in this table makes the page `not_recognized` and nothing is stored. The words are the
+// ones the official GetOrders page lists for its status filter (read 2026-11-21); the stages are this code's reading of them and are checked in the live trial.
+//
+// WHAT A STAGE DOES TO STOCK (modules/finance/src/marketplace-orders.ts, `moveLineStock`): `shipped` and `completed` take stock out; `returned` brings it back; `cancelled` moves nothing for a line that
+// never shipped but BRINGS STOCK BACK for a line that did (it is the stage of a failed delivery) and is final; `placed` moves nothing. So a word whose goods are gone (lost, damaged, scrapped) or not yet back
+// (a delivery that failed and is on its way back) must NOT be `cancelled` after a shipment: it stays `shipped` (stock stays out; a write-off is a person's bookkeeping) until a word says the goods are back.
 export const LAZADA_ITEM_STAGE: Readonly<Record<string, MarketplaceOrderStage>> = {
   unpaid: 'placed',
   pending: 'placed',
@@ -71,8 +76,19 @@ export const LAZADA_ITEM_STAGE: Readonly<Record<string, MarketplaceOrderStage>> 
   delivered: 'completed',
   canceled: 'cancelled',
   failed: 'cancelled',
-  lost: 'cancelled',
   returned: 'returned',
+  // Goods lost, damaged or scrapped in transit, or a delivery that failed and is on its way back, stay `shipped`: the stock is out and has not come back. (`lost` was `cancelled` in the first build, which
+  // would have put a lost parcel back into stock; the official page confirms the word, and this changes its stage.) The words after `lost` are those the mirror lacked, found on the official page 2026-11-21.
+  // The stages are the product owner's to confirm.
+  lost: 'shipped',
+  lost_by_3pl: 'shipped',
+  damaged_by_3pl: 'shipped',
+  package_scrapped: 'shipped',
+  failed_delivery: 'shipped',
+  shipped_back: 'shipped',
+  shipped_back_failed: 'shipped',
+  // The goods are back with the seller: the one new word that brings stock back.
+  shipped_back_success: 'returned',
 };
 
 // The sealed secret of a connection: {"appKey": "...", "appSecret": "...", "accessToken": "..."} (more fields join in the token slice and are ignored here). A malformed one is refused without echoing it.
@@ -155,9 +171,11 @@ export interface LazadaOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-// Lazada's own error codes that name a refused credential or a call limit. Anything else is `unreachable`. The official error table could not be read (open.lazada.com is script-rendered): these
-// come from the order API reference and from SDK sources, and the live check fills the list.
-const CREDENTIAL_CODES: ReadonlySet<string> = new Set(['IllegalAccessToken', 'IncompleteSignature']);
+// Lazada's own error codes that name a refused credential or a call limit. Anything else is `unreachable`. `IllegalAccessToken` and `SellerNotVerified` are on official pages ("The specified access token is
+// invalid or expired"; "the seller's store opening process has not been completed": the seller must act in Seller Center, and the closest closed kind of the port is `credentials`, whose message says
+// "reconnect", which does not finish a store opening: a message of its own is a follow-up, the kinds being a closed list of a shared module). `IncompleteSignature` is on the official token page. The
+// rate-limit codes are not on any official page read; they come from SDK sources, and the live check fills the list.
+const CREDENTIAL_CODES: ReadonlySet<string> = new Set(['IllegalAccessToken', 'IncompleteSignature', 'SellerNotVerified']);
 const RATE_CODES: ReadonlySet<string> = new Set(['ApiCallLimit', 'AppApiCallLimit', 'E1002']);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
