@@ -5783,9 +5783,9 @@ export const vi = {
   marketplaceVatRate: {
     title: 'Sàn: thuế GTGT trên doanh thu bán hàng',
     intro:
-      'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; sổ sách dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi hay sửa chỗ nhập sai thì thêm dòng mới từ ngày đó (nhập lại cùng ngày để thay dòng sai), không sửa dòng cũ.',
+      'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; hiện sổ sách chưa dùng nó; bản cập nhật sau sẽ dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi hay sửa chỗ nhập sai thì thêm dòng mới từ ngày đó (nhập lại cùng ngày để thay dòng sai), không sửa dòng cũ.',
     entity: 'Công ty',
-    empty: 'Chưa lưu thuế suất nào. Tháng nào chưa có dòng nào phủ tới thì doanh thu sàn của tháng đó được giữ lại, không hạch toán với thuế suất đoán.',
+    empty: 'Chưa lưu thuế suất nào. Khi sổ sách bắt đầu dùng thuế suất, tháng nào chưa có dòng nào phủ tới sẽ được giữ lại, không hạch toán với thuế suất đoán.',
     statusNone: 'Chưa lưu thuế suất',
     statusLater: 'Bắt đầu từ ngày sau',
     rowsTitle: 'Thuế suất GTGT',

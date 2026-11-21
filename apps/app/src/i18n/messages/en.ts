@@ -5785,9 +5785,9 @@ export const en = {
   marketplaceVatRate: {
     title: 'Marketplaces: VAT on your sales',
     intro:
-      'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books use it to split output VAT (33311) from the sales. A change or a correction is a new row from its date, never an edit: enter the date again to fix a wrong row.',
+      'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books do not use it yet; a later update will use it to split output VAT (33311) from the sales. A change or a correction is a new row from its date, never an edit: enter the date again to fix a wrong row.',
     entity: 'Company',
-    empty: 'No VAT rate saved yet. Until one covers a month, that month of marketplace sales is held back instead of posted with a guessed rate.',
+    empty: 'No VAT rate saved yet. Once the books use these rates, a month that no row covers will be held back instead of posted with a guessed rate.',
     statusNone: 'No rate saved yet',
     statusLater: 'Starts later',
     rowsTitle: 'VAT rates',
