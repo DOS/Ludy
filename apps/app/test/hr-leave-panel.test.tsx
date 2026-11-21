@@ -82,6 +82,10 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
         exceededAnnualDays: '0.5',
         personalPaidDays: '0',
         unpaidDaysByMonth: { [`${year}-06`]: '1' },
+        sicknessBhxhDays: '0',
+        maternityBhxhDays: '0',
+        sicknessBhxhDaysByMonth: {},
+        maternityBhxhDaysByMonth: {},
         rulesUsed: [
           {
             id: 'annual_leave.standard_entitlement@2021-02-01',
