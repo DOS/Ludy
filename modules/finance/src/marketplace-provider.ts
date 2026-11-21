@@ -23,6 +23,9 @@ export type MarketplaceAdapterId = (typeof MARKETPLACE_ADAPTERS)[number];
 // The platforms each adapter serves, as static data: the commands check a connection against it before anything is sealed, and the adapter's capabilities are built from it.
 export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS, lazada: ['lazada'] };
 
+// The adapters whose connection the seller authorizes on the platform's own page after typing their app's key and secret (Lazada): the connection holds no access token until they do.
+export const MARKETPLACE_AUTHORIZED_ADAPTERS: readonly MarketplaceAdapterId[] = ['lazada'];
+
 export function isMarketplaceAdapter(value: string): value is MarketplaceAdapterId {
   return (MARKETPLACE_ADAPTERS as readonly string[]).includes(value);
 }

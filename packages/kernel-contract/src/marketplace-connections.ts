@@ -8,6 +8,9 @@ import { zId } from './schemas.ts';
 // What a connection test answers and how a poll ended: states, never the platform's own text. The same lists the port, the database's CHECKs and @crove/db keep.
 export const MARKETPLACE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export const MARKETPLACE_POLL_STATE_KEYS = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
+export const MARKETPLACE_AUTHORIZE_STATE_KEYS = ['pending', 'authorized', 'refused', 'failed'] as const;
+export const zMarketplaceAuthorizeState = z.enum(MARKETPLACE_AUTHORIZE_STATE_KEYS);
+export type MarketplaceAuthorizeState = z.infer<typeof zMarketplaceAuthorizeState>;
 export const zMarketplaceConnectionState = z.enum(MARKETPLACE_CONNECTION_STATES);
 export const zMarketplacePollState = z.enum(MARKETPLACE_POLL_STATE_KEYS);
 export type MarketplaceConnectionState = z.infer<typeof zMarketplaceConnectionState>;
@@ -40,6 +43,10 @@ export const zMarketplaceConnection = z.object({
   lastPollState: zMarketplacePollState.nullable(),
   // The orders waiting in the Inbox for a member to confirm or reject, counted from the staged files this connection's polls ingested.
   ordersWaiting: z.number().int().nonnegative(),
+  // Where the seller's authorization stands (#4238): a code is waiting for the worker, it worked, Lazada refused the code, or the exchange failed. Null: never started.
+  authorizeState: zMarketplaceAuthorizeState.nullable(),
+  // When the refresh token ends (a date, never a token): after it the seller authorizes again. Null until an authorization worked.
+  reauthorizeBy: z.iso.datetime({ offset: true }).nullable(),
 });
 export type MarketplaceConnection = z.infer<typeof zMarketplaceConnection>;
 
@@ -87,3 +94,13 @@ export const zMarketplaceConnectionRecordPoll = z.strictObject({
   // Left out, the cursor stays where it was (a failed poll never moves it).
   cursor: z.string().min(1).max(200).nullable().optional(),
 });
+
+// The seller's authorization of a connection (#4238): a state the API makes (random, only its hash is stored), the one-time code the callback brings (sealed at the API edge) and what the worker records.
+export const zMarketplaceStateHash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+export const zMarketplaceAuthorizeBegin = z.strictObject({ id: zId, stateHash: zMarketplaceStateHash });
+export const zMarketplaceAuthorizeBegun = z.object({ appKey: z.string(), expiresAt: z.iso.datetime({ offset: true }) });
+export type MarketplaceAuthorizeBegun = z.infer<typeof zMarketplaceAuthorizeBegun>;
+export const zMarketplaceAuthorizeLookup = z.strictObject({ stateHash: zMarketplaceStateHash });
+export const zMarketplaceAuthorizeFinish = z.strictObject({ stateHash: zMarketplaceStateHash, codeKeyId: z.string().min(1).max(64), codeEnvelope: z.string().min(1).max(8000) });
+// `codeDigest` names the code the outcome is for (the SHA-256 of its sealed envelope, as authorize_target gave it): an outcome for a code that was replaced meanwhile is not recorded.
+export const zMarketplaceAuthorizeRecord = z.strictObject({ id: zId, codeDigest: z.string().regex(/^[0-9a-f]{64}$/), outcome: z.enum(['authorized', 'refused', 'failed']), reauthorizeBy: z.iso.datetime({ offset: true }).nullable().optional() });

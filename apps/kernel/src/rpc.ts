@@ -75,7 +75,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
-import { MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
@@ -611,6 +611,8 @@ export function createRpcHandler(
       throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
     }
   };
+  // Whether the seller authorizes this marketplace adapter on the platform's page (it then has an App Key beside its sealed secret).
+  const isMarketplaceAuthorized = (id: string): boolean => (MARKETPLACE_AUTHORIZED_ADAPTERS as readonly string[]).includes(id);
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
@@ -3501,6 +3503,8 @@ export function createRpcHandler(
                 legalEntityId: target.legalEntityId,
                 displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
                 credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+                // The App Key is a public identifier, stored in the clear beside the sealed secret it belongs to (the same handler makes both, so they never disagree).
+                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields.appKey } : {}),
               },
               { actor, orgId },
             );

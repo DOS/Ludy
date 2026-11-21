@@ -131,6 +131,7 @@ import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './b
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@crove/bank-feed';
 import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
+import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from './marketplace-tiktok-token.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -667,6 +668,9 @@ export function channelRefreshers(config: ChannelConfig): Record<string, Refresh
   // A Lazada connection's tokens (#2524, S3a): the refresher acts only on `marketplace_lazada` connections, which exist only where MARKETPLACE_PROVIDERS names the adapter. It holds no app
   // credential of its own (the seller's App Key and Secret are in each connection's sealed secret) and reaches only the one host its fetch is bound to.
   if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'lazada')) refreshers.marketplace_lazada = new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
+  // A TikTok Shop connection's tokens (#2524, T1 = #4256): the same, for `marketplace_tiktok_shop`. The seller's own app key and secret are in each connection's sealed secret; the fetch reaches only
+  // the token host, and the token URL (which carries the app secret) never leaves the token module.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'tiktok_shop')) refreshers.marketplace_tiktok_shop = new TiktokRefresher({ fetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS) });
   return refreshers;
 }
 
