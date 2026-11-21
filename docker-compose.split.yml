@@ -14,26 +14,26 @@ name: crove-split
 
 x-crove-env: &crove-env
   AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-  AUTH_ISSUER: crove-auth
+  AUTH_ISSUER: ludy-auth
   AUTH_AUTOCONFIRM: 'true'
   AUTH_SESSION_CHECK: db
   AUTH_STEP_UP: 'off'
   AUTH_UPSTREAM_URL: http://auth:9999
-  DATABASE_URL: postgres://crove_app:${CROVE_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
-  CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
+  DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+  LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
   # JSON logs and the pool sizes (#2175), as in docker-compose.yml.
   LOG_FORMAT: ${LOG_FORMAT:-text}
   DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
   WORKER_DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-10}
   PUBLIC_URL: http://localhost:${SPLIT_PORT:-18080}
-  INBOUND_DOMAIN: inbound.crove.test
+  INBOUND_DOMAIN: inbound.ludy.test
   INBOUND_SECRET: split-stack-inbound-secret-0123456789abcdef
   STORAGE: s3
   S3_ENDPOINT: http://minio:9000
   S3_REGION: us-east-1
-  S3_BUCKET: crove-files
-  S3_ACCESS_KEY_ID: crove-split
-  S3_SECRET_ACCESS_KEY: crove-split-minio-secret
+  S3_BUCKET: ludy-files
+  S3_ACCESS_KEY_ID: ludy-split
+  S3_SECRET_ACCESS_KEY: ludy-split-minio-secret
   S3_FORCE_PATH_STYLE: 'true'
   # The bucket is versioned (minio-init), as evidence buckets must be (ADR-0013). MinIO's port is not published, so
   # browsers could not reach presigned URLs: transfers stream through the kernel, downloads pinned to the version.
@@ -72,10 +72,10 @@ services:
     image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     command: ['server', '/data']
     environment:
-      MINIO_ROOT_USER: crove-split
-      MINIO_ROOT_PASSWORD: crove-split-minio-secret
+      MINIO_ROOT_USER: ludy-split
+      MINIO_ROOT_PASSWORD: ludy-split-minio-secret
       # For `docker compose exec minio mc ...`.
-      MC_HOST_local: http://crove-split:crove-split-minio-secret@127.0.0.1:9000
+      MC_HOST_local: http://ludy-split:ludy-split-minio-secret@127.0.0.1:9000
     healthcheck:
       test: ['CMD', 'curl', '--silent', '--fail', 'http://127.0.0.1:9000/minio/health/live']
       interval: 2s
@@ -85,29 +85,29 @@ services:
   minio-init:
     image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     entrypoint: ['sh', '-c']
-    # crove-archive: the WORM fact stream (#891) needs a bucket created with Object Lock (which also turns versioning on).
-    # crove-split-prober (#2094): the prober's own user, which can only list that bucket and read its verify/ and chain/
+    # ludy-archive: the WORM fact stream (#891) needs a bucket created with Object Lock (which also turns versioning on).
+    # ludy-split-prober (#2094): the prober's own user, which can only list that bucket and read its verify/ and chain/
     # objects, as docs/runbooks/worm-archive.md advises for a deployment. Attaching a policy twice fails, so it is detached
     # first (which fails the first time, hence the `|| true`): a second run of this container, with volumes kept across two
     # `up`s, then works too.
     command:
       - |
         set -e
-        mc mb --ignore-existing local/crove-files
-        mc version enable local/crove-files
-        mc mb --ignore-existing --with-lock local/crove-archive
+        mc mb --ignore-existing local/ludy-files
+        mc version enable local/ludy-files
+        mc mb --ignore-existing --with-lock local/ludy-archive
         cat > /tmp/archive-reader.json <<'POLICY'
         {"Version": "2012-10-17", "Statement": [
-          {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:ListBucketVersions"], "Resource": ["arn:aws:s3:::crove-archive"]},
-          {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::crove-archive/verify/*", "arn:aws:s3:::crove-archive/chain/*"]}
+          {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:ListBucketVersions"], "Resource": ["arn:aws:s3:::ludy-archive"]},
+          {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::ludy-archive/verify/*", "arn:aws:s3:::ludy-archive/chain/*"]}
         ]}
         POLICY
         mc admin policy create local archive-reader /tmp/archive-reader.json
-        mc admin user add local crove-split-prober crove-split-prober-secret
-        mc admin policy detach local archive-reader --user crove-split-prober || true
-        mc admin policy attach local archive-reader --user crove-split-prober
+        mc admin user add local ludy-split-prober ludy-split-prober-secret
+        mc admin policy detach local archive-reader --user ludy-split-prober || true
+        mc admin policy attach local archive-reader --user ludy-split-prober
     environment:
-      MC_HOST_local: http://crove-split:crove-split-minio-secret@minio:9000
+      MC_HOST_local: http://ludy-split:ludy-split-minio-secret@minio:9000
     depends_on:
       minio:
         condition: service_healthy
@@ -144,13 +144,13 @@ services:
       disable: true
     environment:
       <<: *crove-env
-      WORKER_DATABASE_URL: postgres://crove_worker:${CROVE_WORKER_DB_PASSWORD:-local-worker-password}@db:5432/postgres
-      EXTRACT_URL: http://crove-extract:8090
+      WORKER_DATABASE_URL: postgres://crove_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
+      EXTRACT_URL: http://ludy-extract:8090
       # The sandbox's slots (docker-compose.yml gives the same value to crove-extract), which the worker never exceeds.
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
       # The WORM fact stream (#891) in the Object Lock bucket, with the shortest lag so the run sees a batch.
       ARCHIVE_STORE: s3
-      ARCHIVE_S3_BUCKET: crove-archive
+      ARCHIVE_S3_BUCKET: ludy-archive
       ARCHIVE_LAG_SECONDS: '60'
     networks:
       - default
@@ -178,13 +178,13 @@ services:
       PROBER_AUTH_URL: ${PROBER_AUTH_URL:-http://api:8080/auth/v1}
       # The verification markers (#2082) are in the worker's archive bucket on MinIO, not on the archive volume.
       ARCHIVE_STORE: s3
-      ARCHIVE_S3_BUCKET: crove-archive
+      ARCHIVE_S3_BUCKET: ludy-archive
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_FORCE_PATH_STYLE: 'true'
       # The read-only user minio-init makes for it (#2094), never the worker's key.
-      PROBER_ARCHIVE_S3_ACCESS_KEY_ID: crove-split-prober
-      PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: crove-split-prober-secret
+      PROBER_ARCHIVE_S3_ACCESS_KEY_ID: ludy-split-prober
+      PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: ludy-split-prober-secret
 
   # Not needed here (sign-up is auto-confirmed); published ports would clash with a running default stack.
   mailpit:

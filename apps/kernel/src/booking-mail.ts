@@ -96,11 +96,11 @@ export function bookingIcs(p: Booking, brand: string, now: Date): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Crove//Booking//VI',
+    'PRODID:-//Ludy//Booking//VI',
     'CALSCALE:GREGORIAN',
     `METHOD:${cancelled ? 'CANCEL' : 'PUBLISH'}`,
     'BEGIN:VEVENT',
-    `UID:booking-${p.bookingId}@crove`,
+    `UID:booking-${p.bookingId}@ludy`,
     `SEQUENCE:${p.revision}`,
     `DTSTAMP:${icsTime(now)}`,
     `DTSTART:${icsTime(new Date(p.startsAt))}`,

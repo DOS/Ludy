@@ -75,7 +75,7 @@ export async function sweepSecuritySignals(deps: SecurityAlertDeps): Promise<num
     log(`[security] ALERT ${signal.signal}: ${text}`);
     if (!deps.target?.webhookUrl) continue;
     const delivery = await postMessage(
-      { text: `[Crove] Security alert from ${deps.target.instance}: ${text}`, crove: { kind: 'security', instance: deps.target.instance, ...signal } },
+      { text: `[Ludy] Security alert from ${deps.target.instance}: ${text}`, ludy: { kind: 'security', instance: deps.target.instance, ...signal } },
       { webhookUrl: deps.target.webhookUrl, format: deps.target.webhookFormat, telegramChatId: deps.target.telegramChatId, fetch: deps.fetch },
     );
     if (!delivery.ok) log(`[security] could not post the alert: ${delivery.error ?? 'unknown error'}`);

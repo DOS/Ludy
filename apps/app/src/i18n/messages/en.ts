@@ -7608,7 +7608,7 @@ export const en = {
     tiles: {
       missing: 'Missing in {brand}',
       amount_mismatch: 'Amount differs',
-      void_in_crove: 'Cancelled or replaced',
+      void_in_ludy: 'Cancelled or replaced',
       not_on_portal: 'Not on the portal',
     },
     sections: {
@@ -7616,7 +7616,7 @@ export const en = {
         title: 'On the tax portal, not in {brand} ({count})',
         hint: 'Ask the sellers for the XML files of these invoices and upload them to the Inbox, or forward the invoice emails to the intake address.',
       },
-      void_in_crove: {
+      void_in_ludy: {
         title: 'Cancelled or replaced on the tax portal but still in {brand} ({count})',
         hint: 'These invoices are no longer valid. If booked, reverse the entry; if waiting, reject it. Upload the replacement invoice separately.',
       },
@@ -7654,13 +7654,13 @@ export const en = {
       invoice: 'Series and number',
       seller: 'Seller',
       portalTotal: 'Total on the portal',
-      croveTotal: 'Total in {brand}',
+      ludyTotal: 'Total in {brand}',
       notes: 'Notes',
     },
     notes: {
       outsidePeriod: 'Outside the period',
       withoutTaxCode: 'Matched without tax code',
-      duplicateInCrove: 'Duplicate of an invoice already in {brand}',
+      duplicateInLudy: 'Duplicate of an invoice already in {brand}',
       postedOn: 'Posted on {date}',
       declaredInLaterPeriod: 'Posted on {date}, declared in a later period',
       duplicateRows: 'Repeated {count, plural, one {# time} other {# times}} in the lists',
@@ -7706,7 +7706,7 @@ export const en = {
       tiles: {
         missing: 'Sales missing in {brand}',
         amount_mismatch: 'Amount or VAT differs',
-        void_in_crove: 'Cancelled or replaced',
+        void_in_ludy: 'Cancelled or replaced',
         not_on_portal: 'Not on the portal',
       },
       sections: {
@@ -7714,7 +7714,7 @@ export const en = {
           title: 'On the tax portal, not in the books ({count})',
           hint: 'These sales were issued but are not booked, so output VAT is understated. Book each one: upload its XML to the Inbox, or enter it as a sale.',
         },
-        void_in_crove: {
+        void_in_ludy: {
           title: 'Cancelled or replaced on the tax portal but still in {brand} ({count})',
           hint: 'These sales are no longer valid, so output VAT is overstated while they stay. If booked, reverse the entry; if waiting, reject it.',
         },

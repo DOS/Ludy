@@ -46,7 +46,7 @@ describe('booking feed (#1382)', () => {
     const first = lines.slice(lines.indexOf('BEGIN:VEVENT'), lines.indexOf('END:VEVENT') + 1);
     expect(first).toEqual([
       'BEGIN:VEVENT',
-      'UID:feed-booking-0192f0a0-0000-7000-8000-000000000001@crove',
+      'UID:feed-booking-0192f0a0-0000-7000-8000-000000000001@ludy',
       'SEQUENCE:2',
       'DTSTAMP:20261102T010000Z',
       'DTSTART:20261103T020000Z',

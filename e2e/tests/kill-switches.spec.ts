@@ -58,7 +58,7 @@ function runsStarted(slug: string, since: string): number {
 async function wakeAgent(page: Page, slug: string, positionId: string, title: string): Promise<void> {
   const session = await storedSession(page);
   const response = await page.request.post('/api/rpc/tasks/create', {
-    headers: { authorization: `Bearer ${session?.access_token ?? ''}`, 'x-crove-org': slug },
+    headers: { authorization: `Bearer ${session?.access_token ?? ''}`, 'x-ludy-org': slug },
     data: { json: { title, assigneePositionId: positionId, idempotencyKey: randomUUID() } },
   });
   expect(response.status(), await response.text()).toBe(200);

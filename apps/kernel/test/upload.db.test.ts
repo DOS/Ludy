@@ -36,7 +36,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
-const S3_URL = process.env.CROVE_TEST_S3_URL;
+const S3_URL = process.env.LUDY_TEST_S3_URL ?? process.env.CROVE_TEST_S3_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = new Uint8Array(readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)));
 const SECRET = 'test-only-jwt-secret-for-uploads-0123456789';

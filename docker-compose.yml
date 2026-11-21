@@ -27,17 +27,17 @@ services:
     image: crove:local
     command: ['migrate']
     environment:
-      CROVE_APP_DB_PASSWORD: ${CROVE_APP_DB_PASSWORD:-local-app-password}
-      CROVE_WORKER_DB_PASSWORD: ${CROVE_WORKER_DB_PASSWORD:-local-worker-password}
-      CROVE_PROBER_DB_PASSWORD: ${CROVE_PROBER_DB_PASSWORD:-local-prober-password}
-      CROVE_REPORTER_DB_PASSWORD: ${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}
+      LUDY_APP_DB_PASSWORD: ${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}
+      LUDY_WORKER_DB_PASSWORD: ${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}
+      LUDY_PROBER_DB_PASSWORD: ${LUDY_PROBER_DB_PASSWORD:-${CROVE_PROBER_DB_PASSWORD:-local-prober-password}}
+      LUDY_REPORTER_DB_PASSWORD: ${LUDY_REPORTER_DB_PASSWORD:-${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}}
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-local-auth-password}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-      AUTH_ISSUER: crove-auth
+      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
-      DATABASE_URL: postgres://crove_app:${CROVE_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
+      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
       # The context token key (#1822): migrate installs it in the database; the same value goes to crove below.
-      CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
+      LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
     depends_on:
       db:
         condition: service_healthy
@@ -58,7 +58,7 @@ services:
       # 15 minutes, defense in depth (ADR-0028); revocation does not rely on it.
       GOTRUE_JWT_EXP: '900'
       GOTRUE_JWT_AUD: authenticated
-      GOTRUE_JWT_ISSUER: crove-auth
+      GOTRUE_JWT_ISSUER: ${AUTH_ISSUER:-ludy-auth}
       GOTRUE_PASSWORD_MIN_LENGTH: '8'
       # The kernel proxy sets X-Real-IP from the client socket, so rate limits are per client.
       GOTRUE_RATE_LIMIT_HEADER: X-Real-IP
@@ -76,7 +76,7 @@ services:
       GOTRUE_SMTP_PORT: ${SMTP_PORT:-1025}
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
-      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM:-noreply@crove.local}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM:-noreply@ludy.local}
       # The sender name of sign-in mails: the product name users see (BRAND_NAME, #1040).
       GOTRUE_SMTP_SENDER_NAME: ${BRAND_NAME:-Ludy}
       # Email links resolve these paths against API_EXTERNAL_URL's origin, so they must include the /auth/v1 proxy prefix.
@@ -105,9 +105,9 @@ services:
     command: ['auth-grants']
     environment:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-      AUTH_ISSUER: crove-auth
+      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
-      DATABASE_URL: postgres://crove_app:${CROVE_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
+      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
     depends_on:
       auth:
         condition: service_healthy
@@ -125,7 +125,7 @@ services:
       # your own instead (docs/self-host/README.md, "Your own identity provider"): AUTH_ISSUER and AUTH_JWKS_URL name it,
       # PUBLIC_AUTH_URL and PUBLIC_AUTH_ANON_KEY are where and how the app signs in, AUTH_SESSION_CHECK=jwt, AUTH_UPSTREAM_URL set
       # to empty (no bundled proxy), and AUTH_ALLOWED_EMAILS says who may use this deployment.
-      AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
+      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
       # Empty: db with the bundled Supabase Auth (AUTH_UPSTREAM_URL), jwt without it; the kernel derives it.
       AUTH_SESSION_CHECK: ${AUTH_SESSION_CHECK:-}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
@@ -141,10 +141,10 @@ services:
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}
-      DATABASE_URL: postgres://crove_app:${CROVE_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
-      WORKER_DATABASE_URL: postgres://crove_worker:${CROVE_WORKER_DB_PASSWORD:-local-worker-password}@db:5432/postgres
+      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+      WORKER_DATABASE_URL: postgres://crove_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
       # Signs every user context the app enters (#1822, ADR-0028 section 9); the value migrate installed.
-      CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
+      LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       # A web app served from another origin (#2261): where people open it, and the origins the API answers CORS for.
       # Both empty (self-host): the app is served from PUBLIC_URL and no CORS header is sent.
@@ -153,7 +153,7 @@ services:
       # `-` not `:-`: unset is the bundled Supabase Auth, set (even to empty) is what the file says.
       AUTH_UPSTREAM_URL: ${AUTH_UPSTREAM_URL-http://auth:9999}
       # Modules to run (ADR-0031); empty runs every module.
-      CROVE_MODULES: ${CROVE_MODULES:-}
+      LUDY_MODULES: ${LUDY_MODULES:-${CROVE_MODULES:-}}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
@@ -211,7 +211,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@crove.local}
+      SMTP_FROM: ${SMTP_FROM:-noreply@ludy.local}
       # smtp (above) or resend: Crove's own mails through Resend's API, delivery events through its webhooks (#539).
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
@@ -260,7 +260,7 @@ services:
       AI_DEFAULT_MONTHLY_BUDGET: ${AI_DEFAULT_MONTHLY_BUDGET:-}
       API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-600}
       # The all-in-one role on a public PUBLIC_URL starts only with true (the pilot runs api and worker apart, #2118).
-      CROVE_ALLOW_ALL_IN_ONE: ${CROVE_ALLOW_ALL_IN_ONE:-}
+      LUDY_ALLOW_ALL_IN_ONE: ${LUDY_ALLOW_ALL_IN_ONE:-${CROVE_ALLOW_ALL_IN_ONE:-}}
       # Realtime invalidation over SSE (/api/stream): one LISTEN connection per API process (see .env.example).
       STREAM_MAX_CONNECTIONS: ${STREAM_MAX_CONNECTIONS:-500}
       STREAM_MAX_PER_USER: ${STREAM_MAX_PER_USER:-5}
@@ -302,11 +302,11 @@ services:
       WORKER_DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-10}
       EXPORT_CONCURRENCY: ${EXPORT_CONCURRENCY:-4}
       UPLOAD_BEGIN_LIMIT_PER_MINUTE: ${UPLOAD_BEGIN_LIMIT_PER_MINUTE:-20}
-      # Every PDF, XML and MIME parse happens in crove-extract (External-tenant gate T12).
-      EXTRACT_URL: http://crove-extract:8090
-      # The length of every meeting recording is measured in crove-media (#2985): without it meeting
+      # Every PDF, XML and MIME parse happens in ludy-extract (External-tenant gate T12).
+      EXTRACT_URL: http://ludy-extract:8090
+      # The length of every meeting recording is measured in ludy-media (#2985): without it meeting
       # uploads are refused, because a recording whose length is unknown would bypass the AI meter.
-      MEDIA_URL: ${MEDIA_URL:-http://crove-media:8095}
+      MEDIA_URL: ${MEDIA_URL:-http://ludy-media:8095}
       # The same value as crove-media's own: the API refuses a larger recording before it is read (#2989).
       MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-2147483648}
       MEDIA_CALL_TIMEOUT_MS: ${MEDIA_CALL_TIMEOUT_MS:-}
@@ -402,9 +402,11 @@ services:
       # Loopback only. Put a TLS reverse proxy in front (and set PUBLIC_URL) to serve other machines.
       - '127.0.0.1:${PORT:-8080}:8080'
     networks:
-      - default
-      - extract
-      - media
+      default:
+        aliases:
+          - ludy
+      extract:
+      media:
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -439,7 +441,9 @@ services:
     environment:
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
     networks:
-      - extract
+      extract:
+        aliases:
+          - ludy-extract
 
   # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
   # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
@@ -474,7 +478,9 @@ services:
       MEDIA_TIMEOUT_MS: ${MEDIA_TIMEOUT_MS:-300000}
       MEDIA_BODY_TIMEOUT_MS: ${MEDIA_BODY_TIMEOUT_MS:-300000}
     networks:
-      - media
+      media:
+        aliases:
+          - ludy-media
 
   # Health prober and alerts (plan §4.13), off by default: `docker compose --profile prober up -d`. Checks every
   # PROBER_INTERVAL_SECONDS and posts to ALERT_WEBHOOK_URL (stdout when unset). Test the path with
@@ -489,7 +495,7 @@ services:
     healthcheck:
       disable: true
     environment:
-      PROBER_DATABASE_URL: postgres://crove_prober:${CROVE_PROBER_DB_PASSWORD:-local-prober-password}@db:5432/postgres
+      PROBER_DATABASE_URL: postgres://crove_prober:${LUDY_PROBER_DB_PASSWORD:-${CROVE_PROBER_DB_PASSWORD:-local-prober-password}}@db:5432/postgres
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       # JSON log lines, as for the API and the worker (#2175).
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -510,11 +516,11 @@ services:
       # Unset: the probe interval plus 60 s, so each dead letter alerts once (twice at most).
       PROBER_DEAD_LETTER_WINDOW_SECONDS: ${PROBER_DEAD_LETTER_WINDOW_SECONDS:-}
       # The modules the deployment runs, as for the API and the worker: their queued jobs count in job_age (#1894).
-      CROVE_MODULES: ${CROVE_MODULES:-}
+      LUDY_MODULES: ${LUDY_MODULES:-${CROVE_MODULES:-}}
       # Supabase Auth through the kernel's /auth/v1 proxy, inside the Compose network (#1994). Auth hosted elsewhere:
       # set PROBER_AUTH_URL to its /auth/v1 URL (and PUBLIC_AUTH_ANON_KEY for hosted Supabase). PROBER_AUTH_MISSES=0
       # turns the check off.
-      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-${PUBLIC_AUTH_URL:-http://crove:8080/auth/v1}}
+      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-${PUBLIC_AUTH_URL:-http://ludy:8080/auth/v1}}
       PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}
       PROBER_AUTH_MISSES: ${PROBER_AUTH_MISSES:-2}
       PROBER_AUTH_TIMEOUT_SECONDS: ${PROBER_AUTH_TIMEOUT_SECONDS:-10}
@@ -560,7 +566,7 @@ services:
     healthcheck:
       disable: true
     environment:
-      REPORTER_DATABASE_URL: postgres://crove_reporter:${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}@db:5432/postgres
+      REPORTER_DATABASE_URL: postgres://crove_reporter:${LUDY_REPORTER_DB_PASSWORD:-${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}}@db:5432/postgres
       # The prober's webhook settings, used only by --post.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}

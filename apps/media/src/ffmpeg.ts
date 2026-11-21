@@ -71,7 +71,7 @@ interface RawProbeOutput {
 
 export function createTempDir(): string {
   const baseDir = process.env.TMPDIR || tmpdir();
-  return mkdtempSync(join(baseDir, 'crove-media-'));
+  return mkdtempSync(join(baseDir, 'ludy-media-'));
 }
 
 function sortSegmentFiles(files: string[]): string[] {

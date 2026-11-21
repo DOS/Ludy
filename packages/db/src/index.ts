@@ -5,6 +5,7 @@ import type { Database } from './schema.ts';
 export type { Database } from './schema.ts';
 export * from './schema.ts';
 export { singleCell, type CellResolver } from './cells.ts';
+export { checkEnvPair, readEnvPair, type EnvPairResult, type EnvPairSource } from './env.ts';
 
 // Money (numeric), int8 and dates stay strings end to end; timestamptz becomes a Date.
 const NUMERIC = 1700;

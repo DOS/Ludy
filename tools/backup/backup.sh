@@ -33,10 +33,10 @@
 # exit 1. A deployment (PUBLIC_URL not on localhost) without BACKUP_S3_ENDPOINT keeps its run but fails the same way:
 # a copy on the same disk is not a backup.
 #
-# Settings come from the environment, then from $CROVE_DIR/.env, read as docker compose reads it (see .env.example,
+# Settings come from the environment, then from $LUDY_DIR/.env (or $CROVE_DIR/.env), read as docker compose reads it (see .env.example,
 # "Backups"):
-#   CROVE_DIR                directory of docker-compose.yml and .env (default: this checkout)
-#   BACKUP_DIR               where runs are written (default: $CROVE_DIR/.data/backups)
+#   LUDY_DIR / CROVE_DIR     directory of docker-compose.yml and .env (default: this checkout)
+#   BACKUP_DIR               where runs are written (default: $LUDY_DIR/.data/backups)
 #   BACKUP_KEEP_DAYS         days a run is kept in BACKUP_DIR and in the bucket (default 30)
 #   BACKUP_LOCAL_KEEP_DAYS   days a run is kept in BACKUP_DIR when a bucket is set (default BACKUP_KEEP_DAYS)
 #   BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (default crove), BACKUP_S3_ACCESS_KEY_ID,
@@ -97,10 +97,10 @@ on_exit() {
 }
 trap on_exit EXIT
 
-STEP="reading $CROVE_DIR/.env"
-load_env_file "$CROVE_DIR/.env"
+STEP="reading $LUDY_DIR/.env"
+load_env_file "$LUDY_DIR/.env"
 
-BACKUP_DIR="${BACKUP_DIR:-$CROVE_DIR/.data/backups}"
+BACKUP_DIR="${BACKUP_DIR:-$LUDY_DIR/.data/backups}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-30}"
 BACKUP_LOCAL_KEEP_DAYS="${BACKUP_LOCAL_KEEP_DAYS:-$BACKUP_KEEP_DAYS}"
 BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-crove}"

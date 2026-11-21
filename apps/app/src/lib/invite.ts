@@ -76,7 +76,7 @@ export function takeTokenFromHash(): string | null {
 // restricted (invite_only, or an invited address under allowlist), Supabase Auth only gets a sign-up for an invited
 // address that carries its token: whoever merely knows the address cannot create the account first with their own
 // password. The proxy never forwards the header.
-export const INVITE_TOKEN_HEADER = 'x-crove-invite';
+export const INVITE_TOKEN_HEADER = 'x-ludy-invite';
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input;

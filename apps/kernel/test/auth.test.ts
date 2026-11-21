@@ -380,3 +380,40 @@ describe('Supabase Auth sign-out job', () => {
     }
   });
 });
+
+describe('bundled vs custom AUTH_ISSUER dual acceptance', () => {
+  const mintWithIssuer = async (issuer: string) => {
+    const now = Math.floor(Date.now() / 1000);
+    return new SignJWT({
+      iss: issuer,
+      aud: 'authenticated',
+      sub: SUBJECT,
+      iat: now,
+      exp: now + 900,
+      role: 'authenticated',
+      email: 'user@example.com',
+      session_id: SESSION,
+      aal: 'aal1',
+      is_anonymous: false,
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .sign(KEY);
+  };
+
+  it('accepts both ludy-auth and crove-auth when AUTH_ISSUER is bundled (either spelling)', async () => {
+    for (const configured of ['ludy-auth', 'crove-auth']) {
+      const verifier = createTokenVerifier(loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: configured }));
+      await expect(verifier(await mintWithIssuer('ludy-auth'))).resolves.toMatchObject({ issuer: 'ludy-auth', subject: SUBJECT });
+      await expect(verifier(await mintWithIssuer('crove-auth'))).resolves.toMatchObject({ issuer: 'crove-auth', subject: SUBJECT });
+      await expect(verifier(await mintWithIssuer('other-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+    }
+  });
+
+  it('accepts only the exact issuer when AUTH_ISSUER is external or custom', async () => {
+    const customIssuer = 'https://auth.example.test/auth/v1';
+    const verifier = createTokenVerifier(loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: customIssuer }));
+    await expect(verifier(await mintWithIssuer(customIssuer))).resolves.toMatchObject({ issuer: customIssuer, subject: SUBJECT });
+    await expect(verifier(await mintWithIssuer('ludy-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+    await expect(verifier(await mintWithIssuer('crove-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+  });
+});

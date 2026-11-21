@@ -99,7 +99,7 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
   await test.step('a call to write a template by a member is refused and changes nothing', async () => {
     const session = await storedSession(member);
     const refused = await member.request.post('/api/rpc/meetings/template/create', {
-      headers: { authorization: `Bearer ${session?.access_token ?? ''}`, 'x-crove-org': slug, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${session?.access_token ?? ''}`, 'x-ludy-org': slug, 'content-type': 'application/json' },
       data: { json: { name: 'Mẫu của thành viên', sections: [{ title: 'Một mục', hint: '' }] } },
     });
     expect(refused.status(), await refused.text()).toBe(403);

@@ -3661,7 +3661,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         notify: alertTarget?.webhookUrl
           ? async (text) => {
               const delivery = await postMessage(
-                { text: `[Crove] Worker on ${alertTarget.instance}: ${text}`, crove: { kind: 'back_pressure', instance: alertTarget.instance } },
+                { text: `[Ludy] Worker on ${alertTarget.instance}: ${text}`, ludy: { kind: 'back_pressure', instance: alertTarget.instance } },
                 { webhookUrl: alertTarget.webhookUrl, format: alertTarget.webhookFormat, telegramChatId: alertTarget.telegramChatId },
               );
               if (!delivery.ok) console.error(`[back-pressure] could not post the alert: ${delivery.error ?? 'unknown error'}`);

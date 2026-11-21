@@ -138,16 +138,18 @@ describe('configuration guards', () => {
   });
 
   // #2118: a missing compose.pilot.yml or a stray profile must not silently run the API on the worker's login.
-  it('starts the all role on a public PUBLIC_URL only with CROVE_ALLOW_ALL_IN_ONE=true', () => {
+  it('starts the all role on a public PUBLIC_URL only with LUDY_ALLOW_ALL_IN_ONE=true / CROVE_ALLOW_ALL_IN_ONE=true', () => {
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
-    expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/CROVE_ALLOW_ALL_IN_ONE=true/);
+    expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/LUDY_ALLOW_ALL_IN_ONE=true/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'false' }), 'all')).toThrow(/separate processes/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: '' }), 'all')).toThrow(/separate processes/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ LUDY_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
     for (const role of ['api', 'worker'] as const) expect(() => assertSplitRoles(publicConfig(), role)).not.toThrow();
     // A laptop needs no opt-in.
     expect(() => assertSplitRoles(loadConfig(base), 'all')).not.toThrow();
-    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/CROVE_ALLOW_ALL_IN_ONE/);
+    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE/);
+    expect(() => loadConfig({ ...base, LUDY_ALLOW_ALL_IN_ONE: 'true', CROVE_ALLOW_ALL_IN_ONE: 'false' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE and CROVE_ALLOW_ALL_IN_ONE are both set with conflicting values/);
   });
 
   // #2133: keeping the worker's all-org login out of the API does not rest on how the container was composed.
@@ -231,7 +233,9 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
     expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/LUDY_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
+    expect(loadConfig({ ...base, LUDY_MODULES: 'finance,crm', CROVE_MODULES: 'finance,crm' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'crm']);
+    expect(() => loadConfig({ ...base, LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toThrow(/LUDY_MODULES and CROVE_MODULES are both set with conflicting values/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
@@ -594,8 +598,11 @@ describe('GET /version', () => {
   });
 
   it('takes a build id of letters, digits, dot, dash and underscore only', () => {
-    expect(loadConfig({ ...base, CROVE_BUILD: ' ' }).CROVE_BUILD).toBeUndefined();
-    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, CROVE_BUILD: bad }), bad).toThrow(/CROVE_BUILD/);
+    expect(loadConfig({ ...base, LUDY_BUILD: ' ' }).LUDY_BUILD).toBeUndefined();
+    expect(loadConfig({ ...base, CROVE_BUILD: 'abc-123' }).LUDY_BUILD).toBe('abc-123');
+    expect(loadConfig({ ...base, LUDY_BUILD: 'abc-123', CROVE_BUILD: 'abc-123' }).CROVE_BUILD).toBe('abc-123');
+    expect(() => loadConfig({ ...base, LUDY_BUILD: 'abc', CROVE_BUILD: 'def' })).toThrow(/LUDY_BUILD and CROVE_BUILD are both set with conflicting values/);
+    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, CROVE_BUILD: bad }), bad).toThrow(/LUDY_BUILD/);
   });
 });
 
@@ -1293,5 +1300,202 @@ describe('org export owner-run route (#4137)', () => {
       });
     }
     expect(stream).not.toHaveBeenCalled();
+  });
+});
+
+describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#3967)', () => {
+  const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
+
+  it('fails closed on conflicting LUDY_* vs CROVE_* env vars without echoing secret values', () => {
+    const keyA = Buffer.alloc(32, 7).toString('base64');
+    const keyB = Buffer.alloc(32, 8).toString('base64');
+    let contextErr = '';
+    try {
+      loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyB });
+    } catch (error) {
+      contextErr = (error as Error).message;
+    }
+    expect(contextErr).toMatch(/LUDY_CONTEXT_TOKEN_KEY and CROVE_CONTEXT_TOKEN_KEY are both set with conflicting values/);
+    expect(contextErr).not.toContain(keyA);
+    expect(contextErr).not.toContain(keyB);
+    expect(() => loadConfig({ ...base, LUDY_BUILD_TIME: '2026-11-22T00:00:00Z', CROVE_BUILD_TIME: '2026-11-22T01:00:00Z' })).toThrow(
+      /LUDY_BUILD_TIME and CROVE_BUILD_TIME are both set with conflicting values/,
+    );
+    expect(loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyA }).LUDY_CONTEXT_TOKEN_KEY).toBe(keyA);
+  });
+
+  it('accepts x-ludy-org and x-crove-org equally and rejects conflicting values on routes and /api/rpc/*', async () => {
+    const orgId = randomUUID();
+    const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
+    const app = createHttpApp({
+      config: loadConfig(base),
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel'],
+        forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+        query: async () => ({ status: 'active', requestedAt: null, ownerRunTables: [], export: null }),
+        execute: async () => ({}),
+      } as unknown as Runtime,
+      store: {} as BlobStore,
+      authenticate: async () => owner,
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+    });
+
+    for (const headers of [
+      { [ORG_HEADER]: 'acme' },
+      { 'x-crove-org': 'acme' },
+      { [ORG_HEADER]: 'acme', 'x-crove-org': 'acme' },
+    ]) {
+      const response = await app.request('/api/org-export/meetings.glossary_term', { headers: { authorization: 'Bearer owner', ...headers } });
+      expect(response.status, JSON.stringify(headers)).toBe(409);
+      expect(await response.json()).toMatchObject({ code: ORG_NOT_OFFBOARDING });
+    }
+
+    const routeConflict = await app.request('/api/org-export/meetings.glossary_term', {
+      headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
+    });
+    expect(routeConflict.status).toBe(400);
+    expect(await routeConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+
+    const rpcConflict = await app.request('/api/rpc/orgs/list', {
+      method: 'POST',
+      headers: { authorization: 'Bearer owner', 'content-type': 'application/json', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
+      body: '{}',
+    });
+    expect(rpcConflict.status).toBe(400);
+    expect(await rpcConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+  });
+
+  it('accepts x-ludy-invite / x-crove-invite equally, fails closed on mismatch, and drops both before upstream forwarding', async () => {
+    const seen: Array<{ path: string; headers: IncomingHttpHeaders }> = [];
+    const upstream = createServer((req, res) => {
+      seen.push({ path: req.url ?? '', headers: req.headers });
+      res.setHeader('content-type', 'application/json');
+      res.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = upstream.address() as AddressInfo;
+      const validToken = 'a'.repeat(43);
+      const otherToken = 'b'.repeat(43);
+      let checkedTokens: string[] = [];
+      const app = createHttpApp({
+        config: loadConfig({ ...base, AUTH_UPSTREAM_URL: `http://127.0.0.1:${port}`, AUTH_SIGNUP_POLICY: 'invite_only' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+        emailLimiter: {
+          reserve: async () => ({ allowed: true, reservation: 'slot' }),
+          release: async () => {},
+        },
+        signupRefusalLimiter: {
+          reserve: async () => ({ allowed: true, release: async () => {} }),
+        },
+        signupInviteChecks: {
+          held: async () => false,
+          matches: async (_email, token) => {
+            checkedTokens.push(token);
+            return token === validToken;
+          },
+        },
+      });
+
+      const signup = (headers: Record<string, string>) =>
+        app.request('/auth/v1/signup', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify({ email: 'invited@example.test', password: 'correct-horse-battery-staple' }),
+        });
+
+      for (const headers of [
+        { 'x-ludy-invite': validToken },
+        { 'x-crove-invite': validToken },
+        { 'x-ludy-invite': validToken, 'x-crove-invite': validToken },
+      ]) {
+        seen.length = 0;
+        checkedTokens = [];
+        const res = await signup(headers);
+        expect(res.status, JSON.stringify(headers)).toBe(200);
+        expect(checkedTokens).toEqual([validToken]);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
+        expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
+      }
+
+      seen.length = 0;
+      checkedTokens = [];
+      const conflict = await signup({ 'x-ludy-invite': validToken, 'x-crove-invite': otherToken });
+      expect(conflict.status).toBe(403);
+      expect(checkedTokens).toEqual([]);
+      expect(seen).toHaveLength(0);
+
+      seen.length = 0;
+      const proxied = await app.request('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ludy-invite': validToken, 'x-crove-invite': otherToken },
+        body: '{}',
+      });
+      expect(proxied.status).toBe(200);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
+      expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  it('accepts x-ludy-recipient and x-crove-recipient equally on inbound email and returns 400 on conflict', async () => {
+    const INBOUND_SECRET = 'z'.repeat(32);
+    const stored: string[] = [];
+    const app = createHttpApp({
+      config: loadConfig({ ...base, INBOUND_DOMAIN: 'in.test', INBOUND_SECRET }),
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel'],
+        orgless: async () => true,
+      } as unknown as Runtime,
+      store: {
+        put: async (key: string) => {
+          stored.push(key);
+          return 'content:test';
+        },
+        get: async () => new Uint8Array(),
+        delete: async () => {},
+      } as unknown as BlobStore,
+      authenticate: async () => {
+        throw new Error('not used');
+      },
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+    });
+    const addr = `${'a'.repeat(24)}@in.test`;
+    const send = (headers: Record<string, string>) =>
+      app.request('/api/inbound/email', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${INBOUND_SECRET}`, ...headers },
+        body: 'From: sender@example.test\r\nSubject: Hi\r\n\r\nBody',
+      });
+
+    for (const headers of [
+      { 'x-ludy-recipient': addr },
+      { 'x-crove-recipient': addr },
+      { 'x-ludy-recipient': addr, 'x-crove-recipient': addr },
+    ]) {
+      stored.length = 0;
+      const res = await send(headers);
+      expect(res.status, JSON.stringify(headers)).toBe(202);
+      expect(stored).toHaveLength(1);
+    }
+
+    stored.length = 0;
+    const conflict = await send({ 'x-ludy-recipient': addr, 'x-crove-recipient': `${'b'.repeat(24)}@in.test` });
+    expect(conflict.status).toBe(400);
+    expect(await conflict.json()).toEqual({ code: 'RECIPIENT_HEADER_CONFLICT', message: 'Conflicting x-ludy-recipient and x-crove-recipient headers' });
+    expect(stored).toHaveLength(0);
   });
 });

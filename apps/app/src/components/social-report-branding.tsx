@@ -27,7 +27,7 @@ export function BrandMark({ brand, org }: { brand: ReportBrand | null; org: stri
 }
 
 /** The line under a branded page that it was made with Crove, unless the org hides it; nothing without a brand. */
-export function MadeWithCrove({ brand }: { brand: ReportBrand | null }) {
+export function MadeWithLudy({ brand }: { brand: ReportBrand | null }) {
   const t = useTranslations('social.reportBranding');
   if (!brand || brand.hideCrove) return null;
   return <p className="text-xs text-subtle-foreground">{t('madeWith')}</p>;

@@ -216,7 +216,7 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
 
   const acquire = createLimiter(concurrency, maxQueue);
 
-  app.get('/healthz', (c) => c.json({ ok: true, service: 'crove-media' }, 200));
+  app.get('/healthz', (c) => c.json({ ok: true, service: 'ludy-media' }, 200));
 
   async function handleOperation<T>(
     c: Context,

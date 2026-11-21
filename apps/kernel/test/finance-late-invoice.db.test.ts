@@ -394,7 +394,7 @@ suite('late purchase invoice in an open month (#478)', () => {
       expect.objectContaining({
         outcome: 'matched',
         declaredInLaterPeriod: true,
-        crove: expect.objectContaining({ id: lateDocument, issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) }),
+        ludy: expect.objectContaining({ id: lateDocument, issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) }),
       }),
     ]);
     expect(locked.summary).toMatchObject({ matched: 1, missing: 0, notOnPortal: 0, declaredLate: 0 });
@@ -402,11 +402,11 @@ suite('late purchase invoice in an open month (#478)', () => {
     // The month it was posted in: the month's own invoice matched, and the late one declared late, neither missing from
     // the portal nor unexplained, as the VAT working counts it here.
     const open = await reconcile(OPEN);
-    expect(open.items.map((i: any) => [i.crove?.id ?? null, i.outcome, i.declaredInLaterPeriod])).toEqual([
+    expect(open.items.map((i: any) => [i.ludy?.id ?? null, i.outcome, i.declaredInLaterPeriod])).toEqual([
       [expect.any(String), 'matched', false],
       [lateDocument, 'declared_late', false],
     ]);
-    expect(open.items[1].crove).toMatchObject({ issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) });
+    expect(open.items[1].ludy).toMatchObject({ issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) });
     expect(open.summary).toMatchObject({ matched: 1, missing: 0, notOnPortal: 0, declaredLate: 1 });
   });
 

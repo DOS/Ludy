@@ -125,7 +125,7 @@ export function buildSandboxCmsDer(digestSha256: string, externalTxId: string, c
     derSet(
       derSeq(
         derOid([0x55, 0x04, 0x03]),
-        derNode(0x0c, new TextEncoder().encode('Crove Sandbox CA')),
+        derNode(0x0c, new TextEncoder().encode('Ludy Sandbox CA')),
       ),
     ),
   );

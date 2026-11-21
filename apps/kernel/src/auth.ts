@@ -131,6 +131,12 @@ export function bearerIssuedToOAuthClient(authorization: string | null | undefin
   return issuedToOAuthClient(claims);
 }
 
+const BUNDLED_AUTH_ISSUERS: readonly [string, string] = ['ludy-auth', 'crove-auth'];
+
+function acceptedIssuers(configured: string): string | string[] {
+  return BUNDLED_AUTH_ISSUERS.includes(configured) ? [...BUNDLED_AUTH_ISSUERS] : configured;
+}
+
 // Signature, algorithm family, issuer, audience and expiry, then the claims Crove relies on. Every failure is 401:
 // OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
@@ -138,7 +144,7 @@ export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetK
   const emailAccess = createEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const secret = config.AUTH_JWT_SECRET ? new TextEncoder().encode(config.AUTH_JWT_SECRET) : null;
   const options = {
-    issuer: config.AUTH_ISSUER,
+    issuer: acceptedIssuers(config.AUTH_ISSUER),
     audience: config.AUTH_AUDIENCE,
     requiredClaims: ['iss', 'aud', 'exp', 'sub', 'session_id'],
     clockTolerance: CLOCK_TOLERANCE_S,

@@ -1072,7 +1072,7 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect(memberCard.getByText('Đã đăng', { exact: true })).toBeVisible();
   await expect(memberCard.getByRole('button', { name: /Sửa (lại )?nội dung đã đăng/ })).toHaveCount(0);
   const refused = await memberPage.request.post('/api/rpc/social/variants/editPublished', {
-    headers: Object.fromEntries(Object.entries(headers).filter(([k]) => k === 'authorization' || k.startsWith('x-crove'))),
+    headers: Object.fromEntries(Object.entries(headers).filter(([k]) => k === 'authorization' || k.startsWith('x-ludy') || k.startsWith('x-crove'))),
     data: { json: { variantId, revision: 2, body: 'Thành viên sửa bài' } },
   });
   expect(refused.status()).toBe(403);

@@ -53,9 +53,9 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   // Every alert line and every posted message of one sweep.
   async function sweep() {
     const lines: string[] = [];
-    const posted: Array<{ text: string; crove: Record<string, unknown> }> = [];
+    const posted: Array<{ text: string; ludy: Record<string, unknown>; crove: Record<string, unknown> }> = [];
     const fetch = (async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body)) as { text: string; crove: Record<string, unknown> };
+      const body = JSON.parse(String(init.body)) as { text: string; ludy: Record<string, unknown>; crove: Record<string, unknown> };
       posted.push(body);
       return new Response('{}', { status: 200 });
     }) as unknown as typeof globalThis.fetch;
@@ -128,8 +128,10 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     expect(first.found).toBe(1);
     expect(first.lines).toEqual([expect.stringMatching(new RegExp(`^\\[security\\] ALERT actor_many_orgs: user ${probe} acted in 3 orgs within 5 min`))]);
     expect(first.posted).toHaveLength(1);
-    expect(first.posted[0]?.text).toMatch(/^\[Crove\] Security alert from books\.example\.test: user /);
-    expect(first.posted[0]?.crove).toMatchObject({ kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 });
+    expect(first.posted[0]?.text).toMatch(/^\[Ludy\] Security alert from books\.example\.test: user /);
+    const expected = { kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 };
+    expect(first.posted[0]?.ludy).toMatchObject(expected);
+    expect(first.posted[0]?.crove).toMatchObject(expected);
     // The same signal stays quiet until the repeat interval.
     expect((await sweep()).found).toBe(0);
   });

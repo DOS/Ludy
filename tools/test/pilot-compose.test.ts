@@ -59,7 +59,8 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(services['crove']?.command).toEqual(['all']);
     expect(services['crove']?.profiles).toBeUndefined();
     expect(services['crove']?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
-    expect(services['crove']?.environment?.['CROVE_MODULES']).toBe('');
+    expect(services['crove']?.environment?.['LUDY_MODULES']).toBe('');
+    expect(services['crove']?.networks).toEqual({ default: { aliases: ['ludy'] }, extract: null, media: null });
     expect(services['api']).toBeUndefined();
     expect(services['worker']).toBeUndefined();
   });
@@ -87,14 +88,14 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const worker = services['worker'];
     expect(api?.environment).not.toHaveProperty('WORKER_DATABASE_URL');
     expect(api?.environment).not.toHaveProperty('EXTRACT_URL');
-    // The API reaches crove-media (and not crove-extract): it measures the length of a meeting recording at upload (#2985).
+    // The API reaches ludy-media (and not ludy-extract): it measures the length of a meeting recording at upload (#2985).
     expect(Object.keys(api?.networks ?? {}).sort()).toEqual(['default', 'media']);
-    expect(api?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
+    expect(api?.environment?.['MEDIA_URL']).toBe('http://ludy-media:8095');
     expect(api?.environment?.['DATABASE_URL']).toContain('crove_app');
     expect(worker?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
-    expect(worker?.environment?.['EXTRACT_URL']).toBe('http://crove-extract:8090');
+    expect(worker?.environment?.['EXTRACT_URL']).toBe('http://ludy-extract:8090');
     expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
-    expect(worker?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
+    expect(worker?.environment?.['MEDIA_URL']).toBe('http://ludy-media:8095');
     // crove-media runs in both layouts (the release publishes and pins its image, #2988): no profile keeps it out, and the pin wins over its build.
     const pinned = config(['docker-compose.yml', 'compose.pilot.yml', 'docker-compose.override.yml'])['crove-media'] as (Service & { image?: string; build?: unknown }) | undefined;
     expect(pinned?.image).toBe('registry.example/ludy-media@sha256:bb');
@@ -173,7 +174,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const secrets = {
       AUTH_JWT_SECRET: random(),
       AUTH_AUTOCONFIRM: 'false',
-      CROVE_CONTEXT_TOKEN_KEY: random(),
+      LUDY_CONTEXT_TOKEN_KEY: random(),
       DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
       EXPORT_ENCRYPTION_KEY: random(),
     };
@@ -194,7 +195,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const bundled = config(files, {}, ['prober']);
     for (const name of ['api', 'worker']) {
       const env = bundled[name]?.environment;
-      expect(env?.['AUTH_ISSUER'], name).toBe('crove-auth');
+      expect(env?.['AUTH_ISSUER'], name).toBe('ludy-auth');
       expect(env?.['AUTH_SESSION_CHECK'], name).toBe('');
       expect(env?.['AUTH_UPSTREAM_URL'], name).toBe('http://auth:9999');
       expect(env?.['AUTH_JWKS_URL'], name).toBe('');
@@ -228,7 +229,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
       ...strings,
       AUTH_JWT_SECRET: random(),
       AUTH_AUTOCONFIRM: 'false',
-      CROVE_CONTEXT_TOKEN_KEY: random(),
+      LUDY_CONTEXT_TOKEN_KEY: random(),
       DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
       EXPORT_ENCRYPTION_KEY: random(),
     });
@@ -237,15 +238,17 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(loaded.AUTH_ALLOWED_EMAILS).toEqual(['owner@example.test']);
   });
 
-  it('runs the finance module by default for api, worker and prober, and follows CROVE_MODULES', () => {
+  it('runs the finance module by default for api, worker and prober, and follows LUDY_MODULES (or legacy CROVE_MODULES)', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml'];
     for (const [env, expected] of [
       [{}, 'finance'],
+      [{ LUDY_MODULES: '' }, 'finance'],
       [{ CROVE_MODULES: '' }, 'finance'],
       [{ CROVE_MODULES: 'finance,crm' }, 'finance,crm'],
+      [{ LUDY_MODULES: 'finance,crm' }, 'finance,crm'],
     ] as const) {
       const services = config(files, env, ['prober']);
-      for (const name of ['api', 'worker', 'prober']) expect(services[name]?.environment?.['CROVE_MODULES'], `${name} ${JSON.stringify(env)}`).toBe(expected);
+      for (const name of ['api', 'worker', 'prober']) expect(services[name]?.environment?.['LUDY_MODULES'], `${name} ${JSON.stringify(env)}`).toBe(expected);
     }
   });
 

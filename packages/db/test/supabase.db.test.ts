@@ -11,7 +11,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hardeningViolations, migrate, readMigrations } from '../src/migrate.ts';
 
-const URL_ENV = process.env.CROVE_TEST_SUPABASE_URL;
+const URL_ENV = process.env.LUDY_TEST_SUPABASE_URL ?? process.env.CROVE_TEST_SUPABASE_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 // Enabled before migrating, so their types, casts, operators and definer functions are in the catalog the guard
@@ -42,8 +42,8 @@ const EXTENSIONS: ReadonlyArray<readonly [string, string | null]> = [
 ];
 
 // The CI job sets CROVE_REQUIRE_SUPABASE_TEST, so losing the URL there fails the job instead of skipping the suite.
-if (process.env.CROVE_REQUIRE_SUPABASE_TEST && !URL_ENV) {
-  throw new Error('CROVE_REQUIRE_SUPABASE_TEST is set but CROVE_TEST_SUPABASE_URL is not');
+if ((process.env.LUDY_REQUIRE_SUPABASE_TEST ?? process.env.CROVE_REQUIRE_SUPABASE_TEST) && !URL_ENV) {
+  throw new Error('LUDY_REQUIRE_SUPABASE_TEST / CROVE_REQUIRE_SUPABASE_TEST is set but LUDY_TEST_SUPABASE_URL / CROVE_TEST_SUPABASE_URL is not');
 }
 const suite = URL_ENV ? describe : describe.skip;
 

@@ -274,13 +274,15 @@ describe('pilot-check settings', () => {
 
     it('fails when the API and the worker run as the one all-in-one process', () => {
       for (const env of [{ COMPOSE_FILE: undefined }, { COMPOSE_FILE: 'docker-compose.yml:compose.host.yml' }, { COMPOSE_FILE: 'docker-compose.yml:docker-compose.split.yml' }]) {
-        expect(failing({ ...READY, ...env }), JSON.stringify(env)).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE (?:does not list compose\.pilot\.yml|and CROVE_ROLES are unset).*command all/)]);
+        expect(failing({ ...READY, ...env }), JSON.stringify(env)).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE (?:does not list compose\.pilot\.yml|and LUDY_ROLES are unset).*command all/)]);
       }
       expect(failing({ ...READY, COMPOSE_PROFILES: 'prober,all-in-one' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one/)]);
       expect(failing({ ...READY, COMPOSE_PROFILES: 'all-in-one' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one/)]);
       // The kernel's own opt-in is the same statement the other way round.
-      for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: CROVE_ALLOW_ALL_IN_ONE is set: /)]);
-      expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: 'false' })).toEqual([]);
+      for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE is set: /)]);
+      for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE is set: /)]);
+      expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: 'false' })).toEqual([]);
+      expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: 'false', CROVE_ALLOW_ALL_IN_ONE: 'true' })).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE and CROVE_ALLOW_ALL_IN_ONE are both set with conflicting values/)]);
       // `*` starts every profile.
       for (const profiles of ['*', 'prober,*']) expect(failing({ ...READY, COMPOSE_PROFILES: profiles }), profiles).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one \(or \*\)/)]);
     });
@@ -293,23 +295,26 @@ describe('pilot-check settings', () => {
       expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml:my-compose.pilot.yml' })).toEqual([expect.stringContaining('Roles: COMPOSE_FILE does not list')]);
     });
 
-    it('takes the roles a deployment without docker compose names in CROVE_ROLES', () => {
+    it('takes the roles a deployment without docker compose names in LUDY_ROLES or CROVE_ROLES', () => {
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api, worker' })).toEqual([]);
       expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api, worker' })).toEqual([]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'worker,api' })).toEqual([]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: CROVE_ROLES includes all')]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api' })).toEqual([expect.stringContaining('Roles: CROVE_ROLES must name both api and worker')]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api,worker,all' })).toEqual([expect.stringContaining('CROVE_ROLES includes all')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'worker,api' })).toEqual([]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: LUDY_ROLES includes all')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api' })).toEqual([expect.stringContaining('Roles: LUDY_ROLES must name both api and worker')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api,worker,all' })).toEqual([expect.stringContaining('LUDY_ROLES includes all')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api,worker', CROVE_ROLES: 'api' })).toEqual([expect.stringContaining('LUDY_ROLES and CROVE_ROLES are both set with conflicting values')]);
       // A COMPOSE_FILE without the pilot file wins over the statement: docker compose would run all-in-one.
-      expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml', CROVE_ROLES: 'api,worker' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE does not list compose\.pilot\.yml/)]);
+      expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml', LUDY_ROLES: 'api,worker' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE does not list compose\.pilot\.yml/)]);
     });
 
-    it('fails an empty or unknown CROVE_MODULES', () => {
+    it('fails an empty, conflicting, or unknown LUDY_MODULES / CROVE_MODULES', () => {
       for (const modules of [undefined, '', '  ', ' , ']) {
-        expect(failing({ ...READY, CROVE_MODULES: modules }), String(modules)).toEqual([expect.stringMatching(/^Modules: CROVE_MODULES is empty: .*Social's public routes/)]);
+        expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: modules }), String(modules)).toEqual([expect.stringMatching(/^Modules: LUDY_MODULES is empty: .*Social's public routes/)]);
       }
       // The prober refuses the same list on its own (Alerts), so look at the item.
-      expect(failing({ ...READY, CROVE_MODULES: 'finance,sosial' })).toContainEqual(expect.stringContaining('Modules: CROVE_MODULES names 1 module(s) this build does not ship'));
-      expect(failing({ ...READY, CROVE_MODULES: 'Finance, CRM' })).toEqual([]);
+      expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: 'finance,sosial' })).toContainEqual(expect.stringContaining('Modules: LUDY_MODULES names 1 module(s) this build does not ship'));
+      expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: 'Finance, CRM' })).toEqual([]);
+      expect(failing({ ...READY, LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toContainEqual(expect.stringContaining('LUDY_MODULES and CROVE_MODULES are both set with conflicting values'));
     });
 
     it('fails backups with no BACKUP_ENCRYPTION_KEY and drops the manual line it replaces', () => {
@@ -435,7 +440,15 @@ describe('pilot-check settings', () => {
   });
 
   it('knows every secret value this repository ships in .env.example and the compose files', () => {
-    const secrets = new Set<string>([...REQUIRED_SECRETS, 'INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY']);
+    const secrets = new Set<string>([
+      ...REQUIRED_SECRETS,
+      'CROVE_APP_DB_PASSWORD',
+      'CROVE_WORKER_DB_PASSWORD',
+      'CROVE_PROBER_DB_PASSWORD',
+      'CROVE_REPORTER_DB_PASSWORD',
+      'INBOUND_SECRET',
+      'S3_SECRET_ACCESS_KEY',
+    ]);
     const shipped: string[] = [];
     for (const line of readFileSync(`${ROOT}.env.example`, 'utf8').split('\n')) {
       const match = /^([A-Z0-9_]+)=(.+)$/.exec(line.trim());
@@ -443,7 +456,9 @@ describe('pilot-check settings', () => {
     }
     for (const file of ['docker-compose.yml', 'docker-compose.split.yml']) {
       const text = readFileSync(`${ROOT}${file}`, 'utf8');
-      for (const match of text.matchAll(/\$\{([A-Z0-9_]+):-([^}]+)\}/g)) if (secrets.has(match[1]!)) shipped.push(match[2]!);
+      for (const match of text.matchAll(/\$\{([A-Z0-9_]+):-(?:\$\{([A-Z0-9_]+):-([^{}]+)\}|([^{}]+))\}/g)) {
+        if (secrets.has(match[1]!) || (match[2] && secrets.has(match[2]))) shipped.push((match[3] ?? match[4])!);
+      }
       for (const match of text.matchAll(/^\s+([A-Z0-9_]+): ([^${\s][^\s]*)$/gm)) if (secrets.has(match[1]!)) shipped.push(match[2]!.replace(/^'|'$/g, ''));
     }
     expect(shipped.length).toBeGreaterThan(10);
@@ -627,7 +642,7 @@ describe('pilot-check CORS probe (#2261)', () => {
   const API = 'https://api.example.com';
   const APP = 'https://app.example.com';
   // A fetch that answers a preflight the way an API with CORS_ALLOWED_ORIGINS=APP does, or a broken variant of it.
-  const preflight = (allow: (origin: string) => string | null, status = 204, headers = 'authorization, content-type, x-crove-org'): Fetch => async (_input, init) => {
+  const preflight = (allow: (origin: string) => string | null, status = 204, headers = 'authorization, content-type, x-ludy-org'): Fetch => async (_input, init) => {
     const origin = new Headers(init?.headers).get('origin') ?? '';
     const given = allow(origin);
     return new Response(null, { status, headers: given === null ? {} : { 'access-control-allow-origin': given, 'access-control-allow-headers': headers } });
@@ -646,8 +661,8 @@ describe('pilot-check CORS probe (#2261)', () => {
   it('fails when the preflight is not 2xx, or does not allow the headers the app sends', async () => {
     const only = (o: string) => (o === APP ? APP : null);
     expect(await probeCors(API, APP, preflight(only, 403))).toMatchObject({ status: 'fail', message: expect.stringMatching(/answered 403/) });
-    expect(await probeCors(API, APP, preflight(only, 204, 'content-type'))).toMatchObject({ status: 'fail', message: expect.stringMatching(/does not allow the header\(s\) authorization, x-crove-org/) });
-    expect(await probeCors(API, APP, preflight(only, 204, 'Authorization,Content-Type,X-Crove-Org'))).toMatchObject({ status: 'pass' });
+    expect(await probeCors(API, APP, preflight(only, 204, 'content-type'))).toMatchObject({ status: 'fail', message: expect.stringMatching(/does not allow the header\(s\) authorization, x-ludy-org/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'Authorization,Content-Type,X-Ludy-Org'))).toMatchObject({ status: 'pass' });
   });
 
   it('fails when an origin off the list is answered too', async () => {
@@ -867,5 +882,40 @@ describe('pilot-check evidence holds (#1996)', () => {
     expect(await run(fakeS3(() => {
       throw s3Error('NoSuchBucket', 404);
     }).client)).toMatch(/^MANUAL +Evidence holds .*NoSuchBucket \(404\)/m);
+  });
+});
+
+describe('LUDY_* / CROVE_* env dual-read and conflicts (#3967)', () => {
+  it('accepts primary LUDY_* or matching DB password pairs and fails closed on conflicts without leaking secrets', () => {
+    const primaryEnv: Env = {
+      ...READY,
+      LUDY_APP_DB_PASSWORD: fake('app'),
+      LUDY_WORKER_DB_PASSWORD: fake('worker'),
+      LUDY_PROBER_DB_PASSWORD: fake('prober'),
+      LUDY_REPORTER_DB_PASSWORD: fake('reporter'),
+      LUDY_ROLES: undefined,
+      CROVE_ROLES: undefined,
+      LUDY_MODULES: 'finance',
+      CROVE_MODULES: undefined,
+    };
+    delete (primaryEnv as Record<string, unknown>).CROVE_APP_DB_PASSWORD;
+    delete (primaryEnv as Record<string, unknown>).CROVE_WORKER_DB_PASSWORD;
+    delete (primaryEnv as Record<string, unknown>).CROVE_PROBER_DB_PASSWORD;
+    delete (primaryEnv as Record<string, unknown>).CROVE_REPORTER_DB_PASSWORD;
+    expect(failing(primaryEnv)).toEqual([]);
+
+    const conflictPw = fake('different-app-secret', 24);
+    const conflictMsgs = failing({ ...READY, LUDY_APP_DB_PASSWORD: conflictPw });
+    expect(conflictMsgs).toContainEqual(expect.stringMatching(/^Secrets: LUDY_APP_DB_PASSWORD and CROVE_APP_DB_PASSWORD are both set with conflicting values/));
+    for (const msg of conflictMsgs) {
+      expect(msg).not.toContain(conflictPw);
+      expect(msg).not.toContain(String(READY.CROVE_APP_DB_PASSWORD));
+    }
+  });
+
+  it('fails closed in probeBuildChecks on conflicting LUDY_SOURCE_REPO and CROVE_SOURCE_REPO', async () => {
+    const result = await probeBuildChecks('https://ludy.example.com', { LUDY_SOURCE_REPO: 'DOS/Ludy', CROVE_SOURCE_REPO: 'other/repo' }, fakeFetch({}));
+    expect(result).toMatchObject({ item: 'RLS matrix', status: 'fail' });
+    expect(result.message).toMatch(/LUDY_SOURCE_REPO and CROVE_SOURCE_REPO are both set with conflicting values/);
   });
 });

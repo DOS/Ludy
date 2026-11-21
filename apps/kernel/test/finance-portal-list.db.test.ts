@@ -288,21 +288,21 @@ suite('tax portal purchase list (#465)', () => {
     expect(result.status).toBe(200);
     expect(result.body.lists).toEqual([expect.objectContaining({ id: listId, status: 'done', rowCount: 8, listFrom: '2026-09-01', listTo: '2026-09-30', error: null })]);
     const byNumber = Object.fromEntries(
-      result.body.items.map((i: any) => [i.portal?.number ?? i.crove?.number, { outcome: i.outcome, kind: i.crove?.kind ?? null, differences: i.differences, duplicateRows: i.duplicateRows }]),
+      result.body.items.map((i: any) => [i.portal?.number ?? i.ludy?.number, { outcome: i.outcome, kind: i.ludy?.kind ?? null, differences: i.differences, duplicateRows: i.duplicateRows }]),
     );
     expect(byNumber).toEqual({
       '9001': { outcome: 'matched', kind: 'document', differences: [], duplicateRows: 1 },
       '9002': { outcome: 'missing', kind: null, differences: [], duplicateRows: 0 },
       '9003': { outcome: 'in_inbox', kind: 'proposal', differences: [], duplicateRows: 0 },
       '9004': { outcome: 'amount_mismatch', kind: 'document', differences: ['total'], duplicateRows: 0 },
-      '9005': { outcome: 'void_in_crove', kind: 'document', differences: [], duplicateRows: 0 },
+      '9005': { outcome: 'void_in_ludy', kind: 'document', differences: [], duplicateRows: 0 },
       '9006': { outcome: 'not_on_portal', kind: 'document', differences: [], duplicateRows: 0 },
       '9007': { outcome: 'missing', kind: null, differences: [], duplicateRows: 0 },
       '9008': { outcome: 'void', kind: null, differences: [], duplicateRows: 0 },
     });
-    expect(result.body.summary).toMatchObject({ portalInvoices: 7, matched: 1, inInbox: 1, amountMismatch: 1, missing: 2, voidInCrove: 1, void: 1, notOnPortal: 1, duplicateRows: 1 });
+    expect(result.body.summary).toMatchObject({ portalInvoices: 7, matched: 1, inInbox: 1, amountMismatch: 1, missing: 2, voidInLudy: 1, void: 1, notOnPortal: 1, duplicateRows: 1 });
     // The template came from the booked document's proposal.
-    expect(result.body.items.find((i: any) => i.portal?.number === '9001').crove).toMatchObject({ template: '1', series: 'C26TAB', sellerTaxCode: SELLER });
+    expect(result.body.items.find((i: any) => i.portal?.number === '9001').ludy).toMatchObject({ template: '1', series: 'C26TAB', sellerTaxCode: SELLER });
   });
 
   it('keeps lists and Crove-only invoices to their period', async () => {
@@ -313,7 +313,7 @@ suite('tax portal purchase list (#465)', () => {
     const quarter = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2026-Q3' });
     expect(quarter.body.lists).toEqual([]);
     const september = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2026-09' });
-    expect(september.body.items.some((i: any) => i.crove?.number === '1001')).toBe(false);
+    expect(september.body.items.some((i: any) => i.ludy?.number === '1001')).toBe(false);
   });
 
   it('refuses the same file twice in a period, and takes a removed list out of the reconciliation', async () => {
@@ -641,23 +641,23 @@ suite('tax portal purchase list (#465)', () => {
     expect(result.status, JSON.stringify(result.body)).toBe(200);
     expect(result.body.direction).toBe('sale');
     expect(result.body.lists).toEqual([expect.objectContaining({ id: first.listId, direction: 'sale', status: 'done', rowCount: 4, error: null })]);
-    const byNumber = Object.fromEntries(result.body.items.map((i: any) => [i.portal?.number ?? i.crove?.number, { outcome: i.outcome, differences: i.differences }]));
+    const byNumber = Object.fromEntries(result.body.items.map((i: any) => [i.portal?.number ?? i.ludy?.number, { outcome: i.outcome, differences: i.differences }]));
     expect(byNumber).toEqual({
       '8001': { outcome: 'matched', differences: [] },
       '8002': { outcome: 'amount_mismatch', differences: ['vat'] },
       '8003': { outcome: 'missing', differences: [] },
       '8004': { outcome: 'not_on_portal', differences: [] },
-      '8005': { outcome: 'void_in_crove', differences: [] },
+      '8005': { outcome: 'void_in_ludy', differences: [] },
     });
-    expect(result.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInCrove: 1 });
+    expect(result.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInLudy: 1 });
     // The customer is carried on both sides.
     expect(result.body.items.find((i: any) => i.portal?.number === '8003').portal).toMatchObject({ buyerTaxCode: SELLER, sellerTaxCode: BUYER });
-    expect(result.body.items.find((i: any) => i.portal?.number === '8001').crove).toMatchObject({ buyerTaxCode: SELLER, buyerName: expect.any(String) });
+    expect(result.body.items.find((i: any) => i.portal?.number === '8001').ludy).toMatchObject({ buyerTaxCode: SELLER, buyerName: expect.any(String) });
     // The purchase side of the period knows nothing of the sales list, and the books are untouched by the comparison.
     const purchases = await rpc('portalList/reconcile', await tokenFor(viewer), { period: '2026-09' });
     expect(purchases.body.direction).toBe('purchase');
     expect(purchases.body.lists.every((l: any) => l.direction === 'purchase')).toBe(true);
-    expect(purchases.body.items.some((i: any) => ['8001', '8002', '8003', '8004', '8005'].includes(i.portal?.number ?? i.crove?.number))).toBe(false);
+    expect(purchases.body.items.some((i: any) => ['8001', '8002', '8003', '8004', '8005'].includes(i.portal?.number ?? i.ludy?.number))).toBe(false);
     const sales = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_finance.purchase_document WHERE org_id = $1 AND direction = 'sale'`, [org.orgId])).rows[0]);
     expect(sales.n).toBe(4);
 
@@ -668,7 +668,7 @@ suite('tax portal purchase list (#465)', () => {
     await importList([...portalSales].reverse(), '2026-09', 'sale');
     const twice = await rpc('portalList/reconcile', await tokenFor(viewer), { period: '2026-09', direction: 'sale' });
     expect(twice.body.lists).toHaveLength(2);
-    expect(twice.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInCrove: 1, duplicateRows: 4 });
+    expect(twice.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInLudy: 1, duplicateRows: 4 });
   }, 60_000);
 
   it('refuses a purchase list imported as a sales list and the other way round (#2141)', async () => {

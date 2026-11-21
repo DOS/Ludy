@@ -7,6 +7,7 @@
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
+import { checkEnvPair } from '@ludy/db';
 import { ORG_HEADER } from '@ludy/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@ludy/kernel-runtime';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
@@ -38,14 +39,21 @@ export type Env = Readonly<Record<string, string | undefined>>;
 // in step with those files.
 export const REQUIRED_SECRETS = [
   'POSTGRES_PASSWORD',
-  'CROVE_APP_DB_PASSWORD',
-  'CROVE_WORKER_DB_PASSWORD',
-  'CROVE_PROBER_DB_PASSWORD',
-  'CROVE_REPORTER_DB_PASSWORD',
+  'LUDY_APP_DB_PASSWORD',
+  'LUDY_WORKER_DB_PASSWORD',
+  'LUDY_PROBER_DB_PASSWORD',
+  'LUDY_REPORTER_DB_PASSWORD',
   'AUTH_DB_PASSWORD',
   'AUTH_JWT_SECRET',
   'EXPORT_ENCRYPTION_KEY',
 ] as const;
+
+const LEGACY_SECRET_NAMES: Partial<Record<(typeof REQUIRED_SECRETS)[number], string>> = {
+  LUDY_APP_DB_PASSWORD: 'CROVE_APP_DB_PASSWORD',
+  LUDY_WORKER_DB_PASSWORD: 'CROVE_WORKER_DB_PASSWORD',
+  LUDY_PROBER_DB_PASSWORD: 'CROVE_PROBER_DB_PASSWORD',
+  LUDY_REPORTER_DB_PASSWORD: 'CROVE_REPORTER_DB_PASSWORD',
+};
 
 export const KNOWN_DEFAULTS: ReadonlySet<string> = new Set([
   // The database passwords of .env.example and the docker-compose.yml fallbacks, which the kernel also refuses in a
@@ -57,6 +65,7 @@ export const KNOWN_DEFAULTS: ReadonlySet<string> = new Set([
   'local-only-jwt-secret-change-me-0123456789',
   // docker-compose.split.yml (a local test stack)
   'split-stack-inbound-secret-0123456789abcdef',
+  'ludy-split-minio-secret',
   'crove-split-minio-secret',
 ]);
 
@@ -138,8 +147,10 @@ function list(raw: string | undefined, separator: RegExp): string[] {
 // docker compose names its roles in CROVE_ROLES. Names settings only, never a value.
 function rolesProblem(env: Env): string | null {
   // The kernel's own opt-in to run the all role on a public URL (config.ts assertSplitRoles).
-  if (value(env, 'CROVE_ALLOW_ALL_IN_ONE')?.toLowerCase() === 'true') {
-    return 'CROVE_ALLOW_ALL_IN_ONE is set: the kernel then accepts the all-in-one role (the API on the worker database login and every secret) on a public PUBLIC_URL; unset it and run api and worker apart (docs/runbooks/deploy.md)';
+  const allowAll = checkEnvPair(env, 'LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE');
+  if (!allowAll.ok) return allowAll.error;
+  if (allowAll.value?.toLowerCase() === 'true') {
+    return 'LUDY_ALLOW_ALL_IN_ONE is set: the kernel then accepts the all-in-one role (the API on the worker database login and every secret) on a public PUBLIC_URL; unset it and run api and worker apart (docs/runbooks/deploy.md)';
   }
   // `*` is every profile, the all-in-one service among them.
   const profiles = list(value(env, 'COMPOSE_PROFILES'), /,/);
@@ -149,28 +160,32 @@ function rolesProblem(env: Env): string | null {
   // The list separator is ':' (';' on Windows hosts), and an entry may be a path: the file name is matched as a whole entry.
   const composeFile = value(env, 'COMPOSE_FILE');
   const listsPilotFile = /(?:^|[:;/\\])compose\.pilot\.yml(?:$|[:;])/.test(composeFile ?? '');
-  // CROVE_ROLES is the deployment's own statement, for one without docker compose; it never outvotes a COMPOSE_FILE that
+  // LUDY_ROLES is the deployment's own statement, for one without docker compose; it never outvotes a COMPOSE_FILE that
   // says the opposite.
   if (composeFile !== undefined && !listsPilotFile) {
     return `COMPOSE_FILE does not list ${PILOT_COMPOSE_FILE}: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} (docs/runbooks/deploy.md)`;
   }
-  const roles = list(value(env, 'CROVE_ROLES')?.toLowerCase(), /[\s,]+/);
+  const rolesPair = checkEnvPair(env, 'LUDY_ROLES', 'CROVE_ROLES');
+  if (!rolesPair.ok) return rolesPair.error;
+  const roles = list(rolesPair.value?.toLowerCase(), /[\s,]+/);
   if (roles.length > 0) {
-    if (roles.includes('all')) return 'CROVE_ROLES includes all: run api and worker as separate processes (docs/runbooks/deploy.md)';
-    return roles.includes('api') && roles.includes('worker') ? null : 'CROVE_ROLES must name both api and worker, each as its own container or service (docs/runbooks/deploy.md)';
+    if (roles.includes('all')) return 'LUDY_ROLES includes all: run api and worker as separate processes (docs/runbooks/deploy.md)';
+    return roles.includes('api') && roles.includes('worker') ? null : 'LUDY_ROLES must name both api and worker, each as its own container or service (docs/runbooks/deploy.md)';
   }
   if (listsPilotFile) return null;
-  return `COMPOSE_FILE and CROVE_ROLES are unset: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} in COMPOSE_FILE (docs/runbooks/deploy.md), or name the roles in CROVE_ROLES for a deployment without docker compose`;
+  return `COMPOSE_FILE and LUDY_ROLES are unset: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} in COMPOSE_FILE (docs/runbooks/deploy.md), or name the roles in LUDY_ROLES for a deployment without docker compose`;
 }
 
-// CROVE_MODULES names the modules the pilot runs; empty runs every module, Social's public routes included.
+// LUDY_MODULES names the modules the pilot runs; empty runs every module, Social's public routes included.
 function modulesProblem(env: Env): string | null {
-  const names = list(value(env, 'CROVE_MODULES')?.toLowerCase(), /,/);
+  const modulesPair = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
+  if (!modulesPair.ok) return modulesPair.error;
+  const names = list(modulesPair.value?.toLowerCase(), /,/);
   if (names.length === 0) {
-    return `CROVE_MODULES is empty: the deployment then runs every module (${AVAILABLE_MODULES.join(', ')}), Social's public routes among them; set CROVE_MODULES=finance, or the modules the pilot uses (docs/runbooks/deploy.md)`;
+    return `LUDY_MODULES is empty: the deployment then runs every module (${AVAILABLE_MODULES.join(', ')}), Social's public routes among them; set LUDY_MODULES=finance, or the modules the pilot uses (docs/runbooks/deploy.md)`;
   }
   const unknown = names.filter((name) => !(AVAILABLE_MODULES as readonly string[]).includes(name));
-  return unknown.length > 0 ? `CROVE_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
+  return unknown.length > 0 ? `LUDY_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
 }
 
 // The prices are decimal strings and are compared as decimals (the money rule, #3481).
@@ -244,16 +259,27 @@ export function checkEnv(env: Env): CheckResult[] {
   // above already fails it.
   const publicDeployment = publicUrl !== undefined && URL.canParse(publicUrl) && !isLocalHost(new URL(publicUrl).hostname);
   if (publicDeployment) {
+    const modulesPair = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
+    const modulesSummary = modulesPair.ok
+      ? `LUDY_MODULES=${list(modulesPair.value?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`
+      : 'LUDY_MODULES and CROVE_MODULES conflict';
     add('Roles', [rolesProblem(env)], 'the API and the worker run as separate processes (api and worker), not as the all-in-one role');
-    add('Modules', [modulesProblem(env)], `CROVE_MODULES=${list(value(env, 'CROVE_MODULES')?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`);
+    add('Modules', [modulesProblem(env)], modulesSummary);
     add('Transcription price', [transcribePriceProblem(env)], value(env, 'MEETINGS_TRANSCRIBE') === 'on' ? 'AI_PRICE_AUDIO_PER_MIN is set, so the AI budget counts transcription' : 'transcription is off');
     add('AI cost cap', [aiCostProblem(env)], value(env, 'AI_API_KEY') === undefined ? 'no AI key is set: no AI call is made' : 'AI_PRICE_* is set, so ORG_LIMIT_AI_COST_PER_DAY counts the AI cost');
   }
 
   // Secrets: none left at a value this public repository ships.
-  const secrets: (string | null)[] = REQUIRED_SECRETS.map((name) =>
-    secretProblem(name, value(env, name), name === 'AUTH_JWT_SECRET' ? MIN_TOKEN_SECRET_LENGTH : name === 'EXPORT_ENCRYPTION_KEY' ? 0 : MIN_PASSWORD_LENGTH),
-  );
+  const secrets: (string | null)[] = REQUIRED_SECRETS.map((name) => {
+    const legacy = LEGACY_SECRET_NAMES[name];
+    const minLen = name === 'AUTH_JWT_SECRET' ? MIN_TOKEN_SECRET_LENGTH : name === 'EXPORT_ENCRYPTION_KEY' ? 0 : MIN_PASSWORD_LENGTH;
+    if (legacy) {
+      const pair = checkEnvPair(env, name, legacy);
+      if (!pair.ok) return pair.error;
+      return secretProblem(name, pair.value, minLen);
+    }
+    return secretProblem(name, value(env, name), minLen);
+  });
   const exportKey = value(env, 'EXPORT_ENCRYPTION_KEY');
   if (exportKey && !KNOWN_DEFAULTS.has(exportKey)) {
     try {
@@ -629,7 +655,7 @@ export async function probeCors(origin: string, appOrigin: string, fetchFn: Fetc
     method: 'OPTIONS',
     redirect: 'manual',
     signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    headers: { origin: from, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type,x-crove-org' },
+    headers: { origin: from, 'access-control-request-method': 'POST', 'access-control-request-headers': `authorization,content-type,${ORG_HEADER}` },
   });
   try {
     const app = await fetchFn(`${origin}/api/rpc`, init(appOrigin));
@@ -824,8 +850,10 @@ interface CheckRun {
 export async function probeBuildChecks(origin: string, env: Env, fetchFn: Fetch = fetch): Promise<CheckResult> {
   const manual = (why: string): CheckResult => ({ item: 'RLS matrix', status: 'manual', message: `${why}: ${RLS_MANUAL}` });
   const init = (extra: RequestInit = {}): RequestInit => ({ signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), ...extra });
-  const repo = value(env, 'CROVE_SOURCE_REPO') ?? DEFAULT_SOURCE_REPO;
-  if (!/^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/.test(repo)) return { item: 'RLS matrix', status: 'fail', message: `CROVE_SOURCE_REPO is owner/name of a GitHub repository, not ${repo}` };
+  const repoPair = checkEnvPair(env, 'LUDY_SOURCE_REPO', 'CROVE_SOURCE_REPO');
+  if (!repoPair.ok) return { item: 'RLS matrix', status: 'fail', message: repoPair.error };
+  const repo = repoPair.value ?? DEFAULT_SOURCE_REPO;
+  if (!/^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/.test(repo)) return { item: 'RLS matrix', status: 'fail', message: `LUDY_SOURCE_REPO is owner/name of a GitHub repository, not ${repo}` };
   let build: string;
   try {
     // A 503 (the database is down) still names the build. What the instance answers is never printed: only a commit id

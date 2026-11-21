@@ -29,6 +29,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,13 +86,14 @@ jobs:
       # longer published on Docker Hub; pgsty/minio is a community build of the same server, pinned by digest.
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=crove-ci -e MINIO_ROOT_PASSWORD=crove-ci-minio \
+          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=ludy-ci -e MINIO_ROOT_PASSWORD=ludy-ci-minio \
             pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data
           curl --silent --fail --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:9000/minio/health/live
 
       - name: Unit tests (S3 tests against MinIO)
         env:
-          CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
+          LUDY_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
+          CROVE_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
         run: pnpm exec vitest run --project unit
 
       - name: Build web app
@@ -143,6 +145,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,17 +164,18 @@ jobs:
 
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=crove-ci -e MINIO_ROOT_PASSWORD=crove-ci-minio \
+          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=ludy-ci -e MINIO_ROOT_PASSWORD=ludy-ci-minio \
             pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data
           curl --silent --fail --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:9000/minio/health/live
 
       # The staged upload tests (#109) run on MinIO too: the database decides single use, the bucket holds the bytes.
       - name: Database tests (PostgreSQL 17, S3 tests against MinIO)
         env:
-          CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
+          LUDY_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
+          CROVE_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
           PART_SHARD: ${{ matrix.part.shard }}
           # Read by vitest.config.ts: the files another part runs (vitest's --exclude does not reach a project).
-          CROVE_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
+          LUDY_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
         run: |
           echo "DB_PART_STARTED=$(date +%s)" >> "$GITHUB_ENV"
           if [ -z "$PART_SHARD" ]; then
@@ -217,8 +221,9 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
-      CROVE_SHARED_DATABASE: "true"
+      LUDY_SHARED_DATABASE: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -468,16 +473,16 @@ jobs:
         run: |
           built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           test -n "$built_at"
-          docker build --build-arg "CROVE_BUILD=$GITHUB_SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$IMAGE" .
+          docker build --build-arg "LUDY_BUILD=$GITHUB_SHA" --build-arg "LUDY_BUILD_TIME=$built_at" -t "$IMAGE" .
 
-      # GET /version reports CROVE_BUILD (#892), and CROVE_BUILD_TIME orders builds for /readyz (#1952): both build
+      # GET /version reports LUDY_BUILD (#892), and LUDY_BUILD_TIME orders builds for /readyz (#1952): both build
       # arguments reach the running image.
       - name: The image carries its build id and time
         run: |
-          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD)" = "$GITHUB_SHA"
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" LUDY_BUILD)" = "$GITHUB_SHA"
           built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           test -n "$built_at"
-          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD_TIME)" = "$built_at"
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" LUDY_BUILD_TIME)" = "$built_at"
 
       - name: Modules load and no parser package is in the image
         run: |

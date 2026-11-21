@@ -184,7 +184,7 @@ suite('queued mail (#548)', () => {
     expect(await runMailJob(deps(mailer), { orgId, messageId: invoice })).toEqual({ action: 'recorded', outcome: 'sent', code: null });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: 'khach@example.vn', subject: 'Báo cáo tuần', text: 'Tiếp cận 1200\nhttps://crove.example' });
-    expect(sent[0]?.messageId).toMatch(/^<[0-9a-f-]{36}@crove\.invalid>$/);
+    expect(sent[0]?.messageId).toMatch(/^<[0-9a-f-]{36}@ludy\.invalid>$/);
     expect(sent[0]?.returnPath).toMatch(/^bounce\+[^@]+@in\.crove\.example$/);
     expect(await row(invoice)).toMatchObject({ status: 'sent', attempts: 1, provider_message_id: 'em_1', error_code: null });
     expect(await calls(invoice)).toEqual([{ key: `mail:${invoice}:1`, state: 'succeeded', error_kind: null }]);

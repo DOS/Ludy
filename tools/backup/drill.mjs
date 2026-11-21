@@ -125,7 +125,7 @@ function stack(name, port, storage, scratch) {
   ];
   // The storage settings backup.sh and restore.sh read: the values docker-compose.split.yml gives the stack.
   const storageEnv = split
-    ? { STORAGE: 's3', S3_ENDPOINT: 'http://minio:9000', S3_BUCKET: 'crove-files', S3_ACCESS_KEY_ID: 'crove-split', S3_SECRET_ACCESS_KEY: 'crove-split-minio-secret', S3_FORCE_PATH_STYLE: 'true', S3_VERSIONING: 'required' }
+    ? { STORAGE: 's3', S3_ENDPOINT: 'http://minio:9000', S3_BUCKET: 'ludy-files', S3_ACCESS_KEY_ID: 'ludy-split', S3_SECRET_ACCESS_KEY: 'ludy-split-minio-secret', S3_FORCE_PATH_STYLE: 'true', S3_VERSIONING: 'required' }
     : { STORAGE: 'local' };
   return { project: `${PREFIX}-${name}`, port, storage, files, storageEnv, archiver };
 }
@@ -177,7 +177,7 @@ const quietly = (fn) => {
 // Runs a backup script; its output streams to this console. Returns the exit code and the output.
 function script(name, stack, extraEnv, argv = []) {
   const result = spawnSync(BASH, [`${ROOT}tools/backup/${name}`, ...argv], {
-    env: { ...stackEnv(stack), CROVE_DIR: ROOT, ...targetEnv, ...extraEnv },
+    env: { ...stackEnv(stack), LUDY_DIR: ROOT, CROVE_DIR: ROOT, ...targetEnv, ...extraEnv },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -226,7 +226,7 @@ async function ready(stack) {
 
 async function rpc(stack, token, path, input, org) {
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  if (org) headers['x-crove-org'] = org;
+  if (org) headers['x-ludy-org'] = org;
   // Commands carry an idempotency key, so a repeat after a network error is safe.
   const response = await send(`${base(stack)}/api/rpc/${path}`, () => ({
     method: 'POST',
@@ -255,7 +255,7 @@ async function upload(stack, token, slug, name, bytes) {
   const response = await send(`${base(stack)}/api/files`, () => {
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: 'application/xml' }), name);
-    return { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) };
+    return { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) };
   });
   const json = await response.json();
   assert(response.ok && json.files?.[0]?.fileId, `upload of ${name} accepted (HTTP ${response.status})`);
@@ -273,7 +273,7 @@ async function proposalOf(stack, token, slug, fileId) {
 
 async function download(stack, token, slug, path) {
   const response = await send(`${base(stack)}${path}`, () => ({
-    headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug },
+    headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug },
     signal: AbortSignal.timeout(REQUEST_MS),
   }));
   assert(response.ok, `${path} downloads (HTTP ${response.status})`);
