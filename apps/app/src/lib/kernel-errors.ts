@@ -1457,6 +1457,9 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_ATTACHMENT_RATE_LIMITED',
   'SIGN_ATTACHMENT_REQUIRED',
   'SIGN_INVALID_FIELD_OPTION',
+  // eSign Slice 3a shared meeting minutes handoff (#3811).
+  'SIGN_MINUTES_NOT_SHARED',
+  'SIGN_SOURCE_NOT_FOUND',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];
@@ -1500,6 +1503,8 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'MEDIA_EXTRACT_TIMEOUT',
   'HR_CONTRACT_INVALID',
   'CAPTURE_ALREADY_RUNNING',
+  'SIGN_MINUTES_NOT_SHARED',
+  'SIGN_SOURCE_NOT_FOUND',
 ]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
