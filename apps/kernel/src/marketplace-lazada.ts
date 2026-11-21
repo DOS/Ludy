@@ -213,7 +213,11 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
   async function readOrders(credential: LazadaCredential, params: Record<string, string>): Promise<RawOrder[]> {
     const data = await call(credential, ORDERS_PATH, params);
     const picked = isRecord(data) ? data.orders : undefined;
-    if (picked === undefined) return [];
+    if (picked === undefined) {
+      // A reply that counts orders but carries no list cannot be an empty page: it would read as `ok` with nothing staged, on the same window, on every poll.
+      if (isRecord(data) && (Number(data.countTotal) > 0 || Number(data.count) > 0)) throw notRecognized();
+      return [];
+    }
     if (!Array.isArray(picked) || picked.length > PAGE_SIZE) throw notRecognized();
     const seen = new Set<string>();
     return picked.map((entry) => {

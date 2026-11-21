@@ -380,6 +380,18 @@ describe('ids and days a hostile answer could bend', () => {
   });
 });
 
+describe('an answer that counts orders but carries no list', () => {
+  it('is not an empty page: it is not_recognized, while a zero or absent count (or an explicit empty list) is nothing new', async () => {
+    const reply = (data: unknown) => (path: string): Response | undefined => (path === '/orders/get' ? new Response(JSON.stringify({ code: '0', data })) : undefined);
+    for (const data of [{ countTotal: 3 }, { count: 2 }, { countTotal: '5', count: 0 }]) {
+      expect(await kind(() => setup([], { intercept: reply(data) }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    }
+    for (const data of [{ countTotal: 0, count: 0 }, {}, { count: 0, orders: [] }]) {
+      expect(await setup([], { intercept: reply(data) }).provider.listOrders(SECRET, 'lazada', null)).toEqual({ orders: [], nextCursor: null });
+    }
+  });
+});
+
 describe('a call that fails', () => {
   const orders = [fakeOrder({ id: '1', number: '9106000001', updatedAt: '2026-11-09T10:00:00+07:00' })];
 
