@@ -59,6 +59,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_notes_attachments.sql',
       // #3562 (notes templates and versions): the purge restatement that adds crove_notes.note_version and crove_notes.note_template restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_notes_templates_versions.sql',
+      // #4123 (capture sessions): the purge restatement that adds crove_meetings.capture_session restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_capture_session.sql',
     ]);
   });
 });

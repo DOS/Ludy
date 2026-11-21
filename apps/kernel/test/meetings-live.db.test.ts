@@ -451,11 +451,14 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
   });
 
   it('replaces the pieces with the final recording: the audio is kept once, the pieces lose their keys at once and their objects in the next sweep', async () => {
-    const meetingId = await liveMeeting();
+    // A live capture (ADR-0055 slice 1, #4123): the recorder's app opens it with the meeting, and the final recording ends it.
+    const meetingId = await liveMeeting('recorder', { capture: {} });
+    expect(await rows('SELECT kind, ended_reason FROM crove_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ kind: 'app', ended_reason: null }]);
     for (const seq of [0, 1, 2]) expect((await sendChunk('recorder', meetingId, seq, piece('s', seq))).status).toBe(200);
     const pieces = await chunkObjects(meetingId);
     expect(pieces).toHaveLength(3);
     const finalBytes = await upload('recorder', meetingId, 'audio', 'final');
+    expect(await rows('SELECT ended_reason FROM crove_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ ended_reason: 'media' }]);
     // One audio segment, one audio key; the pieces' rows and keys are gone in the same commit.
     expect(await count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
     expect((await rows<{ kind: string }>('SELECT kind FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).map((r) => r.kind)).toEqual(['audio']);

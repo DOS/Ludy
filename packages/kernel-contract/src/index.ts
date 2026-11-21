@@ -139,6 +139,7 @@ export * from './notes.ts';
 export * from './extension.ts';
 export * from './mcp.ts';
 export * from './meeting-agenda.ts';
+export * from './meeting-capture.ts';
 export * from './meeting-chat.ts';
 export * from './meeting-ask.ts';
 export * from './meeting-brief.ts';

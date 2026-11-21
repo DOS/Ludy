@@ -1352,6 +1352,16 @@ export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
 export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
 export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
 
+// The capture session of a call (ADR-0055 slice 1, #4123): which kind of client holds a capture, and why a finished one ended.
+export const MEETING_CAPTURE_KINDS = ['extension', 'app'] as const;
+export type MeetingCaptureKind = (typeof MEETING_CAPTURE_KINDS)[number];
+export const MEETING_CAPTURE_ENDED_REASONS = ['media', 'stopped', 'lost'] as const;
+export type MeetingCaptureEndedReason = (typeof MEETING_CAPTURE_ENDED_REASONS)[number];
+export type MeetingsCaptureSessionTable = Refine<
+  G.MeetingsCaptureSessionTable,
+  { kind: MeetingCaptureKind; ended_reason: MeetingCaptureEndedReason | null }
+>;
+
 // Projects that group kernel tasks (#2591, ADR-0048).
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -1464,6 +1474,7 @@ type Refined = Tables<{
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
+  'crove_meetings.capture_session': MeetingsCaptureSessionTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;

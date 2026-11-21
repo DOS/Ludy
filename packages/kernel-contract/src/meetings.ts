@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
+import { zCaptureStart } from './meeting-capture.ts';
 import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
 import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
@@ -135,6 +136,8 @@ export const zMeetingCreate = z.strictObject({
   consentNoticeVersion: z.string().max(20).refine((v) => v !== IMPORT_CONSENT_NOTICE_VERSION && KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
+  // A live recording says what it knows of the call, and the server refuses a second capture of the same call (ADR-0055 slice 1, #4123). An extension token is always a live capture, with or without this.
+  capture: zCaptureStart.optional(),
 });
 export type MeetingCreate = z.infer<typeof zMeetingCreate>;
 
