@@ -103,6 +103,7 @@ GRANT UPDATE (
   l1_acted_at,
   final_acted_by,
   final_acted_at,
+  reason,
   decision_note,
   payroll_leave_entry_id,
   updated_at
@@ -116,6 +117,23 @@ ALTER TABLE crove_hr.leave_request ENABLE ALWAYS TRIGGER b_legal_entity;
 CREATE OR REPLACE FUNCTION crove_hr.leave_request_update_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  -- Allow hr.payroll.employee.erase to clear free-text PII notes after retention (any status).
+  IF NEW.status = OLD.status
+     AND NEW.reason IS NULL
+     AND NEW.decision_note IS NULL
+     AND (OLD.reason IS NOT NULL OR OLD.decision_note IS NOT NULL)
+     AND NEW.l1_approver_user_id IS NOT DISTINCT FROM OLD.l1_approver_user_id
+     AND NEW.l1_acted_at IS NOT DISTINCT FROM OLD.l1_acted_at
+     AND NEW.final_acted_by IS NOT DISTINCT FROM OLD.final_acted_by
+     AND NEW.final_acted_at IS NOT DISTINCT FROM OLD.final_acted_at
+     AND NEW.payroll_leave_entry_id IS NOT DISTINCT FROM OLD.payroll_leave_entry_id
+     AND EXISTS (
+       SELECT 1 FROM crove_hr.payroll_employee e
+        WHERE e.org_id = OLD.org_id AND e.id = OLD.employee_id AND e.erased_at IS NOT NULL
+     ) THEN
+    RETURN NEW;
+  END IF;
+
   IF OLD.status IN ('approved', 'rejected', 'cancelled') THEN
     -- Allow FK ON DELETE SET NULL clearing payroll_leave_entry_id while preserving status and decision fields.
     IF NEW.status = OLD.status
@@ -125,6 +143,7 @@ BEGIN
        AND NEW.l1_acted_at IS NOT DISTINCT FROM OLD.l1_acted_at
        AND NEW.final_acted_by IS NOT DISTINCT FROM OLD.final_acted_by
        AND NEW.final_acted_at IS NOT DISTINCT FROM OLD.final_acted_at
+       AND NEW.reason IS NOT DISTINCT FROM OLD.reason
        AND NEW.decision_note IS NOT DISTINCT FROM OLD.decision_note THEN
       RETURN NEW;
     END IF;
@@ -134,11 +153,16 @@ BEGIN
        AND NEW.l1_acted_at IS NOT DISTINCT FROM OLD.l1_acted_at
        AND NEW.final_acted_by IS NOT DISTINCT FROM OLD.final_acted_by
        AND NEW.final_acted_at IS NOT DISTINCT FROM OLD.final_acted_at
+       AND NEW.reason IS NOT DISTINCT FROM OLD.reason
        AND NEW.decision_note IS NOT DISTINCT FROM OLD.decision_note
        AND NEW.payroll_leave_entry_id IS NOT DISTINCT FROM OLD.payroll_leave_entry_id THEN
       RETURN NEW;
     END IF;
     RAISE EXCEPTION 'leave request % is already %', OLD.id, OLD.status USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.reason IS DISTINCT FROM OLD.reason THEN
+    RAISE EXCEPTION 'leave request reason is immutable' USING ERRCODE = '42501';
   END IF;
 
   IF OLD.status = 'pending_l1' THEN

@@ -69,6 +69,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_capture_session.sql',
       // #4316 (marketplace push hooks): the purge restatement that adds crove_finance.marketplace_hook and marketplace_hook_notice restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_marketplace_hook.sql',
+      // #4300 (HR leave requests): the purge restatement that adds crove_hr.leave_request restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_hr_leave_request.sql',
     ]);
   });
 });

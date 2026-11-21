@@ -525,15 +525,19 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     });
 
     // (c) hr.payroll.leave.delete nulls payroll_leave_entry_id on leave_request while keeping status = 'approved'.
+    const approvedReason = 'Nghỉ phép gia đình tháng 4';
+    const approvedFinalNote = 'Đã duyệt chốt kỳ 4';
     const subApproved = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
       startOn: '2026-04-13',
       endOn: '2026-04-14',
       kind: 'annual_leave',
       days: '2.0',
+      reason: approvedReason,
     });
     await o.exec(o.manager, 'hr.leave_request.approve_l1', { requestId: subApproved.requestId });
     const approved = await o.exec<HrLeaveRequestActionResult>(o.owner, 'hr.leave_request.approve_final', {
       requestId: subApproved.requestId,
+      note: approvedFinalNote,
     });
     expect(approved.status).toBe('approved');
     expect(approved.payrollLeaveEntryId).toBeTruthy();
@@ -641,5 +645,64 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       [soleOrgId],
     );
     expect(soleAudit.rows[0]?.detail).toMatchObject({ selfApproved: true });
+
+    // (d) Direct reason tampering on non-erased rows fails (42501); employee erase wipes reason + decision_note (pending and terminal) and masks selfLeaveRequests.
+    const subPendingForErase = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
+      startOn: '2026-04-20',
+      endOn: '2026-04-20',
+      kind: 'annual_leave',
+      days: '1.0',
+      reason: 'Lý do riêng chờ duyệt',
+    });
+    await expect(
+      adminPool.query(`UPDATE crove_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subPendingForErase.requestId]),
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      adminPool.query(`UPDATE crove_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subApproved.requestId]),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empStaff, endedOn: '2026-08-31' });
+    const adminClient = await adminPool.connect();
+    try {
+      await adminClient.query('BEGIN');
+      await adminClient.query('SET LOCAL session_replication_role = replica');
+      await adminClient.query(
+        `UPDATE crove_hr.payroll_employee
+            SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
+          WHERE id = $1`,
+        [empStaff],
+      );
+      await adminClient.query('COMMIT');
+    } finally {
+      adminClient.release();
+    }
+    const erased = await o.exec<{ cleared: string[] }>(
+      o.owner,
+      'hr.payroll.employee.erase',
+      { employeeId: empStaff },
+      asMfa(o.owner),
+    );
+    expect(erased.cleared).toContain('leave request notes');
+
+    const dbNotes = await adminPool.query<{ id: string; reason: string | null; decision_note: string | null }>(
+      `SELECT id, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
+      [empStaff],
+    );
+    expect(dbNotes.rows).toHaveLength(3);
+    for (const row of dbNotes.rows) {
+      expect(row.reason).toBeNull();
+      expect(row.decision_note).toBeNull();
+    }
+
+    const teamAfterErase = await o.query<HrLeaveRequestView[]>(o.manager, 'hr.self.leave.requests', {
+      scope: 'team',
+    });
+    const erasedTeamRows = teamAfterErase.filter((r) => r.employeeId === empStaff);
+    expect(erasedTeamRows).toHaveLength(3);
+    for (const row of erasedTeamRows) {
+      expect(row.employeeName).toBe('');
+      expect(row.reason).toBeNull();
+      expect(row.decisionNote).toBeNull();
+    }
   });
 });
