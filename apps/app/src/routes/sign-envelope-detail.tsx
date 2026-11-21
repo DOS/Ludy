@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
@@ -40,6 +41,8 @@ import {
   checkSendReadiness,
   clampFieldBox,
   createPlacedFieldBox,
+  isChoiceFieldType,
+  normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForSigners,
   resizeFieldBox,
@@ -67,6 +70,7 @@ function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacem
     required: f.required,
     proposedByAi: f.proposedByAi,
     fontSizePt: f.fontSizePt,
+    options: f.options ? [...f.options] : null,
   }));
 }
 
@@ -366,6 +370,7 @@ export function SignEnvelopeDetailPage() {
           required: fItem.required,
           proposedByAi: fItem.proposedByAi,
           ...(fItem.fontSizePt ? { fontSizePt: fItem.fontSizePt } : {}),
+          ...(isChoiceFieldType(fItem.fieldType) ? { options: normalizeChoiceOptions(fItem.options) } : {}),
         })),
       );
       return { result, revision };
@@ -676,6 +681,11 @@ export function SignEnvelopeDetailPage() {
   const resolveProposalSignerId = (proposedSignerId: string): string =>
     assignableSigners.some((s) => s.id === proposedSignerId) ? proposedSignerId : '';
 
+  const defaultChoiceOptions = () => [
+    t('fields.defaultOptionN', { index: '1' }),
+    t('fields.defaultOptionN', { index: '2' }),
+  ];
+
   const handleAddField = (fieldType: SignFieldType, coords?: { pageNumber: number; xCenterNorm: number; yCenterNorm: number }) => {
     if (!isDraft || !activeSignerId) return;
     const targetPage = coords?.pageNumber ?? pageNumber;
@@ -694,9 +704,10 @@ export function SignEnvelopeDetailPage() {
         fieldType,
         pageNumber: targetPage,
         ...box,
-        label: null,
+        label: fieldType === 'attachment' ? t('fields.attachmentPresets.idCard') : null,
         required: true,
         proposedByAi: false,
+        options: isChoiceFieldType(fieldType) ? defaultChoiceOptions() : null,
       },
     ]);
     setSelectedFieldId(localId);
@@ -719,6 +730,7 @@ export function SignEnvelopeDetailPage() {
     if (!signerId) return;
     const box = clampFieldBox(adjustedBox ?? proposal);
     const localId = `prop-${globalThis.crypto.randomUUID()}`;
+    const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
     updateDraftFields((prev) => [
       ...prev,
       {
@@ -730,6 +742,9 @@ export function SignEnvelopeDetailPage() {
         label: proposal.label,
         required: proposal.required,
         proposedByAi: true,
+        options: isChoiceFieldType(proposal.fieldType)
+          ? (cleanedOpts.length > 0 ? cleanedOpts : defaultChoiceOptions())
+          : null,
       },
     ]);
     setDismissedProposalIds((prev) => [...prev, proposal.proposalId]);
@@ -744,6 +759,7 @@ export function SignEnvelopeDetailPage() {
       const signerId = resolveProposalSignerId(proposal.signerId);
       if (!signerId) continue;
       const box = clampFieldBox(proposal);
+      const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
       nextFields.push({
         localId: `prop-${globalThis.crypto.randomUUID()}`,
         signerId,
@@ -753,6 +769,9 @@ export function SignEnvelopeDetailPage() {
         label: proposal.label,
         required: proposal.required,
         proposedByAi: true,
+        options: isChoiceFieldType(proposal.fieldType)
+          ? (cleanedOpts.length > 0 ? cleanedOpts : defaultChoiceOptions())
+          : null,
       });
       appliedIds.push(proposal.proposalId);
     }
@@ -775,6 +794,9 @@ export function SignEnvelopeDetailPage() {
       label: item.label,
       required: item.required,
       proposedByAi: false,
+      options: isChoiceFieldType(item.fieldType)
+        ? (item.options && item.options.length > 0 ? item.options : defaultChoiceOptions())
+        : null,
     }));
     updateDraftFields((prev) => [...prev, ...placed]);
     setSelectedFieldId(placed[0]!.localId);
@@ -1343,6 +1365,24 @@ export function SignEnvelopeDetailPage() {
                   <span>{t('fields.requiredToggle')}</span>
                 </label>
 
+                <FieldOptionsAndAttachmentEditor
+                  field={selectedField}
+                  onChangeOptions={(nextOptions) => {
+                    updateDraftFields((prev) =>
+                      prev.map((item) =>
+                        item.localId === selectedField.localId ? { ...item, options: nextOptions } : item,
+                      ),
+                    );
+                  }}
+                  onChangeLabel={(nextLabel) => {
+                    updateDraftFields((prev) =>
+                      prev.map((item) =>
+                        item.localId === selectedField.localId ? { ...item, label: nextLabel } : item,
+                      ),
+                    );
+                  }}
+                />
+
                 <p className="text-muted-foreground">{t('fields.nudgeHint')}</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   <Button
@@ -1581,6 +1621,55 @@ export function SignEnvelopeDetailPage() {
                         })}
                       </Button>
                     ) : null}
+                  </div>
+                ) : null}
+
+                {detailQuery.data?.fields.some((fItem) => Boolean(fItem.attachmentFileId)) ? (
+                  <div className="space-y-1.5 border-t pt-2" data-testid="sign-uploaded-attachments-list">
+                    <p className="font-medium text-foreground">{t('evidence.attachmentsHeading')}</p>
+                    <ul className="space-y-1.5">
+                      {detailQuery.data.fields
+                        .filter((fItem) => Boolean(fItem.attachmentFileId))
+                        .map((attField) => {
+                          const signerName = signers.find((s) => s.id === attField.signerId)?.name ?? '';
+                          const fname = attField.attachmentFilename ?? 'attachment.pdf';
+                          return (
+                            <li key={attField.id} className="space-y-1 rounded border bg-card px-2 py-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-medium text-foreground">
+                                  {attField.label || t('fields.types.attachment')}
+                                  {signerName ? ` (${signerName})` : ''}
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 shrink-0 px-2 text-xs max-md:min-h-11"
+                                  onClick={() => void handleDownload(attField.attachmentFileId!, fname)}
+                                  data-testid={`sign-download-attachment-${attField.id}`}
+                                >
+                                  {t('evidence.downloadAttachment')}
+                                </Button>
+                              </div>
+                              <div className="truncate text-[11px] text-muted-foreground">{fname}</div>
+                              {attField.attachmentSha256 ? (
+                                <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[11px]">
+                                  <span className="truncate">{attField.attachmentSha256}</span>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 shrink-0 px-1.5 text-[11px] max-md:min-h-11"
+                                    onClick={() => void copyDigest(attField.attachmentSha256!)}
+                                  >
+                                    {t('evidence.copyDigest')}
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                    </ul>
                   </div>
                 ) : null}
 

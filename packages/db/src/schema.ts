@@ -215,7 +215,7 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
@@ -1418,8 +1418,10 @@ export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', '
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
 export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
@@ -1443,6 +1445,7 @@ export const SIGN_EVENT_TYPES = [
   'signer_delegated',
   'signer_viewed',
   'signer_otp_verified',
+  'attachment_uploaded',
   'signer_signed',
   'in_person_signed',
   'signer_declined',
@@ -1501,7 +1504,13 @@ export type SignSignerTable = Refine<
   }
 >;
 
-export type SignFieldTable = Refine<G.SignFieldTable, { field_type: SignFieldType }>;
+export type SignFieldTable = Refine<
+  G.SignFieldTable,
+  {
+    field_type: SignFieldType;
+    attachment_content_type: SignAttachmentContentType | null;
+  }
+>;
 export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
 export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
 export type SignTemplateTable = Refine<

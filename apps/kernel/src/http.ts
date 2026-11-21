@@ -218,12 +218,16 @@ import {
   runSignPublicHubList,
 } from './sign-public-hub.ts';
 import {
+  SIGN_ATTACHMENT_MAX_BYTES,
+  SIGN_ATTACHMENT_UPLOADS_MAX,
+  SIGN_ATTACHMENTS_PER_MINUTE,
   SIGN_DELEGATES_PER_MINUTE,
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
   SIGN_PDF_READS_MAX,
   SIGN_PDFS_PER_MINUTE,
   SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_ATTACHMENTS_PER_MINUTE,
   SIGN_TOKEN_DELEGATES_PER_MINUTE,
   SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
   SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
@@ -234,6 +238,7 @@ import {
   SIGN_VIEWS_PER_MINUTE,
   readPublicPdfBytes,
   resolvePublicPdf,
+  runSignAttachmentUpload,
   runSignDecline,
   runSignDelegate,
   runSignOtpRequest,
@@ -412,6 +417,9 @@ export interface HttpDeps {
     tokenSubmit: RateLimiter;
     delegate: RateLimiter;
     tokenDelegate: RateLimiter;
+    attachment: RateLimiter;
+    tokenAttachment: RateLimiter;
+    attachmentUploads: ConcurrencyLimiter;
     verify: RateLimiter;
   }>;
   // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
@@ -1561,6 +1569,9 @@ export function createHttpApp(deps: HttpDeps) {
     const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
     const signDelegateLimit = deps.signLimits?.delegate ?? new RateLimiter({ perMinute: SIGN_DELEGATES_PER_MINUTE });
     const signTokenDelegateLimit = deps.signLimits?.tokenDelegate ?? new RateLimiter({ perMinute: SIGN_TOKEN_DELEGATES_PER_MINUTE });
+    const signAttachmentLimit = deps.signLimits?.attachment ?? new RateLimiter({ perMinute: SIGN_ATTACHMENTS_PER_MINUTE });
+    const signTokenAttachmentLimit = deps.signLimits?.tokenAttachment ?? new RateLimiter({ perMinute: SIGN_TOKEN_ATTACHMENTS_PER_MINUTE });
+    const signAttachmentUploads = deps.signLimits?.attachmentUploads ?? new ConcurrencyLimiter({ total: SIGN_ATTACHMENT_UPLOADS_MAX, perKey: SIGN_ATTACHMENT_UPLOADS_MAX });
     const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
 
     const setSignSecurityHeaders = (c: Context) => {
@@ -1705,6 +1716,74 @@ export function createHttpApp(deps: HttpDeps) {
         return c.json(res.result);
       } catch (error) {
         return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/attachment', signEdgeGuard(signAttachmentLimit), signBodyLimit(SIGN_ATTACHMENT_MAX_BYTES + 4 * 1024 * 1024), async (c) => {
+      const release = signAttachmentUploads.tryAcquire('sign-attachment');
+      if (!release) {
+        c.header('retry-after', '2');
+        return c.json({ code: 'SIGN_ATTACHMENT_BUSY', message: 'Máy chủ đang xử lý nhiều tệp đính kèm, hãy thử lại sau vài giây' }, 503);
+      }
+      try {
+        const ct = (c.req.header('content-type') ?? '').toLowerCase();
+        let token: unknown = null;
+        let fieldId: unknown = null;
+        let filename: unknown = null;
+        let bytes: Uint8Array | null = null;
+        let oversize = false;
+        let invalidEncoding = false;
+        if (ct.includes('multipart/form-data')) {
+          const form = await c.req.parseBody().catch(() => null);
+          if (!form) return signOpaqueNotFound(c);
+          token = form.token;
+          fieldId = form.fieldId;
+          const file = form.file;
+          if (file instanceof File) {
+            filename = file.name;
+            if (file.size > SIGN_ATTACHMENT_MAX_BYTES) {
+              oversize = true;
+            } else {
+              bytes = new Uint8Array(await file.arrayBuffer());
+            }
+          }
+        } else {
+          const json = await c.req.json().catch(() => null);
+          if (!json || typeof json !== 'object') return signOpaqueNotFound(c);
+          const payload = json as Record<string, unknown>;
+          token = payload.token;
+          fieldId = payload.fieldId;
+          filename = payload.filename;
+          if (typeof payload.contentBase64 === 'string') {
+            const cleanBase64 = payload.contentBase64.replace(/\s+/g, '');
+            const maxBase64Chars = Math.ceil((SIGN_ATTACHMENT_MAX_BYTES * 4) / 3) + 16;
+            if (cleanBase64.length > maxBase64Chars) {
+              oversize = true;
+            } else if (cleanBase64.length > 0) {
+              if (cleanBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+                invalidEncoding = true;
+              } else {
+                bytes = new Uint8Array(Buffer.from(cleanBase64, 'base64'));
+              }
+            }
+          }
+        }
+        const res = await runSignAttachmentUpload(
+          runtime,
+          store,
+          signBilling,
+          { token, fieldId, filename, bytes, oversize, invalidEncoding },
+          signMeta(c),
+          (hash) => signTokenAttachmentLimit.take(hash),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      } finally {
+        release();
       }
     });
 
@@ -2849,11 +2928,16 @@ export function createHttpApp(deps: HttpDeps) {
       }
       // A large body keeps its slot until it is handed to the connection (or the client goes away).
       const payload = releaseLarge ? held(bytes, releaseLarge) : body(bytes);
+      const isSignAttachment = file.source === 'sign_attachment';
       return new Response(payload, {
         headers: {
           'content-type': file.content_type,
-          'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
-          'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+          'content-disposition': isSignAttachment
+            ? `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`
+            : `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+          'content-security-policy': isSignAttachment
+            ? "default-src 'none'; sandbox"
+            : "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           'x-content-type-options': 'nosniff',
           'cache-control': 'private, no-store',
         },
