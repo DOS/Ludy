@@ -5655,6 +5655,7 @@ export const en = {
     authorize: 'Authorize',
     authorizeAgain: 'Authorize again',
     reauthorizeBy: 'authorize again before {when}',
+    authorizeStatesLazada: { failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.' },
     authorizeStates: {
       pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',
@@ -5681,7 +5682,7 @@ export const en = {
     neverPolled: 'No orders pulled yet',
     polledAt: 'Orders last pulled {when}',
     ordersWaiting: '{count, plural, one {# order} other {# orders}} waiting in the Inbox to confirm.',
-    fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appKey: 'App Key', appSecret: 'App Secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
+    fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appKey: 'App Key', serviceId: 'App Service ID', appSecret: 'App Secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
     status: {
       active: 'Connected',
       expired: 'Expired, connect again',
@@ -5698,6 +5699,14 @@ export const en = {
     testStatesLazada: {
       wrong_credentials: 'Lazada refused the key, the secret or the access token. Check the App Key and App Secret, then connect again.',
       api_not_enabled: 'The app is not authorized on Lazada yet, so no orders can be read. Press Authorize and sign in to the seller account on Lazada.',
+    },
+    testStatesTiktok: {
+      wrong_credentials: 'TikTok Shop refused the key, the secret or the access token. Check the App Key, App Secret and Service ID, then connect again.',
+      api_not_enabled: 'The app is not authorized on TikTok Shop yet, so no orders can be read. Press Authorize and sign in to the seller account on TikTok Shop.',
+    },
+    pollStatesTiktok: { not_authorized: 'The app is not authorized on TikTok Shop yet, so no orders can be read' },
+    authorizeStatesTiktok: {
+      failed: 'The authorization could not be completed. The app must be bound to exactly one shop (none, or several, is not accepted); check that, then press Authorize again. If it keeps failing, tell the system administrator.',
     },
     pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {

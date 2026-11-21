@@ -5652,6 +5652,7 @@ export const vi = {
     authorize: 'Cấp quyền',
     authorizeAgain: 'Cấp quyền lại',
     reauthorizeBy: 'cần cấp quyền lại trước {when}',
+    authorizeStatesLazada: { failed: 'Chưa hoàn tất được việc cấp quyền. Hãy bấm Cấp quyền lại; nếu vẫn lỗi, báo người quản trị hệ thống.' },
     authorizeStates: {
       pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại; sau 15 phút mà chưa xong thì sẽ báo lỗi và bạn bấm Cấp quyền lại.',
       authorized: 'Đã cấp quyền',
@@ -5678,7 +5679,7 @@ export const vi = {
     neverPolled: 'Chưa lấy đơn lần nào',
     polledAt: 'Lấy đơn lần cuối {when}',
     ordersWaiting: 'Có {count, plural, other {# đơn}} đang chờ xác nhận ở Hộp thư.',
-    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
+    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', serviceId: 'Mã dịch vụ của ứng dụng (Service ID)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy kết nối lại',
@@ -5695,6 +5696,14 @@ export const vi = {
     testStatesLazada: {
       wrong_credentials: 'Lazada từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key và App Secret rồi kết nối lại.',
       api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn. Hãy bấm Cấp quyền và đăng nhập tài khoản người bán trên Lazada.',
+    },
+    testStatesTiktok: {
+      wrong_credentials: 'TikTok Shop từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key, App Secret và Service ID rồi kết nối lại.',
+      api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên TikTok Shop nên chưa lấy được đơn. Hãy bấm Cấp quyền và đăng nhập tài khoản người bán trên TikTok Shop.',
+    },
+    pollStatesTiktok: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên TikTok Shop nên chưa lấy được đơn' },
+    authorizeStatesTiktok: {
+      failed: 'Chưa hoàn tất được việc cấp quyền. Ứng dụng phải gắn với đúng một gian hàng (không có hoặc có nhiều gian hàng thì không nhận); hãy kiểm tra rồi bấm Cấp quyền lại. Nếu vẫn lỗi, báo người quản trị hệ thống.',
     },
     pollStatesLazada: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn' },
     pollStates: {
