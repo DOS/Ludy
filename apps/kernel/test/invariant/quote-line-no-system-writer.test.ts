@@ -39,9 +39,9 @@ const productionSources = (): Array<{ file: string; text: string }> => {
 };
 
 // A write to the lines: the query builder's insertInto, updateTable and deleteFrom naming the table, and raw SQL (any spacing and case, with or without the schema).
-const TABLE = String.raw`(?:crove_crm\s*\.\s*)?"?quote_line"?`;
+const TABLE = String.raw`(?:"?crove_crm"?\s*\.\s*)?"?quote_line"?`;
 const BUILDER_WRITE = new RegExp(String.raw`\.\s*(?:insertInto|updateTable|deleteFrom)\s*\(\s*['"\x60](?:crove_crm\s*\.\s*)?quote_line['"\x60]`, 'i');
-const SQL_WRITE = new RegExp(String.raw`\b(?:insert\s+into|update|delete\s+from)\s+(?:only\s+)?${TABLE}\b`, 'i');
+const SQL_WRITE = new RegExp(String.raw`\b(?:insert\s+into|update|delete\s+from|merge\s+into)\s+(?:only\s+)?${TABLE}\b`, 'i');
 const writes = (text: string): boolean => BUILDER_WRITE.test(text) || SQL_WRITE.test(text);
 // Code that reaches the table without naming it in one expression (a table name held in a variable, a generic helper) cannot be read here; the literal name is what the guard pins.
 
@@ -75,8 +75,22 @@ describe('no system-context code writes a quote line (the taint-key exemption of
       const access = /\baccess:\s*([^,\n]+)/.exec(block)?.[1] ?? '';
       expect(access, `${name} declares an access`).not.toBe('');
       expect(access, `${name} must not be reachable by the system context`).not.toMatch(/system/i);
+      // An access written as a constant (EDITORS) is read through its definition.
+      const constant = /^[A-Z_]+$/.test(access.trim()) ? new RegExp(String.raw`const\s+${access.trim()}\b[^;]*;`).exec(text)?.[0] : undefined;
+      if (/^[A-Z_]+$/.test(access.trim())) expect(constant, `${name}: the definition of ${access.trim()}`).toBeDefined();
+      expect(constant ?? '', `${name}: ${access.trim()} must not name the system`).not.toMatch(/system/i);
     }
     // The helper that inserts lines is called only from those commands: it is not exported, so nothing else can reach it.
     expect(/export\s+(?:async\s+)?function\s+insertLines|export\s*\{[^}]*\binsertLines\b/.test(text)).toBe(false);
+  });
+
+  it('the commands that write lines are reused only by the known twin builder, whose access is people only: a handler lent to a system command would run as the system', () => {
+    // quoteSave and quoteRevise are exported, so another file could wrap their handler in a command with `access: 'system'`; the files that name them are known, and the one that wraps them gives its own access.
+    const users = productionSources().filter((f) => f.file !== WRITER && /\b(?:quoteSave|quoteRevise)\b/.test(f.text)).map((f) => f.file).sort();
+    expect(users).toEqual(['modules/crm/src/index.ts', 'modules/crm/src/mcp-write.ts']);
+    const twin = read(join(ROOT, 'modules/crm/src/mcp-write.ts'));
+    expect(twin).not.toMatch(/system/i);
+    expect(/access:\s*ADMINS\b/.test(twin)).toBe(true);
+    expect(/const ADMINS = \['owner', 'admin'\] as const;/.test(twin)).toBe(true);
   });
 });

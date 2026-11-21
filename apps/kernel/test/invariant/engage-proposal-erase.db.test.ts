@@ -152,7 +152,7 @@ suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)',
     for (const f of fns) {
       expect(f.secdef).toBe(true);
       expect(f.config).toContain('search_path=pg_catalog, pg_temp');
-      // No grant to PUBLIC (an ACL entry with an empty grantee), and none to the worker, the app or the definer's own login roles.
+      // No grant to PUBLIC (an ACL entry with an empty grantee), and none to the worker or the definer's own login roles (the app inherits crove_tenant's).
       expect(f.acl ?? '').not.toMatch(/(^|[{,])=/);
       for (const role of ['crove_worker', 'crove_definer_tenant']) expect(f.acl ?? '').not.toContain(`${role}=`);
       expect(f.acl ?? '').toContain('crove_tenant=X');
