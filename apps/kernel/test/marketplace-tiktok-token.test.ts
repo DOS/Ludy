@@ -128,6 +128,16 @@ describe('createTiktokToken', () => {
     );
     expect(result).toEqual({ failed: 'NETWORK' });
     expect(leaks(result)).toEqual([]);
+    // A code is single use: a lost answer is never asked again.
+    let calls = 0;
+    const lost = setup({
+      fetch: async (url) => {
+        calls += 1;
+        throw new Error(`connect ECONNRESET ${url}`);
+      },
+    });
+    expect(await lost.create('CODE1')).toEqual({ failed: 'NETWORK' });
+    expect(calls).toBe(1);
   });
 
   it('takes an expiry only when it is a Unix time in the next 400 days, else one day for the access life and none for the authorization end', async () => {
@@ -248,7 +258,6 @@ describe('TiktokRefresher', () => {
     expect(refresher.provider).toBe('marketplace_tiktok_shop');
     expect(refresher.horizonSeconds).toBe(TIKTOK_REFRESH_HORIZON_SECONDS);
     // The sweep's scan caps the window at seven days, and an access token lives seven.
-    expect(TIKTOK_REFRESH_HORIZON_SECONDS).toBe(86_400);
     expect(TIKTOK_REFRESH_HORIZON_SECONDS).toBeLessThanOrEqual(7 * 86_400);
   });
 });

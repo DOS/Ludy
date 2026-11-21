@@ -40,7 +40,7 @@ describe('the signature', () => {
     const query = { app_key: '123abc', timestamp: '1700000000', shop_cipher: 'GCP_XF90igAAAABh00qsWgtvOiGFNqyubMt3', page_size: '20', sort_field: 'create_time', sort_order: 'ASC', sign: 'ignored', access_token: 'ignored' };
     expect(signTiktokRequest('helloworld', '/order/202309/orders/search', query, '{"order_status":"UNPAID","update_time_ge":1623812664}')).toBe('37565241e284831836cfe1cc9de05f97e86b71f643894b84980274b91d72f169');
     expect(signTiktokRequest('helloworld', '/authorization/202309/shops', { app_key: '123abc', timestamp: '1700000000' }, null)).toBe('c6e43eb0571c43fa1536ec27fbebffbf647d1c3179a9757313d128db259cbb2c');
-    // A multipart request is signed without its body: the caller passes null, and the result is the one of a request that has none.
+    // A multipart request is signed without its body, which the caller says by passing null (this vector fixes only the arithmetic of that case, not who decides it).
     expect(signTiktokRequest('helloworld', '/product/202309/images/upload', { app_key: '123abc', timestamp: '1700000000' }, null)).toBe('9c3a4ca09dd51d35d33231d39768bdd7be62033ce56dcb86e706c5838a923a9a');
   });
 
@@ -60,6 +60,8 @@ describe('the sealed secret', () => {
   it('reads the app, the token and the shop, and refuses a malformed secret without echoing it', () => {
     expect(parseTiktokSecret(SECRET)).toEqual({ ...KEY, shopCipher: 'GCP_XF90igAAAABh00qsWgtvOiGFNqyubMt3', shopId: '7000714532876273420' });
     expect(parseTiktokSecret(JSON.stringify(KEY))).toEqual({ ...KEY, shopCipher: null, shopId: null });
+    // What this reader returns reads back (a later slice re-seals it): explicit nulls are no shop yet.
+    expect(parseTiktokSecret(JSON.stringify(parseTiktokSecret(JSON.stringify(KEY))))).toEqual({ ...KEY, shopCipher: null, shopId: null });
     for (const bad of ['not json', '{}', 'null', JSON.stringify({ ...KEY, appKey: '' }), JSON.stringify({ ...KEY, accessToken: 'has space' }), JSON.stringify({ ...KEY, appSecret: 7 }), JSON.stringify({ ...KEY, shopId: 'abc' }), JSON.stringify({ ...KEY, shopCipher: 'a b' })]) {
       expect(() => parseTiktokSecret(bad)).toThrow(MarketplaceProviderError);
     }
@@ -101,6 +103,14 @@ describe('the call', () => {
     // The same signed address with another body is not accepted: the body is part of what is signed.
     const replay = await fake.fetch(sent.url, { method: 'POST', headers: { 'x-tts-access-token': KEY.accessToken, 'content-type': 'application/json' }, body: `${body} ` });
     expect(await replay.json()).toMatchObject({ code: 106001 });
+  });
+
+  it('refuses a request that tries to pass the signature, the token, the key or the time itself (a caller bug), with no call made', async () => {
+    const { call, fake } = setup();
+    for (const key of ['sign', 'access_token', 'app_key', 'timestamp']) {
+      await expect(call(parseTiktokSecret(SECRET), { method: 'GET', path: '/authorization/202309/shops', query: { [key]: 'x' } })).rejects.toBeInstanceOf(RangeError);
+    }
+    expect(fake.calls).toHaveLength(0);
   });
 
   it('spaces the calls of one app and shop, and does not make another app wait', async () => {
@@ -176,6 +186,10 @@ describe('what a refusal becomes', () => {
     expect(await run(answered(401, { code: 36009004, message: 'Invalid credentials. The `access_token` header is invalid.' }))).toMatchObject({ kind: 'credentials' });
     expect(await run(answered(401, { code: 36009004, message: 'Invalid credentials. Invalid `app_key` query parameter.' }))).toMatchObject({ kind: 'credentials' });
     expect(await run(answered(400, { code: 36009004, message: 'Invalid timestamp. The value must not be earlier than 5 minutes before the current time.' }))).toEqual({ kind: 'unreachable', reason: null });
+    // A 401 with wording the page does not list is still a refusal of the credentials; a 400 with it is not.
+    expect(await run(answered(401, { code: 36009004, message: 'The x-tts-access-token header value is not accepted.' }))).toMatchObject({ kind: 'credentials' });
+    expect(await run(answered(400, { code: 36009004, message: 'Something else entirely.' }))).toEqual({ kind: 'unreachable', reason: null });
+    expect(await run(answered(401, { code: 36009004, message: 'Invalid timestamp. The value must not exceed the current time by more than 30 seconds.' }))).toEqual({ kind: 'unreachable', reason: null });
     expect(await run(answered(400, { code: 36009004, message: 'Unexpected identifier. The `shop_cipher` query parameter is not required for this request.' }))).toEqual({ kind: 'unreachable', reason: null });
   });
 

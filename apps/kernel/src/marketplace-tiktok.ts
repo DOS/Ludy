@@ -44,8 +44,9 @@ export function parseTiktokSecret(secret: string): TiktokCredential {
   }
   const picked = pickAllowed(value, ['appKey', 'appSecret', 'accessToken', 'shopCipher', 'shopId'] as const);
   if (!picked || !tokenText(picked.appKey) || !tokenText(picked.appSecret) || !tokenText(picked.accessToken)) throw new MarketplaceProviderError('credentials');
-  const shopCipher = picked.shopCipher === undefined ? null : tokenText(picked.shopCipher) ? picked.shopCipher : undefined;
-  const shopId = picked.shopId === undefined ? null : typeof picked.shopId === 'string' && /^\d{1,30}$/.test(picked.shopId) ? picked.shopId : undefined;
+  // An absent or null shop is no shop yet (the interface says `string | null`, so a secret re-sealed from this reader's own result must read back).
+  const shopCipher = picked.shopCipher === undefined || picked.shopCipher === null ? null : tokenText(picked.shopCipher) ? picked.shopCipher : undefined;
+  const shopId = picked.shopId === undefined || picked.shopId === null ? null : typeof picked.shopId === 'string' && /^\d{1,30}$/.test(picked.shopId) ? picked.shopId : undefined;
   if (shopCipher === undefined || shopId === undefined) throw new MarketplaceProviderError('credentials');
   return { appKey: picked.appKey, appSecret: picked.appSecret, accessToken: picked.accessToken, shopCipher, shopId };
 }
@@ -75,6 +76,9 @@ const CREDENTIAL_CODES: Readonly<Record<string, TiktokCredentialReason>> = {
 // The message is only matched against this closed list and is never stored or repeated.
 const CREDENTIAL_MESSAGE_WORDS = ['missing credentials', 'access_token header is invalid', 'x-tts-access-token header is invalid', 'invalid app_key'] as const;
 
+// The documented 36009004 messages that are not about the credentials.
+const NON_CREDENTIAL_MESSAGE_WORDS = ['timestamp', 'identifier', 'api version', 'shop_cipher', 'category_asset_cipher', 'shop_id'] as const;
+
 function classify(status: number, code: string, message: string): TiktokApiError {
   if (status === 429 || code === '36009002') return new TiktokApiError('rate_limited');
   if (Object.hasOwn(CREDENTIAL_CODES, code)) return new TiktokApiError('credentials', CREDENTIAL_CODES[code] ?? 'unknown');
@@ -82,6 +86,9 @@ function classify(status: number, code: string, message: string): TiktokApiError
     // The page writes names between backticks; whether the API does is not known, so quotes and backticks are dropped before the match.
     const text = message.toLowerCase().replace(/[`'"]/g, '');
     if (CREDENTIAL_MESSAGE_WORDS.some((word) => text.includes(word))) return new TiktokApiError('credentials', 'unknown');
+    // The documented non-credential uses (the timestamp window, an identifier that is not wanted or not valid, the API version) are the worker's clock or request, never a refusal. A 401 or 403 with
+    // wording the page does not list is still a refusal of the credentials: it falls through to the status rule below.
+    if (!NON_CREDENTIAL_MESSAGE_WORDS.some((word) => text.includes(word))) return status === 401 || status === 403 ? new TiktokApiError('credentials', 'unknown') : new TiktokApiError('unreachable');
     return new TiktokApiError('unreachable');
   }
   if (status === 401 || status === 403) return new TiktokApiError('credentials', 'unknown');
@@ -137,6 +144,8 @@ export function tiktokCaller(options: TiktokOptions): TiktokCaller {
   }
 
   return async (credential, request, idKeys = DEFAULT_ID_KEYS) => {
+    // `sign` and `access_token` are the caller's to never pass: the first is computed here, the second travels in a header, and neither is signed if it is in the query (a token would end up in the address).
+    if (Object.hasOwn(request.query, 'sign') || Object.hasOwn(request.query, 'access_token') || Object.hasOwn(request.query, 'app_key') || Object.hasOwn(request.query, 'timestamp')) throw new RangeError('reserved query parameter');
     await takeTurn(`${credential.appKey}:${credential.shopCipher ?? ''}`);
     const query: Record<string, string> = { ...request.query, app_key: credential.appKey, timestamp: String(Math.floor(now().getTime() / 1000)) };
     const body = request.method === 'POST' ? (request.body ?? '') : null;
@@ -161,7 +170,6 @@ export function tiktokCaller(options: TiktokOptions): TiktokCaller {
     const code = isRecord(answer) && (typeof answer.code === 'number' || typeof answer.code === 'string') ? String(answer.code) : '';
     const message = isRecord(answer) && typeof answer.message === 'string' ? answer.message : '';
     if (!response.ok || code !== '0') {
-      if (!response.ok) await response.body?.cancel().catch(() => undefined);
       throw classify(response.status, code, message);
     }
     return isRecord(answer) ? answer.data : undefined;
