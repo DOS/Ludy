@@ -15,9 +15,10 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { serverOrigin } from '../lib/api-base.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
-import { bankAccountChoices, feedAccountRows, feedFromMin, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
+import { bankAccountChoices, feedAccountRows, feedFromMin, hookAddress, latestSync, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
 import type { Role } from '../lib/members.ts';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.accounts.key() });
@@ -320,6 +321,114 @@ function AccountRow({
   );
 }
 
+// The Tingee webhook (#4204): the address to paste in the business's Tingee portal, made by the server and shown once. The key
+// lives only in this component's state: it is not in a query key, a URL or storage, the mutation is dropped as soon as nothing
+// watches it (gcTime 0), and hiding the address (or leaving the card) discards it. Replacing the address stops the old one at
+// once, so it takes a second click. The status read never carries the key.
+function HookBlock({ connection, mapped }: { connection: Connection; mapped: readonly BankFeedAccountView[] }) {
+  const t = useTranslations('bankFeeds.hook');
+  const f = useFormat();
+  const [address, setAddress] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null);
+  const status = useQuery(orpc.bankFeeds.hook.queryOptions({ input: { connectionId: connection.id } }));
+  const make = useMutation({
+    ...orpc.bankFeeds.hookSet.mutationOptions({
+      onSuccess: async (made) => {
+        setAddress(hookAddress(serverOrigin(), made.provider, made.key));
+        setCopied(null);
+        setConfirming(false);
+        await queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.hook.key() });
+      },
+    }),
+    // The mutation holds its answer, the key included: with no cache time it is dropped as soon as nothing watches it.
+    gcTime: 0,
+  });
+  const copy = async () => {
+    if (address === null) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied('yes');
+    } catch {
+      setCopied('failed');
+    }
+  };
+  const run = () => {
+    setAddress(null);
+    make.mutate({ connectionId: connection.id });
+  };
+  const hook = status.data;
+  const lastPull = latestSync(mapped);
+  return (
+    <section className="mt-3 space-y-2 rounded-md border p-3" aria-label={t('title')}>
+      <p className="text-xs font-medium text-muted-foreground">{t('title')}</p>
+      <p className="text-xs text-subtle-foreground">{t('intro')}</p>
+      {status.error && <ErrorText>{errorMessage(status.error)}</ErrorText>}
+      {hook && (
+        <ul className="space-y-1 text-xs text-muted-foreground">
+          {hook.exists ? (
+            <>
+              {hook.createdAt && <li>{t('createdAt', { when: f.dateTime(hook.createdAt) })}</li>}
+              {hook.rotatedAt && <li>{t('rotatedAt', { when: f.dateTime(hook.rotatedAt) })}</li>}
+              <li>{hook.lastSeenAt ? t('lastSeen', { when: f.dateTime(hook.lastSeenAt) }) : t('noNotice')}</li>
+              <li>{t('rejected', { count: String(hook.rejectedCount) })}</li>
+            </>
+          ) : (
+            <li>{t('none')}</li>
+          )}
+          <li>{lastPull ? t('lastPull', { when: f.dateTime(lastPull) }) : t('noPull')}</li>
+        </ul>
+      )}
+      {hook?.stopped && (
+        <p className="text-xs text-warning" role="alert">
+          {t('stopped')}
+        </p>
+      )}
+      {address !== null && (
+        <div className="space-y-2 rounded-md bg-muted p-2">
+          <p className="text-xs text-foreground">{t('shownOnce')}</p>
+          <Input className="min-h-11 font-mono text-xs" readOnly aria-label={t('addressLabel')} value={address} onFocus={(e) => e.currentTarget.select()} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" className="min-h-11" onClick={() => void copy()}>
+              {t('copy')}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11" onClick={() => setAddress(null)}>
+              {t('close')}
+            </Button>
+          </div>
+          {copied && (
+            <p className="text-xs text-subtle-foreground" role="status">
+              {copied === 'yes' ? t('copied') : t('copyFailed')}
+            </p>
+          )}
+        </div>
+      )}
+      {confirming ? (
+        <div className="space-y-2">
+          <p className="text-xs text-warning" role="alert">
+            {t('warnRotate')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button loading={make.isPending} type="button" variant="outline" className="min-h-11" onClick={run}>
+              {t('confirmRotate')}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11" onClick={() => setConfirming(false)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        hook && (
+          <Button loading={make.isPending} type="button" variant="outline" className="min-h-11" onClick={() => (hook.exists ? setConfirming(true) : run())}>
+            {hook.exists ? t('rotate') : t('create')}
+          </Button>
+        )
+      )}
+      {make.error && <ErrorText>{errorMessage(make.error)}</ErrorText>}
+    </section>
+  );
+}
+
 function ConnectionItem({
   connection,
   mapped,
@@ -355,6 +464,7 @@ function ConnectionItem({
           {t('errorHint')}
         </p>
       )}
+      {connection.provider === 'bank_tingee' && connection.status === 'active' && <HookBlock connection={connection} mapped={mapped} />}
       {listed.error && <ErrorText>{errorMessage(listed.error)}</ErrorText>}
       {listed.isLoading ? (
         <RowsSkeleton />

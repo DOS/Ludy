@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BankFeedAccountView } from '@crove/kernel-contract';
 import type { ChartAccount } from '../src/lib/accounts.ts';
-import { bankAccountChoices, bankFeedOffered, feedAccountRows, feedFromMin, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
+import { bankAccountChoices, bankFeedOffered, feedAccountRows, feedFromMin, hookAddress, latestSync, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
 
 const chart = (code: string, rootCode: string, active = true): ChartAccount => ({ code, name: '', parentCode: null, rootCode, active, custom: false });
 const mapped = (externalAccountId: string, connectionId = 'c1'): BankFeedAccountView => ({
@@ -93,5 +93,16 @@ describe('feedFromMin (#4218)', () => {
   });
   it('takes the earliest day the server names for a mapped account', () => {
     expect(feedFromMin('bank_sandbox', { ...mapped('SBX-001'), feedFromEarliest: '2026-11-18' }, now)).toBe('2026-11-18');
+  });
+});
+
+describe('hookAddress and latestSync (#4204)', () => {
+  it('builds the address to paste from the API origin, the provider and the key', () => {
+    expect(hookAddress('https://api.example.test', 'bank_tingee', 'abcDEF123_-xyz')).toBe('https://api.example.test/api/bank-feed/bank_tingee/webhook/abcDEF123_-xyz');
+    expect(hookAddress('https://api.example.test/', 'bank_tingee', 'k')).toBe('https://api.example.test/api/bank-feed/bank_tingee/webhook/k');
+  });
+  it('takes the most recent sync, or null when nothing pulled yet', () => {
+    expect(latestSync([mapped('a'), mapped('b')])).toBeNull();
+    expect(latestSync([{ ...mapped('a'), lastSyncedAt: '2026-11-01T00:00:00.000Z' }, mapped('b'), { ...mapped('c'), lastSyncedAt: '2026-11-03T00:00:00.000Z' }])).toBe('2026-11-03T00:00:00.000Z');
   });
 });
