@@ -20,6 +20,15 @@ export const POLL_STATE_KEYS = {
   not_recognized: 'pollStates.not_recognized',
 } as const satisfies Record<MarketplacePollState, string>;
 
+// The words for a test state of a connection: an adapter may have its own for a state (Lazada tells "not authorized yet" from "refused"), else the generic ones.
+const OWN_TEST_WORDS: Readonly<Record<string, readonly MarketplaceConnectionState[]>> = { lazada: ['wrong_credentials', 'api_not_enabled'] };
+export const testStateKey = (adapterId: string, state: MarketplaceConnectionState): string =>
+  OWN_TEST_WORDS[adapterId]?.includes(state) ? `testStatesLazada.${state}` : TEST_STATE_KEYS[state];
+
+// The words for how a poll ended. A Lazada poll refused as `credentials` whose last test said the app is not authorized yet reads as that (not as a refused login); everything else is generic.
+export const pollStateKey = (connection: Pick<MarketplaceConnection, 'provider' | 'lastTestState'>, state: MarketplacePollState): string =>
+  state === 'credentials' && adapterIdOf(connection) === 'lazada' && connection.lastTestState === 'api_not_enabled' ? 'pollStatesLazada.not_authorized' : POLL_STATE_KEYS[state];
+
 export const PLATFORM_KEYS = { shopee: 'platforms.shopee', tiktok_shop: 'platforms.tiktok_shop', lazada: 'platforms.lazada' } as const;
 
 // Whether the marketplace card draws: the deployment offers an adapter to connect, or the org already has a connection (a viewer still reads it when the adapter was turned off
@@ -33,6 +42,32 @@ export const adapterIdOf = (connection: Pick<MarketplaceConnection, 'provider'>)
 export const canPollNow = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
   connection.status === 'active' && adapters.some((a) => a.id === adapterIdOf(connection) && a.offline);
 
+// Whether the screen offers "Authorize": the connection is live and its adapter is authorized on the platform's own page (Lazada). The adapter list does not say so, so the one adapter that has the step is named here;
+// the server refuses the start for any other (MARKETPLACE_AUTHORIZE_UNSUPPORTED).
+export const AUTHORIZED_ADAPTERS: readonly string[] = ['lazada'];
+export const canAuthorize = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
+  connection.status === 'active' && AUTHORIZED_ADAPTERS.includes(adapterIdOf(connection)) && adapters.some((a) => a.id === adapterIdOf(connection) && !a.offline);
+
+// The notice on a connection whose seller authorization is running out (#4240 S3b): `soon` from this many days before `reauthorizeBy` (the end of the refresh token, a date the server keeps in the clear),
+// `ended` once it has passed (the sweep has then stopped renewing it). Only a connection that was authorized and has a date, and that was not disconnected, has one.
+export const REAUTHORIZE_NOTICE_DAYS = 14;
+export type ReauthorizeNotice = 'soon' | 'ended';
+export const reauthorizeNotice = (connection: Pick<MarketplaceConnection, 'authorizeState' | 'reauthorizeBy' | 'status'>, now: Date): ReauthorizeNotice | null => {
+  if (connection.status === 'revoked' || connection.authorizeState !== 'authorized' || !connection.reauthorizeBy) return null;
+  const left = Date.parse(connection.reauthorizeBy) - now.getTime();
+  if (Number.isNaN(left)) return null;
+  if (left <= 0) return 'ended';
+  return left <= REAUTHORIZE_NOTICE_DAYS * 86_400_000 ? 'soon' : null;
+};
+
+// What the disconnect call sends: the connection, and `deleteStaged` only when the member ticked it AND orders are waiting (#4240 S3b).
+export const disconnectInput = (connection: Pick<MarketplaceConnection, 'id' | 'ordersWaiting'>, discard: boolean): { id: string; deleteStaged?: true } =>
+  discard && connection.ordersWaiting > 0 ? { id: connection.id, deleteStaged: true } : { id: connection.id };
+
+// The words of the notice: a connection the seller can authorize again says so; one that cannot (it has stopped, so the button is not offered, or the adapter is off) says to connect again.
+export const reauthorizeNoticeKey = (notice: ReauthorizeNotice, canAuthorizeAgain: boolean): 'reauthorizeSoon' | 'reauthorizeEnded' | 'reauthorizeReconnect' =>
+  canAuthorizeAgain ? (notice === 'soon' ? 'reauthorizeSoon' : 'reauthorizeEnded') : 'reauthorizeReconnect';
+
 // The platforms a connect can name: those an adapter serves.
 export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo[]): MarketplacePlatformInfo[] => platforms.filter((p) => p.adapter);
 
@@ -40,4 +75,4 @@ export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo
 export const fieldLabelKey = (name: string, known: (key: string) => boolean): string | null => (known(`fieldLabels.${name}`) ? `fieldLabels.${name}` : null);
 
 // A field the org types to connect is a secret unless its name says it is a plain identifier: the input hides what is typed.
-export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|clientId|shopId)$/i.test(name);
+export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|appKey|clientId|shopId)$/i.test(name);

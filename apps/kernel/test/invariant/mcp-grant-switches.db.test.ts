@@ -5,7 +5,7 @@
 // - a kill switch of scope `module` for the command's module refuses the call with KILL_SWITCH_ON (403), writes nothing and writes the grant's refusal row under the command's own name;
 // - a kill switch of scope `agent` naming the grant refuses it the same way, and a second grant of the org is not touched;
 // - an app the org switched off (ADR-0053, `apps_off`) answers MODULE_OFF (404) with the same audit row, for a write and for a proposal (the gate reads the module of the command the proposal is for);
-// and that `crove_kernel.mcp_switch_check` is the API login's alone, with a pinned search path, and refuses a name that is not a module. That a released switch lets the next call through, and that a person's own
+// and that `crove_kernel.mcp_switch_check` is the API login's alone, with a pinned search path, refuses a name that is not a module, and answers only for the context the caller entered (its org and its grant). That a released switch lets the next call through, and that a person's own
 // commands are untouched, are product flows: apps/kernel/test/mcp-grant-switches.db.test.ts.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
@@ -250,5 +250,45 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
     expect((await q<{ ok: boolean }>(`SELECT has_function_privilege('public', '${fn}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
     expect((await q(`SELECT proconfig FROM pg_proc WHERE oid = '${fn}'::regprocedure`)).rows[0]).toEqual({ proconfig: ['search_path=pg_catalog, pg_temp'] });
     await expect(q(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'Not A Module')`, [orgId, randomUUID()])).rejects.toThrow(/MCP_GRANT_SCOPE/);
+  });
+
+  it('answers a switch check only for the context the caller entered: no context, another org or another grant is refused and tells nothing about a switch', async () => {
+    const g = await grant([ENGAGE]);
+    const other = await grant([ENGAGE]);
+    await stopModule('crm');
+    try {
+      // No sealed context (the superuser's own session): refused before any switch row is read, so an engaged switch is not told.
+      await expect(q(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'crm')`, [orgId, g.grantId])).rejects.toThrow(/MCP_SWITCH_CONTEXT/);
+      // The API login, in the entered context of the first grant.
+      const app = new URL(adminUrl);
+      app.username = 'crove_app';
+      app.password = 'test-app-pw';
+      const c = new pg.Client({ connectionString: app.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, g.grantId, ENGAGE]);
+        // Another grant of the same org, and another org with the same grant: both are about a call that is not this one.
+        await expect(c.query(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'crm')`, [orgId, other.grantId])).rejects.toThrow(/MCP_SWITCH_CONTEXT/);
+        await c.query('ROLLBACK');
+        await c.query('BEGIN');
+        await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, g.grantId, ENGAGE]);
+        await expect(c.query(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'crm')`, [randomUUID(), g.grantId])).rejects.toThrow(/MCP_SWITCH_CONTEXT/);
+        await c.query('ROLLBACK');
+        // The control: about its own org and grant the check still reads the switch, so the binding does not blind it.
+        await c.query('BEGIN');
+        await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, g.grantId, ENGAGE]);
+        await expect(c.query(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'crm')`, [orgId, g.grantId])).rejects.toThrow(/KILL_SWITCH_ON/);
+        await c.query('ROLLBACK');
+        await c.query('BEGIN');
+        await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, g.grantId, ENGAGE]);
+        await expect(c.query(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'ads')`, [orgId, g.grantId])).resolves.toBeDefined();
+        await c.query('ROLLBACK');
+      } finally {
+        await c.end();
+      }
+    } finally {
+      await releaseAll();
+    }
   });
 });

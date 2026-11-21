@@ -75,6 +75,8 @@ function useLine() {
         return t('text.channel_expired');
       case 'kernel.ai_budget':
         return n.detail.level === 'stop' ? t('text.ai_budget_stop') : t('text.ai_budget_warn', { percent: n.detail.percent ?? '' });
+      case 'kernel.mcp_engage_reads':
+        return t(n.detail.grants === 'member' ? 'text.mcp_engage_reads_member' : n.detail.grants === 'both' ? 'text.mcp_engage_reads_both' : 'text.mcp_engage_reads');
       case 'kernel.personal_data_notice':
         return [
           Number(n.detail.notes ?? 0) + Number(n.detail.todos ?? 0) > 0 ? t('text.personal_data_notice', { items: privateItems(Number(n.detail.notes ?? 0), Number(n.detail.todos ?? 0)) }) : null,
@@ -117,6 +119,7 @@ export function NotificationsPage() {
     else if (target?.to === 'meetings') void navigate({ to: '/o/$slug/meetings', params: { slug } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
+    else if (target?.to === 'aiConnections') void navigate({ to: '/o/$slug/ai-connections', params: { slug } });
   };
   const open = (n: WorkNotification) => {
     if (!n.read) read.mutate({ ids: [n.id] });

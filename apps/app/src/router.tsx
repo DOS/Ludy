@@ -75,6 +75,7 @@ import { SocialChannelsPage } from './routes/social-channels.tsx';
 import { OAuthCallbackPage } from './routes/social-oauth.tsx';
 import { CalendarOAuthCallbackPage } from './routes/calendar-oauth.tsx';
 import { MeetingPlatformOAuthCallbackPage } from './routes/meeting-platform-oauth.tsx';
+import { MarketplaceOAuthCallbackPage } from './routes/marketplace-oauth.tsx';
 import { SocialComposePage, SocialPostPage } from './routes/social-post.tsx';
 import { SocialSharePage } from './routes/social-share.tsx';
 import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg, rememberShare } from './lib/social-share.ts';
@@ -406,6 +407,17 @@ const meetingPlatformOAuthCallbackRoute = createRoute({
     await requireAuth();
   },
   component: MeetingPlatformOAuthCallbackPage,
+});
+
+// Where a marketplace's consent page sends the seller back (Lazada, #4238); the authorization remembers its org the same way.
+const marketplaceOAuthCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/marketplace/oauth/$provider/callback',
+  beforeLoad: async ({ matches }) => {
+    requireInstalledOutside(matches);
+    await requireAuth();
+  },
+  component: MarketplaceOAuthCallbackPage,
 });
 
 const onboardingRoute = createRoute({
@@ -751,6 +763,7 @@ const routeTree = rootRoute.addChildren([
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
   meetingPlatformOAuthCallbackRoute,
+  marketplaceOAuthCallbackRoute,
   orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsQuotesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsNotificationsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 

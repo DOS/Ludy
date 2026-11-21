@@ -75,7 +75,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
-import { MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
@@ -611,6 +611,8 @@ export function createRpcHandler(
       throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
     }
   };
+  // Whether the seller authorizes this marketplace adapter on the platform's page (it then has an App Key beside its sealed secret).
+  const isMarketplaceAuthorized = (id: string): boolean => (MARKETPLACE_AUTHORIZED_ADAPTERS as readonly string[]).includes(id);
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
@@ -3501,9 +3503,16 @@ export function createRpcHandler(
                 legalEntityId: target.legalEntityId,
                 displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
                 credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+                // The App Key is a public identifier, stored in the clear beside the sealed secret it belongs to (the same handler makes both, so they never disagree).
+                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields.appKey } : {}),
               },
               { actor, orgId },
             );
+            // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
+            // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
+            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+              await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
+            }
             return { id: connected.id };
           }),
         ),
@@ -3515,9 +3524,12 @@ export function createRpcHandler(
             if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
             const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
             if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
-            // The API never opens a credential: a provider reached over the network is tested by the worker (a later build, with its adapter). The offline provider reaches no host and needs
-            // no credential, so its test runs here.
-            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            // The API never opens a credential: a provider reached over the network is tested by the worker, which records the state (the card shows it on its next read). The offline provider reaches
+            // no host and needs no credential, so its test runs here.
+            if (provider.hosts.length > 0) {
+              await runtime.execute('finance.marketplace_connection.request_test', { id: row.id }, { actor, orgId });
+              return { queued: true as const };
+            }
             let state: MarketplaceTestResult;
             try {
               state = await provider.testConnection(SANDBOX_MARKETPLACE_SECRET);
@@ -3533,9 +3545,59 @@ export function createRpcHandler(
             const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // "Disconnect and discard what is waiting" (#4240 S3b): the reports of this connection still staged in the Inbox are rejected first, each by the existing member decision (nothing is posted; their
+            // originals follow the retention that already exists). It runs BEFORE the credential goes: a refusal (too many to do at once) or a failure leaves the connection live. Each report is its own
+            // decision, so the ones already discarded stay discarded when a later one fails (a second disconnect finds only what is left). A report that was decided meanwhile is skipped.
+            let discarded = 0;
+            const discardWaiting = async () => {
+              const { fileIds } = await runtime.query<{ fileIds: string[] }>('finance.marketplace_connection.staged', { id: row.id }, { actor, orgId });
+              for (const fileId of fileIds) {
+                try {
+                  await runtime.execute('finance.marketplace.reject', { fileId }, { actor, orgId });
+                  discarded += 1;
+                } catch (error) {
+                  if (!(error instanceof DomainError && error.code === 'MARKETPLACE_NOT_STAGED')) throw error;
+                }
+              }
+            };
+            if (input.deleteStaged) await discardWaiting();
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
-            return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            // A poll that was mid-ingest when the list was read may have staged one more: the channel is revoked now, so no new poll starts, and what is left is discarded before the row goes.
+            if (input.deleteStaged) await discardWaiting();
+            const unlinked = await runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            return input.deleteStaged ? { ...unlinked, discarded } : unlinked;
+          }),
+        ),
+        // The seller's authorization on the platform's own page (#4238). The API makes the state (random; only its hash is stored, with the member and the connection) and builds the address from the App Key kept in
+        // the clear; it opens no credential. The return is checked by the finance command (single use, this member, this org, 10 minutes) and the code is sealed here and traded by the worker alone.
+        authorizeStart: os.marketplace.connections.authorizeStart.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            if (!provider.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // Without the public address the return address would be a relative one that the platform refuses.
+            if (!channels?.publicUrl) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const attempt = newOAuthAttempt(false);
+            const begun = await runtime.execute<{ appKey: string; expiresAt: string }>('finance.marketplace_connection.authorize_begin', { id: row.id, stateHash: attempt.stateHash }, { actor, orgId });
+            const redirectUri = `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/marketplace/oauth/${row.provider.slice('marketplace_'.length)}/callback`;
+            return { authorizeUrl: provider.authorizeUrl({ appKey: begun.appKey, redirectUri, state: attempt.state }), expiresAt: begun.expiresAt };
+          }),
+        ),
+        authorizeFinish: os.marketplace.connections.authorizeFinish.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            if (!channels) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const stateHash = oauthStateHash(input.state);
+            const found = await runtime.query<{ id: string; provider: string; externalAccountId: string }>('finance.marketplace_connection.authorize_lookup', { stateHash }, { actor, orgId });
+            if (!marketplaceProviderOf(found.provider.slice('marketplace_'.length))?.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // The code is sealed under a binding of its own and never opened here; the worker opens it.
+            const sealed = channels.broker.seal(input.code, { orgId, provider: found.provider, externalAccountId: found.externalAccountId });
+            return runtime.execute<{ id: string }>('finance.marketplace_connection.authorize_finish', { stateHash, codeKeyId: sealed.keyId, codeEnvelope: sealed.envelope.toString('base64') }, { actor, orgId });
           }),
         ),
         pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
@@ -3589,6 +3651,14 @@ export function createRpcHandler(
           return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
         }),
       ),
+      // Saves the mapping of a passed check (#4037): the command re-reads the file's check in its own transaction and refuses anything that is not the same file, platform and mapping the person saw checked.
+      columnsConfirm: os.marketplace.columnsConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsProfile: os.marketplace.columnsProfile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_profile', input, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -4065,6 +4135,9 @@ export function createRpcHandler(
           return { connectionId };
         }),
       ),
+      // The webhook hook key (#4203): no idempotency key, so a replay never hands the secret out again; the answer is the key, shown once.
+      hookSet: os.bankFeeds.hookSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.bank_feed.hook_set', input, { actor, orgId }))),
+      hook: os.bankFeeds.hook.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.hook', input, { actor, orgId }))),
       map: os.bankFeeds.map.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

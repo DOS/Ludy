@@ -30,7 +30,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/webhooks/mail/:provider': { app: 'kernel', gate: 'kernel', why: 'mail delivery events' },
   '/api/inbound/email': { app: 'kernel', gate: 'kernel', why: 'inbound mail' },
   '/api/bank-feed/:provider/webhook': { app: 'finance', gate: 'dropped', why: 'crove_finance.bank_feed_notice_claim drops the notice of an org whose Finance is off' },
-  '/api/bank-feed/:provider/webhook/:hookKey': { app: 'finance', gate: 'pending', why: "Tingee S3 (#4203): the hook lookup and the notice put will ask org_app_on for finance, so a notice of an org whose Finance is off is answered like an unknown key (404) and stored nowhere; the PR that adds the route replaces this class" },
+  '/api/bank-feed/:provider/webhook/:hookKey': { app: 'finance', gate: 'sql', why: 'crove_finance.bank_feed_hook_lookup and bank_feed_hook_put_notice ask org_app_on for finance, so a notice of an org whose Finance is off is answered like an unknown key (404) and stored nowhere' },
   '/api/webhooks/misa-amis': { app: 'finance', gate: 'dropped', why: 'the worker relay finds the org through crove_finance.misa_amis_callback_claim, which asks org_app_on for finance, so the result of an org whose Finance is off is acknowledged (200) and dropped' },
   '/api/ads/meta/data-deletion': { app: 'ads', gate: 'keeping', why: 'a platform erasure request is a duty that outlives the app switch' },
   '/api/channels/zalo/webhook': { app: 'kernel', gate: 'kernel', why: 'conversation core' },

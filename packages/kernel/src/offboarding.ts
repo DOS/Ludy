@@ -118,7 +118,11 @@ export const EXPORT_TABLES = {
   'finance.channel_order_line': { from: 'crove_finance.channel_order_line', omit: [] },
   'finance.channel_settlement': { from: 'crove_finance.channel_settlement', omit: [] },
   'finance.channel_settlement_line': { from: 'crove_finance.channel_settlement_line', omit: [] },
+  // The mapping of a marketplace report's columns a person confirmed (#4037): the header texts of the mapped columns and their standard fields, never a cell value or a buyer column.
+  'finance.marketplace_column_profile': { from: 'crove_finance.marketplace_column_profile', omit: [] },
   'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
+  // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and a time only.
+  'finance.marketplace_connection_file': { from: 'crove_finance.marketplace_connection_file', omit: [] },
   // The code AMIS is told for this connection is a routing id of the deployment, not the org's data; the access code is sealed in crove_kernel.credential, which is never exported.
   'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
   // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.

@@ -194,13 +194,14 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
+import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -614,7 +615,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -2680,12 +2681,20 @@ export const contract = {
       // MARKETPLACE_DISABLED (404) for an adapter this deployment does not offer, MARKETPLACE_PLATFORM (422) for a platform the adapter does not serve, MARKETPLACE_FIELDS (422) when the
       // fields are not the adapter's, MARKETPLACE_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
       connect: oc.input(zMarketplaceConnect).output(z.object({ id: zId })),
-      // MARKETPLACE_PROVIDER_NOT_READY (503) for an adapter that is reached through the worker.
-      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTested),
-      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // The offline adapter answers the state at once; an adapter that reaches the platform answers `{queued: true}` and the worker records the state (the list shows it). CHANNEL_NOT_ACTIVE (409), MARKETPLACE_DISABLED (404).
+      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTestAnswer),
+      // With `deleteStaged` the reports of this connection still waiting in the Inbox are rejected first (each is the member's own decision, nothing is posted; their originals follow the retention that
+      // already exists), and `discarded` says how many. MARKETPLACE_TOO_MANY_STAGED (409) when there are more than can be discarded at once: nothing is done then.
+      disconnect: oc.input(z.object({ id: zId, deleteStaged: z.boolean().optional() })).output(z.object({ removed: z.boolean(), discarded: z.number().int().min(0).optional() })),
       // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
       // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
       pollNow: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // The seller's authorization of a connection on the platform's own page (#4238, Lazada). Start: the address of that page, with a one-time state bound to this connection and this member (10 minutes).
+      // MARKETPLACE_AUTHORIZE_UNSUPPORTED (422), MARKETPLACE_APP_KEY_MISSING (409), CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403) unless owner or admin.
+      authorizeStart: oc.input(z.object({ id: zId })).output(zMarketplaceAuthorizeStarted),
+      // Finish: the page the platform returns the seller to calls this with the state and the one-time code. The code is sealed here and traded by the worker; the answer is only the connection. MARKETPLACE_AUTHORIZE_INVALID (400)
+      // for a state that is wrong, used, ended, another member's or another org's.
+      authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
     },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
@@ -2708,6 +2717,11 @@ export const contract = {
     columnsFiles: oc.input(z.strictObject({})).output(z.array(zMarketplaceColumnsFile)),
     columns: oc.input(z.object({ fileId: zId })).output(zMarketplaceColumnsStatus),
     columnsProposal: oc.input(zMarketplaceColumnsProposalAsk).output(zMarketplaceColumnsProposal),
+    // Saves the mapping of a passed check (#4037, slice 3 of #3850): the file whose check the person looked at and the platform and mapping they saw, which must be the file's last check (done, with parsed lines,
+    // the same platform and mapping), or MARKETPLACE_COLUMNS_NOT_CHECKED / MARKETPLACE_COLUMNS_STALE (409); the profile's headers and digest come from what the worker recorded, and the check row is deleted in the
+    // same transaction. Owners and admins; a person only. `columnsProfile` reads the org's latest saved mapping of a platform (every member).
+    columnsConfirm: oc.input(zMarketplaceColumnsConfirm.extend({ idempotencyKey: zId })).output(zMarketplaceColumnsConfirmed),
+    columnsProfile: oc.input(zMarketplaceColumnProfileQuery).output(zMarketplaceColumnProfile.nullable()),
   },
   // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). `status` says whether this deployment offers the connector (it does only when it holds the integrator's ClientID; the value is
   // never in any answer). The customer's access code is sealed in the kernel at the edge and never in an answer, a log or an audit row: the screen shows only "connected since". Every role reads the
@@ -3006,6 +3020,11 @@ export const contract = {
     listed: oc
       .input(z.object({ connectionId: zId }))
       .output(z.array(z.object({ externalAccountId: z.string(), displayName: z.string(), listedAt: z.string() }))),
+    // The webhook hook key of a connection whose provider signs notices with the customer's own secret (Tingee, #4203): makes the hook or replaces its key, and answers the key once (only its SHA-256 is kept; the old address stops at
+    // once). No idempotency key: a replay would hand the secret out again. Owners and admins.
+    hookSet: oc.input(zBankFeedHookSet).output(zBankFeedHookCreated),
+    // The hook's status (made, rotated, last notice, notices refused in the hour, stopped), never its key. Owners and admins.
+    hook: oc.input(zBankFeedHookSet).output(zBankFeedHookStatus),
     map: oc.input(zBankFeedMap.extend({ idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
     unmap: oc.input(z.object({ feedAccountId: zId, idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
   },

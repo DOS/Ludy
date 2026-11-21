@@ -83,7 +83,9 @@ export interface CroveFinanceSchema {
   'crove_finance.journal_voucher': FinanceJournalVoucherTable;
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
   'crove_finance.marketplace_column_check': FinanceMarketplaceColumnCheckTable;
+  'crove_finance.marketplace_column_profile': FinanceMarketplaceColumnProfileTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
+  'crove_finance.marketplace_connection_file': FinanceMarketplaceConnectionFileTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_amis_match': FinanceMisaAmisMatchTable;
@@ -917,6 +919,9 @@ export interface FinanceBankFeedAccountTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   feed_from: string | null;
+  last_pull_outcome: string | null;
+  last_pull_outcome_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_pull_item: number | null;
 }
 
 /** crove_finance.bank_feed_listed_account */
@@ -1430,6 +1435,27 @@ export interface FinanceMarketplaceColumnCheckTable {
   preview: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
+/** crove_finance.marketplace_column_profile */
+export interface FinanceMarketplaceColumnProfileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  header_row: ColumnType<number, number, NotGranted>;
+  columns: ColumnType<unknown, string, NotGranted>;
+  header_digest: ColumnType<string, string, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.marketplace_connection_file */
+export interface FinanceMarketplaceConnectionFileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  marketplace_connection_id: ColumnType<string, string, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.marketplace_connection */
 export interface FinanceMarketplaceConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1446,6 +1472,16 @@ export interface FinanceMarketplaceConnectionTable {
   orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  app_key: string | null;
+  authorize_state: string | null;
+  authorize_state_hash: string | null;
+  authorize_expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authorize_by: string | null;
+  authorize_code_key_id: string | null;
+  authorize_code_envelope: string | null;
+  reauthorize_by: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authorize_pending_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  seller_ref: string | null;
 }
 
 /** crove_finance.marketplace_party */
