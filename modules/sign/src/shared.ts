@@ -22,7 +22,21 @@ import { SIGN_INVITE_MAIL_SOURCE, SIGN_INVITE_MAIL_TEMPLATE, queueSignInviteEmai
 
 export const SIGN_WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const SIGN_READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
-export const DEFAULT_SIGN_LINK_TTL_HOURS = 30 * 24;
+export const SIGN_MAX_LINK_HOURS = 30 * 24;
+export const DEFAULT_SIGN_LINK_TTL_HOURS = SIGN_MAX_LINK_HOURS;
+export const SIGN_MAX_LINK_TTL_MS = SIGN_MAX_LINK_HOURS * 3_600_000;
+
+export function assertValidEnvelopeExpiry(expiresAt: Date | null, now: Date): void {
+  if (expiresAt === null) return;
+  const nowMs = now.getTime();
+  const expMs = expiresAt.getTime();
+  if (!Number.isFinite(expMs) || expMs <= nowMs) {
+    throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
+  }
+  if (expMs > nowMs + SIGN_MAX_LINK_TTL_MS) {
+    throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt cannot exceed 30 days (720 hours)');
+  }
+}
 
 export interface IssuedSigningLink {
   signerId: string;
@@ -346,8 +360,10 @@ export async function sendDraftEnvelope(
     .where('id', 'in', dueIds)
     .execute();
 
-  const defaultExpiry = new Date(ctx.now.getTime() + DEFAULT_SIGN_LINK_TTL_HOURS * 3_600_000);
-  const tokenExpiresAt = row.expires_at ? new Date(row.expires_at) : defaultExpiry;
+  const defaultExpiry = new Date(ctx.now.getTime() + SIGN_MAX_LINK_TTL_MS);
+  const tokenExpiresAt = row.expires_at
+    ? new Date(Math.min(new Date(row.expires_at).getTime(), defaultExpiry.getTime()))
+    : defaultExpiry;
 
   const links: IssuedSigningLink[] = [];
   let orgName: string | null = null;
