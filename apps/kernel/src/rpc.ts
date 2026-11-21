@@ -3545,9 +3545,28 @@ export function createRpcHandler(
             const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // "Disconnect and discard what is waiting" (#4240 S3b): the reports of this connection still staged in the Inbox are rejected first, each by the existing member decision (nothing is posted; their
+            // originals follow the retention that already exists). It runs BEFORE the credential goes: a refusal (too many to do at once) or a failure leaves the connection live. Each report is its own
+            // decision, so the ones already discarded stay discarded when a later one fails (a second disconnect finds only what is left). A report that was decided meanwhile is skipped.
+            let discarded = 0;
+            const discardWaiting = async () => {
+              const { fileIds } = await runtime.query<{ fileIds: string[] }>('finance.marketplace_connection.staged', { id: row.id }, { actor, orgId });
+              for (const fileId of fileIds) {
+                try {
+                  await runtime.execute('finance.marketplace.reject', { fileId }, { actor, orgId });
+                  discarded += 1;
+                } catch (error) {
+                  if (!(error instanceof DomainError && error.code === 'MARKETPLACE_NOT_STAGED')) throw error;
+                }
+              }
+            };
+            if (input.deleteStaged) await discardWaiting();
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
-            return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            // A poll that was mid-ingest when the list was read may have staged one more: the channel is revoked now, so no new poll starts, and what is left is discarded before the row goes.
+            if (input.deleteStaged) await discardWaiting();
+            const unlinked = await runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+            return input.deleteStaged ? { ...unlinked, discarded } : unlinked;
           }),
         ),
         // The seller's authorization on the platform's own page (#4238). The API makes the state (random; only its hash is stored, with the member and the connection) and builds the address from the App Key kept in

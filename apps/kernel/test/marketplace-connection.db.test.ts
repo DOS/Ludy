@@ -893,6 +893,61 @@ suite('marketplace connections (#2519)', () => {
     expect(String(again.body.id)).not.toBe(id);
   });
 
+  it('disconnects and discards what is waiting (#4240 S3b): only this connection\'s staged reports are rejected, by the member\'s own decision, before the credential goes; without the flag nothing is touched', async () => {
+    const entityIds: string[] = [];
+    for (const name of ['Chi nhánh C', 'Chi nhánh D']) {
+      entityIds.push(String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [orgId, name, owner.userId]))[0]?.id));
+    }
+    const ids: string[] = [];
+    for (const legalEntityId of entityIds) {
+      const connected = await call('connections/connect', owner, connectInput({ platform: 'lazada', legalEntityId }));
+      expect(connected.status).toBe(200);
+      ids.push(String(connected.body.id));
+    }
+    const [a, b] = ids as [string, string];
+    const before = (await files()).length;
+    expect(await poll(a)).toEqual({ state: 'ok', orders: 3, staged: true });
+    expect(await poll(b)).toEqual({ state: 'ok', orders: 3, staged: true });
+    const added = (await files()).slice(before);
+    expect(added).toHaveLength(2);
+    for (const f of added) expect(await readMarketplaceFile({ runtime: worker, store, extract }, orgId, f.id)).toEqual({ handled: true });
+    const fileOf = (id: string) => String(added.find((f) => f.filename.includes(id))?.id);
+    const stateOf = async (fileId: string) =>
+      (await rows<{ state: string }>(`SELECT x.result -> 'summary' ->> 'state' AS state FROM crove_kernel.extraction x WHERE x.org_id = $1 AND x.file_id = $2 AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)`, [orgId, fileId]))[0]?.state;
+    expect(await stateOf(fileOf(a))).toBe('staged');
+    expect(await stateOf(fileOf(b))).toBe('staged');
+
+    // The list of what waits is one connection's own, and only owners and admins read it.
+    expect(await rt.query('finance.marketplace_connection.staged', { id: a }, { actor: asUser(adminUser), orgId })).toEqual({ fileIds: [fileOf(a)] });
+    expect(await rt.query('finance.marketplace_connection.staged', { id: b }, { actor: asUser(owner), orgId })).toEqual({ fileIds: [fileOf(b)] });
+    await expect(rt.query('finance.marketplace_connection.staged', { id: a }, { actor: asUser(member), orgId })).rejects.toThrow();
+
+    // Members and viewers cannot disconnect, with or without the flag.
+    for (const who of [member, viewer]) expect((await call('connections/disconnect', who, { id: a, deleteStaged: true })).status).toBe(403);
+    expect(await stateOf(fileOf(a))).toBe('staged');
+
+    // With the flag: this connection\'s waiting report is rejected (nothing posted), the other connection\'s is left, the credential and the row go, the file stays for the existing retention.
+    const orders = await count('SELECT 1 FROM crove_finance.channel_order WHERE org_id = $1', [orgId]);
+    const done = await call('connections/disconnect', adminUser, { id: a, deleteStaged: true });
+    expect(done.body).toEqual({ removed: true, discarded: 1 });
+    expect(await stateOf(fileOf(a))).toBe('rejected');
+    expect(await stateOf(fileOf(b))).toBe('staged');
+    expect(await count('SELECT 1 FROM crove_finance.channel_order WHERE org_id = $1', [orgId])).toBe(orders);
+    expect(await count('SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [orgId, fileOf(a)])).toBe(1);
+    expect(await count('SELECT 1 FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, a])).toBe(0);
+    const list = (await call('connections/list', owner)).body as Array<{ id: string; ordersWaiting: number }>;
+    expect(list.find((c) => c.id === a)).toBeUndefined();
+    expect(list.find((c) => c.id === b)?.ordersWaiting).toBe(3);
+    // The decision is the admin\'s own, in the audit trail (the reject command ran as that member).
+    expect(await count(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.reject' AND actor_id = $2 AND detail::text LIKE $3`, [orgId, adminUser.userId, `%${fileOf(a)}%`])).toBe(1);
+
+    // Without the flag nothing waiting is touched: the report of the second connection stays staged after it is disconnected, as before.
+    expect((await call('connections/disconnect', owner, { id: b })).body).toEqual({ removed: true });
+    expect(await stateOf(fileOf(b))).toBe('staged');
+    // A second disconnect with the flag finds nothing.
+    expect((await call('connections/disconnect', owner, { id: a, deleteStaged: true })).body).toEqual({ removed: false });
+  });
+
   it('holds the roles in SQL as the runtime\'s own login: owners and admins file a connection, members and viewers read it, and only the test and the poll columns can change', async () => {
     const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh vai trò', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     const channel = randomUUID();

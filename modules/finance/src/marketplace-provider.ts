@@ -17,12 +17,12 @@ import { money, toMoney } from '@crove/l10n-vn';
 export type MarketplacePlatformKey = (typeof MARKETPLACE_PLATFORM_KEYS)[number];
 
 // The adapters this build knows. `sandbox` is the offline provider; `lazada` is the real Lazada adapter (#2524), built dormant: a deployment turns it on with MARKETPLACE_PROVIDERS (a later slice).
-// `tiktok_shop` is the TikTok Shop adapter (#2524, T2 = #4259), built dormant too: nothing builds it from MARKETPLACE_PROVIDERS until its wiring slice.
-export const MARKETPLACE_ADAPTERS = ['sandbox', 'lazada', 'tiktok_shop'] as const;
+// `tiktok_shop` is the TikTok Shop adapter (#2524, T2 = #4259), built dormant too: nothing builds it from MARKETPLACE_PROVIDERS until its wiring slice. `shopee` is the Shopee adapter (#2524, S1 = #4274), dormant in the same way.
+export const MARKETPLACE_ADAPTERS = ['sandbox', 'lazada', 'tiktok_shop', 'shopee'] as const;
 export type MarketplaceAdapterId = (typeof MARKETPLACE_ADAPTERS)[number];
 
 // The platforms each adapter serves, as static data: the commands check a connection against it before anything is sealed, and the adapter's capabilities are built from it.
-export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS, lazada: ['lazada'], tiktok_shop: ['tiktok_shop'] };
+export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS, lazada: ['lazada'], tiktok_shop: ['tiktok_shop'], shopee: ['shopee'] };
 
 // The adapters whose connection the seller authorizes on the platform's own page after typing their app's key and secret (Lazada): the connection holds no access token until they do.
 export const MARKETPLACE_AUTHORIZED_ADAPTERS: readonly MarketplaceAdapterId[] = ['lazada', 'tiktok_shop'];
