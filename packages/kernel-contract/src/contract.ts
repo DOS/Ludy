@@ -194,6 +194,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceVatRateSet, zMarketplaceVatRates, zMarketplaceVatRatesGet } from './marketplace-vat-rate.ts';
 import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
@@ -2728,6 +2729,13 @@ export const contract = {
       // Finish: the page the platform returns the seller to calls this with the state and the one-time code. The code is sealed here and traded by the worker; the answer is only the connection. MARKETPLACE_AUTHORIZE_INVALID (400)
       // for a state that is wrong, used, ended, another member's or another org's.
       authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
+    },
+    // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated rows, oldest first; every role reads, owners and admins add rows from a date (R1, audited, a change is a later row, never an edit).
+    // The suggested schedule on the settings field applies only when a person confirms it. MARKETPLACE_VAT_RATE_ORDER (409) when a row does not start after the entity's latest, MARKETPLACE_VAT_RATE_LOCKED (409)
+    // inside a locked period, MARKETPLACE_VAT_RATE_DATE (422), FORBIDDEN (403) unless owner or admin.
+    vatRates: {
+      list: oc.input(zMarketplaceVatRatesGet).output(zMarketplaceVatRates),
+      set: oc.input(zMarketplaceVatRateSet.extend({ idempotencyKey: zId })).output(zMarketplaceVatRates),
     },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.

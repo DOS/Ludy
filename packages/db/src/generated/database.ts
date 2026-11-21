@@ -87,6 +87,7 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_connection_file': FinanceMarketplaceConnectionFileTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
+  'crove_finance.marketplace_vat_rate': FinanceMarketplaceVatRateTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_amis_match': FinanceMisaAmisMatchTable;
   'crove_finance.misa_amis_match_check': FinanceMisaAmisMatchCheckTable;
@@ -1492,6 +1493,18 @@ export interface FinanceMarketplacePartyTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   platform: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.marketplace_vat_rate */
+export interface FinanceMarketplaceVatRateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  method: ColumnType<string, string, NotGranted>;
+  vat_percent: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
