@@ -20,6 +20,7 @@ import { DomainError, defineCommand, type CommandContext, type ErrorStatus } fro
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import { signInPersonCommands } from './in-person.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken, maskEmail } from './sealing.ts';
@@ -1903,4 +1904,5 @@ export const signCommands = [
   ...signDirectPublicCommands,
   ...signTemplateCommands,
   ...signCaCommands,
+  ...signInPersonCommands,
 ];

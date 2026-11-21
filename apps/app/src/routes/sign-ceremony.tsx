@@ -15,7 +15,16 @@ import { CounterpartySummaryBanner } from '../components/sign/shared-summary-car
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import { publicSignApi, PublicSignError, type PublicFieldSubmission, type PublicSignField, type PublicSignViewState } from '../lib/sign-api.ts';
-import { forgetSignToken, pendingSignToken, readSignTokenFromHash, rememberSignToken, scrubSignTokenHash, subscribeToHash } from '../lib/sign-hash.ts';
+import type { SignSignerRole } from '../lib/sign-fields.ts';
+import {
+  forgetSignToken,
+  hasInPersonQueryFlag,
+  pendingSignToken,
+  readSignTokenFromHash,
+  rememberSignToken,
+  scrubSignTokenHash,
+  subscribeToHash,
+} from '../lib/sign-hash.ts';
 import { toast } from '../lib/toast.ts';
 
 export interface CeremonyFieldAnswer {
@@ -115,9 +124,44 @@ export function canSubmitCeremony(params: {
   );
 }
 
+export function SignInPersonHandoffCard({
+  title,
+  outcome,
+  signerRole,
+}: {
+  title: string;
+  outcome: 'completed' | 'declined';
+  signerRole?: SignSignerRole | undefined;
+}) {
+  const t = useTranslations('sign.ceremony');
+  const isApprover = signerRole === 'approver';
+  const heading =
+    outcome === 'declined'
+      ? t(isApprover ? 'approverDeclinedTitle' : 'declinedTitle')
+      : t(isApprover ? 'inPersonApproverCompletedTitle' : 'inPersonCompletedTitle');
+
+  return (
+    <Card className="mx-auto max-w-lg border-primary/40" data-testid="sign-ceremony-in-person-handoff">
+      <CardHeader className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="brand" data-testid="ceremony-in-person-badge">
+            {t('inPersonBadge')}
+          </Badge>
+        </div>
+        <CardTitle className="text-lg">{heading}</CardTitle>
+        <CardDescription className="font-medium text-foreground">{title}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm text-muted-foreground">
+        <p>{t('inPersonHandoffHint')}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SignCeremonyPage() {
   const t = useTranslations('sign.ceremony');
 
+  const [inPersonMode, setInPersonMode] = useState<boolean>(() => hasInPersonQueryFlag());
   const [token, setToken] = useState<string | null>(() => {
     const hadHash = typeof window !== 'undefined' && Boolean(window.location.hash);
     const fromHash = readSignTokenFromHash();
@@ -212,11 +256,13 @@ export function SignCeremonyPage() {
       if (next) {
         rememberSignToken(next);
         resetCeremonyTransientState();
+        setInPersonMode(hasInPersonQueryFlag());
         setToken(next);
         setTokenEpoch((n) => n + 1);
       } else if (hadHash) {
         forgetSignToken();
         resetCeremonyTransientState();
+        setInPersonMode(hasInPersonQueryFlag());
         setToken(null);
       }
     });
@@ -234,6 +280,9 @@ export function SignCeremonyPage() {
     try {
       const view = await publicSignApi.view(activeToken);
       if (requestGenRef.current !== requestId) return;
+      if ('inPerson' in view && view.inPerson === true) {
+        setInPersonMode(true);
+      }
       setViewState(view);
       if (
         view.state === 'already_completed' ||
@@ -270,7 +319,13 @@ export function SignCeremonyPage() {
           if (isOtpRequiredError(pdfErr)) {
             setOtpSent(false);
             setOtpCode('');
-            setViewState({ state: 'otp_required', orgName: view.orgName, title: view.title, maskedEmail: null });
+            setViewState({
+              state: 'otp_required',
+              orgName: view.orgName,
+              title: view.title,
+              maskedEmail: null,
+              ...(view.inPerson ? { inPerson: true } : {}),
+            });
           } else {
             setPdfError(t('invalidHint'));
           }
@@ -389,13 +444,17 @@ export function SignCeremonyPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await publicSignApi.submit(
+      const submitRes = await publicSignApi.submit(
         buildSignSubmitPayload({
           token,
           fields: viewState.fields,
           answers,
         }),
       );
+      const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
+      if (wasInPerson) {
+        setInPersonMode(true);
+      }
       forgetSignToken();
       toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
       setViewState({
@@ -403,6 +462,7 @@ export function SignCeremonyPage() {
         title: viewState.title,
         status: 'completed',
         signerRole: isApproverCeremony ? 'approver' : 'signer',
+        ...(wasInPerson ? { inPerson: true } : {}),
       });
       setPdfBytes(null);
     } catch (error) {
@@ -411,7 +471,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
         toast(t('otpInvalid'), 'error');
       } else {
         const msg = error instanceof Error ? error.message : t('invalidTitle');
@@ -434,6 +500,7 @@ export function SignCeremonyPage() {
     setDeclineError(null);
     try {
       await publicSignApi.decline({ token, reason: declineReason.trim() });
+      const wasInPerson = Boolean(inPersonMode || viewState.inPerson);
       forgetSignToken();
       setDeclineOpen(false);
       toast(t(isApproverCeremony ? 'approverDeclineSuccessToast' : 'declineSuccessToast'));
@@ -442,6 +509,7 @@ export function SignCeremonyPage() {
         title: viewState.title,
         status: 'declined',
         signerRole: isApproverCeremony ? 'approver' : 'signer',
+        ...(wasInPerson ? { inPerson: true } : {}),
       });
       setPdfBytes(null);
     } catch (error) {
@@ -451,7 +519,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
         toast(t('otpInvalid'), 'error');
       } else {
         setDeclineError(error instanceof Error ? error.message : t('invalidTitle'));
@@ -463,7 +537,7 @@ export function SignCeremonyPage() {
 
   const handleDelegate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!token || viewState?.state !== 'ready') return;
+    if (!token || viewState?.state !== 'ready' || inPersonMode || viewState.inPerson) return;
     const trimmedName = delegateName.trim();
     const trimmedEmail = delegateEmail.trim().toLowerCase();
     const trimmedReason = delegateReason.trim();
@@ -501,7 +575,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
         toast(t('otpInvalid'), 'error');
       } else {
         setDelegateError(error instanceof Error ? error.message : t('invalidTitle'));
@@ -511,14 +591,25 @@ export function SignCeremonyPage() {
     }
   };
 
+  const isInPerson = Boolean(inPersonMode || (viewState && 'inPerson' in viewState && viewState.inPerson));
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <ScreenTitle name={viewState?.title ?? t('invalidTitle')} />
 
       <header className="border-b bg-card px-4 py-3">
         <div className="mx-auto flex max-w-3xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <Logo />
-          <span className="text-xs leading-relaxed text-muted-foreground">{t('securityNote')}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Logo />
+            {isInPerson ? (
+              <Badge variant="brand" data-testid="ceremony-header-in-person-badge">
+                {t('inPersonBadge')}
+              </Badge>
+            ) : null}
+          </div>
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            {isInPerson ? t('inPersonSecurityNote') : t('securityNote')}
+          </span>
         </div>
       </header>
 
@@ -539,6 +630,12 @@ export function SignCeremonyPage() {
               <CardDescription>{t('waitingHint', { order: String(viewState.order) })}</CardDescription>
             </CardHeader>
           </Card>
+        ) : isInPerson && (viewState?.state === 'already_completed' || viewState?.state === 'declined') ? (
+          <SignInPersonHandoffCard
+            title={viewState.title}
+            outcome={viewState.state === 'declined' ? 'declined' : 'completed'}
+            signerRole={viewState.signerRole}
+          />
         ) : viewState?.state === 'already_completed' ? (
           <Card data-testid="sign-ceremony-completed">
             <CardHeader>
@@ -636,6 +733,7 @@ export function SignCeremonyPage() {
         ) : viewState?.state === 'ready' ? (
           <SignCeremonyReadyView
             viewState={viewState}
+            inPerson={isInPerson}
             answers={answers}
             pdfBytes={pdfBytes}
             loadingPdf={loadingPdf}
@@ -702,6 +800,7 @@ export function SignCeremonyPage() {
 
 export interface SignCeremonyReadyViewProps {
   viewState: ReadySignView;
+  inPerson?: boolean;
   answers: Readonly<Record<string, CeremonyFieldAnswer>>;
   pdfBytes: Uint8Array | null;
   loadingPdf: boolean;
@@ -750,8 +849,10 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
   const common = useTranslations('common');
 
   const isApproverCeremony = isApproverCeremonyMode(viewState);
+  const isInPerson = Boolean(props.inPerson || viewState.inPerson);
   const canDelegateCeremony = Boolean(
-    viewState.allowDelegation &&
+    !isInPerson &&
+      viewState.allowDelegation &&
       viewState.signerRole !== 'cc' &&
       (viewState.delegationCount ?? 0) < 2 &&
       props.onDelegateOpenChange,
