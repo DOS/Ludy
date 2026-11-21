@@ -182,6 +182,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
     'ads.object.archive_approved': 'ludy.ads.draft',
     'ads.budget.lower_approved': 'ludy.ads.draft',
     'ads.schedule.shorten_approved': 'ludy.ads.draft',
+    // Step 1 of 2 for #4181: the twin that cancels a queued raise of a running ad; the change that adds it is the next PR.
+    'ads.manage.cancel_approved': 'ludy.ads.draft',
   };
   it('has only the proposal-only twins of the Engage commands (E4) as commands a grant reaches as a proposal, each R2, access proposal, under its scope', () => {
     const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');

@@ -70,8 +70,8 @@ describe('telling a platform by its income headers', () => {
     expect(platform === undefined || INCOME_PROFILES.some((p) => p.platform === platform)).toBe(true);
   });
 
-  it('has no profile for Lazada: its layout is a row per fee line, which no public page shows well enough to map (#2521)', () => {
-    expect(INCOME_PROFILES.map((p) => p.platform)).toEqual(['shopee', 'tiktok_shop']);
+  it('has no profile for Lazada\'s OWN export (a row per fee line, which no public page shows well enough to map, #2521); its profile is the layout Ludy writes (#4302)', () => {
+    expect(INCOME_PROFILES.map((p) => p.platform)).toEqual(['shopee', 'tiktok_shop', 'lazada']);
     expect(findIncomeColumns(grid([['orderNumber', 'orderItemId', 'feeName', 'amount', 'statement', 'paidStatus']]))).toBeNull();
   });
 });

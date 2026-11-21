@@ -13,9 +13,12 @@ import {
   MARKETPLACE_PLATFORM_LIMITS,
   MarketplaceProviderError,
   SANDBOX_MARKETPLACE_SECRET,
+  incomeSpan,
   marketplaceCsvRows,
+  marketplaceIncomeCsv,
   marketplaceOrdersCsv,
   ordersSpan,
+  parseMarketplaceIncomePage,
   parseMarketplaceOrderPage,
   splitWritableOrders,
   type MarketplaceOrder,
@@ -28,6 +31,7 @@ import {
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { joinPollCursor, splitPollCursor } from './marketplace-income-leg.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
 
@@ -262,6 +266,22 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     staged = staged || last.outcome.staged;
     if (!last.more) break;
   }
+  // The income leg (#4302) runs after a whole orders leg only: a state the orders leg ended in (credentials, rate limit, unreachable) is not made worse by asking the same account for more. Its files
+  // are the days of income the platform has paid, one file a day; nothing is confirmed and nothing posts.
+  if (last.outcome.state === 'ok' && typeof provider.listIncome === 'function') {
+    for (let pages = 0; pages < MARKETPLACE_MAX_PAGES_PER_RUN; pages++) {
+      const current = await openSecret(deps, provider, job.orgId, target.channelConnectionId, options);
+      if (current === null) {
+        await record({ state: 'credentials' });
+        last = { outcome: { state: 'credentials', orders: 0, staged: false }, more: false };
+        break;
+      }
+      const income = await pollIncomePage({ deps, job, target, provider, secret: current, record, held, options });
+      staged = staged || income.outcome.staged;
+      last = { outcome: { state: income.outcome.state, orders: 0, staged: false }, more: income.more };
+      if (!income.more) break;
+    }
+  }
   return { state: last.outcome.state, orders, staged };
 }
 
@@ -287,7 +307,7 @@ async function pollPage(ctx: PageContext): Promise<MarketplacePageResult> {
   const stop = (state: MarketplacePollEnding, orders = 0): MarketplacePageResult => ({ outcome: { state, orders, staged: false }, more: false });
   let given;
   try {
-    given = await provider.listOrders(secret, target.platform, held.cursor);
+    given = await provider.listOrders(secret, target.platform, splitPollCursor(held.cursor).orders);
   } catch (error) {
     // The cursor stays where it was: the next poll asks for the same orders again.
     // Anything that is not the port's own error is made one of its kind here: its message (which a client library may fill with a URL or a header) is neither kept nor logged, and pg-boss
@@ -314,14 +334,27 @@ async function pollPage(ctx: PageContext): Promise<MarketplacePageResult> {
     return stop('too_large', page.orders.length);
   }
   // Nothing new: the poll is recorded with the cursor the provider gave back (and not at all when that changes nothing).
+  // The cursor the orders leg moves is its own part of the stored one: the income part beside it is kept as it is.
+  const parts = splitPollCursor(held.cursor);
+  let moved: { cursor?: string } = {};
+  if (page.nextCursor && page.nextCursor !== parts.orders) {
+    try {
+      const joined = joinPollCursor({ orders: page.nextCursor, income: parts.income });
+      if (joined !== null) moved = { cursor: joined };
+    } catch {
+      // A cursor that holds the separator or leaves no room for the income part is not one the stored form can carry: refused like any answer the port does not name.
+      await record({ state: 'not_recognized' });
+      return stop('not_recognized');
+    }
+  }
   if (page.orders.length === 0) {
-    await record({ state: 'ok', ...(page.nextCursor && page.nextCursor !== held.cursor ? { cursor: page.nextCursor } : {}) });
+    await record({ state: 'ok', ...moved });
     return stop('ok');
   }
 
   // An order the platform's layout cannot carry (a fractional quantity on a platform that writes a row for each unit) is left out and named as a state, never half written.
   const { writable, refused } = splitWritableOrders(target.platform, page.orders);
-  const cursor = page.nextCursor && page.nextCursor !== held.cursor ? { cursor: page.nextCursor } : {};
+  const cursor = moved;
   if (writable.length === 0) {
     await record({ state: 'not_recognized', ...cursor });
     return stop('not_recognized');
@@ -363,4 +396,70 @@ async function pollPage(ctx: PageContext): Promise<MarketplacePageResult> {
   // same window, so the run ends there.
   const more = state === 'ok' && page.more === true && cursor.cursor !== undefined && !filed.duplicate;
   return { outcome: { state, orders: filed.duplicate ? 0 : writable.length, staged: !filed.duplicate }, more };
+}
+
+// One day of the income leg: ask the provider for the next closed payment day after the income part of the cursor, check the page, write the day's lines as the platform's income CSV and ingest it with
+// the SAME command as an order page (the income reader of the worker takes it from there), then, only then, move the income part. A day with no lines moves the cursor and writes nothing.
+async function pollIncomePage(ctx: PageContext): Promise<MarketplacePageResult> {
+  const { deps, job, target, provider, secret, record, held, options } = ctx;
+  const stop = (state: MarketplacePollEnding): MarketplacePageResult => ({ outcome: { state, orders: 0, staged: false }, more: false });
+  const parts = splitPollCursor(held.cursor);
+  let given;
+  try {
+    given = await (provider.listIncome as NonNullable<MarketplaceProvider['listIncome']>)(secret, target.platform, parts.income);
+  } catch (error) {
+    // The cursor stays: the next poll asks for the same day again. The error's text is neither kept nor logged (see pollPage).
+    const state: MarketplacePollEnding = error instanceof MarketplaceProviderError ? error.kind : 'unreachable';
+    await record({ state });
+    console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: income ${state}`);
+    return stop(state);
+  }
+  const page = parseMarketplaceIncomePage(given);
+  if (page === null) {
+    await record({ state: 'not_recognized' });
+    console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: income not_recognized`);
+    return stop('not_recognized');
+  }
+  // The stored cursor: the orders part untouched, the income part as the provider gave it back (a cursor that cannot be joined is refused like a page the port does not name).
+  let next: { cursor?: string } = {};
+  if (page.nextCursor && page.nextCursor !== parts.income) {
+    try {
+      const joined = joinPollCursor({ orders: parts.orders, income: page.nextCursor });
+      if (joined !== null) next = { cursor: joined };
+    } catch {
+      await record({ state: 'not_recognized' });
+      return stop('not_recognized');
+    }
+  }
+  if (page.lines.length === 0) {
+    await record({ state: 'ok', ...next });
+    return { outcome: { state: 'ok', orders: 0, staged: false }, more: page.more === true && next.cursor !== undefined };
+  }
+  if (page.lines.length > EXTRACT_LIMITS.maxIncomeLines) {
+    await record({ state: 'too_large' });
+    return stop('too_large');
+  }
+  let csv: string;
+  try {
+    csv = marketplaceIncomeCsv(target.platform, page.lines, job.connectionId);
+  } catch {
+    await record({ state: 'not_recognized' });
+    return stop('not_recognized');
+  }
+  const bytes = new TextEncoder().encode(csv);
+  if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes) {
+    await record({ state: 'too_large' });
+    return stop('too_large');
+  }
+  const sha256 = sha256Hex(bytes);
+  const storageKey = fileKey(job.orgId, sha256);
+  const generation = await putFile(deps.store, storageKey, bytes, 'text/csv', sha256);
+  const span = incomeSpan(page.lines);
+  const filed = await deps.runtime.execute<{ fileId: string; duplicate: boolean }>(
+    'finance.marketplace_connection.ingest_page',
+    { marketplaceConnectionId: job.connectionId, filename: `thu-nhap-${target.platform}-${job.connectionId}${span ? `-${span.from}-${span.to}` : ''}.csv`, contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation },
+    options,
+  );
+  await record({ state: 'ok', ...next });
+  return { outcome: { state: 'ok', orders: 0, staged: !filed.duplicate }, more: page.more === true && next.cursor !== undefined };
 }

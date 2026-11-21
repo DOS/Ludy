@@ -120,6 +120,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
+  'crove_sign.envelope_obligation',
+  'crove_sign.member_signature',
+  'crove_sign.org_stamp',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -221,6 +224,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_notes.notebook', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
   ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
   ['crove_notes.todo_list', () => 'false'], // A personal to-do list is its owner's alone (ADR-0037).
+  ['crove_sign.member_signature', () => 'false'], // A member's own saved signature and initials (#3817); read in a user context only.
+  ['crove_sign.org_stamp', () => 'false'], // Org stamps require a user context of an org member (#3817); an agent context reads none.
   ['crove_social.notification', () => 'false'], // Per member.
   ['crove_social.notification_mail_off', () => 'false'], // Per member.
   ['crove_social.notification_mute', () => 'false'], // Per member.
@@ -349,6 +354,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_notes.todo', 'false'],
   // A personal to-do list is its owner's alone, the system context's included (ADR-0037).
   ['crove_notes.todo_list', 'false'],
+  // A member's saved signature and initials (#3817): read and written by that member alone in a user context; the system context sees and changes none of it.
+  ['crove_sign.member_signature', 'false'],
 ]);
 // Tables whose nullable legal_entity_id scopes a row to an entity, NULL being an org-level row every member reads
 // (#1716). The value makes a row of org A's default entity: the table's trigger gives it the entity of the record it
@@ -442,7 +449,8 @@ interface RowFactory {
   updatesBySystemOnly?: string;
   // For a role that may update some columns but not org_id: the assignment (and extra row filter) the update
   // probes use, when a no-op assignment would be refused by a trigger. Defaults to "<first column> = <itself>".
-  update?: { set: string; where?: string };
+  // blindSet assigns a constant without reading any column (used for blind UPDATE sweeps when org_id and updated_at are not updatable).
+  update?: { set: string; where?: string; blindSet?: string };
 }
 
 const hex64 = () => randomBytes(32).toString('hex');
@@ -2129,7 +2137,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
   // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
   'crove_hr.payroll_dependent': {
-    update: { set: 'ended_on = ended_on' },
+    update: { set: 'ended_on = ended_on', blindSet: "display_name = 'RLS matrix blind'" },
     make: (o) => {
       const employee = randomUUID();
       return {
@@ -3416,6 +3424,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
   'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 4e (#3821): post-signature agreement terms, renewal notice windows, and milestone obligations bound to an envelope.
+  'crove_sign.envelope_obligation': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          counterparty_name: 'Cong ty TNHH Doi Tac Mau',
+          effective_date: '2026-11-01',
+          expiry_date: '2027-10-31',
+          renewal_notice_days: 30,
+          contract_value: '24000000.0000',
+          currency: 'VND',
+          obligations_json: '[]',
+          status: 'confirmed',
+          confirmed_by: o.owner,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
   // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
   'crove_sign.field': {
     make: (o) => {
@@ -3442,6 +3474,42 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // eSign Slice 4a (#3817): a member's own saved handwritten or typed signature and initials (one row per member and kind), read and written by that member alone in a user context.
+  'crove_sign.member_signature': {
+    noInsertControl:
+      'one saved row per member and kind (UNIQUE (org_id, user_id, kind)); a member writes their own through sign.member_signature.upsert (stamps-and-saved-signatures.db.test.ts tests it)',
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        kind: 'signature',
+        signature_kind: 'draw',
+        signature_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        image_sha256: hex64(),
+        width_px: 1,
+        height_px: 1,
+      },
+    }),
+  },
+  // eSign Slice 4a (#3817): corporate or title stamp image managed by owners and admins and readable by org members and the system export context.
+  'crove_sign.org_stamp': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix stamp ${tag()}`,
+        stamp_kind: 'company',
+        file_id: o.file,
+        stamp_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        image_sha256: hex64(),
+        width_px: 1,
+        height_px: 1,
+        status: 'active',
+        created_by: o.owner,
+      },
+    }),
   },
   // eSign Slice 1 (#3330 / #3323): recipient required to sign an envelope.
   'crove_sign.signer': {
@@ -5119,6 +5187,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       if (table.startsWith('crove_hr.')) {
         it('is for owners and admins only: a plain member and a viewer reach no row, and an admin does what the owner does', async () => {
           const factory = factoryFor(table);
+          // Prove plainMember and viewerPerson have unrestricted entity scope ('*'), so le_scope cannot be what hides crove_hr rows (#2717 G2).
+          for (const who of [plainMember, viewerPerson]) {
+            const scope = expectRows(await probe(who, (c) => c.query('SELECT crove_kernel.ctx_le_scope() AS scope')), `${who.name} (le_scope)`);
+            expect(scope.rows, `${who.name}: le_scope on ${table}`).toEqual([{ scope: ['*'] }]);
+          }
           const readOwn = async (actor: Actor) => expectRows(await probe(actor, (c) => c.query(`SELECT org_id::text AS org FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${actor.name} (read)`);
           const ownerRead = await readOwn(member);
           expect(ownerRead.rows.length, `${table}: the owner reads the seeded rows of org A`).toBeGreaterThan(0);
@@ -5158,6 +5231,58 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             const run = (who: Actor) => probe(who, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id]));
             expect(shape(await run(adminPerson)), `${adminPerson.name} deleting from ${table}, as the owner does`).toEqual(shape(await run(member)));
             for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (delete)`).rowCount, `${who.name}: rows of ${table} deleted`).toBe(0);
+          }
+
+          // Blind UPDATE and DELETE sweeps (#2717 G1): run with no WHERE clause and assign constants without reading columns so SELECT policies
+          // cannot mask an UPDATE-only or DELETE-only RLS gap (while staying compatible with per-command policies).
+          if (cols.length > 0) {
+            const blind = cols.includes('org_id')
+              ? { sql: `UPDATE ${table} SET org_id = $1`, params: [orgs.A.id] }
+              : factory.update?.blindSet
+                ? { sql: `UPDATE ${table} SET ${factory.update.blindSet}`, params: [] }
+                : cols.includes('updated_at')
+                  ? { sql: `UPDATE ${table} SET updated_at = $1::timestamptz`, params: ['2026-11-01T00:00:00Z'] }
+                  : undefined;
+            if (!blind) {
+              throw new Error(`${table} has updatable columns (${cols.join(', ')}) without org_id or updated_at: add update.blindSet (constant assignment with no column read) to ROW_FACTORIES`);
+            }
+            if (can(table, 'crove_app', 'SELECT')) {
+              if (!factory.update?.where) {
+                const ownerSweep = await sweepRun(member, table, blind.sql, blind.params);
+                expect(ownerSweep, `${member.name} blind-updating ${table} (control)`).toMatchObject({ ok: true });
+                if (ownerSweep.ok) expect(ownerSweep.changed, `${member.name}: blind update control on ${table}`).toBeGreaterThan(0);
+              }
+              for (const who of [plainMember, viewerPerson]) {
+                const swept = await sweepRun(who, table, blind.sql, blind.params);
+                expect(swept, `${who.name} blind-updating ${table} without WHERE`).toEqual({ ok: true, visible: 0, changed: 0 });
+              }
+            } else {
+              for (const who of [plainMember, viewerPerson]) {
+                const outcome = await probe(who, (c) => c.query(blind.sql, blind.params));
+                expect(expectRows(outcome, `${who.name} (blind update)`).rowCount, `${who.name}: blind update on ${table}`).toBe(0);
+              }
+            }
+          } else {
+            for (const who of [plainMember, viewerPerson]) {
+              expectDenied(await probe(who, (c) => c.query(`UPDATE ${table} SET org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who.name} blind-updating ${table}`);
+            }
+          }
+          if (can(table, 'crove_app', 'DELETE')) {
+            if (can(table, 'crove_app', 'SELECT')) {
+              for (const who of [plainMember, viewerPerson]) {
+                const swept = await sweepRun(who, table, `DELETE FROM ${table}`, []);
+                expect(swept, `${who.name} blind-deleting from ${table} without WHERE`).toEqual({ ok: true, visible: 0, changed: 0 });
+              }
+            } else {
+              for (const who of [plainMember, viewerPerson]) {
+                const outcome = await probe(who, (c) => c.query(`DELETE FROM ${table}`));
+                expect(expectRows(outcome, `${who.name} (blind delete)`).rowCount, `${who.name}: blind delete on ${table}`).toBe(0);
+              }
+            }
+          } else {
+            for (const who of [plainMember, viewerPerson]) {
+              expectDenied(await probe(who, (c) => c.query(`DELETE FROM ${table}`)), PRIVILEGE_DENIED, `${who.name} blind-deleting from ${table}`);
+            }
           }
         });
       }
