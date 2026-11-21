@@ -84,4 +84,5 @@ export const zMarketplaceAuthorizeBegun = z.object({ appKey: z.string(), expires
 export type MarketplaceAuthorizeBegun = z.infer<typeof zMarketplaceAuthorizeBegun>;
 export const zMarketplaceAuthorizeLookup = z.strictObject({ stateHash: zMarketplaceStateHash });
 export const zMarketplaceAuthorizeFinish = z.strictObject({ stateHash: zMarketplaceStateHash, codeKeyId: z.string().min(1).max(64), codeEnvelope: z.string().min(1).max(8000) });
-export const zMarketplaceAuthorizeRecord = z.strictObject({ id: zId, outcome: z.enum(['authorized', 'refused', 'failed']), reauthorizeBy: z.iso.datetime({ offset: true }).nullable().optional() });
+// `codeDigest` names the code the outcome is for (the SHA-256 of its sealed envelope, as authorize_target gave it): an outcome for a code that was replaced meanwhile is not recorded.
+export const zMarketplaceAuthorizeRecord = z.strictObject({ id: zId, codeDigest: z.string().regex(/^[0-9a-f]{64}$/), outcome: z.enum(['authorized', 'refused', 'failed']), reauthorizeBy: z.iso.datetime({ offset: true }).nullable().optional() });

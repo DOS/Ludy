@@ -29,7 +29,7 @@ import {
   type MarketplaceConnectionTested,
 } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, sha256Hex } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { MARKETPLACE_ADAPTER_PLATFORMS, MARKETPLACE_AUTHORIZED_ADAPTERS, isMarketplaceAdapter, type MarketplaceAdapterId, type MarketplacePlatformKey } from './marketplace-provider.ts';
 
@@ -85,6 +85,8 @@ export const marketplaceConnectionConnect = defineCommand({
   handler: async (ctx, input): Promise<{ id: string; existing: boolean }> => {
     if (!isMarketplaceAdapter(input.adapter)) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này không được hỗ trợ');
     checkPlatform(input.adapter, input.platform);
+    // The App Key goes with the sealed secret in this one command, so the two never disagree: an adapter that is authorized on the platform's page needs it, any other has none.
+    if (MARKETPLACE_AUTHORIZED_ADAPTERS.includes(input.adapter) !== Boolean(input.appKey)) throw new DomainError('MARKETPLACE_FIELDS', 422, 'Hãy nhập đủ các thông tin mà sàn yêu cầu, không thêm thông tin khác');
     const channelProvider = `${PREFIX}${input.adapter}`;
     const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
     // The account is the entity's platform under this adapter, so a second connect of it is the same connection.
@@ -315,6 +317,9 @@ export const marketplaceConnectionRecordPoll = defineCommand({
 // error carries the state, the code or a token.
 export const MARKETPLACE_AUTHORIZE_REQUESTED = 'finance.marketplace_authorize_requested';
 export const MARKETPLACE_AUTHORIZE_TTL_MS = 10 * 60_000;
+// The binding a sealed one-time code is sealed under: its own, never the credential's, so an envelope of the credential cannot pass for a code and the reverse.
+export const marketplaceAuthorizeCodeAccount = (connectionId: string): string => `${connectionId}:authorize_code`;
+const digestOf = (envelope: string): string => sha256Hex(new TextEncoder().encode(envelope));
 
 const authorizeInvalid = () => new DomainError('MARKETPLACE_AUTHORIZE_INVALID', 400, 'Đường dẫn cấp quyền không hợp lệ, đã hết hạn hoặc đã dùng rồi; hãy bấm Cấp quyền lại');
 const requireUser = (ctx: { actor: { type: string; userId?: string } }): string => {
@@ -347,12 +352,18 @@ export const marketplaceConnectionAuthorizeBegin = defineCommand({
     if (!row.app_key) throw new DomainError('MARKETPLACE_APP_KEY_MISSING', 409, 'Kết nối này chưa lưu App Key; hãy ngắt kết nối rồi kết nối lại');
     const expiresAt = new Date(ctx.now.getTime() + MARKETPLACE_AUTHORIZE_TTL_MS);
     // One pending authorization for a connection: a new start replaces the old one.
-    await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
-      .set({ authorize_state_hash: input.stateHash, authorize_expires_at: expiresAt, authorize_by: userId })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.id)
-      .execute();
+    try {
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_connection')
+        .set({ authorize_state_hash: input.stateHash, authorize_expires_at: expiresAt, authorize_by: userId })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.id)
+        .execute();
+    } catch (error) {
+      // A hash another connection of the org already holds (the API makes them at random, so only a direct caller can send one).
+      if (pgCode(error) === '23505') throw authorizeInvalid();
+      throw error;
+    }
     ctx.audit({ started: true });
     return { appKey: row.app_key, expiresAt: expiresAt.toISOString() };
   },
@@ -367,12 +378,12 @@ export const marketplaceConnectionAuthorizeLookup = defineQuery({
     const userId = requireUser(ctx);
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection')
-      .select(['id', 'provider', 'legal_entity_id', 'platform', 'authorize_expires_at', 'authorize_by'])
+      .select(['id', 'provider', 'authorize_expires_at', 'authorize_by'])
       .where('org_id', '=', ctx.orgId)
       .where('authorize_state_hash', '=', input.stateHash)
       .executeTakeFirst();
     if (!row || row.authorize_by !== userId || !row.authorize_expires_at || new Date(row.authorize_expires_at).getTime() <= Date.now()) throw authorizeInvalid();
-    return { id: row.id, provider: row.provider, externalAccountId: `${row.legal_entity_id}:${row.platform}` };
+    return { id: row.id, provider: row.provider, externalAccountId: marketplaceAuthorizeCodeAccount(row.id) };
   },
 });
 
@@ -411,7 +422,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
       .where('id', '=', row.id)
       .execute();
     await ctx.emit(MARKETPLACE_AUTHORIZE_REQUESTED, { connection_id: row.id });
-    ctx.audit({ requested: true });
+    ctx.audit({ connectionId: row.id, requested: true });
     return { id: row.id };
   },
 });
@@ -419,7 +430,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
 // What the worker needs to finish an authorization: the sealed code and the binding of the sealed secret, or why it must not.
 export type MarketplaceAuthorizeTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_pending' | 'unknown_adapter' }
-  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string };
+  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string };
 
 export const marketplaceConnectionAuthorizeTarget = defineQuery({
   name: 'finance.marketplace_connection.authorize_target',
@@ -438,7 +449,16 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter || !MARKETPLACE_AUTHORIZED_ADAPTERS.includes(adapter)) return { action: 'none', reason: 'unknown_adapter' };
     if (row.authorize_state !== 'pending' || !row.authorize_code_key_id || !row.authorize_code_envelope) return { action: 'none', reason: 'not_pending' };
-    return { action: 'authorize', id: row.id, channelConnectionId: row.channel_connection_id, adapter, codeKeyId: row.authorize_code_key_id, codeEnvelope: row.authorize_code_envelope };
+    return {
+      action: 'authorize',
+      id: row.id,
+      channelConnectionId: row.channel_connection_id,
+      adapter,
+      codeKeyId: row.authorize_code_key_id,
+      codeEnvelope: row.authorize_code_envelope,
+      codeDigest: digestOf(row.authorize_code_envelope),
+      codeAccount: marketplaceAuthorizeCodeAccount(row.id),
+    };
   },
 });
 
@@ -453,13 +473,14 @@ export const marketplaceConnectionAuthorizeRecord = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     const found = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection')
-      .select(['id', 'authorize_state'])
+      .select(['id', 'authorize_state', 'authorize_code_envelope'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .forUpdate()
       .executeTakeFirst();
     // Only a pending authorization is recorded: a second record of the same code, or one for a connection that was reconnected meanwhile, changes nothing.
-    if (!found || found.authorize_state !== 'pending') return { recorded: false };
+    // and only for the code the worker read: if the seller authorized again meanwhile, the newer code is not cleared by an older outcome.
+    if (!found || found.authorize_state !== 'pending' || !found.authorize_code_envelope || digestOf(found.authorize_code_envelope) !== input.codeDigest) return { recorded: false };
     await ctx.trx
       .updateTable('crove_finance.marketplace_connection')
       .set({
