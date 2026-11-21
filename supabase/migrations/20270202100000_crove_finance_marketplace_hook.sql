@@ -126,8 +126,10 @@ BEGIN
   IF EXISTS (SELECT 1 FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook AND n.dedupe_key = p_dedupe_key) THEN
     RETURN 'duplicate';
   END IF;
+  -- The machine's cap counts and inserts under one transaction lock, so two puts for different hooks cannot both pass the count (a put is a few statements; the lock is held to its commit).
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.marketplace_hook_notice.capacity', 0));
   IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook LIMIT 20) s) >= 20
-     OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.marketplace_hook_notice LIMIT 10001) s) > 10000 THEN
+     OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.marketplace_hook_notice LIMIT 10000) s) >= 10000 THEN
     RETURN 'busy';
   END IF;
   INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, request_url)

@@ -259,7 +259,7 @@ suite('Marketplace push hook (#4316)', () => {
     expect(await waiting()).toEqual([]);
   });
 
-  it('finds the body nowhere but in its own row: no outbox, archive, audit or job row holds it, and the wake-up carries no payload', async () => {
+  it('finds the body nowhere but in its own row: no outbox, archive, audit or job row holds it (the job schema is crove_jobs), and the wake-up carries no payload', async () => {
     const heard: string[] = [];
     const listener = new pg.Client({ connectionString: adminUrl });
     await listener.connect();
@@ -271,7 +271,7 @@ suite('Marketplace push hook (#4316)', () => {
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((payload) => payload === '')).toBe(true);
     await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)');
-    const tables = await rows<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'pgboss') AND table_type = 'BASE TABLE'");
+    const tables = await rows<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'crove_jobs') AND table_type = 'BASE TABLE'");
     for (const { table_schema, table_name } of tables) {
       // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.
       const found = await rows<{ hit: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table_schema}.${table_name} t WHERE t::text LIKE $1 OR t::text LIKE $2) AS hit`, [`%${CANARY}%`, `%${Buffer.from(CANARY).toString('hex')}%`]);
