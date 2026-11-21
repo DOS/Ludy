@@ -50,7 +50,7 @@ const kindOf = async (run: () => Promise<unknown>): Promise<string> => {
     return error instanceof MarketplaceProviderError ? error.kind : `other: ${String(error)}`;
   }
 };
-const stagesOf = (page: { orders: Array<{ orderNo: string; stage: string; lines: Array<{ sku: string | null }> }> }, sn: string) => page.orders.filter((o) => o.orderNo === sn).map((o) => `${o.stage}:${o.lines.map((l) => l.sku).join('+')}`);
+const stagesOf = (page: { orders: ReadonlyArray<{ orderNo: string; stage: string; lines: ReadonlyArray<{ sku: string | null }> }> }, sn: string) => page.orders.filter((o) => o.orderNo === sn).map((o) => `${o.stage}:${o.lines.map((l) => l.sku).join('+')}`);
 const detailCalls = (fake: ReturnType<typeof fakeShopee>) => fake.calls.filter((c) => c.path === '/api/v2/returns/get_return_detail');
 
 describe('the stock rule for returns', () => {
