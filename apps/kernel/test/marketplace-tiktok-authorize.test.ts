@@ -89,6 +89,15 @@ describe('the trade of the code and the choice of the shop', () => {
     expect(leaks(result)).toEqual([]);
   });
 
+  it('keeps only a Vietnam shop with a local seller: a cross-border shop or another region fails in words, with nothing stored', async () => {
+    for (const over of [{ sellerType: 'CROSS_BORDER' as const }, { region: 'TH' }]) {
+      const { provider } = setup({ shops: [fakeShop(over)] });
+      const result = await provider.authorize!(TYPED, 'CODE1');
+      expect(result).toEqual({ failed: 'NOT_LOCAL_SHOP' });
+      expect(leaks(result)).toEqual([]);
+    }
+  });
+
   it('says `failed` when the shop list cannot be read, and refused for a code TikTok does not accept (used, or not a seller\'s)', async () => {
     const down = setup({ intercept: (host, path) => (host === 'open-api.tiktokglobalshop.com' && path.includes('/shops') ? new Response('down', { status: 503 }) : undefined) });
     const downResult = await down.provider.authorize!(TYPED, 'CODE1');

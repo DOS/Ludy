@@ -73,6 +73,8 @@ export function withTiktokAuthorize(provider: MarketplaceProvider, options: Tikt
       if (shops.length === 0) return { failed: 'NO_SHOP' };
       if (shops.length > 1) return { failed: 'MANY_SHOPS' };
       const shop = shops[0]!;
+      // Only a Vietnam shop with a local seller: a cross-border shop would pass here and then fail every poll without a clear message.
+      if (shop.region !== 'VN' || shop.sellerType !== 'LOCAL') return { failed: 'NOT_LOCAL_SHOP' };
       const sealed = { ...(JSON.parse(granted.secret) as Record<string, unknown>), ...(keyText(keys.serviceId) ? { serviceId: keys.serviceId } : {}), shopCipher: shop.cipher, shopId: shop.id };
       return { granted: { secret: JSON.stringify(sealed), accessExpiresAt: granted.accessExpiresAt, refreshExpiresAt: granted.authorizationEndsAt } };
     },

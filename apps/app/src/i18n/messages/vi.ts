@@ -5703,7 +5703,7 @@ export const vi = {
     },
     pollStatesTiktok: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên TikTok Shop nên chưa lấy được đơn' },
     authorizeStatesTiktok: {
-      failed: 'Chưa hoàn tất được việc cấp quyền. Có thể do TikTok đang trục trặc nhất thời, hãy bấm Cấp quyền lại; nếu vẫn lỗi, kiểm tra ứng dụng có gắn với đúng một gian hàng không (không có hoặc có nhiều gian hàng thì không nhận). Nếu vẫn lỗi, báo người quản trị hệ thống.',
+      failed: 'Chưa hoàn tất được việc cấp quyền. Có thể do TikTok đang trục trặc nhất thời, hãy bấm Cấp quyền lại; nếu vẫn lỗi, kiểm tra ứng dụng có gắn với đúng một gian hàng tại Việt Nam của người bán trong nước không (không có, nhiều gian hàng hoặc gian hàng xuyên biên giới thì không nhận). Nếu vẫn lỗi, báo người quản trị hệ thống.',
     },
     pollStatesLazada: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn' },
     pollStates: {
