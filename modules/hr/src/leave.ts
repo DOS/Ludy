@@ -20,6 +20,7 @@ import {
   zHrLeaveSet,
   type HrLeaveBalanceResult,
   type HrLeaveCategory,
+  type HrLeaveEntryKind,
   type HrLeaveEntryView,
   type HrLeaveWorkweek,
   type HrLeaveWritten,
@@ -88,7 +89,7 @@ export function computeAnnualLeaveBalance(
 
 export function validateMonthlyLeaveBounds(opts: {
   month: string;
-  kind: 'opening_balance' | 'annual_leave' | 'personal_paid' | 'unpaid_leave';
+  kind: HrLeaveEntryKind;
   days: ReturnType<typeof money>;
   hireDate: string | null;
   endedOn: Date | string | null;

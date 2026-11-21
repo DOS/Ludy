@@ -139,6 +139,10 @@ describe('HR self-service portal UI (#4300)', () => {
         exceededAnnualDays: '0',
         personalPaidDays: '0',
         unpaidDaysByMonth: {},
+        sicknessBhxhDays: '0',
+        maternityBhxhDays: '0',
+        sicknessBhxhDaysByMonth: {},
+        maternityBhxhDaysByMonth: {},
         rulesUsed: [],
       },
     };
