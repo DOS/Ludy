@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared case table for crove_kernel.text_detect and crove_kernel.text_redact_spans (#4001, Slice 1):
 // covers real values across all five structured kinds and near-misses that must stay undetected.
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
 
 const SYNTHETIC_MST_PREFIX = '590000001';
 const SYNTHETIC_MST_CHECK = enterpriseCheckDigit(SYNTHETIC_MST_PREFIX);

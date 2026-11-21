@@ -9,7 +9,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { hardeningViolations, migrate, setRolePasswords } from '@crove/db/migrate';
+import { hardeningViolations, migrate, setRolePasswords } from '@ludy/db/migrate';
 import { PII_DETECT_CASES, type RedactionKind } from './pii-detect-cases.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
