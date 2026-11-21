@@ -351,4 +351,33 @@ describe('HR labor contract PDF renderer (#3548)', () => {
     expect(contractFilename('-'.repeat(50_000), '2026-02-01')).toBe('hop-dong-lao-dong-2026-02-01.pdf');
     expect(contractFilename(`a${'-'.repeat(50_000)}`, '2026-02-01')).toBe('hop-dong-lao-dong-a-2026-02-01.pdf');
   });
+
+  it('renders hourly and piece-rate wage units and computes probation percentage against the active basis rate (#4301)', () => {
+    const hourlyPdf = extractRenderedTextFromPdf(
+      renderLaborContractPdf(
+        sampleContract({
+          payBasis: 'hourly',
+          hourlyRate: '50000',
+          baseWage: '0',
+          probationWage: '42500',
+        }),
+      ),
+    ).pages.join(' ');
+    expect(hourlyPdf).toContain('50.000 VND/giờ');
+    expect(hourlyPdf).toContain('42.500 VND/giờ (85% đơn giá giờ');
+
+    const piecePdf = extractRenderedTextFromPdf(
+      renderLaborContractPdf(
+        sampleContract({
+          payBasis: 'piece_rate',
+          pieceRate: '25000',
+          baseWage: '0',
+          probationRoleTier: null,
+          probationEndOn: null,
+          probationWage: null,
+        }),
+      ),
+    ).pages.join(' ');
+    expect(piecePdf).toContain('25.000 VND/sản phẩm');
+  });
 });

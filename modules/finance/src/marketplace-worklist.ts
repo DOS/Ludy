@@ -6,11 +6,12 @@
 // second request.
 // - settlements to post: stored settlements that stand and have no posting voucher, with the net the entry would post (a zero net posts nothing and is not offered);
 // - payouts to match: settlements whose posting stands and that have no payout voucher (a reversed payout counts: it is not posted again), that would post one (a receivable, money received, no
-//   unexplained adjustment), with the entity's bank lines the transfer may be: money in, equal to the net, not before the period, and free of every voucher and of every pending proposal;
+//   unexplained deduction), with the entity's bank lines the transfer may be: money in, equal to the net, not before the period, and free of every voucher and of every pending proposal. A line with money the
+//   report does not explain (above zero), or tax withheld from a seller that is no household, is listed in `adjustable`: the person classifies it when asking (#4303 S4);
 // - invoices to clear: the platform's posted fee invoices that still have something to clear while fees wait on 1388, with what a clearing would take now.
 // `postingConfirmed` is false while the accountant has not confirmed the account map of an entity in view (#2520): every request would be refused, so the screen shows the actions disabled.
 import { sql } from 'kysely';
-import { MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@ludy/kernel-contract';
+import { MARKETPLACE_FEE_CLEARING_COMMAND, MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
@@ -31,6 +32,31 @@ type Maps = Readonly<Record<string, MarketplacePostingMap>>;
 const MAX_SETTLEMENTS = 50;
 const MAX_CANDIDATES = 8;
 const MAX_INVOICES = 30;
+
+// The lines of a posted settlement a person must classify before its payout can be asked for (#4303 S4): `other` above zero (only when the settlement's `other` adds up to something: an offsetting pair is no
+// adjustment), and the tax withheld when the seller is no household. A line with a fraction of a dong cannot be classified (an adjustment is whole dong), so such a settlement is not offered, as an unexplained one
+// was not before. Null too when there are more lines than the request can carry (the accountant handles that settlement).
+async function adjustableOf(ctx: QueryContext, settlementId: string, household: boolean, withOther: boolean): Promise<MarketplaceWorklist['payouts'][number]['adjustable'] | null> {
+  const rows = (
+    await sql<{ id: string; other: string; tax_withheld: string }>`
+      SELECT id, other::text, tax_withheld::text FROM crove_finance.channel_settlement_line
+      WHERE org_id = ${ctx.orgId}::uuid AND settlement_id = ${settlementId}::uuid
+        AND ((${withOther} AND other > 0) OR (NOT ${household} AND tax_withheld > 0))
+      ORDER BY id LIMIT ${MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX + 1}`.execute(ctx.trx)
+  ).rows;
+  const out: MarketplaceWorklist['payouts'][number]['adjustable'] = [];
+  for (const r of rows) {
+    if (withOther && money(r.other).greaterThan(0)) {
+      if (!money(r.other).isInteger()) return null;
+      out.push({ lineId: r.id, source: 'other', amount: toMoney(money(r.other)) });
+    }
+    if (!household && money(r.tax_withheld).greaterThan(0)) {
+      if (!money(r.tax_withheld).isInteger()) return null;
+      out.push({ lineId: r.id, source: 'withheld', amount: toMoney(money(r.tax_withheld)) });
+    }
+  }
+  return out.length > MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX ? null : out;
+}
 
 // The pending proposal of a command that names the item, if any (the id in a stored payload keeps the case it was given, so both sides are lowered).
 const pendingOf = (ctx: QueryContext, command: string, key: string, id: string) =>
@@ -54,7 +80,7 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
   return true;
 }
 
-// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
+// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (the map and the payout rows are `commentary`, so the gate reads closed).
 // `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
 // lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
 export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
@@ -99,9 +125,9 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
 
       // Settlements whose posting stands and that have no payout voucher (reversed or not): what the platform still has to be recorded as paying.
       const posted = (
-        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string; receivable: string; received: string; other: string }>`
+        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string; receivable: string; received: string; other: string; min_other: string }>`
           SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text,
-                 coalesce(sum(l.sales - l.seller_discount - l.refund), 0)::text AS receivable, coalesce(sum(l.net), 0)::text AS received, coalesce(sum(l.other), 0)::text AS other
+                 coalesce(sum(l.sales - l.seller_discount - l.refund), 0)::text AS receivable, coalesce(sum(l.net), 0)::text AS received, coalesce(sum(l.other), 0)::text AS other, coalesce(min(l.other), 0)::text AS min_other
           FROM crove_finance.channel_settlement s
           JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
@@ -113,10 +139,16 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       // Posted: the settlement has its vouchers and none is reversed, the rule the payout command asks for too.
       const postedPostings = await postingsOf(ctx, posted.map((p) => p.id));
       const standingPosted = posted.filter((p) => settlementPosted(postedPostings.get(p.id) ?? [])).slice(0, MAX_SETTLEMENTS);
-      // Only a settlement the payout command could post: a receivable to clear, money received, no unexplained adjustment.
-      const payable = standingPosted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && money(p.other).isZero());
+      // Only a settlement the payout command could post: a receivable to clear, money received, and nothing unexplained that a person cannot classify: the lines' `other` add up to zero (as before), or none is
+      // below zero (an incentive or a compensation can be classified; a deduction cannot).
+      const payable = standingPosted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && (money(p.other).isZero() || !money(p.min_other).isNegative()));
       const payouts: MarketplaceWorklist['payouts'] = [];
+      const kinds = new Map<string, string>();
+      for (const e of payable.length === 0 ? [] : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(payable.map((p) => p.legal_entity_id))]).execute()) kinds.set(e.id, e.kind);
       for (const p of payable) {
+        // A settlement whose `other` adds up to something is classified line by line; an offsetting pair is no adjustment, as before.
+        const adjustable = await adjustableOf(ctx, p.id, kinds.get(p.legal_entity_id) === 'household', !money(p.other).isZero());
+        if (adjustable === null) continue;
         const lines = (
           await sql<{ id: string; value_date: string; amount: string; bank_ref: string | null }>`
             SELECT id, value_date::text, amount::text, bank_ref FROM crove_finance.bank_line
@@ -141,6 +173,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
           received: toMoney(money(p.received)),
           candidates: free,
           proposalId: await pendingOf(ctx, 'finance.marketplace_payout.record', 'settlementId', p.id),
+          adjustable,
         });
       }
 

@@ -7,7 +7,9 @@
 // - the bank line only confirms the transfer: money in, equal to the net, not before the period, free of other vouchers and payouts, and a bank voucher is refused for a line a payout names;
 // - the entry is built again at approval: a stored proposal that differs is refused; a payout posts once and a line settles one payout (unique indexes); a closed period, another adjustment and a chart
 //   with no map are refused;
-// - the shipped set of commands (every row of the account map is `commentary`) refuses with 409 until the accountant confirms the map (#2520).
+// - the shipped set of commands (the map and the rows of the sales, payout and fee paths are `commentary`) refuses with 409 until the accountant confirms the map (#2520);
+// - the lines of a settlement the report does not explain are posted only when a person classified them (#4303 S4): an incentive (Cr 711), a carrier compensation (Cr 632 up to the stated cost, the rest Cr 711), tax
+//   withheld from a seller that is no household (Dr 1388 under the platform); a wrong amount, a negative line, an unclassified line, a household's tax and a closed gate are refused.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -127,6 +129,12 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  // The same request with the lines a person classified (#4303 S4).
+  type Adjustment = { kind: 'incentive' | 'carrier_compensation' | 'withheld_in_error'; lineId: string; amount: string; costAmount?: string };
+  const askWith = (o: Org, settlementId: string, bankLineId: string, adjustments: unknown[], user = o.admin, runtime = rt) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId, adjustments } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const lineIdsOf = async (o: Org, settlementId: string) =>
+    (await rows<{ id: string }>('SELECT id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2 ORDER BY line_key', [o.orgId, settlementId])).map((r) => r.id);
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
@@ -134,7 +142,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   // The settlement posted (Dr 131 / Cr 5111), the state a payout needs.
   const post = async (o: Org, settlementId: string) => approve(o, (await askSettlement(o, settlementId)).proposalId);
   const payloadOf = async (o: Org, proposalId: string) =>
-    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[]; adjustments?: unknown[] } & Record<string, unknown> }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
       'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
@@ -610,6 +618,124 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     expect(await payoutsOf(o, settlement)).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+  });
+
+  // #4303 S4: the lines of a settlement the report does not explain, classified by a person. A company (no household) seller: the settlement posts Dr 131 / Cr 5111 for its sales and no tax lines.
+  describe('the classified lines of a payout (#4303 S4)', () => {
+    async function company(lines: SeedLine[], received: string | number, platform = 'shopee') {
+      const o = await org('tt133', false);
+      const settlement = await seed(o, platform, '2026-10-01', '2026-10-15', lines);
+      await post(o, settlement);
+      const line = await bankLine(o, '2026-10-20', received);
+      return { o, settlement, line, ids: await lineIdsOf(o, settlement), party: (await partyOf(o, platform)) as string };
+    }
+    const accounts = (stored: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } | undefined) => stored?.lines.map((l) => [l.account, l.debit, l.credit, l.party?.id ?? null]);
+    const rowsOf = (entry: Awaited<ReturnType<typeof entryOf>>) => entry.map((l) => [l.account_code, l.debit, l.credit, l.party_id]);
+
+    it('posts an incentive to 711 and a compensation to 632 up to the stated cost and 711 for the rest, in one entry that balances; unclassified it is refused as before', async () => {
+      const { o, settlement, line, ids, party } = await company([{ sales: '100000', other: '6000' }, { sales: '50000', other: '2000' }], '158000');
+      await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'OTHER' } });
+      const adjustments: Adjustment[] = [{ kind: 'incentive', lineId: ids[0] as string, amount: '6000' }, { kind: 'carrier_compensation', lineId: ids[1] as string, amount: '2000', costAmount: '1500' }];
+      const { proposalId } = await askWith(o, settlement, line, adjustments);
+      const stored = await payloadOf(o, proposalId);
+      const expected = [['1121', '158000', '0', null], ['131', '0', '150000', party], ['711', '0', '6000', null], ['632', '0', '1500', null], ['711', '0', '500', null]];
+      expect(accounts(stored)).toEqual(expected);
+      // The audit of the proposal holds ids, kinds and amounts only.
+      expect(stored?.adjustments).toEqual(adjustments);
+      expect(stored).toMatchObject({ received: '158000', fees: '0', taxWithheld: '0', total: '158000' });
+      const done = await approve(o, proposalId);
+      expect(rowsOf(await entryOf(o, done.journalEntryId))).toEqual(expected);
+      // 131 is cleared, and 632 and 711 hold what the payout credited.
+      const totals = await rows<{ account_code: string; debit: string; credit: string }>(
+        "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '632', '711') GROUP BY 1 ORDER BY 1",
+        [o.orgId],
+      );
+      expect(totals).toEqual([{ account_code: '131', debit: '150000', credit: '150000' }, { account_code: '632', debit: '0', credit: '1500' }, { account_code: '711', debit: '0', credit: '6500' }]);
+    });
+
+    it('credits 632 with the whole compensation when the stated cost is higher, and 711 with all of it when the cost is zero', async () => {
+      const above = await company([{ sales: '100000', other: '3000' }], '103000');
+      const a = await askWith(above.o, above.settlement, above.line, [{ kind: 'carrier_compensation', lineId: above.ids[0], amount: '3000', costAmount: '9000' }]);
+      expect(accounts(await payloadOf(above.o, a.proposalId))).toEqual([['1121', '103000', '0', null], ['131', '0', '100000', above.party], ['632', '0', '3000', null]]);
+      const zero = await company([{ sales: '100000', other: '3000' }], '103000', 'tiktok_shop');
+      const z = await askWith(zero.o, zero.settlement, zero.line, [{ kind: 'carrier_compensation', lineId: zero.ids[0], amount: '3000', costAmount: '0' }]);
+      expect(accounts(await payloadOf(zero.o, z.proposalId))).toEqual([['1121', '103000', '0', null], ['131', '0', '100000', zero.party], ['711', '0', '3000', null]]);
+    });
+
+    it('debits 1388 under the platform for tax withheld from a seller that is no household, in place of 3331 and 3335', async () => {
+      const { o, settlement, line, ids, party } = await company([{ sales: '100000', tax: '2000' }], '98000');
+      await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'TAX_SPLIT' } });
+      const { proposalId } = await askWith(o, settlement, line, [{ kind: 'withheld_in_error', lineId: ids[0], amount: '2000' }]);
+      const expected = [['1121', '98000', '0', null], ['1388', '2000', '0', party], ['131', '0', '100000', party]];
+      expect(accounts(await payloadOf(o, proposalId))).toEqual(expected);
+      const done = await approve(o, proposalId);
+      expect(rowsOf(await entryOf(o, done.journalEntryId))).toEqual(expected);
+      expect(await rows("SELECT 1 FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333')", [o.orgId])).toHaveLength(0);
+    });
+
+    it('refuses a tax classified as withheld in error on a household, whose withheld tax goes through 3331 and 3335, at the request and at the approval of a forged proposal', async () => {
+      const { o, settlement, line } = await posted();
+      const ids = await lineIdsOf(o, settlement);
+      await expect(askWith(o, settlement, line, [{ kind: 'withheld_in_error', lineId: ids[1], amount: '3000' }])).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'ADJUSTMENT_HOUSEHOLD' } });
+      // The approval: a normal proposal whose stored classification was edited to call the household's tax a mistake is refused when it is built again, and nothing posts.
+      const forged = (await ask(o, settlement, line)).proposalId;
+      await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{adjustments}', jsonb_build_array(jsonb_build_object('kind', 'withheld_in_error', 'lineId', $3::text, 'amount', '3000'))) WHERE org_id = $1 AND id = $2`, [o.orgId, forged, ids[1]]);
+      await expect(approve(o, forged)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'ADJUSTMENT_HOUSEHOLD' } });
+      expect(await payoutsOf(o, settlement)).toHaveLength(0);
+      await rt.execute('kernel.proposal.reject', { id: forged }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      // The normal payout still posts on the same settlement.
+      await expect(approve(o, (await ask(o, settlement, line)).proposalId)).resolves.toMatchObject({ voucherId: expect.any(String) });
+    });
+
+    it('refuses an amount that is not the line\'s to the dong, a line left out, a negative line, a repeat, an unknown line, a line with nothing on it, and a kind outside the closed set, and writes nothing', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '6000' }, { sales: '50000', other: '2000' }], '158000');
+      const both = (a: string, b: string): Adjustment[] => [{ kind: 'incentive', lineId: ids[0] as string, amount: a }, { kind: 'incentive', lineId: ids[1] as string, amount: b }];
+      const refused = (reason: string, adjustments: unknown[]) => expect(askWith(o, settlement, line, adjustments)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason } });
+      await refused('ADJUSTMENT_AMOUNT', both('5999', '2000'));
+      await refused('ADJUSTMENT_AMOUNT', both('6000', '2001'));
+      await refused('OTHER', [both('6000', '2000')[0]]);
+      await refused('ADJUSTMENT_DUPLICATE', [...both('6000', '2000'), { kind: 'carrier_compensation', lineId: ids[0], amount: '6000', costAmount: '0' }]);
+      await refused('ADJUSTMENT_LINE', [...both('6000', '2000'), { kind: 'incentive', lineId: randomUUID(), amount: '1' }]);
+      await refused('ADJUSTMENT_NOTHING', [...both('6000', '2000'), { kind: 'withheld_in_error', lineId: ids[0], amount: '1' }]);
+      await expect(askWith(o, settlement, line, [{ kind: 'gift', lineId: ids[0], amount: '6000' }])).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      await expect(askWith(o, settlement, line, [{ kind: 'carrier_compensation', lineId: ids[0], amount: '6000' }])).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      await expect(askWith(o, settlement, line, [{ kind: 'incentive', lineId: ids[0], amount: '6000.5' }])).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      // A deduction the report does not explain cannot be classified at all.
+      const neg = await company([{ sales: '100000', other: '6000' }, { sales: '50000', other: '-500' }], '155500', 'tiktok_shop');
+      await expect(askWith(neg.o, neg.settlement, neg.line, [{ kind: 'incentive', lineId: neg.ids[0], amount: '6000' }])).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'OTHER_NEGATIVE' } });
+      for (const x of [o, neg.o]) {
+        expect(await rows("SELECT 1 FROM crove_kernel.proposal WHERE org_id = $1 AND command = 'finance.marketplace_payout.record'", [x.orgId])).toHaveLength(0);
+        expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id IS NOT NULL', [x.orgId])).toHaveLength(0);
+      }
+    });
+
+    it('builds the entry again at approval from the stored classification: a changed cost, amount or a dropped classification is refused', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '6000' }, { sales: '50000', other: '2000' }], '158000');
+      const adjustments: Adjustment[] = [{ kind: 'incentive', lineId: ids[0] as string, amount: '6000' }, { kind: 'carrier_compensation', lineId: ids[1] as string, amount: '2000', costAmount: '1500' }];
+      const tamper = async (sql: string, expected: object) => {
+        const { proposalId } = await askWith(o, settlement, line, adjustments);
+        await rows(sql, [o.orgId, proposalId]);
+        await expect(approve(o, proposalId), sql).rejects.toMatchObject(expected);
+        await rt.execute('kernel.proposal.reject', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      };
+      // The cost lowered to zero: the rebuilt entry has no 632 line, the stored one does.
+      await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{adjustments,1,costAmount}', '"0"') WHERE org_id = $1 AND id = $2`, { code: 'MARKETPLACE_PAYOUT_MISMATCH', status: 422 });
+      // An amount that is not the line's; the whole classification dropped; a 711 credit moved to 632 in the lines (a person's choice cannot be rewritten after the request).
+      await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{adjustments,0,amount}', '"5999"') WHERE org_id = $1 AND id = $2`, { code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422 });
+      await tamper(`UPDATE crove_kernel.proposal SET payload = payload - 'adjustments' WHERE org_id = $1 AND id = $2`, { code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422 });
+      await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,2,account}', '"632"') WHERE org_id = $1 AND id = $2`, { code: 'MARKETPLACE_PAYOUT_MISMATCH', status: 422 });
+      expect(await payoutsOf(o, settlement)).toHaveLength(0);
+    });
+
+    it('is refused with 409 while the shipped map is unconfirmed, at the request and the approval, and writes nothing', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '6000' }], '106000');
+      const adjustments: Adjustment[] = [{ kind: 'incentive', lineId: ids[0] as string, amount: '6000' }];
+      await expect(askWith(o, settlement, line, adjustments, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      const { proposalId } = await askWith(o, settlement, line, adjustments);
+      await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      expect(await payoutsOf(o, settlement)).toHaveLength(0);
+      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    });
   });
 
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {

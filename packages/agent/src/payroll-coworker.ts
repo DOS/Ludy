@@ -22,7 +22,7 @@ import { metered } from './meter.ts';
 import { amountText, statedFiguresProblem as figuresProblem } from './overview.ts';
 import { hasAddress } from './reminder.ts';
 
-export const PAYROLL_COMPONENTS = ['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction', 'gross', 'employee_insurance', 'pit', 'deductions', 'net'] as const;
+export const PAYROLL_COMPONENTS = ['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction', 'sickness_bhxh_reduction', 'maternity_bhxh_reduction', 'gross', 'employee_insurance', 'pit', 'deductions', 'net'] as const;
 export type PayrollComponent = (typeof PAYROLL_COMPONENTS)[number];
 /** One person's month as amounts (decimal strings), by fixed component. */
 export type PayrollFigures = Record<PayrollComponent, string>;
@@ -48,6 +48,8 @@ const COMPONENT_LABEL = {
     night_work: 'Tiền làm đêm',
     bonus: 'Thưởng',
     unpaid_reduction: 'Khoản trừ do nghỉ không lương',
+    sickness_bhxh_reduction: 'Khoản trừ do nghỉ ốm đau hưởng BHXH',
+    maternity_bhxh_reduction: 'Khoản trừ do nghỉ thai sản hưởng BHXH',
     gross: 'Tổng thu nhập',
     employee_insurance: 'Bảo hiểm người lao động đóng',
     pit: 'Thuế thu nhập cá nhân',
@@ -62,6 +64,8 @@ const COMPONENT_LABEL = {
     night_work: 'Night work pay',
     bonus: 'Bonus',
     unpaid_reduction: 'Reduction for unpaid leave',
+    sickness_bhxh_reduction: 'Reduction for BHXH sickness leave',
+    maternity_bhxh_reduction: 'Reduction for BHXH maternity leave',
     gross: 'Gross pay',
     employee_insurance: 'Insurance paid by the employee',
     pit: 'Personal income tax',
@@ -91,7 +95,18 @@ export interface PayrollLineFacts {
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
   exceededAnnualDays?: string;
-  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; overtimeCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean; annualLeaveExceeded: boolean };
+  checks: {
+    minimumWageFailed: boolean;
+    deductionCapFailed: boolean;
+    overtimeCapFailed: boolean;
+    netBelowMinimum: boolean;
+    insuredAboveCap: boolean;
+    cashPaymentOverLimit: boolean;
+    annualLeaveExceeded: boolean;
+    workPermitExpiring?: boolean;
+    bhxhSuspendedRegime?: boolean;
+    nonResidentFlatPit?: boolean;
+  };
 }
 
 /** A line as the server holds it: the person's id is only here, to map an alias back. It never goes in a prompt. */
@@ -153,6 +168,9 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
         insuredAboveCap: line.checks.insuredAboveCap === true,
         cashPaymentOverLimit: line.checks.cashPaymentOverLimit === true,
         annualLeaveExceeded: line.checks.annualLeaveExceeded === true,
+        workPermitExpiring: line.checks.workPermitExpiring === true,
+        bhxhSuspendedRegime: line.checks.bhxhSuspendedRegime === true,
+        nonResidentFlatPit: line.checks.nonResidentFlatPit === true,
       },
     };
   });
@@ -219,7 +237,20 @@ const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 // Flag: anomalies found by code, each put in a sentence by the model
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'annual_leave_exceeded', 'rule_blocks'] as const;
+export const PAYROLL_ANOMALY_KINDS = [
+  'pay_moved',
+  'net_below_minimum',
+  'deduction_over_cap',
+  'overtime_over_cap',
+  'dependent_unregistered',
+  'insured_above_cap',
+  'cash_payment_over_limit',
+  'annual_leave_exceeded',
+  'work_permit_expiring',
+  'bhxh_suspended_regime',
+  'non_resident_flat_pit',
+  'rule_blocks',
+] as const;
 export type PayrollAnomalyKind = (typeof PAYROLL_ANOMALY_KINDS)[number];
 
 export interface PayrollAnomaly {
@@ -279,6 +310,33 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
           : vi
             ? `${who}: đã nghỉ phép năm vượt mức theo luật`
             : `${who}: annual leave taken exceeds statutory entitlement`,
+      );
+    }
+    if (line.checks.workPermitExpiring) {
+      add(
+        'work_permit_expiring',
+        who,
+        vi
+          ? `${who}: giấy phép lao động đã hết hạn hoặc sắp hết hạn trong vòng 30 ngày`
+          : `${who}: work permit is expired or expiring within 30 days`,
+      );
+    }
+    if (line.checks.bhxhSuspendedRegime) {
+      add(
+        'bhxh_suspended_regime',
+        who,
+        vi
+          ? `${who}: tạm dừng đóng bảo hiểm bắt buộc do tổng số ngày nghỉ ốm đau/thai sản hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên`
+          : `${who}: compulsory insurance is suspended because combined BHXH sickness/maternity and unpaid leave reaches 14 or more working days`,
+      );
+    }
+    if (line.checks.nonResidentFlatPit) {
+      add(
+        'non_resident_flat_pit',
+        who,
+        vi
+          ? `${who}: áp dụng thuế TNCN 20% toàn phần đối với cá nhân không cư trú (${amountOf(line.figures.pit, language)})`
+          : `${who}: flat 20% non-resident PIT applied (${amountOf(line.figures.pit, language)})`,
       );
     }
   }
@@ -489,6 +547,8 @@ export interface PayslipExplainRequest {
   figures: PayrollFigures;
   /** Dependents counted in the tax, as the breakdown stored it. */
   dependentsCounted: number;
+  taxMode?: string;
+  insuranceSuspended?: string | null;
 }
 
 const str = (v: unknown): string => {
@@ -514,6 +574,8 @@ export function payrollFiguresOf(figures: { gross: string; employeeInsurance: st
     night_work: str(rec(pay.nightWork).pay),
     bonus: str(pay.bonus),
     unpaid_reduction: str(pay.unpaidReduction),
+    sickness_bhxh_reduction: str(pay.sicknessBhxhReduction),
+    maternity_bhxh_reduction: str(pay.maternityBhxhReduction),
     gross: str(figures.gross),
     employee_insurance: str(figures.employeeInsurance),
     pit: str(figures.pit),
@@ -533,9 +595,26 @@ export function explainFactsText(request: PayslipExplainRequest): string {
   const { language, figures } = request;
   const labels = COMPONENT_LABEL[language];
   const line = (key: PayrollComponent) => `- ${labels[key]}: ${amountOf(figures[key], language)}`;
-  const earned = (['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction'] as const).filter((k) => !new Decimal(figures[k]).isZero());
+  const earned = (['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction', 'sickness_bhxh_reduction', 'maternity_bhxh_reduction'] as const).filter((k) => !new Decimal(figures[k]).isZero());
   const taken = (['employee_insurance', 'pit', 'deductions'] as const).filter((k) => !new Decimal(figures[k]).isZero());
   const dependents = request.dependentsCounted > 0 ? [language === 'vi' ? `- Số người phụ thuộc được tính giảm trừ: ${request.dependentsCounted}` : `- Dependents counted for the deduction: ${request.dependentsCounted}`] : [];
+  const notes: string[] = [];
+  if (request.taxMode === 'non_resident_flat') {
+    notes.push(language === 'vi' ? '- Chế độ thuế: cá nhân không cư trú, khấu trừ 20% toàn phần' : '- Tax regime: non-resident flat 20% withholding');
+  }
+  if (request.insuranceSuspended === 'sickness_leave') {
+    notes.push(
+      language === 'vi'
+        ? '- Bảo hiểm bắt buộc: tạm dừng đóng do tổng số ngày nghỉ ốm đau hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên'
+        : '- Compulsory insurance: suspended because combined BHXH sickness and unpaid leave reaches 14 or more working days',
+    );
+  } else if (request.insuranceSuspended === 'maternity_leave') {
+    notes.push(
+      language === 'vi'
+        ? '- Bảo hiểm bắt buộc: tạm dừng đóng do tổng số ngày nghỉ thai sản hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên'
+        : '- Compulsory insurance: suspended because combined BHXH maternity and unpaid leave reaches 14 or more working days',
+    );
+  }
   return [
     language === 'vi' ? 'Các khoản tạo nên thu nhập:' : 'Pay components:',
     ...earned.map(line),
@@ -543,6 +622,7 @@ export function explainFactsText(request: PayslipExplainRequest): string {
     language === 'vi' ? 'Các khoản trừ:' : 'Deductions:',
     ...taken.map(line),
     ...dependents,
+    ...notes,
     line('net'),
   ].join('\n');
 }
