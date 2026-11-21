@@ -518,11 +518,11 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_key($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
-    // A real connection of the same org, so only the context guard can be what refuses.
+    // A real connection of the same org, so only the context guard can be what refuses. The worker login reaches the function and its guard refuses the missing context; the application login has no
+    // EXECUTE on it at all, so the database refuses before the function runs.
     const target = await connection(o, 'lazada');
-    for (const target_pool of [workerPool, pool]) {
-      await expect(target_pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MARKETPLACE_PURGE_WORKER_ONLY') });
-    }
+    await expect(workerPool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MARKETPLACE_PURGE_WORKER_ONLY') });
+    await expect(pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     // The rule and the reference check are nobody's to call: no role executes them (the definers do, as their owner).
     for (const target of [workerPool, pool]) {
       await expect(target.query('SELECT * FROM crove_finance.marketplace_purge_candidates(NULL, NULL, $1, $2)', [GRACE, EXPIRED])).rejects.toBeDefined();
