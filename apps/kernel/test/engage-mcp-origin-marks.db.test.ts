@@ -237,6 +237,36 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     expect(again).toMatchObject({ actorOrigin: 'ui', tainted: true });
   });
 
+  it('keeps no taint key past its transaction: the setting that carries a deleted tainted line\'s text is gone after a commit and after a rollback, on the same connection (#4168)', async () => {
+    const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty khóa dòng' });
+    const deal = await run<Deal>('crm.deal.create', { partyId: party.partyId, title: 'Cơ hội khóa dòng', amount: '1000000', expectedClose: null }, asBrowser('owner'));
+    const lines = [{ kind: 'item' as const, description: 'Dòng có khóa tạm', quantity: '1', unitPrice: '100000', vatRate: '10' }];
+    const made = await run<Quote>('crm.mcp.quote_save', { dealId: deal.id, lines: [] });
+    const filled = await run<Quote>('crm.mcp.quote_save', { quoteId: made.id, version: made.version, lines });
+    // One session, three transactions: what an earlier one left would still be here in the later one.
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      const keys = async () => (await c.query<{ k: string }>(`SELECT COALESCE(pg_catalog.current_setting('crove.tainted_line_keys', true), '') AS k`)).rows[0]?.k;
+      const drop = () => c.query(`DELETE FROM crove_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id]);
+      expect(await keys()).toBe('');
+      await c.query('BEGIN');
+      await drop();
+      // The control: inside the transaction the deleted line's key is recorded, so a replacement in it stays tainted.
+      expect(await keys()).not.toBe('');
+      await c.query('ROLLBACK');
+      expect(await keys()).toBe('');
+      expect(await one(`SELECT count(*)::int AS n FROM crove_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id])).toMatchObject({ n: 1 });
+      await c.query('BEGIN');
+      await drop();
+      expect(await keys()).not.toBe('');
+      await c.query('COMMIT');
+      expect(await keys()).toBe('');
+    } finally {
+      await c.end();
+    }
+  });
+
   it('marks the contact a coworker adds, in the contact list, and not a person\'s own', async () => {
     const theirs = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Liên hệ do Dy thêm' });
     const mine = await run<{ partyId: string }>('kernel.party.create', { kind: 'person', name: 'Liên hệ của người' }, asBrowser('owner'));
