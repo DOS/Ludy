@@ -226,7 +226,7 @@ export const marketplaceConnectionRequestTest = defineCommand({
 // What the worker needs to poll one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 export type MarketplacePollTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'unknown_adapter' }
-  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null };
+  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null; lastPolledAt: string | null };
 
 export const marketplaceConnectionPollTarget = defineQuery({
   name: 'finance.marketplace_connection.poll_target',
@@ -236,7 +236,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'c.last_polled_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -244,7 +244,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
-    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state };
+    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state, lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).toISOString() : null };
   },
 });
 

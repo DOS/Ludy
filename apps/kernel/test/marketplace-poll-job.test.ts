@@ -22,7 +22,7 @@ function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee'
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const puts: string[] = [];
   const runtime = {
-    query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null }),
+    query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null }),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
       return name === 'kernel.file.ingest' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate } : {};
@@ -311,5 +311,42 @@ describe('the job payload is closed, and a test only records its state (#4238)',
     const off = testSetup({ target: { adapter: 'other' } });
     expect(await off.run()).toEqual({ state: 'skipped', reason: 'provider_off' });
     expect(off.executed).toEqual([]);
+  });
+});
+
+describe('a connection whose polls fail backs off (#4238)', () => {
+  const NOW = new Date('2026-11-21T12:00:00Z');
+  const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+  const withState = (lastPollState: string | null, lastPolledAt: string | null, hosts: string[]) => {
+    let asked = 0;
+    const runtime = {
+      query: async (name: string) =>
+        name === 'kernel.channel.credential'
+          ? { provider: 'marketplace_lazada', externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') }
+          : { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState, lastPolledAt },
+      execute: async () => ({}),
+    } as unknown as Runtime;
+    const provider = { id: 'lazada', hosts, connectFields: [], capabilities: { platforms: {} }, testConnection: async () => 'works', listOrders: async () => ((asked += 1), { orders: [], nextCursor: null }), orderFinance: async () => null, listStock: async () => [] } as unknown as MarketplaceProvider;
+    const run = () => runMarketplacePoll({ runtime, broker: { open: () => '{}' } as unknown as CredentialBroker, store: {} as BlobStore, providers: { lazada: provider } }, { orgId: ORG, connectionId: CONNECTION }, 1, () => NOW);
+    return { run, asked: () => asked };
+  };
+
+  it('does not ask again within the wait after a failure, and asks again after it', async () => {
+    const hour = 3_600_000;
+    const early = withState('unreachable', ago(hour / 2), ['api.lazada.vn']);
+    expect(await early.run()).toEqual({ state: 'skipped', reason: 'backoff' });
+    expect(early.asked()).toBe(0);
+    const late = withState('unreachable', ago(hour + 1000), ['api.lazada.vn']);
+    expect((await late.run()).state).toBe('ok');
+    expect(late.asked()).toBe(1);
+    // A refused login waits six hours.
+    expect(await withState('credentials', ago(5 * hour), ['api.lazada.vn']).run()).toEqual({ state: 'skipped', reason: 'backoff' });
+    expect((await withState('credentials', ago(6 * hour + 1000), ['api.lazada.vn']).run()).state).toBe('ok');
+  });
+
+  it('never holds back a good poll, a connection never polled, or the offline provider', async () => {
+    expect((await withState('ok', ago(1000), ['api.lazada.vn']).run()).state).toBe('ok');
+    expect((await withState(null, null, ['api.lazada.vn']).run()).state).toBe('ok');
+    expect((await withState('unreachable', ago(1000), []).run()).state).toBe('ok');
   });
 });

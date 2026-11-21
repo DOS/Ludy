@@ -114,18 +114,27 @@ export async function runMarketplaceTest(deps: MarketplacePollDeps, job: Marketp
   return { state };
 }
 
-export async function runMarketplacePoll(deps: MarketplacePollDeps, job: MarketplacePollJob, maxPages: number = MARKETPLACE_MAX_PAGES_PER_RUN): Promise<MarketplacePollOutcome> {
+// A connection whose last poll failed is not asked again at once (Lazada may disable an app for many failing calls, and a refused login does not mend itself): the sweep's poll is skipped until this
+// long after the failed one. A refused login waits longest (it needs the seller to act); the rest wait an hour. A good poll clears it, and so does any change of the state.
+export const MARKETPLACE_BACKOFF_MS: Readonly<Record<string, number>> = { credentials: 6 * 3_600_000, unreachable: 3_600_000, rate_limited: 3_600_000, too_large: 3_600_000, not_recognized: 3_600_000 };
+
+export async function runMarketplacePoll(deps: MarketplacePollDeps, job: MarketplacePollJob, maxPages: number = MARKETPLACE_MAX_PAGES_PER_RUN, now: () => Date = () => new Date()): Promise<MarketplacePollOutcome> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const target = await deps.runtime.query<MarketplacePollTarget>('finance.marketplace_connection.poll_target', { id: job.connectionId }, options);
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
   // The adapter switched off on this deployment: nothing is sent and the connection's record is left as it was.
   if (!Object.hasOwn(deps.providers, target.adapter)) return { state: 'skipped', reason: 'provider_off' };
   const provider = deps.providers[target.adapter] as MarketplaceProvider;
+  // Backing off after a failed poll: only a provider that reaches a host (the offline one cannot fail this way).
+  const wait = target.lastPollState === null ? undefined : MARKETPLACE_BACKOFF_MS[target.lastPollState];
+  if (provider.hosts.length > 0 && wait !== undefined && target.lastPolledAt !== null && now().getTime() - Date.parse(target.lastPolledAt) < wait) return { state: 'skipped', reason: 'backoff' };
   // What the row holds now (the cursor and the last state): a poll that changes nothing it holds writes nothing (the 15-minute sweep would otherwise add an audit row for every connection every time),
   // and after a page the next one starts from the cursor the page recorded.
   const held = { cursor: target.cursor, state: target.lastPollState };
   const record = async (fields: { state: MarketplacePollEnding; cursor?: string }) => {
-    if (fields.state === held.state && (fields.cursor === undefined || fields.cursor === held.cursor)) return;
+    // A failure of a provider that reaches a host is always written (its time starts the back-off, one row an hour at most); anything else that changes nothing the row holds is not.
+    const unchanged = fields.state === held.state && (fields.cursor === undefined || fields.cursor === held.cursor);
+    if (unchanged && !(provider.hosts.length > 0 && fields.state !== 'ok')) return;
     await deps.runtime.execute('finance.marketplace_connection.record_poll', { id: job.connectionId, ...fields }, options);
     held.state = fields.state;
     if (fields.cursor !== undefined) held.cursor = fields.cursor;
