@@ -333,23 +333,20 @@ export const HR_SEVERANCE_INELIGIBLE_REASONS = [
 ] as const;
 export type HrSeveranceIneligibleReason = (typeof HR_SEVERANCE_INELIGIBLE_REASONS)[number];
 
-export const zHrEmployeeSeveranceAsk = z.strictObject({
+const terminationAllowanceAskFields = {
   employeeId: zId,
   endedOn: zLocalDate.optional(),
-  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS).optional(),
   totalWorkedMonths: z.number().int().min(0).max(1200).optional(),
   unemploymentInsuredMonths: z.number().int().min(0).max(1200).optional(),
   priorSettledMonths: z.number().int().min(0).max(1200).optional(),
   paidAmount: zHrWage.optional(),
-});
-export type HrEmployeeSeveranceAsk = z.input<typeof zHrEmployeeSeveranceAsk>;
+};
 
-export const zHrEmployeeSeveranceResult = z.object({
+const terminationAllowanceResultFields = {
   employeeId: zId,
   status: z.enum(HR_STATUSES),
   hireDate: z.string(),
   endedOn: z.string(),
-  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS),
   totalWorkedMonths: z.number().int(),
   unemploymentInsuredMonths: z.number().int(),
   priorSettledMonths: z.number().int(),
@@ -358,14 +355,54 @@ export const zHrEmployeeSeveranceResult = z.object({
   qualifyingYears: z.string(),
   averageWage: z.string(),
   eligible: z.boolean(),
-  reason: z.enum(HR_SEVERANCE_INELIGIBLE_REASONS).nullable(),
   amount: z.string(),
   paidAmount: z.string().nullable(),
   pitExemptAmount: z.string(),
   taxableExcess: z.string(),
   rulesUsed: z.array(zHrLaborRuleRef),
+};
+
+export const zHrEmployeeSeveranceAsk = z.strictObject({
+  ...terminationAllowanceAskFields,
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS).optional(),
+});
+export type HrEmployeeSeveranceAsk = z.input<typeof zHrEmployeeSeveranceAsk>;
+
+export const zHrEmployeeSeveranceResult = z.object({
+  ...terminationAllowanceResultFields,
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS),
+  reason: z.enum(HR_SEVERANCE_INELIGIBLE_REASONS).nullable(),
 });
 export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;
+
+// Statutory job-loss allowance termination & ineligibility codes (equal to JOB_LOSS_TERMINATION_REASONS / JobLossIneligibleReason in @crove/l10n-vn).
+export const HR_JOB_LOSS_TERMINATION_REASONS = [
+  'organizational_restructuring',
+  'economic_reasons',
+  'merger_division_transfer',
+  'other_non_art42_art43',
+] as const;
+export type HrJobLossTerminationReason = (typeof HR_JOB_LOSS_TERMINATION_REASONS)[number];
+
+export const HR_JOB_LOSS_INELIGIBLE_REASONS = [
+  'worked_under_12_months',
+  'not_job_loss_reason',
+] as const;
+export type HrJobLossIneligibleReason = (typeof HR_JOB_LOSS_INELIGIBLE_REASONS)[number];
+
+export const zHrEmployeeJobLossAsk = z.strictObject({
+  ...terminationAllowanceAskFields,
+  terminationReason: z.enum(HR_JOB_LOSS_TERMINATION_REASONS).optional(),
+});
+export type HrEmployeeJobLossAsk = z.input<typeof zHrEmployeeJobLossAsk>;
+
+export const zHrEmployeeJobLossResult = z.object({
+  ...terminationAllowanceResultFields,
+  terminationReason: z.enum(HR_JOB_LOSS_TERMINATION_REASONS),
+  reason: z.enum(HR_JOB_LOSS_INELIGIBLE_REASONS).nullable(),
+  minimumFloorApplied: z.boolean(),
+});
+export type HrEmployeeJobLossResult = z.infer<typeof zHrEmployeeJobLossResult>;
 
 export const zHrEmployeeContractPdfAsk = z.strictObject({
   employeeId: zId,

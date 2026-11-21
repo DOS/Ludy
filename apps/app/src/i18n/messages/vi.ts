@@ -1622,6 +1622,10 @@ export const vi = {
     eraseConfirm: 'Xóa hồ sơ này',
     severance: {
       toggle: 'Tính trợ cấp thôi việc',
+      modeLabel: 'Chọn loại trợ cấp',
+      tabArt46: 'Trợ cấp thôi việc (Điều 46)',
+      tabArt47: 'Trợ cấp mất việc làm (Điều 47)',
+      switchToJobLoss: 'Chuyển sang bảng tính Trợ cấp mất việc làm (Điều 47)',
       title: 'Bảng tính trợ cấp thôi việc (Điều 46 BLLĐ 2019 & Điều 8 NĐ 145/2020)',
       readOnlyNote: 'Bảng tính chỉ dùng để tham khảo và đối chiếu. Ludy không tự hạch toán, không tạo phiếu chi và không tự chuyển tiền; người phụ trách tự quyết định và lập đề xuất chi riêng.',
       reasonLabel: 'Lý do chấm dứt hợp đồng',
@@ -1667,6 +1671,32 @@ export const vi = {
       sixMonthWageItem: 'Tháng {index}',
       rulesTitle: 'Căn cứ quy tắc',
       ruleStatus: { confirmed: 'đã xác nhận', commentary: 'chờ kế toán xác nhận' },
+    },
+    jobLoss: {
+      title: 'Bảng tính trợ cấp mất việc làm (Điều 47 BLLĐ 2019 & Điều 8 NĐ 145/2020)',
+      reasonLabel: 'Lý do mất việc làm',
+      reasons: {
+        organizational_restructuring: 'Thay đổi cơ cấu, công nghệ hoặc tổ chức lại lao động (Điều 42)',
+        economic_reasons: 'Vì lý do kinh tế (Điều 42)',
+        merger_division_transfer: 'Chia, tách, hợp nhất, sáp nhập hoặc chuyển quyền sở hữu/sử dụng tài sản (Điều 43)',
+        other_non_art42_art43: 'Lý do khác không thuộc Điều 42/43 (không hưởng trợ cấp mất việc làm)',
+      },
+      ineligibleReasons: {
+        worked_under_12_months: 'Thời gian làm việc dưới 12 tháng nên không đủ điều kiện hưởng trợ cấp mất việc làm.',
+        not_job_loss_reason: 'Lý do chấm dứt không thuộc Điều 42/43 nên không hưởng trợ cấp mất việc làm.',
+      },
+      amount: 'Trợ cấp mất việc làm theo luật',
+      floorBadge: 'Sàn tối thiểu 2 tháng lương theo Điều 47',
+      aboveFloorBadge: 'Tính theo 1 tháng lương mỗi năm đủ tính (đạt từ 2 tháng trở lên)',
+      lyTitle: 'Ly tóm tắt đối chiếu (chỉ tham khảo)',
+      lySummaryIneligible: 'Không áp dụng trợ cấp mất việc làm theo Điều 47. {excessNote}',
+      lySummaryFloorApplied:
+        'Đã trừ {excludedMonths} tháng đóng BHTN hoặc đã chi trả trước đây (còn {qualifyingMonths} tháng, làm tròn {qualifyingYears} năm). Công thức 1 tháng/năm thấp hơn sàn tối thiểu 2 tháng lương, nên áp dụng sàn tối thiểu 2 tháng theo Điều 47 là {amount}. {excessNote}',
+      lySummaryStandard:
+        'Đã trừ {excludedMonths} tháng đóng BHTN hoặc đã chi trả trước đây (còn {qualifyingMonths} tháng, làm tròn {qualifyingYears} năm). Mức theo luật 1 tháng/năm là {amount} (đạt từ sàn tối thiểu 2 tháng trở lên). {excessNote}',
+      lyExcessWarn: 'Lưu ý: số tiền thực chi dự kiến vượt mức miễn thuế TNCN theo luật {excess}.',
+      lyNoExcess: 'Toàn bộ khoản chi dự kiến nằm trong mức miễn thuế TNCN theo luật (chờ kế toán xác nhận #2535).',
+      lyNoPayout: 'Chưa phát sinh khoản chi vượt mức miễn thuế.',
     },
     leave: {
       toggle: 'Phép năm',
@@ -15436,6 +15466,7 @@ export const vi = {
           },
           erase: 'Xóa hồ sơ nhân viên đã nghỉ sau thời hạn lưu trữ',
           get: 'Xem hồ sơ một nhân viên, kể cả số căn cước và số tài khoản',
+          job_loss: 'Tính trợ cấp mất việc làm theo luật cho một nhân viên (chỉ xem)',
           list: 'Xem danh sách nhân viên và lương cơ bản',
           severance: 'Tính trợ cấp thôi việc theo luật cho một nhân viên (chỉ xem)',
         },

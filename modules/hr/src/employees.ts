@@ -24,6 +24,7 @@ import {
   zHrEmployeeContractPdfAsk,
   zHrEmployeeEdit,
   zHrEmployeeEnd,
+  zHrEmployeeJobLossAsk,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -36,6 +37,7 @@ import {
   type HrEmployee,
   type HrEmployeeContractPdf,
   type HrEmployeeErased,
+  type HrEmployeeJobLossResult,
   type HrEmployeeSeveranceResult,
   type HrEmployeeSummary,
   type HrEmploymentTerms,
@@ -45,7 +47,7 @@ import {
   type HrWritten,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
+import { calculateJobLossAllowance, calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
 import {
   contractFilename,
   contractTitle,
@@ -989,6 +991,100 @@ export const employeeGet = defineQuery({
   },
 });
 
+interface EmployeeTerminationBasisInput {
+  employeeId: string;
+  endedOn?: string | undefined;
+  totalWorkedMonths?: number | undefined;
+  unemploymentInsuredMonths?: number | undefined;
+  priorSettledMonths?: number | undefined;
+}
+
+interface EmployeeTerminationBasis {
+  employeeId: string;
+  status: 'active' | 'ended';
+  hireDate: string;
+  endedOn: string;
+  totalWorkedMonths: number;
+  unemploymentInsuredMonths: number;
+  priorSettledMonths: number;
+  sixMonthWages: string[];
+}
+
+async function loadEmployeeTerminationBasis(
+  ctx: QueryContext,
+  input: EmployeeTerminationBasisInput,
+): Promise<EmployeeTerminationBasis> {
+  const e = await ctx.trx
+    .selectFrom('crove_hr.payroll_employee')
+    .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', input.employeeId)
+    .executeTakeFirst();
+  if (!e) throw notFound();
+  if (e.erased_at !== null) throw erasedError();
+  const termsAsc = await ctx.trx
+    .selectFrom('crove_hr.payroll_employment')
+    .select(['effective_from', 'base_wage'])
+    .where('org_id', '=', ctx.orgId)
+    .where('employee_id', '=', e.id)
+    .orderBy('effective_from', 'asc')
+    .execute();
+  const first = termsAsc[0];
+  if (!first) throw notFound();
+  const hireDate = iso(first.effective_from);
+  const today = vietnamDay(new Date());
+  const effectiveEndedOn =
+    input.endedOn !== undefined
+      ? input.endedOn
+      : e.ended_on !== null
+        ? iso(e.ended_on)
+        : today < hireDate
+          ? hireDate
+          : today;
+  if (effectiveEndedOn < hireDate) {
+    throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
+  }
+  const totalWorkedMonths = input.totalWorkedMonths ?? countCompletedCalendarMonths(hireDate, effectiveEndedOn);
+  const unemploymentInsuredMonths = input.unemploymentInsuredMonths ?? 0;
+  const priorSettledMonths = input.priorSettledMonths ?? 0;
+
+  const wageMonthsCount = totalWorkedMonths >= 6 ? 6 : Math.max(1, totalWorkedMonths);
+  const months = recentCompletedMonths(effectiveEndedOn, wageMonthsCount);
+  const payLines = await ctx.trx
+    .selectFrom('crove_hr.payroll_line as l')
+    .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+    .select(['r.month', 'l.inputs'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('r.legal_entity_id', '=', e.legal_entity_id)
+    .where('l.employee_id', '=', e.id)
+    .where('l.kind', '=', 'pay')
+    .where('r.status', '!=', 'draft')
+    .where('r.month', 'in', months)
+    .execute();
+  const allowancesByMonth = new Map<string, string>();
+  for (const line of payLines) {
+    const parsed = zHrPayrollInputs.parse(line.inputs ?? {});
+    const named = parsed.allowances.filter((a) => a.namedInContract).map((a) => a.amount);
+    allowancesByMonth.set(line.month, toMoney(sum(named)));
+  }
+  const sixMonthWages = months.map((month) => {
+    const baseWage = baseWageInForceForMonth(termsAsc, month);
+    const allowanceTotal = allowancesByMonth.get(month) ?? '0';
+    return toMoney(money(baseWage).plus(money(allowanceTotal)));
+  });
+
+  return {
+    employeeId: e.id,
+    status: e.status,
+    hireDate,
+    endedOn: effectiveEndedOn,
+    totalWorkedMonths,
+    unemploymentInsuredMonths,
+    priorSettledMonths,
+    sixMonthWages,
+  };
+}
+
 export const employeeSeverance = defineQuery({
   name: 'hr.payroll.employee.severance',
   input: zHrEmployeeSeveranceAsk,
@@ -996,89 +1092,63 @@ export const employeeSeverance = defineQuery({
   sensitive: true,
   target: targetOf,
   handler: async (ctx, input): Promise<HrEmployeeSeveranceResult> => {
-    const e = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.employeeId)
-      .executeTakeFirst();
-    if (!e) throw notFound();
-    if (e.erased_at !== null) throw erasedError();
-    const termsAsc = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
-      .select(['effective_from', 'base_wage'])
-      .where('org_id', '=', ctx.orgId)
-      .where('employee_id', '=', e.id)
-      .orderBy('effective_from', 'asc')
-      .execute();
-    const first = termsAsc[0];
-    if (!first) throw notFound();
-    const hireDate = iso(first.effective_from);
-    const today = vietnamDay(new Date());
-    const effectiveEndedOn =
-      input.endedOn !== undefined
-        ? input.endedOn
-        : e.ended_on !== null
-          ? iso(e.ended_on)
-          : today < hireDate
-            ? hireDate
-            : today;
-    if (effectiveEndedOn < hireDate) {
-      throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
-    }
-    const totalWorkedMonths = input.totalWorkedMonths ?? countCompletedCalendarMonths(hireDate, effectiveEndedOn);
-    const unemploymentInsuredMonths = input.unemploymentInsuredMonths ?? 0;
-    const priorSettledMonths = input.priorSettledMonths ?? 0;
+    const basis = await loadEmployeeTerminationBasis(ctx, input);
     const terminationReason = input.terminationReason ?? 'contract_expired';
-
-    const wageMonthsCount = totalWorkedMonths >= 6 ? 6 : Math.max(1, totalWorkedMonths);
-    const months = recentCompletedMonths(effectiveEndedOn, wageMonthsCount);
-    const payLines = await ctx.trx
-      .selectFrom('crove_hr.payroll_line as l')
-      .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
-      .select(['r.month', 'l.inputs'])
-      .where('l.org_id', '=', ctx.orgId)
-      .where('r.legal_entity_id', '=', e.legal_entity_id)
-      .where('l.employee_id', '=', e.id)
-      .where('l.kind', '=', 'pay')
-      .where('r.status', '!=', 'draft')
-      .where('r.month', 'in', months)
-      .execute();
-    const allowancesByMonth = new Map<string, string>();
-    for (const line of payLines) {
-      const parsed = zHrPayrollInputs.parse(line.inputs ?? {});
-      const named = parsed.allowances.filter((a) => a.namedInContract).map((a) => a.amount);
-      allowancesByMonth.set(line.month, toMoney(sum(named)));
-    }
-    const sixMonthWages = months.map((month) => {
-      const baseWage = baseWageInForceForMonth(termsAsc, month);
-      const allowanceTotal = allowancesByMonth.get(month) ?? '0';
-      return toMoney(money(baseWage).plus(money(allowanceTotal)));
-    });
     const calc = calculateSeveranceAllowance({
-      totalWorkedMonths,
-      unemploymentInsuredMonths,
-      priorSettledMonths,
-      sixMonthWages,
+      totalWorkedMonths: basis.totalWorkedMonths,
+      unemploymentInsuredMonths: basis.unemploymentInsuredMonths,
+      priorSettledMonths: basis.priorSettledMonths,
+      sixMonthWages: basis.sixMonthWages,
       terminationReason,
       ...(input.paidAmount !== undefined ? { paidAmount: input.paidAmount } : {}),
     });
     return {
-      employeeId: e.id,
-      status: e.status,
-      hireDate,
-      endedOn: effectiveEndedOn,
+      ...basis,
       terminationReason,
-      totalWorkedMonths,
-      unemploymentInsuredMonths,
-      priorSettledMonths,
-      sixMonthWages,
       qualifyingMonths: calc.qualifyingMonths,
       qualifyingYears: calc.qualifyingYears,
       averageWage: calc.averageWage,
       eligible: calc.eligible,
       reason: calc.reason,
       amount: calc.amount,
+      paidAmount: calc.paidAmount,
+      pitExemptAmount: calc.pitExemptAmount,
+      taxableExcess: calc.taxableExcess,
+      rulesUsed: [...calc.rulesUsed],
+    };
+  },
+});
+
+export const employeeJobLoss = defineQuery({
+  name: 'hr.payroll.employee.job_loss',
+  input: zHrEmployeeJobLossAsk,
+  access: MANAGERS,
+  sensitive: true,
+  target: targetOf,
+  auditDetail: (input) => ({
+    termination_reason: input.terminationReason ?? 'organizational_restructuring',
+  }),
+  handler: async (ctx, input): Promise<HrEmployeeJobLossResult> => {
+    const basis = await loadEmployeeTerminationBasis(ctx, input);
+    const terminationReason = input.terminationReason ?? 'organizational_restructuring';
+    const calc = calculateJobLossAllowance({
+      totalWorkedMonths: basis.totalWorkedMonths,
+      unemploymentInsuredMonths: basis.unemploymentInsuredMonths,
+      priorSettledMonths: basis.priorSettledMonths,
+      sixMonthWages: basis.sixMonthWages,
+      terminationReason,
+      ...(input.paidAmount !== undefined ? { paidAmount: input.paidAmount } : {}),
+    });
+    return {
+      ...basis,
+      terminationReason,
+      qualifyingMonths: calc.qualifyingMonths,
+      qualifyingYears: calc.qualifyingYears,
+      averageWage: calc.averageWage,
+      eligible: calc.eligible,
+      reason: calc.reason,
+      amount: calc.amount,
+      minimumFloorApplied: calc.minimumFloorApplied,
       paidAmount: calc.paidAmount,
       pitExemptAmount: calc.pitExemptAmount,
       taxableExcess: calc.taxableExcess,
@@ -1204,4 +1274,4 @@ export const employeeContractPdf = defineQuery({
 });
 
 export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
-export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance, employeeContractPdf];
+export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance, employeeJobLoss, employeeContractPdf];
