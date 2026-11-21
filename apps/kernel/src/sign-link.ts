@@ -124,6 +124,8 @@ export interface SignResolvedToken {
   signerId: string;
   tokenUsed: boolean;
   tokenExpiresAt: string;
+  inPerson?: boolean;
+  inPersonHostUserId?: string | null;
   envelopeStatus: string;
   signerStatus: string;
   signerRole: string;
@@ -279,6 +281,7 @@ export async function runSignView(
     return rows[0]?.view ?? null;
   });
   if (!view) return { status: 'not_found' };
+  const inPerson = Boolean(view.inPerson || resolved.inPerson);
   if (view.state === 'ready') {
     const sharedSummary = parseSharedSummary(view.sharedSummary ?? null, view.pageCount);
     return {
@@ -288,6 +291,7 @@ export async function runSignView(
         signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
         pageDimensions: normalizeSignPageDimensions(view.pageDimensions),
         sharedSummary,
+        ...(inPerson ? { inPerson: true } : {}),
       },
     };
   }
@@ -298,6 +302,7 @@ export async function runSignView(
       orgName: view.orgName,
       title: view.title,
       maskedEmail: view.maskedEmail,
+      ...(inPerson ? { inPerson: true } : {}),
     },
   };
 }
@@ -471,6 +476,7 @@ export async function runSignSubmit(
       envelopeStatus: res.envelopeStatus,
       completed: res.completed,
       signedAt: res.signedAt,
+      ...(res.inPerson || resolved.inPerson ? { inPerson: true } : {}),
     },
   };
 }
@@ -567,6 +573,13 @@ export async function runSignDelegate(
   const resolved = await resolvePublicToken(runtime, billing, tokenHash, true);
   if (!resolved) return { status: 'not_found' };
   if (resolved.tokenUsed) return { status: 'already_used' };
+  if (resolved.inPerson) {
+    throw new DomainError(
+      'SIGN_DELEGATION_DISABLED',
+      403,
+      'Signer delegation is disabled for in-person signing sessions',
+    );
+  }
 
   const parsed = zSignPublicDelegateInput.safeParse(body);
   if (!parsed.success) {

@@ -53,6 +53,7 @@ export interface CanonicalCertificateEvent {
   seq: number;
   eventType: string;
   signerId: string | null;
+  hostUserId?: string | null;
   actorType: string;
   documentSha256: string;
   prevEventHash: string | null;

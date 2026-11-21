@@ -44,9 +44,10 @@ export interface SignerPanelProps {
   onAddSigner: (input: AddSignerFormInput) => Promise<void>;
   onRemoveSigner: (signerId: string) => Promise<void>;
   onMoveSigner: (signerId: string, direction: -1 | 1) => Promise<void>;
-  onCopyZaloLink?: (signerId: string) => Promise<void>;
-  onRemindSigner?: (signerId: string) => Promise<void>;
-  onCorrectSigner?: (signer: SignSignerRecord) => void;
+  onCopyZaloLink?: ((signerId: string) => Promise<void>) | undefined;
+  onRemindSigner?: ((signerId: string) => Promise<void>) | undefined;
+  onCorrectSigner?: ((signer: SignSignerRecord) => void) | undefined;
+  onStartInPerson?: ((signerId: string) => void) | undefined;
 }
 
 const SIGNER_STATUS_VARIANT = {
@@ -73,6 +74,7 @@ export function SignerPanel({
   onCopyZaloLink,
   onRemindSigner,
   onCorrectSigner,
+  onStartInPerson,
 }: SignerPanelProps) {
   const t = useTranslations('sign');
   const isDraft = envelopeStatus === 'draft';
@@ -281,6 +283,19 @@ export function SignerPanel({
 
                   {canLinkOrRemind || canCorrect ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {canLinkOrRemind && onStartInPerson && signer.signerRole !== 'cc' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="max-sm:min-h-11"
+                          disabled={busy}
+                          onClick={() => onStartInPerson(signer.id)}
+                          data-testid={`signer-in-person-btn-${signer.id}`}
+                        >
+                          {t('actions.startInPerson')}
+                        </Button>
+                      ) : null}
                       {canLinkOrRemind && onCopyZaloLink && signer.signerRole !== 'cc' ? (
                         <Button
                           type="button"
