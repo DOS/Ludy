@@ -9,9 +9,9 @@
 // Uncertain (#2520, L): one rate for all the goods of the entity; a seller with goods at several rates, or goods outside the 8% cut, waits for an item-level rate (#4303 option A). The audit rows hold ids,
 // dates, the method and the rate, nothing else.
 import { sql } from 'kysely';
-import { vietnamToday, zMarketplaceVatRateSet, zMarketplaceVatRatesGet, type MarketplaceVatRateRow, type MarketplaceVatRates } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { vietnamToday, zMarketplaceVatRateSet, zMarketplaceVatRatesGet, type MarketplaceVatRateRow, type MarketplaceVatRates } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
