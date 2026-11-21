@@ -624,7 +624,7 @@ export type SupplierPaymentTable = Refine<
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
-export const MARKETPLACE_AUTHORIZE_STATES = ['pending', 'authorized', 'refused', 'failed'] as const;
+export const MARKETPLACE_AUTHORIZE_STATES = ['pending', 'authorized', 'refused', 'failed', 'shop_changed'] as const;
 export type MarketplaceAuthorizeState = (typeof MARKETPLACE_AUTHORIZE_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];

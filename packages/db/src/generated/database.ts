@@ -1481,6 +1481,7 @@ export interface FinanceMarketplaceConnectionTable {
   authorize_code_envelope: string | null;
   reauthorize_by: ColumnType<Date | null, Date | string | null, Date | string | null>;
   authorize_pending_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  seller_ref: string | null;
 }
 
 /** crove_finance.marketplace_party */

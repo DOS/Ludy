@@ -126,7 +126,8 @@ export interface MarketplaceStockLevel {
 // What trading a seller's one-time authorization code gives: the new sealed secret of the connection (the seller's keys with the tokens) and the dates, or why not. `refused`: the platform says the code is
 // bad, used or expired (the seller authorizes again); `failed`: anything else. A short word each, never the platform's text.
 export type MarketplaceAuthorizeResult =
-  | { granted: { secret: string; accessExpiresAt: Date; refreshExpiresAt: Date | null } }
+  // `sellerRef`: the platform's id of the seller who authorized, when its answer names one (a short word, never a name or an e-mail): the finance command refuses an authorization of a different seller (#4285).
+  | { granted: { secret: string; accessExpiresAt: Date; refreshExpiresAt: Date | null; sellerRef?: string | null } }
   | { refused: string }
   | { failed: string };
 

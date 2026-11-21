@@ -31,6 +31,19 @@ import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type Credenti
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
 
+// The seller id a sealed secret names (the authorize step writes it beside the tokens, #4285): a short word or nothing. Anything else (a secret of another shape, a value that is not a plain id) is nothing, never
+// an error: it only decides whether the previous seller is known, and a secret that does not parse was already refused by the trade.
+const SELLER_REF = /^[A-Za-z0-9_-]{1,64}$/;
+const sellerRefOf = (value: unknown): string | null => (typeof value === 'string' && SELLER_REF.test(value) ? value : null);
+function sellerIdOfSecret(secret: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(secret);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as { sellerId?: unknown }).sellerId : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface MarketplacePollJob {
   orgId: string;
   // The marketplace connection's id (the finance module's row), not the channel connection's.
@@ -152,6 +165,9 @@ export async function runMarketplaceAuthorize(deps: MarketplacePollDeps, job: Ma
     expiresAt: result.granted.accessExpiresAt.toISOString(),
     reauthorizeBy: result.granted.refreshExpiresAt ? result.granted.refreshExpiresAt.toISOString() : null,
     credential: { keyId: next.keyId, envelope: next.envelope.toString('base64') },
+    // Which seller authorized, and which one the connection's previous secret named: the command refuses a different seller (#4285). Short words only, read from the two secrets this step already holds.
+    sellerRef: sellerRefOf(result.granted.sellerRef ?? null),
+    priorSellerRef: sellerRefOf(sellerIdOfSecret(secret)),
   };
   // The platform has spent the code and given the pair: this command holds the only copy of the tokens, so a passing database error is tried again (the command is safe to repeat: it records only the pending
   // authorization of this code, once).
