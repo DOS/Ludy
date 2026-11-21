@@ -86,6 +86,39 @@ describe('payroll rule data', () => {
     });
     expect(otCaps?.source.cite).toContain('Art. 107');
     expect(ruleInForce(PAYROLL_RULES, 'overtime_caps', 'default', '2020-12-31')).toBeUndefined();
+    expect(leaveRule?.value).toMatchObject({
+      sicknessMonthsAllowance: '2',
+      maternityMonthsAllowancePerEvent: '6',
+    });
+  });
+
+  it('holds non-resident 20% PIT, foreign insurance exemption, and sickness/maternity suspension rules as commentary', () => {
+    const nonResident = ruleInForce(PAYROLL_RULES, 'pit_non_resident', 'default', '2026-01-01');
+    expect(nonResident).toMatchObject({
+      id: 'pit_non_resident.default@2026-01-01',
+      status: 'commentary',
+      value: { percent: '20' },
+    });
+    expect(nonResident?.source.cite).toContain('Law 109/2025');
+    expect(ruleInForce(PAYROLL_RULES, 'pit_non_resident', 'default', '2025-12-31')).toBeUndefined();
+
+    const foreign = ruleInForce(PAYROLL_RULES, 'foreign_insurance', 'default', '2025-07-01');
+    expect(foreign).toMatchObject({
+      id: 'foreign_insurance.default@2025-07-01',
+      status: 'commentary',
+      value: { minContractMonths: 12, exemptFunds: ['unemployment'] },
+    });
+    expect(foreign?.source.cite).toContain('Decree 143/2018');
+    expect(ruleInForce(PAYROLL_RULES, 'foreign_insurance', 'default', '2025-06-30')).toBeUndefined();
+
+    for (const key of ['unpaid_leave', 'sickness_leave', 'maternity_leave'] as const) {
+      const susp = ruleInForce(PAYROLL_RULES, 'insurance_suspension', key, '2025-07-01');
+      expect(susp).toMatchObject({
+        id: `insurance_suspension.${key}@2025-07-01`,
+        status: 'commentary',
+        value: { unpaidWorkingDays: '14' },
+      });
+    }
   });
 
   // The accountant (#2535) flips a row to `confirmed` in her pull request and adds its id to this list, which is the
