@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { normalizeStatementAmount, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { normalizeStatementAmount, vietnamToday, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -541,6 +541,96 @@ suite('bank statement import (#326)', () => {
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
     expect((await feed('accounts', owner)).body).toEqual([]);
     expect(await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).toMatchObject({ status: 404, body: { code: 'BANK_FEED_ACCOUNT_NOT_FOUND' } });
+  });
+
+  it('skips the statement lines on or after the day a feed takes over, with a warning, and keeps the earlier ones (#4218)', async () => {
+    expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.CUT', name: 'Cut-over' })).status).toBe(200);
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng cut-over' })).body.connectionId);
+    await sync(connectionId);
+    const map = (input: Record<string, unknown>) => feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121.CUT', idempotencyKey: randomUUID(), ...input });
+    // Days relative to today in Vietnam: the sandbox's first pull reaches back 7 days, so a cut-over may be set from today minus 7.
+    const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+    const cut = dayOf(-3);
+    // Not a day: refused by the contract; a day before the feed's reach: refused, as the feed would never fetch what the import skips.
+    expect((await map({ feedFrom: '15/10/2026' })).status).toBe(400);
+    expect(await map({ feedFrom: dayOf(-8) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_TOO_EARLY' } });
+    expect((await map({ feedFrom: dayOf(-7) })).status).toBe(200);
+    const mapped = await map({ feedFrom: cut });
+    expect(mapped.status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    // Before the feed has pulled, nothing it supplies is in the books: a file keeps all its lines (the first pull may start later than the day set and the day then moves up).
+    const early = [row(dayOf(-6), '100000', '', '', 'EARLY-A'), row(dayOf(-1), '100000', '', '', 'EARLY-B')];
+    expect((await preview(early, '1121.CUT')).body.feed).toBeUndefined();
+    expect((await preview(early, '1121.CUT')).body.counts).toMatchObject({ new: 2, duplicate: 0 });
+    // Pulled once (the cursor is set; the sandbox's pull is not run here so the account holds only the file's lines): from the day on the feed supplies.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-4)]));
+    const rows = [row(dayOf(-6), '100000', '', '', 'CUT-A'), row(dayOf(-4), '200000', '', '', 'CUT-B'), row(cut, '300000', '', '', 'CUT-C'), row(dayOf(-1), '400000', '', '', 'CUT-D')];
+    const shown = await preview(rows, '1121.CUT');
+    expect(shown.status).toBe(200);
+    expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    expect(shown.body.feed).toEqual({ from: cut, leftOut: 2 });
+    expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
+    // Imported, only the days before the cut-over are stored; the same file again stores nothing.
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
+    expect((await stored('1121.CUT')).map((l) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 0, duplicate: 4 } } });
+    // Another bank account has no cut-over and takes the same lines; clearing the day on this one lifts the skip.
+    expect(await importFile(rows, '1121.VCB')).toMatchObject({ status: 200, body: { counts: { new: 4 } } });
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    const cleared = await preview(rows, '1121.CUT');
+    expect(cleared.body.feed).toBeUndefined();
+    expect(cleared.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    // A remap with no feedFrom leaves the day as it is.
+    expect((await map({ feedFrom: cut })).status).toBe(200);
+    expect((await map({})).status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    // A feed that stopped supplies nothing, so it must not keep file lines out: an expired connection lifts the skip.
+    const setStatus = (status: string) => admin((c) => c.query('UPDATE crove_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
+    await setStatus('expired');
+    expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
+    await setStatus('active');
+    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, leftOut: 2 });
+    // A first pull that runs later than the day set (here: the day is set in SQL to before the pull's window, as a delay across midnight would leave it) moves the day up to where the pull really starts.
+    const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
+    await sync(connectionId);
+    expect(await feedFromOf()).toBe(dayOf(-7));
+    // The move-up is on the trail, with the day it was and the day it became.
+    const moved = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ? 'feedFromMovedTo' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
+    expect(moved.rows[0]?.detail).toMatchObject({ feedFromMovedTo: dayOf(-7), feedFromWas: dayOf(-9) });
+    // The pull leaves out the lines the feed brings from before the day: nothing it stored is dated before it.
+    const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
+    expect(fed.every((l) => l.value_date >= (dayOf(-7)))).toBe(true);
+    // Once the account has synced, the day cannot move earlier (the lines the feed left out are not fetched again); later, or cleared, it can.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    // Clearing the day does not open a way round the rule: with none set, a new day may not be earlier than the day the cursor has reached.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    // The sandbox cursor is the last day pulled, so the first day still fetched is the next one: the cursor's day itself is refused.
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    // A cursor that cannot be read gives no day to vouch for: the day is refused and the view says so.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
+    expect(await map({ feedFrom: dayOf(-1) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_UNKNOWN' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
+    // A Tingee connection writes its cursor as yyyyMMddHHmmss: the floor is the day after, or the day itself at midnight.
+    const stampOf = (day: string, time: string) => `${day.replaceAll('-', '')}${time}`;
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
+    // Back to the sandbox provider: the connection is only a stand-in for Tingee's cursor here, and other tests count Tingee connections.
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 
   it('maps only a bank feed connection, and only an active one', async () => {
