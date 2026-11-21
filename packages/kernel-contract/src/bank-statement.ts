@@ -442,3 +442,11 @@ export const zBankPayrollExplainAsk = z.strictObject({ bankLineId: zId, runId: z
 export type BankPayrollExplainAsk = z.infer<typeof zBankPayrollExplainAsk>;
 export const zBankPayrollExplanation = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
 export type BankPayrollExplanation = z.infer<typeof zBankPayrollExplanation>;
+
+// The coworker's one sentence on an open bank line the matcher could not settle (#4219, Tingee S4c): the line and its candidates are read again by the server from the books, never taken from the caller, and the
+// model only words that several candidates fit or none stands out. `ai` names the state when there is no text (off: no model; busy: too many calls; budget: the AI budget is spent; failed: the call failed or its
+// text was refused; none: the line is not one the matcher left open to choice), and the screen then shows the line as it is. The sentence is a read: it picks no candidate and makes no voucher.
+export const zBankCandidatesLineAsk = z.strictObject({ bankLineId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type BankCandidatesLineAsk = z.infer<typeof zBankCandidatesLineAsk>;
+export const zBankCandidatesLine = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
+export type BankCandidatesLine = z.infer<typeof zBankCandidatesLine>;

@@ -7487,6 +7487,7 @@ export const en = {
       stepUp: 'approve {count, plural, one {# voucher} other {# vouchers}}',
       retry: 'Try again',
       dismiss: 'Dismiss',
+      candidatesNote: '{finance}, your AI coworker, wrote this sentence. It chooses nothing: you pick the match and approve any voucher.',
       reason: {
         taxCodeInvoice: 'Suggested match: the tax code is in the transfer text, and the amount equals invoice {number}',
         taxCode: 'Suggested match: the tax code is in the transfer text',
@@ -9519,7 +9520,7 @@ export const en = {
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
-      finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
+      finance_bank_match_explain: 'Explaining a bank transaction (payroll match, candidates to choose from)',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
       finance_marketplace_fee_note: 'Wording the platform fees waiting for an invoice',
       finance_misa_check_line: 'Wording what a MISA export check found',
