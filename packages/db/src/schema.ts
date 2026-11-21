@@ -498,6 +498,12 @@ export type VatReturnFiledTable = Refine<
 // Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
 export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
 export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+
+// How the last pull of a mapped bank feed account ended (#4244): a closed kind, never a provider's text. The same set as the
+// CHECK on bank_feed_account.last_pull_outcome and the contract's BANK_FEED_PULL_OUTCOMES.
+export const BANK_FEED_PULL_OUTCOMES = ['ok', 'credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+export type BankFeedPullOutcome = (typeof BANK_FEED_PULL_OUTCOMES)[number];
+export type BankFeedAccountTable = Refine<G.FinanceBankFeedAccountTable, { last_pull_outcome: ColumnType<BankFeedPullOutcome | null, BankFeedPullOutcome | null, BankFeedPullOutcome | null> }>;
 // A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
 export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
@@ -1549,6 +1555,7 @@ type Refined = Tables<{
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
   'crove_finance.bank_party_rule': BankPartyRuleTable;
+  'crove_finance.bank_feed_account': BankFeedAccountTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
