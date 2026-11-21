@@ -35,12 +35,14 @@ import {
   SIGNING_EVENT_WRITE,
   SIGNING_OTP_INVALIDATE_WRITE,
   SIGNING_TOKEN_WRITE,
+  SIGN_MAX_LINK_HOURS,
   SIGN_READERS,
   SIGN_WRITERS,
   actorLabelOfCtx,
   assertSystemCommand,
   assertSystemQuery,
   assertUserQuery,
+  assertValidEnvelopeExpiry,
   formatSignMicroNorm,
   normalizeNormalizedFieldBoxes,
   parseDetectedTags,
@@ -1652,10 +1654,10 @@ export const templateInstantiate = defineCommand({
           ? new Date(input.expiresAt)
           : null
         : tpl.expires_in_hours
-          ? new Date(ctx.now.getTime() + tpl.expires_in_hours * 3_600_000)
+          ? new Date(ctx.now.getTime() + Math.min(tpl.expires_in_hours, SIGN_MAX_LINK_HOURS) * 3_600_000)
           : null;
-    if (expiresAt !== null && expiresAt.getTime() <= ctx.now.getTime()) {
-      throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
+    if (input.expiresAt !== undefined) {
+      assertValidEnvelopeExpiry(expiresAt, ctx.now);
     }
 
     const roles = await loadTemplateRoles(ctx, tpl.id);

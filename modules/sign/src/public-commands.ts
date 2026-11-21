@@ -8,9 +8,9 @@ import { tableWrite, zId, type SignPageDimension } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
+import { SIGN_MAX_LINK_TTL_MS } from './shared.ts';
 
 const OTP_TTL_MS = 10 * 60_000;
-const DEFAULT_LINK_TTL_HOURS = 30 * 24;
 
 function assertSystem(ctx: CommandContext): void {
   if (ctx.actor.type !== 'system') {
@@ -79,6 +79,8 @@ export const publicOtpMailData = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: 'system',
+  // Returns transient 6-digit OTP code strictly to the worker mail dispatcher; never cache in idempotency_key.
+  noIdempotency: true,
   writes: [tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['otp_sha256', 'expires_at'])],
   handler: async (ctx, input): Promise<{ code: string; signerName: string; docTitle: string; expiresAt: string } | null> => {
     assertSystem(ctx);
@@ -126,6 +128,8 @@ export const signerMailData = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: 'system',
+  // Returns transient one-time signing token strictly to the worker mail dispatcher; never cache in idempotency_key.
+  noIdempotency: true,
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['org_id', 'envelope_id', 'signer_id', 'token_sha256', 'expires_at', 'revoked_at', 'revoked_by', 'created_by', 'created_at']),
     tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']),
@@ -142,7 +146,7 @@ export const signerMailData = defineCommand({
   } | null> => {
     assertSystem(ctx);
     if (input.messageId) {
-      const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + DEFAULT_LINK_TTL_HOURS * 3_600_000);
+      const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + SIGN_MAX_LINK_TTL_MS);
       const { rows } = await sql<{
         data: {
           tokenId: string;
@@ -220,9 +224,12 @@ export const signerMailData = defineCommand({
       return null;
     }
 
-    const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + DEFAULT_LINK_TTL_HOURS * 3_600_000);
+    const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + SIGN_MAX_LINK_TTL_MS);
     const envExp = envelope.expires_at ? new Date(envelope.expires_at) : null;
-    const tokenExpiresAt = envExp && envExp.getTime() > Date.now() ? envExp : defaultExpiry;
+    const tokenExpiresAt =
+      envExp && envExp.getTime() > Date.now()
+        ? new Date(Math.min(envExp.getTime(), defaultExpiry.getTime()))
+        : defaultExpiry;
 
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);

@@ -1915,6 +1915,9 @@ export class Runtime {
       if (c.noIdempotency && c.bootstrap) {
         throw new Error(`command ${c.name}: an org-less bootstrap command cannot declare noIdempotency`);
       }
+      if (c.noIdempotency && (c.access === 'proposal' || c.access === 'proposal_revision')) {
+        throw new Error(`command ${c.name}: a proposal or proposal_revision command cannot declare noIdempotency (proposals persist their result)`);
+      }
       this.#commands.set(c.name, c as CommandDef<unknown, unknown>);
       this.#contactOrPayment.set(c.name, contactOrPayment === null || contactOrPayment.length > 0);
       this.#installedModules.add(moduleOf(c.name));
@@ -2929,6 +2932,10 @@ export class Runtime {
     const resolveNested = (name: string, nestedInput: unknown, proposalIdOption: string | undefined): NestedRun => {
       const nested = this.#commands.get(name);
       if (!nested || nested.bootstrap) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${name}`);
+      // A one-time secret answer must never flow back into an unflagged caller whose idempotency row or proposal result could persist it (#3428).
+      if (nested.noIdempotency && !def.noIdempotency) {
+        throw new Error(`command ${def.name}: cannot run ${nested.name} (noIdempotency) unless ${def.name} also declares noIdempotency: true`);
+      }
       const parsed = parseInput(nested.input, nestedInput);
       // A sealed value passed down: the nested command declares it too (its own path), so its audit row and hash are masked as well.
       if (sealed.size > 0 && leaksSealed(maskSealed(parsed, nested.sealedInput), sealed)) {
