@@ -15,7 +15,7 @@ const HASH = `sha256:${'b'.repeat(64)}`;
 const addDays = (day: string, days: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 // A character a person cannot see or that breaks the line, but a model reads.
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-const LAUNCH_KEYS = ['adAccountId', 'adAccountName', 'canChange', 'currency', 'dailyBudget', 'endOn', 'heldDailyBudget', 'heldEndOn', 'launchId', 'objects', 'startOn', 'state'];
+const LAUNCH_KEYS = ['adAccountId', 'adAccountName', 'canChange', 'currency', 'dailyBudget', 'endOn', 'heldDailyBudget', 'heldEndOn', 'launchId', 'objects', 'queuedRaises', 'startOn', 'state'];
 const OBJECT_KEYS = ['level', 'name', 'pending', 'slot', 'status'];
 
 interface View {
@@ -179,6 +179,34 @@ suite('the read of started ad launches and the proposals made with its ids (#414
     expect(await h.executions('ads.launch.stop', made.proposalId)).toBe(1);
     // A stopped launch is not in the list any more.
     expect((await read()).launches.map((l) => l.launchId)).not.toContain(launch);
+  });
+
+  it('lists the waiting changes that would raise spend (and only those) with the id a cancel takes, and an AI coworker asks to cancel one it read (#4181)', async () => {
+    const { launch, account } = await rig('live');
+    // A change as the table holds it: the insert guard asks a raise's own approved proposal, so it is set aside for the one statement. Only a raise carries a proposal.
+    const insert = async (kind: string, slot: string, level: string, columns: string, values: unknown[]): Promise<string> => {
+      const id = randomUUID();
+      const proposal = kind === 'budget_raise' ? randomUUID() : null;
+      const marks = values.map((_, i) => `$${i + 9}`).join(', ');
+      await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
+        await c.query(`INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, proposal_id, requested_by, ${columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${proposal ? `'${proposal}'` : 'NULL'}, '${h.owner}', ${marks})`, [h.orgId, id, account, launch, kind, slot, level, `obj-${id.slice(0, 8)}`, ...values]);
+      });
+      return id;
+    };
+    // Before anything waits: an empty list.
+    expect((await read()).launches.find((l) => l.launchId === launch)?.queuedRaises).toEqual([]);
+    const raise = await insert('budget_raise', 'ad_set', 'ad_set', 'from_budget, to_budget', [100000, 150000]);
+    // A waiting pause on another object is not a raise: it is never listed (a cancel of it would keep an ad running).
+    await insert('pause', 'ad_1', 'ad', 'from_budget', [null]);
+    const mine = (await read()).launches.find((l) => l.launchId === launch);
+    expect(mine?.queuedRaises).toEqual([{ changeId: raise, kind: 'budget_raise', slot: 'ad_set', toBudget: '150000', toEndOn: null }]);
+    // The coworker names that change in a cancel; a person approves it and it no longer waits (and no longer shows in the list).
+    const { actor } = await h.grant();
+    const made = await h.propose(actor, 'ads.manage.cancel_approved', { changeId: raise });
+    expect(made.status).toBe('pending');
+    await h.approve(made.proposalId);
+    expect(await h.executions('ads.manage.cancel', made.proposalId)).toBe(1);
+    expect((await read()).launches.find((l) => l.launchId === launch)?.queuedRaises).toEqual([]);
   });
 
   it('lets an AI coworker ask to lower a budget it read, and a budget that is not lower is refused when the person approves, leaving the proposal pending', async () => {
