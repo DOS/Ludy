@@ -20,7 +20,8 @@
 import { money, toMoney } from '@crove/l10n-vn';
 import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@crove/mod-finance';
 import { cleanLabel, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
-import { SHOPEE_HOSTS, parseShopeeSecret, shopeeCaller, testShopeeConnection, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
+import { SHOPEE_MAX_RETURN_DETAILS, goodsBackLines, mayBringGoodsBack, readReturnDetail, readReturnList, type ShopeeReturn } from './marketplace-shopee-returns.ts';
+import { SHOPEE_HOSTS, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, testShopeeConnection, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
 
 const ORDER_LIST_PATH = '/api/v2/order/get_order_list';
 const ORDER_DETAIL_PATH = '/api/v2/order/get_order_detail';
@@ -43,9 +44,6 @@ const FUTURE_SLACK_MS = DAY_MS;
 const DETAIL_FIELDS = 'item_list,pickup_done_time,cancel_by';
 const ORDER_FIELDS = ['order_sn', 'region', 'currency', 'order_status', 'create_time', 'update_time', 'item_list', 'pickup_done_time', 'cancel_by'] as const;
 const ITEM_FIELDS = ['item_id', 'item_name', 'item_sku', 'model_id', 'model_name', 'model_sku', 'model_quantity_purchased', 'model_original_price', 'model_discounted_price'] as const;
-// The fields whose number is kept as the exact text Shopee wrote (an amount, and ids that can pass 2^53); every other number stays a number.
-const AMOUNT_KEYS: ReadonlySet<string> = new Set(['model_original_price', 'model_discounted_price']);
-const ID_KEYS: ReadonlySet<string> = new Set(['item_id', 'model_id']);
 
 // The stage of an order by Shopee's status word (Data Definition, OrderStatus). CLOSED: a word not in this table makes the page `not_recognized` and nothing is stored. CANCELLED and IN_CANCEL are decided
 // again below by who cancelled and whether the parcel was picked up. The stages are this code's reading of the words and are checked in the live trial.
@@ -68,14 +66,6 @@ const CANCEL_BY: ReadonlySet<string> = new Set(['buyer', 'seller', 'system', 'op
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const vietnamDay = (ms: number): string => new Date(ms + VIETNAM_OFFSET_MS).toISOString().slice(0, 10);
-
-// An answer as JSON in which an amount and an id are kept as the EXACT text Shopee wrote (a JSON number is a float in JS, and a float would round a long amount or turn a long id into another one). The amount
-// then has to be a plain decimal string to be taken (marketplaceMoney): an exponent or more than four decimals refuses the page. Every other number stays a number.
-export function parseShopeeAnswer(text: string): unknown {
-  const reviver = (key: string, value: unknown, context?: { source?: string }): unknown =>
-    (AMOUNT_KEYS.has(key) || ID_KEYS.has(key)) && typeof value === 'number' && typeof context?.source === 'string' ? context.source : value;
-  return JSON.parse(text, reviver as unknown as Parameters<typeof JSON.parse>[1]);
-}
 
 // A time as Shopee writes it: whole Unix seconds, in milliseconds here. Optional ones may be missing, null or 0 (unset); one that is present and not a plausible time refuses the page.
 function timeOf(value: unknown, required: boolean): number | null {
@@ -100,6 +90,8 @@ interface RawOrder {
   deliveredDay: string | null;
   stage: MarketplaceOrderStage;
   lines: MarketplaceOrderLine[];
+  // The line keys whose goods a return brought back to the seller (S2); filled after the returns are read.
+  returnedLines: Set<string>;
 }
 
 // One order of an answer as only the fields the adapter reads; anything malformed, unknown or masked refuses the page.
@@ -157,7 +149,21 @@ function parseOrder(entry: unknown, latestMs: number): RawOrder {
     deliveredDay: stage === 'completed' ? vietnamDay(updated) : null,
     stage,
     lines,
+    returnedLines: new Set<string>(),
   };
+}
+
+// The port orders of the raw ones, sorted by number. An order with lines whose goods came back answers as TWO port orders of one number: the returned lines first (stage `returned`), then the rest in the stage the
+// order had, so a line never moves back (the intake dedupes by order and line and moves a stage forward only). Dates only where the stage makes them true.
+function toPortOrders(orders: readonly RawOrder[]): MarketplaceOrder[] {
+  const out: MarketplaceOrder[] = [];
+  for (const o of [...orders].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    const back = o.lines.filter((l) => o.returnedLines.has(l.lineKey));
+    const rest = o.lines.filter((l) => !o.returnedLines.has(l.lineKey));
+    if (back.length > 0) out.push({ orderNo: o.id, orderedAt: o.createdDay, shippedAt: o.shippedDay, deliveredAt: o.deliveredDay, stage: 'returned', lines: back });
+    if (rest.length > 0) out.push({ orderNo: o.id, orderedAt: o.createdDay, shippedAt: o.shippedDay, deliveredAt: o.deliveredDay, stage: o.stage, lines: rest });
+  }
+  return out;
 }
 
 export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller = shopeeCaller(options)): MarketplaceProvider {
@@ -235,6 +241,7 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
 
       let end = start;
       let numbers: string[] = [];
+      let returns: ShopeeReturn[] = [];
       let width = cursor?.width ?? 0;
       for (; width < SLICES_MS.length; width += 1) {
         // The platform allows at most 15 days between the two times.
@@ -242,8 +249,14 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         // Nothing past the cursor yet.
         if (end <= from) return { orders: [], nextCursor: since };
         const read = await listWindow(credential, from, end);
-        if (!read.more) {
-          numbers = read.numbers;
+        const found = await readReturnList(caller, credential, from, end, nowMs);
+        // The orders to read: those the list names and those of the returns that could bring goods back (a return of any other kind moves no stock and needs no order). Over a page, or over what the detail
+        // calls may cost, the window is cut narrower, exactly as when the list itself says there is more.
+        const wanted = found.returns.filter(mayBringGoodsBack);
+        const union = new Set([...read.numbers, ...wanted.map((r) => r.orderNo)]);
+        if (!read.more && !found.more && union.size <= PAGE_SIZE && wanted.length <= SHOPEE_MAX_RETURN_DETAILS) {
+          numbers = [...union];
+          returns = wanted;
           break;
         }
       }
@@ -256,10 +269,17 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         return { orders: [], nextCursor: writeCursor(end, Math.max(0, width - 1)), more: true };
       }
       const details = await readDetails(credential, numbers);
-      const orders: MarketplaceOrder[] = details
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-        .map((o) => ({ orderNo: o.id, orderedAt: o.createdDay, shippedAt: o.shippedDay, deliveredAt: o.deliveredDay, stage: o.stage, lines: o.lines }));
-      return { orders, nextCursor: writeCursor(end, width), more: end < nowMs };
+      const byNumber = new Map(details.map((o) => [o.id, o] as const));
+      // The returns that could bring goods back, one detail call each: the lines whose goods reached the seller are `returned`. An order that has not shipped (or was cancelled) cannot have goods coming back.
+      for (const ret of returns) {
+        const order = byNumber.get(ret.orderNo);
+        if (!order) throw notRecognized();
+        const detail = await readReturnDetail(caller, credential, ret, nowMs);
+        const held = new Map(order.lines.map((l) => [l.lineKey, Number(l.quantity)] as const));
+        const back = goodsBackLines(detail, held);
+        if (order.stage === 'shipped' || order.stage === 'completed') for (const key of back) order.returnedLines.add(key);
+      }
+      return { orders: toPortOrders(details), nextCursor: writeCursor(end, width), more: end < nowMs };
     },
 
     // Not in this slice: the order's money lines come with the escrow reads (S3); a poll never asks for them today.

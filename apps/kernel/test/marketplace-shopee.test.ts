@@ -6,8 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { MarketplaceProviderError, parseMarketplaceOrderPage } from '@crove/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
-import { SHOPEE_HOSTS, ShopeeApiError, parseShopeeSecret, shopeeCaller, shopeeShopInfo, testShopeeConnection } from '../src/marketplace-shopee.ts';
-import { SHOPEE_ORDER_STAGE, parseShopeeAnswer, shopeeMarketplace } from '../src/marketplace-shopee-orders.ts';
+import { SHOPEE_HOSTS, ShopeeApiError, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, shopeeShopInfo, testShopeeConnection } from '../src/marketplace-shopee.ts';
+import { SHOPEE_ORDER_STAGE, shopeeMarketplace } from '../src/marketplace-shopee-orders.ts';
 import { fakeShopee, fakeShopeeOrder, type FakeShopeeItem, type FakeShopeeOrderSpec, type FakeShopeeRaw } from './fake-shopee.ts';
 
 const NOW = Date.parse('2026-11-21T08:00:00Z');

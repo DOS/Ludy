@@ -113,7 +113,42 @@ export function fakeShopeeOrder(spec: FakeShopeeOrderSpec): FakeShopeeRaw {
   };
 }
 
-export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[] }) {
+export interface FakeShopeeReturn {
+  returnSn: string;
+  orderSn: string;
+  status: string;
+  updatedMs: number;
+  // 0 return and refund, 1 refund only.
+  solution: number;
+  items: Array<{ itemId: number | string; modelId: number | string; amount: number }>;
+  reverseStatus?: string;
+  validation?: string;
+}
+
+// A return in the shape of the list and the detail pages. The buyer's nickname, e-mail and pickup address are there on purpose and are never read.
+const returnJson = (r: FakeShopeeReturn, detail: boolean): Record<string, unknown> => ({
+  return_sn: r.returnSn,
+  order_sn: r.orderSn,
+  status: r.status,
+  update_time: Math.floor(r.updatedMs / 1000),
+  create_time: Math.floor(r.updatedMs / 1000) - 86_400,
+  return_solution: r.solution,
+  needs_logistics: r.solution === 0,
+  refund_amount: 150000.0,
+  currency: 'VND',
+  reason: 'DIFFERENT_DESCRIPTION',
+  user: { username: 'nguyenvanthu_buyer', email: 'buyer***@example.com', portrait: 'https://cf.shopee.sg/file/abc' },
+  item: r.items.map((i) => ({ item_id: i.itemId, model_id: i.modelId, amount: i.amount, name: 'Áo thun mẫu', item_price: 120000.0, item_sku: 'AT-MAU', variation_sku: 'AT-MAU-DL' })),
+  ...(detail
+    ? {
+        reverse_logistics_status: r.reverseStatus ?? 'LOGISTICS_REQUEST_CREATED',
+        validation_type: r.validation ?? 'seller_validation',
+        return_pickup_address: { name: 'Nguyễn Văn Thử', phone: '0901234567', address: '12 Đường Thử' },
+      }
+    : {}),
+});
+
+export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]; returns?: FakeShopeeReturn[] }) {
   // `raws`: the orders the list and detail calls answer from, built with fakeShopeeOrder (which carries a buyer's data on purpose, returned only when a call asks for it).
   const calls: FakeShopeeCall[] = [];
   const nowMs = options.now ?? (() => Date.now());
@@ -124,6 +159,7 @@ export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]
   // The access token a refresh replaced, still valid until this time (five minutes).
   let replacedAccess: { token: string; untilMs: number } | null = null;
   const raws = options.raws ?? [];
+  const returns = options.returns ?? [];
   const authorizationEndsAtMs = options.authorizationEndsAtMs ?? nowMs() + 200 * 86_400_000;
 
   const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -216,6 +252,23 @@ export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]
       const fields = (query.response_optional_fields ?? '').split(',');
       const found = numbers.map((n) => raws.find((r) => r.sn === n)).filter((r): r is FakeShopeeRaw => r !== undefined);
       return text(`{"request_id":"rid","error":"","message":"","response":{"order_list":[${found.map((r) => r.detail(fields)).join(',')}]}}`);
+    }
+    if (url.pathname === '/api/v2/returns/get_return_list') {
+      const from = Number(query.update_time_from);
+      const to = Number(query.update_time_to);
+      const size = Number(query.page_size);
+      const pageNo = Number(query.page_no);
+      if (!Number.isInteger(from) || !Number.isInteger(to) || to - from > 15 * 86_400 || from >= to) return failure('error_param', 'Wrong parameters, detail: update_time.');
+      if (!Number.isInteger(size) || size < 1 || size > 100 || !Number.isInteger(pageNo) || pageNo < 1) return failure('error_param', 'Wrong parameters, detail: page.');
+      const matching = returns.filter((r) => r.updatedMs >= from * 1000 && r.updatedMs <= to * 1000).sort((a, b) => a.updatedMs - b.updatedMs);
+      const offset = (pageNo - 1) * size;
+      const page = matching.slice(offset, offset + size);
+      return text(`{"request_id":"rid","error":"","message":"","response":{"more":${offset + size < matching.length},"return":${JSON.stringify(page.map((r) => returnJson(r, false)))}}}`);
+    }
+    if (url.pathname === '/api/v2/returns/get_return_detail') {
+      const found = returns.find((r) => r.returnSn === query.return_sn);
+      if (!found) return failure('error_param', 'The information you queried is not found.');
+      return text(`{"request_id":"rid","error":"","message":"","response":${JSON.stringify(returnJson(found, true))}}`);
     }
     return failure('error_param', 'unknown path', 404);
   };
