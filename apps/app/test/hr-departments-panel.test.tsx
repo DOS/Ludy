@@ -358,6 +358,13 @@ describe('HR departments UI panel & employee assignment (#3412)', () => {
     const assignedHtml = wrap(<HrEmployeesPage />, 'vi');
     expect(assignedHtml).toContain('Kinh doanh - Trưởng nhóm KD');
     expect(assignedHtml).toContain('value="' + DEPT_SALES_ID + '"');
+    expect(assignedHtml).toContain('data-testid="hr-leave-queue"');
+
+    cache.current.setQueryData(['org', 'get', {}], { orgId: ORG_ID, role: 'admin' });
+    expect(wrap(<HrEmployeesPage />, 'vi')).toContain('data-testid="hr-leave-queue"');
+
+    cache.current.setQueryData(['org', 'get', {}], { orgId: ORG_ID, role: 'member' });
+    expect(wrap(<HrEmployeesPage />, 'vi')).not.toContain('data-testid="hr-leave-queue"');
   });
 
   it('defaults AddForm payFunction from picked department unless manually overridden, and renders Detail department info', () => {

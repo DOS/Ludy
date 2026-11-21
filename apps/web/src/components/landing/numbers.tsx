@@ -20,7 +20,7 @@ export function Numbers({ dict }: { dict: Dictionary }) {
           const value = STATS[item.key as keyof typeof STATS];
           return (
             <div key={item.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4">
-              <dd className={`num font-display text-2xl leading-none font-semibold tracking-[-0.02em] sm:text-4xl ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
+              <dd className={`num font-display text-2xl leading-none font-semibold tracking-[-0.02em] sm:text-3xl md:text-2xl lg:text-3xl ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
                 {format.format(value)}
                 {ROUNDED.has(item.key) ? '+' : ''}
               </dd>

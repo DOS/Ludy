@@ -2090,6 +2090,7 @@ export function HrEmployeesPage() {
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const owner = org.data?.role === 'owner';
+  const manager = owner || org.data?.role === 'admin';
   const members: readonly OrgMemberOption[] = org.data?.members ?? [];
   const [showEnded, setShowEnded] = useState(false);
   const [showArchivedDepartments, setShowArchivedDepartments] = useState(false);
@@ -2217,7 +2218,7 @@ export function HrEmployeesPage() {
           })}
         </DataTable>
       )}
-      <LeaveApprovalQueue />
+      {manager && <LeaveApprovalQueue />}
     </>
   );
 }
