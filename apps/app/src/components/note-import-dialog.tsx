@@ -21,7 +21,8 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ErrorText, Spinner } from './ui.tsx';
+import { Skeleton } from '@crove/ui/components/skeleton';
+import { ErrorText } from './ui.tsx';
 import { errorMessage, importEvernoteEnex, importTodoistCsv } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -130,7 +131,13 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
     const parsed = isEnex ? parsedEnex : parsedTodoist;
     if (!parsed || parsed.ok) return null;
     if (parsed.code === 'TOO_LARGE') return t('invalidSizeLimit');
-    if (parsed.code === 'NOTE_IMPORT_INVALID' || parsed.code === 'NOTE_IMPORT_UNSAFE_XML' || parsed.code === 'NOTE_IMPORT_EMPTY') {
+    if (
+      parsed.code === 'NOTE_IMPORT_INVALID' ||
+      parsed.code === 'NOTE_IMPORT_UNSAFE_XML' ||
+      parsed.code === 'NOTE_IMPORT_EMPTY' ||
+      parsed.code === 'NOTE_TOO_LONG' ||
+      parsed.code === 'NOTE_ATTACHMENT_LIMIT'
+    ) {
       return tKernel(parsed.code);
     }
     return parsed.detail;
@@ -313,9 +320,10 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
           </label>
 
           {readingFile && (
-            <div className="flex items-center gap-2 text-sm text-subtle-foreground" role="status">
-              <Spinner />
-              <span>{t('parsing')}</span>
+            <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3" aria-busy="true" role="status">
+              <p className="text-xs text-subtle-foreground">{t('parsing')}</p>
+              <Skeleton className="h-3.5 w-2/5" />
+              <Skeleton className="h-3.5 w-3/4" />
             </div>
           )}
 

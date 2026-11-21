@@ -129,73 +129,69 @@ export const noteImportEnex = defineCommand({
 
     for (const item of input.notes) {
       const titleKey = item.title.trim().toLowerCase();
-      const previewNbKey =
-        targetNotebookId !== null
-          ? targetNotebookId
-          : !input.ignoreFileNotebooks && item.notebookName
-            ? (privateNotebookByName.get(item.notebookName.trim().toLowerCase()) ?? `new:${item.notebookName.trim().toLowerCase()}`)
-            : 'unfiled';
-      const noteDupKey = `${previewNbKey}:${titleKey}`;
-      if (input.skipDuplicates && seenNoteKeys.has(noteDupKey)) {
-        skippedDuplicates += 1;
-        for (const att of item.attachments) unusedStorageKeys.push(att.storageKey);
-        continue;
-      }
-      seenNoteKeys.add(noteDupKey);
-
       let noteNotebookId: string | null = targetNotebookId;
       if (noteNotebookId === null && !input.ignoreFileNotebooks && item.notebookName) {
-        const nbKey = item.notebookName.trim().toLowerCase();
-        const matched = privateNotebookByName.get(nbKey);
-        if (matched) {
-          noteNotebookId = matched;
-          reusedNotebookIds.add(matched);
-        } else {
-          if (totalOwnedNotebooks >= NOTEBOOKS_MAX) {
-            throw new DomainError('NOTEBOOK_LIMIT_REACHED', 422, `Đã đạt giới hạn ${NOTEBOOKS_MAX} sổ tay; hãy xóa bớt sổ tay không còn dùng`);
-          }
-          let nextSortKey = keyBetween(lastNotebookSortKey, null);
-          if (nextSortKey.length > REBALANCE_AT) {
-            const ownNbs = await ctx.trx
-              .selectFrom('crove_notes.notebook')
-              .select('id')
-              .where('org_id', '=', ctx.orgId)
-              .where('author_user_id', '=', userId)
-              .orderBy('sort_key')
-              .orderBy('id')
-              .execute();
-            const fresh = spreadKeys(ownNbs.length + 1);
-            for (let i = 0; i < ownNbs.length; i += 1) {
-              await ctx.trx
-                .updateTable('crove_notes.notebook')
-                .set({ sort_key: fresh[i] as string })
-                .where('org_id', '=', ctx.orgId)
-                .where('id', '=', ownNbs[i]!.id)
-                .execute();
-            }
-            nextSortKey = fresh[ownNbs.length] as string;
-          }
-          const nbRow = await ctx.trx
-            .insertInto('crove_notes.notebook')
-            .values({
-              org_id: ctx.orgId,
-              author_user_id: userId,
-              visibility: 'private',
-              name: item.notebookName,
-              stack_name: null,
-              pinned: false,
-              sort_key: nextSortKey,
-              created_at: ctx.now,
-              updated_at: ctx.now,
-            })
-            .returning('id')
-            .executeTakeFirstOrThrow();
-          lastNotebookSortKey = nextSortKey;
-          totalOwnedNotebooks += 1;
-          privateNotebookByName.set(nbKey, nbRow.id);
-          createdNotebookIds.push(nbRow.id);
-          noteNotebookId = nbRow.id;
+        noteNotebookId = privateNotebookByName.get(item.notebookName.trim().toLowerCase()) ?? null;
+      }
+
+      if (noteNotebookId !== null || input.ignoreFileNotebooks || !item.notebookName) {
+        const noteDupKey = `${noteNotebookId ?? 'unfiled'}:${titleKey}`;
+        if (input.skipDuplicates && seenNoteKeys.has(noteDupKey)) {
+          skippedDuplicates += 1;
+          for (const att of item.attachments) unusedStorageKeys.push(att.storageKey);
+          continue;
         }
+        seenNoteKeys.add(noteDupKey);
+        if (noteNotebookId !== null && targetNotebookId === null) {
+          reusedNotebookIds.add(noteNotebookId);
+        }
+      } else {
+        const nbKey = item.notebookName.trim().toLowerCase();
+        if (totalOwnedNotebooks >= NOTEBOOKS_MAX) {
+          throw new DomainError('NOTEBOOK_LIMIT_REACHED', 422, `Đã đạt giới hạn ${NOTEBOOKS_MAX} sổ tay; hãy xóa bớt sổ tay không còn dùng`);
+        }
+        let nextSortKey = keyBetween(lastNotebookSortKey, null);
+        if (nextSortKey.length > REBALANCE_AT) {
+          const ownNbs = await ctx.trx
+            .selectFrom('crove_notes.notebook')
+            .select('id')
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .orderBy('sort_key')
+            .orderBy('id')
+            .execute();
+          const fresh = spreadKeys(ownNbs.length + 1);
+          for (let i = 0; i < ownNbs.length; i += 1) {
+            await ctx.trx
+              .updateTable('crove_notes.notebook')
+              .set({ sort_key: fresh[i] as string })
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', ownNbs[i]!.id)
+              .execute();
+          }
+          nextSortKey = fresh[ownNbs.length] as string;
+        }
+        const nbRow = await ctx.trx
+          .insertInto('crove_notes.notebook')
+          .values({
+            org_id: ctx.orgId,
+            author_user_id: userId,
+            visibility: 'private',
+            name: item.notebookName,
+            stack_name: null,
+            pinned: false,
+            sort_key: nextSortKey,
+            created_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        lastNotebookSortKey = nextSortKey;
+        totalOwnedNotebooks += 1;
+        privateNotebookByName.set(nbKey, nbRow.id);
+        createdNotebookIds.push(nbRow.id);
+        noteNotebookId = nbRow.id;
+        seenNoteKeys.add(`${noteNotebookId}:${titleKey}`);
       }
 
       const createdAt = parseSanitizedTimestamp(item.createdAt, ctx.now, ctx.now);

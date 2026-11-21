@@ -350,6 +350,34 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
       unusedStorageKeys: [],
     });
     expect(store.storage.size).toBe(2);
+
+    // Intra-batch duplicates targeting a brand-new notebook keep only the first note and delete the second note's staged blob.
+    const intraBatchEnex = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <notebook>Fresh Batch Book</notebook>
+  <note>
+    <title>Repeated Title</title>
+    <content><![CDATA[<en-note><p>First</p></en-note>]]></content>
+    <resource><data encoding="base64">${pngB64}</data><mime>image/png</mime><resource-attributes><file-name>one.png</file-name></resource-attributes></resource>
+  </note>
+  <note>
+    <title>Repeated Title</title>
+    <content><![CDATA[<en-note><p>Duplicate inside same batch</p></en-note>]]></content>
+    <resource><data encoding="base64">${pdfB64}</data><mime>application/pdf</mime><resource-attributes><file-name>dup.pdf</file-name></resource-attributes></resource>
+  </note>
+</en-export>`;
+    const batchRes = await uploadEnex('member', intraBatchEnex, { skipDuplicates: 'true' });
+    expect(batchRes.status, JSON.stringify(batchRes.body)).toBe(201);
+    expect(batchRes.body).toMatchObject({
+      importedNotes: 1,
+      createdNotebooks: 1,
+      reusedNotebooks: 0,
+      attachmentsCount: 1,
+      skippedDuplicates: 1,
+      unusedStorageKeys: [],
+    });
+    // Only the first note's blob remains added (+1 -> total 3).
+    expect(store.storage.size).toBe(3);
   });
 
   it('fails closed on XXE/DTD XML and invalid UTF-8, and rolls back BlobStore blobs on DB command failure', async () => {

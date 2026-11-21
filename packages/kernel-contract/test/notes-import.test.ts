@@ -314,6 +314,11 @@ describe('Todoist .csv importer', () => {
     if (multiWordLabel.ok) {
       expect(multiWordLabel.lists[0]!.tasks[0]!.tags).toEqual(['vip', 'khách vip', 'ops review']);
     }
+
+    expect(deriveTodoistListNameFromFilename('C:\\exports\\Roadmap [4567].csv')).toBe('Roadmap');
+    expect(deriveTodoistListNameFromFilename(`folder/Tabs ${'\t'.repeat(500)} [12].csv`)).toBe('Tabs');
+    expect(deriveTodoistListNameFromFilename('Sprint [Q4].csv')).toBe('Sprint [Q4]');
+    expect(deriveTodoistListNameFromFilename('blob.csv')).toBeNull();
   });
 
   it('supports multiple explicit lists via TYPE=list, rejects missing headers, empty files, and enforces row/task caps', () => {

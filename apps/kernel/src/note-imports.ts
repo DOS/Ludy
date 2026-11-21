@@ -38,6 +38,21 @@ interface ParsedMultipartUpload {
   fields: Record<string, string>;
 }
 
+async function readBoundedImportStream(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+  tooLargeMessage: string,
+): Promise<Uint8Array> {
+  try {
+    return await readBoundedStream(body, maxBytes);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === 'TOO_LARGE') {
+      throw new DomainError('TOO_LARGE', 413, tooLargeMessage);
+    }
+    throw error;
+  }
+}
+
 async function readImportMultipart(
   req: Request,
   maxBytes: number,
@@ -57,7 +72,7 @@ async function readImportMultipart(
   const fields: Record<string, string> = {};
 
   if (contentType.toLowerCase().includes('multipart/form-data')) {
-    const rawBody = await readBoundedStream(req.body, maxBytes + MULTIPART_OVERHEAD_BYTES);
+    const rawBody = await readBoundedImportStream(req.body, maxBytes + MULTIPART_OVERHEAD_BYTES, tooLargeMessage);
     const copy = new Request(req.url, {
       method: req.method,
       headers: req.headers,
@@ -80,7 +95,7 @@ async function readImportMultipart(
       if (typeof val === 'string') fields[key] = val;
     }
   } else {
-    bytes = await readBoundedStream(req.body, maxBytes);
+    bytes = await readBoundedImportStream(req.body, maxBytes, tooLargeMessage);
     if (bytes.byteLength === 0) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
     const url = new URL(req.url);
     rawName = url.searchParams.get('filename') ?? req.headers.get('x-file-name') ?? '';

@@ -1613,12 +1613,29 @@ export function parseCsvRecords(rawText: string): { rows: string[][]; unterminat
 
 export function deriveTodoistListNameFromFilename(filename: string | null | undefined): string | null {
   if (!filename) return null;
-  const base = filename
-    .trim()
-    .replace(/^.*[/\\]/, '')
-    .replace(/\.csv$/i, '')
-    .replace(/\s*\[\d+\]$/, '')
-    .trim();
+  const trimmed = filename.trim();
+  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  let base = lastSlash === -1 ? trimmed : trimmed.slice(lastSlash + 1);
+  if (base.toLowerCase().endsWith('.csv')) {
+    base = base.slice(0, -4);
+  }
+  base = base.trim();
+  if (base.endsWith(']')) {
+    const open = base.lastIndexOf('[');
+    if (open !== -1 && open + 1 < base.length - 1) {
+      let allDigits = true;
+      for (let i = open + 1; i < base.length - 1; i += 1) {
+        const c = base.charCodeAt(i);
+        if (c < 0x30 || c > 0x39) {
+          allDigits = false;
+          break;
+        }
+      }
+      if (allDigits) {
+        base = base.slice(0, open).trim();
+      }
+    }
+  }
   const clean = cleanSingleLine(base, TODO_LIST_NAME_MAX);
   if (!clean || clean.toLowerCase() === 'blob' || clean.toLowerCase() === 'file') return null;
   return clean;
