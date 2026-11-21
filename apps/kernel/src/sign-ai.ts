@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Kernel orchestration for Vy on eSign (#3351):
+// Kernel orchestration for Vy on eSign (#3351, #3821, #3822):
 // 1. Reads envelope layout, SHA-256, and declared signer role keys in the caller's own transaction (sign.ai_analysis.source;
 //    never reads signer emails or raw secrets).
-// 2. Runs Vy outside any database transaction through the AI budget meter (metered 'sign.field_propose' and 'sign.clause_summary'
-//    inside withAiScope).
-// 3. Writes sanitized proposals strictly through Runtime.execute('sign.envelope.propose_fields' | 'sign.ai_analysis.record')
-//    so persistence and tenancy enforcement stay inside the sign module.
+// 2. Runs Vy outside any database transaction through the AI budget meter (metered 'sign.field_propose', 'sign.clause_summary',
+//    'sign.version_diff', 'sign.contract_draft', and 'sign.obligation_extract' inside withAiScope).
+// 3. Writes sanitized proposals strictly through Runtime.execute('sign.envelope.propose_fields' | 'sign.ai_analysis.record' |
+//    'sign.obligation.propose') so persistence and tenancy enforcement stay inside the sign module.
 // When AI is off, unconfigured, busy, not inspected, or AiBudgetExhaustedError fires, returns a structured status cleanly so
 // core manual envelope creation, field placement, and sending keep working identically. Failures log codes only, never PDF text.
 import {
@@ -24,6 +24,8 @@ import type {
   SignDiffCompareResult,
   SignDrafterProposeInput,
   SignDrafterProposeResult,
+  SignEnvelopeObligationRecordContract,
+  SignObligationAiOutcome,
 } from '@ludy/kernel-contract';
 import {
   DomainError,
@@ -41,20 +43,30 @@ import {
   type SignAiRiskClause,
   type SignAiSource,
   type SignDiffSourceResult,
+  type SignObligationSource,
 } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 
+export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
+  Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations'>>;
+
 export interface SignAi {
-  reader:
-    | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
-        Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses'>>)
-    | null;
+  reader: SignAiReaderPort | null;
   budget: DraftBudget;
+  obligationBudget?: DraftBudget;
 }
 
-export function signAi(reader: SignAi['reader'], budget: DraftBudget): SignAi {
-  return { reader, budget };
+export function signAi(
+  reader: SignAi['reader'],
+  budget: DraftBudget,
+  obligationBudget?: DraftBudget,
+): SignAi {
+  return {
+    reader,
+    budget,
+    ...(obligationBudget ? { obligationBudget } : {}),
+  };
 }
 
 export type SignAiOutcomeState = 'used' | 'off' | 'budget' | 'busy' | 'not_ready' | 'not_draft' | 'no_text' | 'failed';
@@ -574,6 +586,199 @@ export async function proposeSignContractDraftClauses(
     }
     console.error('[sign-ai] contract draft proposal failed', error instanceof Error ? error.name : typeof error);
     return { ai: 'failed', summaryNote: null, proposedClauses: [] };
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface SignObligationExtractOutcome {
+  ai: SignObligationAiOutcome;
+  status:
+    | 'proposed'
+    | 'confirmed'
+    | 'off'
+    | 'budget'
+    | 'busy'
+    | 'not_ready'
+    | 'not_completed'
+    | 'no_text'
+    | 'empty'
+    | 'failed';
+  obligation: SignEnvelopeObligationRecordContract | null;
+}
+
+export interface ProposeEnvelopeObligationsParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'execute' | 'query'>;
+  orgId: string;
+  actor: UserActor | SystemActor;
+  envelopeId: string;
+  pages?: readonly SignAiPageInput[];
+  inspectPages?: (source: SignObligationSource) => Promise<readonly SignAiPageInput[]>;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+  promptVersion?: string;
+}
+
+function obligationOutcome(
+  ai: Exclude<SignObligationAiOutcome, 'used'>,
+  existing: SignEnvelopeObligationRecordContract | null = null,
+): SignObligationExtractOutcome {
+  return {
+    ai,
+    status: ai,
+    obligation: existing,
+  };
+}
+
+export async function proposeEnvelopeObligations(
+  params: ProposeEnvelopeObligationsParams,
+): Promise<SignObligationExtractOutcome> {
+  const { ai, runtime, orgId, actor, envelopeId } = params;
+  if (actor.type !== 'user' && actor.type !== 'system') {
+    throw new DomainError('FORBIDDEN', 403, 'Only workspace members or system workers can extract contract obligations');
+  }
+
+  const source = await runtime.query<SignObligationSource>(
+    'sign.obligation.source',
+    { envelopeId },
+    { actor, orgId },
+  );
+
+  const safeExisting = async (): Promise<SignEnvelopeObligationRecordContract | null> => {
+    try {
+      const res = await runtime.query<{ obligation: SignEnvelopeObligationRecordContract | null }>(
+        'sign.obligation.get',
+        { envelopeId },
+        { actor, orgId },
+      );
+      return res.obligation;
+    } catch {
+      return null;
+    }
+  };
+
+  if (!ai.reader?.extractObligations || source.aiStopped) {
+    return obligationOutcome('off', await safeExisting());
+  }
+  if (source.status !== 'completed') {
+    return obligationOutcome('not_completed', await safeExisting());
+  }
+  if (source.inspectStatus !== 'passed' || !source.pageCount || source.pageCount < 1) {
+    return obligationOutcome('not_ready', await safeExisting());
+  }
+  if (
+    params.pages &&
+    params.pages
+      .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= (source.pageCount ?? 0))
+      .every((p) => p.text.trim().length === 0)
+  ) {
+    return obligationOutcome('no_text', await safeExisting());
+  }
+  if (!params.pages && !params.inspectPages) {
+    return obligationOutcome('no_text', await safeExisting());
+  }
+
+  const rateBudget = ai.obligationBudget ?? ai.budget;
+  const ticket = rateBudget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return obligationOutcome('busy', await safeExisting());
+  }
+
+  const promptVersion = params.promptVersion ?? SIGN_AI_PROMPT_VERSION;
+  const extractObligations = ai.reader.extractObligations.bind(ai.reader);
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<SignObligationSource>(
+      'sign.obligation.source',
+      { envelopeId },
+      { actor, orgId },
+    );
+    return latest.aiStopped;
+  };
+
+  const runScoped = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const baseMeter =
+      params.meter === 'runtime'
+        ? actor.type === 'user'
+          ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+          : systemMeter(runtime as Runtime, params.meterOptions ?? {})
+        : params.meter;
+    const guardedMeter: AiMeter = {
+      admit: async (call) => {
+        if (await isAiStopped()) {
+          throw new SignAiStoppedError();
+        }
+        return baseMeter.admit(call);
+      },
+      record: (call, usage) => baseMeter.record(call, usage),
+    };
+    return withAiScope({ orgId, meter: guardedMeter }, fn);
+  };
+
+  try {
+    const pageCount = source.pageCount;
+    const rawPages = params.pages ?? (params.inspectPages ? await params.inspectPages(source) : []);
+    const extractedPages: SignAiExtractedPage[] = rawPages
+      .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= pageCount)
+      .map((p) => ({ page: p.page, text: p.text }));
+    if (extractedPages.every((p) => p.text.trim().length === 0)) {
+      return obligationOutcome('no_text', await safeExisting());
+    }
+
+    const extractResult = await runScoped(() =>
+      extractObligations({
+        envelopeTitle: source.title,
+        pageCount,
+        pages: extractedPages,
+      }),
+    );
+
+    if (await isAiStopped()) {
+      throw new SignAiStoppedError();
+    }
+
+    if (extractResult.kind === 'none' || !extractResult.proposal) {
+      return obligationOutcome(
+        extractResult.code === 'REFUSED' ? 'failed' : 'empty',
+        await safeExisting(),
+      );
+    }
+
+    const saved = await runtime.execute<SignEnvelopeObligationRecordContract>(
+      'sign.obligation.propose',
+      {
+        envelopeId,
+        promptVersion,
+        proposal: extractResult.proposal,
+        extractedPages,
+      },
+      { actor, orgId },
+    );
+
+    return {
+      ai: 'used',
+      status: saved.status === 'confirmed' ? 'confirmed' : 'proposed',
+      obligation: saved,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError) {
+      return obligationOutcome('off', await safeExisting());
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return obligationOutcome('budget', await safeExisting());
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    if (error instanceof DomainError && error.code === 'SIGN_OBLIGATION_ENVELOPE_NOT_COMPLETED') {
+      return obligationOutcome('not_completed', await safeExisting());
+    }
+    console.error('[sign-ai] obligation extraction failed', error instanceof Error ? error.name : typeof error);
+    return obligationOutcome('failed', await safeExisting());
   } finally {
     ticket.release();
   }

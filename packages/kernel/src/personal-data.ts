@@ -597,6 +597,11 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
   },
+  'crove_sign.envelope_obligation.counterparty_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;

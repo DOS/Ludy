@@ -7,6 +7,9 @@ import type {
   SignDrafterProposeInput,
   SignDrafterProposeResult,
   SignDrafterRenderPdfResult,
+  SignEnvelopeObligationRecordContract,
+  SignObligationProposalContract,
+  SignObligationRenewalListItem,
   SignSharedKeyTerm,
   SignSharedSummary,
 } from '@ludy/kernel-contract';
@@ -586,6 +589,42 @@ export const signApi = {
   listCaRequests: (envelopeId: string) => client.sign.ca.list_requests({ envelopeId }),
   initiateCaRequest: (input: { envelopeId: string; caConnectionId?: string; signerId?: string }) =>
     client.sign.ca.initiate_request({ ...input, idempotencyKey: crypto.randomUUID() }),
+  getObligation: (envelopeId: string) => client.sign.obligation.get({ envelopeId }),
+  listRenewalEnvelopes: (input: { limit?: number } = {}) => client.sign.obligation.renewals_list(input),
+  extractObligations: (envelopeId: string, pages?: ReadonlyArray<{ page: number; text: string }>) =>
+    client.sign.obligation.extract({
+      envelopeId,
+      ...(pages && pages.length > 0 ? { pages: [...pages] } : {}),
+    }),
+  upsertObligation: (input: {
+    envelopeId: string;
+    counterpartyName?: string | null;
+    effectiveDate?: string | null;
+    expiryDate?: string | null;
+    renewalNoticeDays?: number | null;
+    autoRenew: boolean;
+    contractValue?: string | null;
+    currency: string;
+    obligations: Array<{
+      id?: string;
+      title: string;
+      dueDate?: string | null;
+      status?: 'pending' | 'completed';
+      pageNumber?: number | null;
+      quoteExcerpt?: string | null;
+      proposedByAi?: boolean;
+    }>;
+  }) => client.sign.obligation.upsert({ ...input, idempotencyKey: crypto.randomUUID() }),
+  dismissObligationProposal: (envelopeId: string) =>
+    client.sign.obligation.dismiss_proposal({ envelopeId, idempotencyKey: crypto.randomUUID() }),
+  completeObligationItem: (envelopeId: string, itemId: string, completed: boolean) =>
+    client.sign.obligation.complete_item({ envelopeId, itemId, completed, idempotencyKey: crypto.randomUUID() }),
+};
+
+export type {
+  SignEnvelopeObligationRecordContract,
+  SignObligationProposalContract,
+  SignObligationRenewalListItem,
 };
 
 export type SignCaProvider = 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign';

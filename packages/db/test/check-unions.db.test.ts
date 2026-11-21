@@ -266,6 +266,7 @@ import {
   SIGN_CA_REQUEST_STATUSES,
   SIGN_CA_RETRY_SAFETIES,
   SIGN_CA_SUBFILTERS,
+  SIGN_OBLIGATION_STATUSES,
   type Database,
 } from '../src/schema.ts';
 
@@ -408,6 +409,7 @@ const UNIONS = unions({
   'crove_sign.ca_signing_request.status': SIGN_CA_REQUEST_STATUSES,
   'crove_sign.ca_signing_request.retry_safety': SIGN_CA_RETRY_SAFETIES,
   'crove_sign.ca_signing_request.sub_filter': SIGN_CA_SUBFILTERS,
+  'crove_sign.envelope_obligation.status': SIGN_OBLIGATION_STATUSES,
   'crove_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,
