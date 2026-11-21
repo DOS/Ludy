@@ -134,6 +134,10 @@ export const AI_FEATURES = {
   'sign.clause_summary': 'sign',
   // Vy (the general manager) summarizing completed project tasks into 3 to 5 handover deliverable bullets for a draft eSign acceptance minutes PDF (#3812): one call over the project name and caller-readable completed tasks only, nothing persisted or sent automatically.
   'sign.acceptance_draft': 'sign',
+  // Vy (the general manager) summarizing commercial and legal risk deltas between two PDF contract revisions (#3822): one call over bounded changed hunks, every delta citing verbatim quotes from v1 or v2.
+  'sign.version_diff': 'sign',
+  // Vy (the general manager) proposing customized Vietnamese SME contract clauses for human editing before PDF generation (#3822): one call over structured contract variables and plain-language instructions, neutralized against tag injection.
+  'sign.contract_draft': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

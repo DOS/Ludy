@@ -3799,6 +3799,8 @@ export interface SignEnvelopeTable {
   auto_remind_before_expiry: Generated<boolean>;
   decline_acknowledged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   decline_acknowledged_by: string | null;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_sign.field */
@@ -3936,6 +3938,8 @@ export interface SignTemplateTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_social.account_snapshot */

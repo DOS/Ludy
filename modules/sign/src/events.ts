@@ -10,6 +10,7 @@ export const SIGN_EVENT_TYPES = [
   'document_inspected',
   'document_inspect_failed',
   'envelope_updated',
+  'envelope_shared_summary_updated',
   'signer_added',
   'signer_removed',
   'signers_reordered',

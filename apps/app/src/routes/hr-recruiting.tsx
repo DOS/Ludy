@@ -17,6 +17,7 @@ import {
   type HrCandidateView,
   type HrContractType,
   type HrDepartmentView,
+  type HrInterviewerOption,
   type HrOpeningView,
   type HrPayFunction,
   type HrRecruitingBriefResult,
@@ -589,36 +590,118 @@ export function RecruitingBriefPanel({
   );
 }
 
-function InterviewSchedulePanel({ candidate }: { candidate: HrCandidateView }) {
+export function resolveDefaultInterviewerId(
+  candidate: Pick<HrCandidateView, 'interviewerUserId'>,
+  interviewers: readonly HrInterviewerOption[],
+  meUserId: string | null | undefined,
+): string {
+  if (
+    candidate.interviewerUserId &&
+    (interviewers.length === 0 || interviewers.some((i) => i.userId === candidate.interviewerUserId))
+  ) {
+    return candidate.interviewerUserId;
+  }
+  if (meUserId && (interviewers.length === 0 || interviewers.some((i) => i.userId === meUserId))) {
+    return meUserId;
+  }
+  return interviewers[0]?.userId ?? '';
+}
+
+export function buildInterviewSlotsInput(args: {
+  candidate: Pick<HrCandidateView, 'interviewEventId' | 'interviewerUserId'>;
+  interviewerUserId: string;
+  durationMinutes: number;
+  maxSlots?: number;
+}) {
+  const sameInterviewerAsCurrent =
+    Boolean(args.candidate.interviewEventId) &&
+    Boolean(args.candidate.interviewerUserId) &&
+    args.interviewerUserId === args.candidate.interviewerUserId;
+  return {
+    ...(args.interviewerUserId ? { interviewerUserId: args.interviewerUserId } : {}),
+    durationMinutes: args.durationMinutes,
+    maxSlots: args.maxSlots ?? 8,
+    ...(sameInterviewerAsCurrent && args.candidate.interviewEventId
+      ? { exceptEventId: args.candidate.interviewEventId }
+      : {}),
+  };
+}
+
+export function InterviewSchedulePanel({
+  candidate,
+  initialOpen = false,
+  initialConfirmCancel = false,
+}: {
+  candidate: HrCandidateView;
+  initialOpen?: boolean;
+  initialConfirmCancel?: boolean;
+}) {
   const t = useTranslations('hrRecruiting');
   const f = useFormat();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
+  const [confirmCancel, setConfirmCancel] = useState(initialConfirmCancel);
+  const [selectedInterviewer, setSelectedInterviewer] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [customStart, setCustomStart] = useState(candidate.interviewStartsAt ? formatLocalDateTimeInput(candidate.interviewStartsAt) : '');
   const [customDuration, setCustomDuration] = useState(45);
 
+  const meQuery = useQuery({
+    ...orpc.me.get.queryOptions(),
+    enabled: open,
+    ...ONCE,
+  });
+  const interviewersQuery = useQuery({
+    ...orpc.hr.recruiting.interviewers.list.queryOptions(),
+    enabled: open,
+    ...ONCE,
+  });
+
+  const interviewers = interviewersQuery.data ?? [];
+  const defaultInterviewerId = resolveDefaultInterviewerId(candidate, interviewers, meQuery.data?.userId);
+  const activeInterviewerId =
+    selectedInterviewer && (interviewers.length === 0 || interviewers.some((i) => i.userId === selectedInterviewer))
+      ? selectedInterviewer
+      : defaultInterviewerId;
+  const waitingForMeDefault = !selectedInterviewer && !candidate.interviewerUserId && meQuery.isPending;
+  const slotsReady = !interviewersQuery.isPending && !waitingForMeDefault;
+
   const slotsQuery = useQuery({
     ...orpc.hr.recruiting.interviewSlots.queryOptions({
-      input: {
+      input: buildInterviewSlotsInput({
+        candidate,
+        interviewerUserId: activeInterviewerId,
         durationMinutes,
         maxSlots: 8,
-        ...(candidate.interviewEventId ? { exceptEventId: candidate.interviewEventId } : {}),
-      },
+      }),
     }),
-    enabled: open,
+    enabled: open && slotsReady,
     ...ONCE,
   });
 
   const schedule = useMutation({
     mutationFn: (slot: { startsAt: string; endsAt: string }) =>
-      client.hr.recruiting.candidates.scheduleInterview({ candidateId: candidate.id, ...slot }),
+      client.hr.recruiting.candidates.scheduleInterview({
+        candidateId: candidate.id,
+        ...slot,
+        ...(activeInterviewerId ? { interviewerUserId: activeInterviewerId } : {}),
+      }),
     onSuccess: async () => {
       await refresh();
       setOpen(false);
     },
   });
 
+  const cancelInterview = useMutation({
+    mutationFn: () => client.hr.recruiting.candidates.cancelInterview({ candidateId: candidate.id }),
+    onSuccess: async () => {
+      setConfirmCancel(false);
+      setOpen(false);
+      await refresh();
+    },
+  });
+
   const canSchedule = candidate.stage !== 'hired' && candidate.stage !== 'rejected' && candidate.erasedAt === null;
+  const hasActiveInterview = candidate.interviewEventId !== null && candidate.interviewStartsAt !== null;
 
   return (
     <section className="mt-4 border-t pt-4" data-testid="hr-interview-panel">
@@ -628,29 +711,117 @@ function InterviewSchedulePanel({ candidate }: { candidate: HrCandidateView }) {
           <p className="text-xs text-subtle-foreground">
             {candidate.interviewStartsAt ? t('interview.current', { at: f.dateTime(candidate.interviewStartsAt) }) : t('interview.none')}
           </p>
+          {candidate.interviewStartsAt && (candidate.interviewerName || candidate.interviewerUserId) && (
+            <p className="text-xs text-muted-foreground" data-testid="hr-interview-interviewer">
+              {candidate.interviewerName
+                ? t('interview.assignedTo', { name: candidate.interviewerName })
+                : t('interview.formerInterviewer')}
+            </p>
+          )}
         </div>
         {canSchedule && (
-          <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)} data-testid="hr-interview-toggle">
-            {candidate.interviewStartsAt ? t('interview.reschedule') : t('interview.pickSlot')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setConfirmCancel(false);
+                setOpen((v) => !v);
+              }}
+              data-testid="hr-interview-toggle"
+            >
+              {candidate.interviewStartsAt ? t('interview.reschedule') : t('interview.pickSlot')}
+            </Button>
+            {hasActiveInterview && !confirmCancel && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-11 text-destructive hover:text-destructive"
+                onClick={() => {
+                  setOpen(false);
+                  setConfirmCancel(true);
+                }}
+                data-testid="hr-interview-cancel-ask"
+              >
+                {t('interview.cancelAction')}
+              </Button>
+            )}
+          </div>
         )}
       </div>
+      {canSchedule && hasActiveInterview && confirmCancel && (
+        <div className="mt-3 space-y-2 rounded-md border border-destructive/40 p-3" data-testid="hr-interview-cancel-confirm-box">
+          <p className="text-sm text-foreground">{t('interview.cancelConfirmText')}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="min-h-11"
+              loading={cancelInterview.isPending}
+              onClick={() => cancelInterview.mutate()}
+              data-testid="hr-interview-cancel-confirm"
+            >
+              {t('interview.cancelConfirmButton')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="min-h-11"
+              onClick={() => setConfirmCancel(false)}
+              data-testid="hr-interview-cancel-keep"
+            >
+              {t('interview.cancelKeep')}
+            </Button>
+          </div>
+          {cancelInterview.error && <ErrorText>{errorMessage(cancelInterview.error)}</ErrorText>}
+        </div>
+      )}
       {open && canSchedule && (
         <div className="mt-3 space-y-3 rounded-md border p-3">
           <div className="flex flex-wrap items-center gap-3">
-            <Label htmlFor="hr-slot-duration">{t('interview.duration')}</Label>
-            <NativeSelect id="hr-slot-duration" value={String(durationMinutes)} onChange={(e) => setDurationMinutes(Number(e.target.value))}>
-              {[30, 45, 60, 90].map((m) => (
-                <NativeSelectOption key={m} value={String(m)}>
-                  {t('interview.minutes', { count: String(m) })}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="hr-slot-interviewer">{t('interview.interviewer')}</Label>
+              <NativeSelect
+                id="hr-slot-interviewer"
+                className="max-md:[&_select]:min-h-11"
+                value={activeInterviewerId}
+                onChange={(e) => setSelectedInterviewer(e.target.value)}
+                data-testid="hr-interview-interviewer-select"
+              >
+                {interviewers.length === 0 ? (
+                  <NativeSelectOption value={activeInterviewerId}>
+                    {candidate.interviewerName ?? t('interview.defaultSelfInterviewer')}
+                  </NativeSelectOption>
+                ) : (
+                  interviewers.map((person) => (
+                    <NativeSelectOption key={person.userId} value={person.userId}>
+                      {`${person.displayName} (${t(`interview.roles.${person.role}`)})`}
+                    </NativeSelectOption>
+                  ))
+                )}
+              </NativeSelect>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="hr-slot-duration">{t('interview.duration')}</Label>
+              <NativeSelect
+                id="hr-slot-duration"
+                className="max-md:[&_select]:min-h-11"
+                value={String(durationMinutes)}
+                onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              >
+                {[30, 45, 60, 90].map((m) => (
+                  <NativeSelectOption key={m} value={String(m)}>
+                    {t('interview.minutes', { count: String(m) })}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
           </div>
+          {interviewersQuery.error && <ErrorText>{errorMessage(interviewersQuery.error)}</ErrorText>}
           {slotsQuery.data && !slotsQuery.data.hoursSaved && (
             <Alert>{t('interview.defaultHoursNote', { tz: slotsQuery.data.timeZone })}</Alert>
           )}
-          {slotsQuery.isPending ? (
+          {!slotsReady || slotsQuery.isPending ? (
             <p className="text-xs text-muted-foreground">{t('loading')}</p>
           ) : slotsQuery.error ? (
             <ErrorText>{errorMessage(slotsQuery.error)}</ErrorText>
@@ -675,7 +846,13 @@ function InterviewSchedulePanel({ candidate }: { candidate: HrCandidateView }) {
           <div className="flex flex-wrap items-end gap-2 border-t pt-2">
             <div className="space-y-1">
               <Label htmlFor="hr-slot-custom">{t('interview.customStart')}</Label>
-              <Input id="hr-slot-custom" type="datetime-local" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+              <Input
+                id="hr-slot-custom"
+                type="datetime-local"
+                className="max-md:min-h-11"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="hr-slot-custom-dur">{t('interview.duration')}</Label>
@@ -684,7 +861,7 @@ function InterviewSchedulePanel({ candidate }: { candidate: HrCandidateView }) {
                 type="number"
                 min={15}
                 max={240}
-                className="w-24"
+                className="w-24 max-md:min-h-11"
                 value={customDuration}
                 onChange={(e) => setCustomDuration(Number(e.target.value))}
               />
@@ -1063,7 +1240,10 @@ export function CandidateDetailPanel({
 
       {candidate.erasedAt === null && (
         <>
-          <InterviewSchedulePanel key={`${candidate.id}-${candidate.interviewStartsAt ?? 'none'}`} candidate={candidate} />
+          <InterviewSchedulePanel
+            key={`${candidate.id}-${candidate.interviewStartsAt ?? 'none'}-${candidate.interviewerUserId ?? 'none'}`}
+            candidate={candidate}
+          />
           <RecruitingBriefPanel
             candidateId={candidate.id}
             candidateVersion={`${candidate.updatedAt}:${candidate.openingId ?? ''}:${candidate.interviewEventId ?? ''}:${opening?.updatedAt ?? ''}:${candidate.openingTitle ?? ''}:${candidate.departmentName ?? ''}`}
@@ -1290,7 +1470,16 @@ export function HrRecruitingPage() {
                     <Badge variant="outline">{t(`stages.${c.stage}`)}</Badge>
                   </TableCell>
                   <TableCell className={NUM}>{c.agreedWage ? f.money(c.agreedWage, 'VND') : c.expectedWage ? f.money(c.expectedWage, 'VND') : '-'}</TableCell>
-                  <TableCell className="px-4 py-3">{c.interviewStartsAt ? f.dateTime(c.interviewStartsAt) : '-'}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    {c.interviewStartsAt ? (
+                      <div>
+                        <span>{f.dateTime(c.interviewStartsAt)}</span>
+                        {c.interviewerName && <p className="text-xs text-muted-foreground">{c.interviewerName}</p>}
+                      </div>
+                    ) : (
+                      '-'
+                    )}
+                  </TableCell>
                   <TableCell className="px-4 py-3 text-right">
                     <Button variant="ghost" size="sm" onClick={() => setOpenCandidateId(c.id)} data-testid="hr-candidate-open">
                       {t('open')}
