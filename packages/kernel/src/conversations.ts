@@ -2701,17 +2701,21 @@ async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>
     WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND (mm.to_address IS NOT NULL OR mm.subject IS NOT NULL OR mm.payload IS NOT NULL)
       AND mm.source_id IN (SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
                            WHERE m.org_id = ${ctx.orgId}::uuid AND c.kind = 'email' AND ${filter})`.execute(ctx.trx);
-  // What an AI coworker proposed to send into these threads (E4 #3863: a reply, a private reply, hiding a comment) holds the thread's or the message's id and, for a reply, the text, in the proposal's payload. It goes
-  // with the thread, pending or decided (a decided proposal is frozen against the tenant, so the database's definer does it): the text is blanked, and a proposal still waiting is rejected.
-  await sql`
-    SELECT crove_kernel.engage_proposal_erase(
-      ARRAY(SELECT c.id FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter}),
-      ARRAY(SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = ${ctx.orgId}::uuid AND ${filter}))`.execute(ctx.trx);
   const { rows } = await sql<{ threads: string; messages: string }>`
     WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
     SELECT (SELECT count(*) FROM gone)::text AS threads,
            (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
+  // What an AI coworker proposed to send into these threads (E4 #3863: a reply, a private reply, hiding a comment) holds the thread's or the message's id and, for a reply, the text, in the proposal's payload. It goes
+  // with the thread, pending or decided (a decided proposal is frozen against the tenant, so the database's definer does it). The definer runs after the delete and takes no ids: it blanks the proposals whose
+  // thread or message no longer exists, so it cannot reach a live thread's, and a large purge builds no id lists (#4160).
+  await eraseGoneProposals(ctx);
   return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
+}
+
+// Blanks, rejects (a pending one) and audits the Engage proposals that name a conversation or a message the org no longer has; run after the deletes. Answers how many.
+async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
+  const { rows } = await sql<{ n: number }>`SELECT crove_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
+  return rows[0]?.n ?? 0;
 }
 
 // Identities left with no thread: nothing the org holds names them any more.
@@ -2765,12 +2769,11 @@ export const conversationEraseContact = defineCommand({
     if (subject) {
       // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
       // its author).
-      // What an AI coworker proposed about those comments (a private reply to one, hiding one: E4 #3863) names them by message id, and goes with them.
-      await sql`
-        SELECT crove_kernel.engage_proposal_erase(ARRAY[]::uuid[], ARRAY(SELECT m.id FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid))`.execute(ctx.trx);
       const others = await sql<{ conversation_id: string }>`
         DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
       erased.messages += others.rows.length;
+      // What an AI coworker proposed about those comments (a private reply to one, hiding one: E4 #3863) names them by message id, and goes with them: the definer finds what lost its message.
+      await eraseGoneProposals(ctx);
       // A draft Vy wrote in one of those threads read what the customer wrote: it goes stale with its text.
       await staleDrafts(ctx, [...new Set(others.rows.map((r) => r.conversation_id))]);
       // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises

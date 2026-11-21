@@ -51,6 +51,7 @@ describe('protected-path detection (G6)', () => {
       'packages/db/src/migrate.ts',
       'packages/kernel/src/approval.ts',
       'packages/kernel/src/identity.ts',
+      'packages/kernel-contract/src/engage-proposals.ts',
       'apps/kernel/src/auth.ts',
       'apps/kernel/src/sessions.ts',
       'apps/kernel/src/http.ts',
