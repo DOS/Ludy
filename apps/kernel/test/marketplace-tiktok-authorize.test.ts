@@ -98,6 +98,17 @@ describe('the trade of the code and the choice of the shop', () => {
     }
   });
 
+  it('authorizes again onto the same shop but refuses another shop, storing nothing (#4273 for TikTok)', async () => {
+    const { provider } = setup({ codes: ['CODE1', 'CODE2'] });
+    const same = await provider.authorize!(JSON.stringify({ ...APP, serviceId: '7000000000001', shopId: fakeShop().id, shopCipher: fakeShop().cipher }), 'CODE1');
+    expect('granted' in same).toBe(true);
+    const other = await provider.authorize!(JSON.stringify({ ...APP, serviceId: '7000000000001', shopId: '7000714532876273999', shopCipher: 'GCP_other' }), 'CODE2');
+    expect(other).toEqual({ failed: 'SHOP_CHANGED' });
+    expect(leaks(other)).toEqual([]);
+    // A secret that never had a shop (the first authorization) is not a change.
+    expect('granted' in (await setup().provider.authorize!(TYPED, 'CODE1'))).toBe(true);
+  });
+
   it('says `failed` when the shop list cannot be read, and refused for a code TikTok does not accept (used, or not a seller\'s)', async () => {
     const down = setup({ intercept: (host, path) => (host === 'open-api.tiktokglobalshop.com' && path.includes('/shops') ? new Response('down', { status: 503 }) : undefined) });
     const downResult = await down.provider.authorize!(TYPED, 'CODE1');

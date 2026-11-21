@@ -41,6 +41,16 @@ export interface TiktokAuthorizeOptions {
   now?: () => Date;
 }
 
+// The shop id the connection already holds, if the sealed secret has one (a first authorization has none).
+function storedShopId(secret: string): string | null {
+  try {
+    const value = (JSON.parse(secret) as { shopId?: unknown }).shopId;
+    return typeof value === 'string' && value !== '' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function withTiktokAuthorize(provider: MarketplaceProvider, options: TiktokAuthorizeOptions): MarketplaceProvider {
   return {
     ...provider,
@@ -75,6 +85,9 @@ export function withTiktokAuthorize(provider: MarketplaceProvider, options: Tikt
       const shop = shops[0]!;
       // Only a Vietnam shop with a local seller: a cross-border shop would pass here and then fail every poll without a clear message.
       if (shop.region !== 'VN' || shop.sellerType !== 'LOCAL') return { failed: 'NOT_LOCAL_SHOP' };
+      // A connection is one shop: its orders, cursor and books belong to it. Authorizing again onto another shop would mix two shops' orders, so it is refused (the seller connects the other shop as a new connection).
+      const storedShop = storedShopId(secret);
+      if (storedShop !== null && storedShop !== shop.id) return { failed: 'SHOP_CHANGED' };
       const sealed = { ...(JSON.parse(granted.secret) as Record<string, unknown>), ...(keyText(keys.serviceId) ? { serviceId: keys.serviceId } : {}), shopCipher: shop.cipher, shopId: shop.id };
       return { granted: { secret: JSON.stringify(sealed), accessExpiresAt: granted.accessExpiresAt, refreshExpiresAt: granted.authorizationEndsAt } };
     },

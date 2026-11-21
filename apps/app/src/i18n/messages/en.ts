@@ -5706,7 +5706,7 @@ export const en = {
     },
     pollStatesTiktok: { not_authorized: 'The app is not authorized on TikTok Shop yet, so no orders can be read' },
     authorizeStatesTiktok: {
-      failed: 'The authorization could not be completed. It can be a passing TikTok problem, so try Authorize again; if it fails again, check that the app is bound to exactly one shop, a Vietnam shop with a local seller (none, several, or a cross-border shop is not accepted). If it keeps failing, tell the system administrator.',
+      failed: 'The authorization could not be completed. It can be a passing TikTok problem, so try Authorize again; if it fails again, check that the app is bound to exactly one shop, a Vietnam shop with a local seller (none, several, or a cross-border shop is not accepted). A connection stays on its first shop: to use another shop, disconnect and connect it as a new connection. If it keeps failing, tell the system administrator.',
     },
     pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {
