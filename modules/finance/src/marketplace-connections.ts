@@ -587,8 +587,10 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
     // The seller who authorized must be the seller this connection was authorized for (#4285, #4273): the stored one, or for a connection authorized before it was kept, the one the worker read from its previous
     // secret. A different seller would move this connection's books, link rows and poll cursor onto another shop's orders, so nothing is replaced: the code is cleared, the state says so, and a different seller
     // needs a new connection. Decided here, by a plain comparison of two short words; a platform that names no seller (null) is not compared.
+    // A field left out is the same as null: never a different seller.
+    const sellerRef = input.sellerRef ?? null;
     const baseline = found.seller_ref ?? input.priorSellerRef ?? null;
-    if (baseline !== null && input.sellerRef !== null && input.sellerRef !== baseline) return fail('shop_changed');
+    if (baseline !== null && sellerRef !== null && sellerRef !== baseline) return fail('shop_changed');
     // The credential is replaced only if the connection is as the worker read it (a reconnect or a refresh since then moved its version); in the same transaction as the mark below, so the two never part.
     const replaced = await ctx.run<{ refreshed: boolean }>('kernel.channel.refresh', {
       connectionId: found.channel_connection_id,
@@ -606,7 +608,7 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
         authorize_pending_at: null,
         reauthorize_by: input.reauthorizeBy,
         // The seller is kept for good (a reconnect does not clear it): the first authorization that names one sets it, a later one is compared with it above.
-        seller_ref: input.sellerRef ?? found.seller_ref ?? input.priorSellerRef ?? null,
+        seller_ref: sellerRef ?? found.seller_ref ?? input.priorSellerRef ?? null,
         // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
         last_poll_state: null,
         last_polled_at: null,

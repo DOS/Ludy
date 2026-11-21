@@ -864,6 +864,9 @@ suite('marketplace connections (#2519)', () => {
     // An answer that names no seller is not compared and keeps the stored one.
     expect(await authorize('TOKEN-4', { sellerRef: null })).toEqual({ recorded: true });
     expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
+    // The field left out altogether (not null) names no seller either: it is not a different one.
+    expect(await authorize('TOKEN-4b', {})).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
     // A reconnect (the same entity and platform) keeps the seller: it is not the secret's, and the next authorization is compared with it.
     await exec('finance.marketplace_connection.connect', connectIn, owner);
     expect(await row()).toMatchObject({ authorize_state: null, seller_ref: '100200' });
