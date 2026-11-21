@@ -327,10 +327,13 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
   if (!data) return null;
   if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0 && data.accruals.length === 0 && data.accrualReversals.length === 0) return null;
   const open = data.postingConfirmed;
+  // A settlement entry needs the sales path only (#4303 S3b): its rows follow that, the payout, fee and invoice rows follow `open`.
+  const salesOpen = data.salesPostingConfirmed;
+  const othersShown = data.payouts.length + data.invoices.length + data.halfReversed.length + data.accruals.length + data.accrualReversals.length > 0;
   return (
     <section className="mb-6 space-y-5" data-testid="marketplace-actions">
       <h2 className="text-base font-semibold">{t('title')}</h2>
-      {!open && (
+      {((!salesOpen && data.settlements.length > 0) || (!open && othersShown)) && (
         <Alert data-testid="marketplace-gate">
           <AlertDescription>{t('gate')}</AlertDescription>
         </Alert>
@@ -341,7 +344,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <p className="mb-2 text-sm text-subtle-foreground">{t('settlementsHint')}</p>
           <DataTable head={[t('platform'), t('period'), t('month'), t('net'), '']} numeric={[3]}>
             {data.settlements.map((s) => (
-              <SettlementRow key={s.id} s={s} open={open} />
+              <SettlementRow key={s.id} s={s} open={salesOpen} />
             ))}
           </DataTable>
         </div>

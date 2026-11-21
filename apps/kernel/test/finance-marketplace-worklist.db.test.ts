@@ -187,6 +187,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const worklist = (o: Org, runtime = rt, legalEntityId?: string) =>
     runtime.query<{
       postingConfirmed: boolean;
+      salesPostingConfirmed: boolean;
       settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
       payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[]; adjustable: { lineId: string; source: string; amount: string }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
@@ -230,10 +231,15 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const o = await org();
     expect((await worklist(o, rtShipped)).postingConfirmed).toBe(false);
     expect((await worklist(o)).postingConfirmed).toBe(true);
+    // The sales path alone (#4303 S3b): open on the shipped map, where the payout and fee accrual rows are still commentary, so the settlement rows are not held by them.
+    expect((await worklist(o, rtShipped)).salesPostingConfirmed).toBe(true);
+    expect((await worklist(o)).salesPostingConfirmed).toBe(true);
     // A chart whose map is not in the injected set (TT99; the shipped TT99 map is commentary, #3711 slice 4) is closed too, and an entity the caller does not name is not looked at.
     const tt99 = await org('tt99');
     expect((await worklist(tt99)).postingConfirmed).toBe(false);
+    expect((await worklist(tt99)).salesPostingConfirmed).toBe(false);
     expect((await worklist(o, rt, o.entity)).postingConfirmed).toBe(true);
+    expect((await worklist(o, rt, o.entity)).salesPostingConfirmed).toBe(true);
     // Closed on the shipped map though its sales path is applied (#4303 S3b): the payout and fee accrual rows are still commentary, and the gate reads all three.
     expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });

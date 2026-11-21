@@ -10,6 +10,7 @@
 //   report does not explain (above zero), or tax withheld from a seller that is no household, is listed in `adjustable`: the person classifies it when asking (#4303 S4);
 // - invoices to clear: the platform's posted fee invoices that still have something to clear while fees wait on 1388, with what a clearing would take now.
 // `postingConfirmed` is false while the accountant has not confirmed the account map of an entity in view (#2520): every request would be refused, so the screen shows the actions disabled.
+// `salesPostingConfirmed` is the same read for the sales path alone: the settlement entries need no other path (finance.marketplace_settlement.record gates on 'sales'), so its rows follow it, not the payout and fee paths (#4303 S3b).
 import { sql } from 'kysely';
 import { MARKETPLACE_FEE_CLEARING_COMMAND, MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
@@ -66,15 +67,15 @@ const pendingOf = (ctx: QueryContext, command: string, key: string, id: string) 
     .execute(ctx.trx)
     .then((r) => r.rows[0]?.id ?? null);
 
-// Whether the account map of every entity in view is confirmed, on the chart the entity keeps today.
-async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undefined, maps: Maps): Promise<boolean> {
+// Whether the account map of every entity in view is confirmed for `paths`, on the chart the entity keeps today.
+async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undefined, maps: Maps, paths: Parameters<typeof requireConfirmedMarketplaceMap>[2]): Promise<boolean> {
   const entities = (await sql<{ id: string }>`SELECT id FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND (${legalEntityId ?? null}::uuid IS NULL OR id = ${legalEntityId ?? null}::uuid)`.execute(ctx.trx)).rows;
   if (entities.length === 0) return false;
   const today = await databaseToday(ctx.trx);
   for (const entity of entities) {
     try {
       // The paths every entity uses; the household tax path is gated at the request itself (refused as unconfirmed), so it does not lock the other buttons.
-      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps, ['sales', 'payout', 'fee_accrual']);
+      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps, paths);
     } catch {
       return false;
     }
@@ -244,7 +245,17 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const accruals: MarketplaceWorklist['accruals'] = offers.accruals.map((a) => ({ ...a, platformName: platformPartyName(a.platform) }));
       const accrualReversals: MarketplaceWorklist['accrualReversals'] = offers.reversals.map((r) => ({ ...r, platformName: platformPartyName(r.platform) }));
 
-      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed, accruals, accrualReversals };
+      const maps = options.maps ?? MARKETPLACE_POSTING_MAPS;
+      return {
+        postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales', 'payout', 'fee_accrual']),
+        salesPostingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales']),
+        settlements,
+        payouts,
+        invoices,
+        halfReversed,
+        accruals,
+        accrualReversals,
+      };
     },
   });
 

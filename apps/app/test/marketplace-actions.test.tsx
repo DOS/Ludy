@@ -44,9 +44,10 @@ const lineA = '00000000-0000-4000-8000-0000000000b1';
 const lineB = '00000000-0000-4000-8000-0000000000b2';
 const documentId = '00000000-0000-4000-8000-0000000000c1';
 
-const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [] };
+const EMPTY: MarketplaceWorklist = { postingConfirmed: true, salesPostingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
+  salesPostingConfirmed: true,
   halfReversed: [],
   accruals: [],
   accrualReversals: [],
@@ -100,11 +101,23 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
   });
 
   it('while the account map is not confirmed shows the gate line and the three actions disabled', () => {
-    const html = render(FULL({ postingConfirmed: false }));
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: false }));
     expect(html).toContain('data-testid="marketplace-gate"');
     expect(html).toContain('Waiting for the accountant to confirm the marketplace account map (#2520)');
     for (const id of ['marketplace-post', 'marketplace-record', 'marketplace-clear']) expect(disabled(html, id)).toBe(true);
     expect(cache.calls).toEqual([]);
+  });
+
+  it('with only the sales path confirmed (the shipped maps) the settlement post is enabled while the payout and clearing actions stay locked (#4303 S3b)', () => {
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: true }));
+    expect(disabled(html, 'marketplace-post')).toBe(false);
+    for (const id of ['marketplace-record', 'marketplace-clear']) expect(disabled(html, id)).toBe(true);
+    // The payout and clearing rows are still locked, so the line says why.
+    expect(html).toContain('data-testid="marketplace-gate"');
+    // Only settlements in view: nothing is locked, so no gate line.
+    const settlementsOnly = render({ ...EMPTY, postingConfirmed: false, settlements: FULL().settlements });
+    expect(disabled(settlementsOnly, 'marketplace-post')).toBe(false);
+    expect(settlementsOnly).not.toContain('data-testid="marketplace-gate"');
   });
 
   it('once the map is confirmed shows no gate line and the three actions enabled', () => {
@@ -273,7 +286,7 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
   });
 
   it('reads in Vietnamese', () => {
-    const html = render(FULL({ postingConfirmed: false }), 'vi');
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: false }), 'vi');
     expect(html).toContain('Chờ kế toán xác nhận bảng tài khoản sàn (#2520)');
     expect(html).toContain('Ghi sổ');
     expect(html).toContain('Ghi nhận tiền về');

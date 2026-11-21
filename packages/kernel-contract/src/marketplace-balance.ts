@@ -157,6 +157,8 @@ export const zMarketplaceFeeAccrualReversal = z.object({
 export type MarketplaceFeeAccrualReversal = z.infer<typeof zMarketplaceFeeAccrualReversal>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
+  // The same gate for the sales path alone: the settlement rows follow it (a settlement entry needs no payout or fee path, #4303 S3b).
+  salesPostingConfirmed: z.boolean(),
   settlements: z.array(zMarketplaceSettlementToPost),
   payouts: z.array(zMarketplacePayoutToMatch),
   invoices: z.array(zMarketplaceInvoiceToClear),
