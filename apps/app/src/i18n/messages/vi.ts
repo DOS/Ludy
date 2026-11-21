@@ -15131,6 +15131,7 @@ export const vi = {
         authorize_record: 'Ghi kết quả cấp quyền cho kết nối sàn',
         authorize_target: 'Xem kết nối sàn cần hoàn tất cấp quyền',
         connect: 'Kết nối tài khoản người bán trên sàn',
+        ingest_page: 'Nhận một trang đơn hàng từ sàn vào hộp thư và ghi liên kết với kết nối',
         list: 'Xem các kết nối sàn thương mại điện tử',
         poll_target: 'Xem kết nối sàn cần lấy đơn',
         record_poll: 'Ghi kết quả lấy đơn từ sàn',

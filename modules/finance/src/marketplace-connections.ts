@@ -9,6 +9,9 @@
 // - finance.marketplace_connection.request_poll (same; R2 external): asks the worker to pull the platform's orders now (the outbox event queues the poll job).
 // - finance.marketplace_connection.record_poll (system; R1): what the worker records after a poll: how it ended, the cursor the next one resumes from (moved only after the page was
 //   ingested) (the orders still waiting are counted by the list from the staged files the connection's polls ingested). The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
+// - finance.marketplace_connection.ingest_page (system; R2 external, as the ingest it runs): files a page of orders (kernel.file.ingest, source `upload`, the connection's entity) and links the file to
+//   the connection in the SAME transaction (crove_finance.marketplace_connection_file, #4250), so the orders still waiting are counted from the link and a member's upload named after a connection id
+//   inflates nothing. A page read twice is one file and one link.
 // - finance.marketplace_connection.poll_target (system query): what the worker needs to poll one connection, or why it must not.
 // - finance.marketplace_connection.list: every member reads the connections, their last test and their last poll.
 // No query, audit fact or error carries a credential, a buyer's data or a platform's own text: only ids, counts and states.
@@ -23,11 +26,13 @@ import {
   zMarketplaceAuthorizeLookup,
   zMarketplaceAuthorizeRecord,
   zMarketplaceConnectionRecordPoll,
+  zMarketplaceIngestPage,
   zMarketplaceConnectionRecordTest,
   zMarketplacePlatform,
   type MarketplaceAuthorizeBegun,
   type MarketplaceConnection,
   type MarketplaceConnectionTested,
+  type MarketplacePageIngested,
 } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, sha256Hex } from '@crove/kernel-runtime';
@@ -283,6 +288,45 @@ export const marketplaceConnectionPollTarget = defineQuery({
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
     return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state, lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).toISOString() : null };
+  },
+});
+
+export const marketplaceConnectionIngestPage = defineCommand({
+  name: 'finance.marketplace_connection.ingest_page',
+  input: zMarketplaceIngestPage,
+  // The same risk as the ingest it runs: its event queues the extraction job, which stages the page for a member (the poll itself confirms nothing).
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.marketplaceConnectionId }),
+  handler: async (ctx, input): Promise<MarketplacePageIngested> => {
+    // The entity is the connection's own, never the caller's; a connection that is gone files nothing.
+    const connection = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection')
+      .select(['id', 'legal_entity_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.marketplaceConnectionId)
+      .executeTakeFirst();
+    if (!connection) throw notFound();
+    // The same intake as a file a member drops in the Inbox (source `upload`: the file-source CHECK has no source of its own for a platform's pull).
+    const filed = await ctx.run<MarketplacePageIngested>('kernel.file.ingest', {
+      filename: input.filename,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      sha256: input.sha256,
+      storageKey: input.storageKey,
+      generation: input.generation,
+      source: 'upload',
+      legalEntityId: connection.legal_entity_id,
+    });
+    // In the same transaction as the ingest. A page read twice is the same file: its first link stays (a file belongs to one connection).
+    await ctx.trx
+      .insertInto('crove_finance.marketplace_connection_file')
+      .values({ org_id: ctx.orgId, marketplace_connection_id: connection.id, file_id: filed.fileId })
+      .onConflict((conflict) => conflict.columns(['org_id', 'file_id']).doNothing())
+      .execute();
+    ctx.audit({ duplicate: filed.duplicate });
+    return filed;
   },
 });
 
@@ -598,14 +642,15 @@ export const marketplaceConnectionList = defineQuery({
       .orderBy('c.created_at')
       .orderBy('c.id')
       .execute();
-    // What waits in the Inbox for each connection: the orders of the staged reads (no member has confirmed or rejected them) of the files its polls ingested, whose names carry the connection's
-    // id. It is counted here, so a confirm or a reject lowers it and a second page adds to the first.
+    // What waits in the Inbox for each connection: the orders of the staged reads (no member has confirmed or rejected them) of the files its polls ingested, found through the link written in the
+    // same transaction as the ingest (crove_finance.marketplace_connection_file, #4250), never through a file's name. It is counted here, so a confirm or a reject lowers it and a second page adds to the first.
     const waiting = new Map<string, number>();
     if (rows.length > 0) {
       const { rows: counted } = await sql<{ id: string; n: string }>`
         SELECT c.id::text AS id, COALESCE(SUM((x.result -> 'summary' ->> 'orders')::int), 0)::text AS n
         FROM crove_finance.marketplace_connection c
-        JOIN crove_kernel.file f ON f.org_id = c.org_id AND f.filename LIKE 'don-hang-%' AND pg_catalog.strpos(f.filename, c.id::text) > 0
+        JOIN crove_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
+        JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
         JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
         WHERE c.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
           AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
@@ -644,6 +689,7 @@ export async function marketplacePollDue(workerDb: Db, after: { orgId: string; i
 export const marketplaceConnectionCommands = [
   marketplaceConnectionConnect,
   marketplaceConnectionRecordTest,
+  marketplaceConnectionIngestPage,
   marketplaceConnectionUnlink,
   marketplaceConnectionRequestPoll,
   marketplaceConnectionRequestTest,
