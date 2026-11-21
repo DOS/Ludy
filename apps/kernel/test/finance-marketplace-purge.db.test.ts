@@ -367,6 +367,28 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect(await link(file)).toEqual([{ marketplace_connection_id: second, disconnected_at: null }]);
   });
 
+  it('leaves a file another table still points at: nothing of it is deleted, and it goes once the reference is gone', async () => {
+    const o = await org();
+    const id = await connection(o, 'shopee');
+    const used = await polled(o, id, ['staged']);
+    const free = await polled(o, id, ['staged']);
+    // A table that restricts the deletion of the file it names (a signing envelope or a post's media does the same).
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES crove_kernel.file (org_id, id))');
+    await rows('INSERT INTO public.purge_probe (org_id, file_id) VALUES ($1, $2)', [o.orgId, used]);
+    await disconnect(o, id);
+    await age(o, used, GRACE + 1);
+    await age(o, free, GRACE + 1);
+    const usedKey = (await fileRow(used))?.storage_key as string;
+    expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
+    expect(await fileRow(free)).toBeUndefined();
+    expect(await fileRow(used)).toBeDefined();
+    expect(store.has(usedKey)).toBe(true);
+    expect(await worker.query('finance.marketplace_retention.key', { fileId: used, disconnected: true }, system(o))).toBeNull();
+    await rows('DELETE FROM public.purge_probe WHERE file_id = $1', [used]);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
+    expect(await fileRow(used)).toBeUndefined();
+  });
+
   it('reads the key of a due file as not shared, nothing for a file that is not due, and stays inside its own org', async () => {
     const a = await org();
     const b = await org();
@@ -403,7 +425,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect(await versions(file)).toEqual([]);
   });
 
-  it('is the worker\'s alone: no other login, and no context that is not the worker as the system in its own org, reaches the functions; the grace is 1 to 14 days and the expiry 1 to 90', async () => {
+  it('is the worker\'s alone: no other login, and no context that is not the worker as the system in its own org, reaches the functions; the grace is 1 to 14 days and the expiry 1 to 90; the rule itself can be called by no role', async () => {
     const o = await org();
     const id = await connection(o, 'shopee');
     const file = await polled(o, id, ['staged']);
@@ -420,9 +442,11 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(workerPool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, randomUUID(), file])).rejects.toBeDefined();
     await expect(pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, randomUUID(), file])).rejects.toBeDefined();
-    // The purge view is nobody's: no role reads it.
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_source')).rejects.toBeDefined();
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_source')).rejects.toBeDefined();
+    // The rule and the reference check are nobody's to call: no role executes them (the definers do, as their owner).
+    for (const target of [workerPool, pool]) {
+      await expect(target.query('SELECT * FROM crove_finance.marketplace_purge_candidates(NULL, NULL, $1, $2)', [GRACE, EXPIRED])).rejects.toBeDefined();
+      await expect(target.query('SELECT crove_finance.marketplace_purge_referenced($1::uuid, $2::uuid)', [o.orgId, file])).rejects.toBeDefined();
+    }
     // The command is the system's alone: a person is refused, and nothing is deleted.
     await expect(rt.execute('finance.marketplace_retention.apply', { fileId: file, disconnected: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeDefined();
     expect((await versions(file)).length).toBe(1);

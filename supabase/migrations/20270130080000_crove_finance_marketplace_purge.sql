@@ -14,10 +14,11 @@
 --    Now the connection's removal sets the link's connection to NULL instead (ON DELETE SET NULL with the column list, so org_id stays), and a BEFORE DELETE trigger on the connection stamps `disconnected_at` on
 --    its links just before. The link stays append-only for a tenant role (no grant changes); a BEFORE INSERT trigger keeps a written link honest (a connection, no time); the file's own foreign key still cascades.
 --    No new table. A poll of a new connection that brings the same bytes again takes the orphan link over (marketplace_link_adopt), so what a live connection holds is never purged.
--- 2. crove_finance.marketplace_purge_source      a view of the files that MAY be purged (everything above except the time), owner only; the three definers read it.
+-- 2. crove_finance.marketplace_purge_candidates   the rule above, with the time, as a function nobody can call but the definers below (a view would be a relation with an org_id column
+--                                                 outside the RLS matrix, which covers tables only); marketplace_purge_referenced names the files another table still points at.
 -- 3. crove_finance.marketplace_purge_due(days, expired_days, limit)   worker only: the files due, oldest first.
 -- 4. crove_finance.marketplace_purge_key(org, file, days, expired_days)    system context, same org: the blob key of one due file, and whether another file row names the same key.
--- 5. crove_finance.marketplace_purge_apply(org, file, days, expired_days) system context, same org: re-checks under the file's lock, resets the connection's poll position when the connection is still there (so
+-- 5. crove_finance.marketplace_purge_apply(org, file, days, expired_days) system context, same org: re-checks under the file's lock (a file another table references is skipped), resets the connection's poll position when the connection is still there (so
 --                                                                 what was purged is read again from the start of the platform's window, never skipped), and DELETES the file row, which takes every extraction
 --                                                                 version and the link with it: nothing of the report, not even its hash, stays, and the same bytes arriving again are a new file.
 -- The worker deletes the object first, then calls apply, then deletes the object once more (the retention's own order): a crash in between repeats and never leaves a row whose object still exists.
@@ -74,6 +75,12 @@ BEGIN
      OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
+  -- The file's key-share lock waits for a purge that holds the row (which then deletes it: this poll fails and is tried again, ingesting the bytes as a new file) and makes a purge that starts later see
+  -- the adopted link.
+  PERFORM 1 FROM crove_kernel.file f WHERE f.org_id = p_org_id AND f.id = p_file_id FOR KEY SHARE OF f;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MARKETPLACE_FILE_PURGED' USING ERRCODE = '40001';
+  END IF;
   UPDATE crove_finance.marketplace_connection_file l
      SET marketplace_connection_id = p_connection_id, disconnected_at = NULL
    WHERE l.org_id = p_org_id AND l.file_id = p_file_id AND l.marketplace_connection_id IS NULL;
@@ -82,45 +89,78 @@ END $$;
 REVOKE ALL ON FUNCTION crove_finance.marketplace_link_adopt(uuid, uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_finance.marketplace_link_adopt(uuid, uuid, uuid) TO crove_worker;
 
--- 2. The files that may be purged, with the facts the time rule needs. Nothing for a link of a live connection (its channel is active): those are never candidates. Owner only: no role reads the view; the
--- definers below read it as its owner.
-CREATE OR REPLACE VIEW crove_finance.marketplace_purge_source AS
-SELECT l.org_id,
-       l.file_id,
-       l.id AS link_id,
-       f.storage_key,
-       l.marketplace_connection_id,
-       l.disconnected_at,
-       CASE WHEN ch.status = 'revoked' THEN ch.updated_at END AS revoked_at,
-       CASE WHEN ch.status = 'expired' THEN ch.updated_at END AS expired_since
-FROM crove_finance.marketplace_connection_file l
-JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
-LEFT JOIN crove_finance.marketplace_connection c ON c.org_id = l.org_id AND c.id = l.marketplace_connection_id
-LEFT JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
-WHERE (l.marketplace_connection_id IS NULL OR ch.status IN ('revoked', 'expired'))
-  AND f.held_until IS NULL
-  AND f.source = 'upload' AND f.content_type = 'text/csv'
-  AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document pd WHERE pd.org_id = f.org_id AND pd.source_file_id = f.id)
-  -- Only marketplace reads (or none yet, or a read that did not finish): a file with any other finished read is not a poll's report.
-  AND NOT EXISTS (
-    SELECT 1 FROM crove_kernel.extraction x
-    WHERE x.org_id = f.org_id AND x.file_id = f.id
-      AND x.status = 'done'
-      AND NOT (x.method = 'unsupported' AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income'))
-  )
-  -- Booked: the latest version is a marketplace read a member imported.
-  AND NOT EXISTS (
-    SELECT 1 FROM crove_kernel.extraction x
-    WHERE x.org_id = f.org_id AND x.file_id = f.id
-      AND x.version = (SELECT pg_catalog.max(e.version) FROM crove_kernel.extraction e WHERE e.org_id = f.org_id AND e.file_id = f.id)
-      AND x.method = 'unsupported' AND x.status = 'done'
-      AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income')
-      AND (x.result -> 'summary' ->> 'state') = 'imported'
-  );
-REVOKE ALL ON crove_finance.marketplace_purge_source FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+-- 2. The rule. Nothing for a link of a live connection (its channel is active): those are never candidates. `p_org_id` / `p_file_id` narrow it to one file (NULL: all). The clock: a link with no connection
+-- counts from its disconnect, a revoked channel from its revocation, an expired channel from `p_expired_days` after it expired (that long without a new authorization counts as the seller's revocation); then
+-- `p_days` of grace. No role can execute it: the definers below call it as the owner.
+CREATE OR REPLACE FUNCTION crove_finance.marketplace_purge_candidates(p_org_id uuid, p_file_id uuid, p_days integer, p_expired_days integer)
+RETURNS TABLE (org_id uuid, file_id uuid, storage_key text, marketplace_connection_id uuid, started_at timestamptz)
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT l.org_id,
+         l.file_id,
+         f.storage_key,
+         l.marketplace_connection_id,
+         pg_catalog.coalesce(l.disconnected_at, CASE WHEN ch.status = 'revoked' THEN ch.updated_at END, ch.updated_at)
+  FROM crove_finance.marketplace_connection_file l
+  JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
+  LEFT JOIN crove_finance.marketplace_connection c ON c.org_id = l.org_id AND c.id = l.marketplace_connection_id
+  LEFT JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+  WHERE (p_org_id IS NULL OR l.org_id = p_org_id)
+    AND (p_file_id IS NULL OR l.file_id = p_file_id)
+    AND (l.marketplace_connection_id IS NULL OR ch.status IN ('revoked', 'expired'))
+    AND (
+      l.disconnected_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
+      OR (ch.status = 'revoked' AND ch.updated_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days))
+      OR (ch.status = 'expired' AND ch.updated_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days + p_expired_days))
+    )
+    AND f.held_until IS NULL
+    AND f.source = 'upload' AND f.content_type = 'text/csv'
+    AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document pd WHERE pd.org_id = f.org_id AND pd.source_file_id = f.id)
+    -- Only marketplace reads (or none yet, or a read that did not finish): a file with any other finished read is not a poll's report.
+    AND NOT EXISTS (
+      SELECT 1 FROM crove_kernel.extraction x
+      WHERE x.org_id = f.org_id AND x.file_id = f.id
+        AND x.status = 'done'
+        AND NOT (x.method = 'unsupported' AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income'))
+    )
+    -- Booked: the latest version is a marketplace read a member imported.
+    AND NOT EXISTS (
+      SELECT 1 FROM crove_kernel.extraction x
+      WHERE x.org_id = f.org_id AND x.file_id = f.id
+        AND x.version = (SELECT pg_catalog.max(e.version) FROM crove_kernel.extraction e WHERE e.org_id = f.org_id AND e.file_id = f.id)
+        AND x.method = 'unsupported' AND x.status = 'done'
+        AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income')
+        AND (x.result -> 'summary' ->> 'state') = 'imported'
+    );
+$$;
+REVOKE ALL ON FUNCTION crove_finance.marketplace_purge_candidates(uuid, uuid, integer, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
--- 3. The files due, ids only; the worker runs the rest in each file's own org. The clock: a link with no connection counts from its disconnect, a revoked channel from its revocation, an expired channel from
--- `expired_days` after it expired (that long without a new authorization counts as the seller's revocation); then `days` of grace.
+-- Whether any other table still points at the file with a foreign key that would refuse its deletion (no action or restrict: a signing envelope, a post's media, a quote logo and the like). The poll never
+-- links such a file; a member's own use of one is respected: the purge skips it, so its object is never deleted for a row that must stay. Read from the catalog, so a table added later is covered too.
+CREATE OR REPLACE FUNCTION crove_finance.marketplace_purge_referenced(p_org_id uuid, p_file_id uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  r record;
+  v_found boolean;
+BEGIN
+  FOR r IN
+    SELECT c.conrelid::pg_catalog.regclass::text AS rel, oa.attname::text AS org_col, fa.attname::text AS file_col
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_attribute oa ON oa.attrelid = c.conrelid AND oa.attnum = c.conkey[1]
+    JOIN pg_catalog.pg_attribute fa ON fa.attrelid = c.conrelid AND fa.attnum = c.conkey[2]
+    WHERE c.contype = 'f' AND c.confrelid = 'crove_kernel.file'::pg_catalog.regclass
+      AND c.confdeltype IN ('a', 'r') AND pg_catalog.array_length(c.conkey, 1) = 2
+  LOOP
+    EXECUTE pg_catalog.format('SELECT EXISTS (SELECT 1 FROM %s t WHERE t.%I = $1 AND t.%I = $2)', r.rel, r.org_col, r.file_col) INTO v_found USING p_org_id, p_file_id;
+    IF v_found THEN
+      RETURN true;
+    END IF;
+  END LOOP;
+  RETURN false;
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_finance.marketplace_purge_referenced(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+-- 3. The files due, ids only; the worker runs the rest in each file's own org. A file another table references is left to key and apply, which skip it (the check reads other tables per file).
 CREATE OR REPLACE FUNCTION crove_finance.marketplace_purge_due(p_days integer, p_expired_days integer, p_limit integer)
 RETURNS TABLE (org_id uuid, file_id uuid)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -133,12 +173,9 @@ BEGIN
   END IF;
   RETURN QUERY
   SELECT s.org_id, s.file_id
-  FROM crove_finance.marketplace_purge_source s
+  FROM crove_finance.marketplace_purge_candidates(NULL, NULL, p_days, p_expired_days) s
   JOIN crove_kernel.tenant t ON t.org_id = s.org_id AND t.status IN ('active', 'offboarding')
-  WHERE s.disconnected_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-     OR s.revoked_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-     OR s.expired_since < pg_catalog.now() - pg_catalog.make_interval(days => p_days + p_expired_days)
-  ORDER BY COALESCE(s.disconnected_at, s.revoked_at, s.expired_since), s.file_id
+  ORDER BY s.started_at, s.file_id
   LIMIT LEAST(GREATEST(p_limit, 1), 1000);
 END;
 $$;
@@ -161,11 +198,8 @@ BEGIN
   RETURN QUERY
   SELECT s.storage_key,
          EXISTS (SELECT 1 FROM crove_kernel.file o WHERE o.storage_key = s.storage_key AND (o.org_id, o.id) <> (s.org_id, s.file_id))
-  FROM crove_finance.marketplace_purge_source s
-  WHERE s.org_id = p_org_id AND s.file_id = p_file_id
-    AND (s.disconnected_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-      OR s.revoked_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-      OR s.expired_since < pg_catalog.now() - pg_catalog.make_interval(days => p_days + p_expired_days));
+  FROM crove_finance.marketplace_purge_candidates(p_org_id, p_file_id, p_days, p_expired_days) s
+  WHERE NOT crove_finance.marketplace_purge_referenced(s.org_id, s.file_id);
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_finance.marketplace_purge_key(uuid, uuid, integer, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -194,11 +228,8 @@ BEGIN
     RETURN;
   END IF;
   SELECT s.marketplace_connection_id INTO v_connection
-  FROM crove_finance.marketplace_purge_source s
-  WHERE s.org_id = p_org_id AND s.file_id = p_file_id
-    AND (s.disconnected_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-      OR s.revoked_at < pg_catalog.now() - pg_catalog.make_interval(days => p_days)
-      OR s.expired_since < pg_catalog.now() - pg_catalog.make_interval(days => p_days + p_expired_days));
+  FROM crove_finance.marketplace_purge_candidates(p_org_id, p_file_id, p_days, p_expired_days) s
+  WHERE NOT crove_finance.marketplace_purge_referenced(s.org_id, s.file_id);
   IF NOT FOUND THEN
     RETURN QUERY SELECT false, 0;
     RETURN;
