@@ -2,7 +2,7 @@
 // The confirmed column mapping (#4037): what the header row alone decides, by the refusal names of the full check (`checkColumnMapping`, #4038), and the contract's list of fields against the
 // standard fields of an order line.
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnsConfirm, type MarketplaceColumnEntry } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnProfile, zMarketplaceColumnsConfirm, type MarketplaceColumnEntry } from '@crove/kernel-contract';
 import { ORDER_FIELDS } from '@crove/l10n-vn';
 import { checkColumnProfileHeader } from '../src/marketplace-column-profile.ts';
 
@@ -53,24 +53,36 @@ describe('checkColumnProfileHeader', () => {
 });
 
 describe('the confirmation the command takes', () => {
-  const digest = 'a'.repeat(64);
-  const ok = { platform: 'shopee', headerRow: 1, columns: BASE, headerDigest: digest };
+  const fileId = '01920000-0000-7000-8000-000000000001';
+  const ok = { fileId, platform: 'shopee', assignments: [{ index: 0, field: 'orderNo' }, { index: 3, field: 'quantity' }] };
 
-  it('is a strict object with a platform, the header row, 2 to 13 columns and a hex digest', () => {
+  it('is a strict object with a file, a platform and 2 to 13 assignments, and nothing else', () => {
     expect(zMarketplaceColumnsConfirm.safeParse(ok).success).toBe(true);
     expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, platform: 'amazon' }).success).toBe(false);
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, columns: [BASE[0]] }).success).toBe(false);
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, headerDigest: 'not-hex' }).success).toBe(false);
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, headerRow: -1 }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, fileId: 'not-an-id' }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, assignments: [ok.assignments[0]] }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, assignments: [] }).success).toBe(false);
   });
 
-  it('refuses a sample, a cell value or any other key next to the mapping', () => {
+  it('takes no header text, header row, digest, sample or cell value from the caller: they come from what the worker recorded for the file', () => {
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, headerDigest: 'a'.repeat(64) }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, headerRow: 1 }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, columns: BASE }).success).toBe(false);
     expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, samples: ['9999'] }).success).toBe(false);
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, columns: [{ ...BASE[0], sample: 'SP-0001' }, BASE[1]] }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, assignments: [{ ...ok.assignments[0], header: 'Order ID' }, ok.assignments[1]] }).success).toBe(false);
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, assignments: [{ ...ok.assignments[0], sample: 'SP-0001' }, ok.assignments[1]] }).success).toBe(false);
   });
 
-  it('refuses a field outside the standard list and a header cut at 80 characters', () => {
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, columns: [BASE[0], { index: 4, header: 'Buyer', field: 'buyerName' }] }).success).toBe(false);
-    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, columns: [BASE[0], { index: 4, header: 'x'.repeat(81), field: 'sku' }] }).success).toBe(false);
+  it('refuses a field outside the standard list', () => {
+    expect(zMarketplaceColumnsConfirm.safeParse({ ...ok, assignments: [ok.assignments[0], { index: 4, field: 'buyerName' }] }).success).toBe(false);
+  });
+});
+
+describe('the profile the command reads back', () => {
+  it('holds the entries (index, header text of at most 80 characters, standard field) and the digest', () => {
+    const profile = { id: '01920000-0000-7000-8000-000000000002', platform: 'shopee', headerRow: 1, columns: BASE, headerDigest: 'a'.repeat(64), confirmedAt: '2026-11-21T00:00:00.000Z' };
+    expect(zMarketplaceColumnProfile.safeParse(profile).success).toBe(true);
+    expect(zMarketplaceColumnProfile.safeParse({ ...profile, columns: [{ index: 4, header: 'x'.repeat(81), field: 'sku' }] }).success).toBe(false);
+    expect(zMarketplaceColumnProfile.safeParse({ ...profile, columns: [{ index: 4, header: 'Buyer', field: 'buyerName' }] }).success).toBe(false);
   });
 });

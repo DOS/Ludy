@@ -166,6 +166,18 @@ export function columnSheet(rows: StatementGrid): ColumnSheet | null {
   return { headerRow: best.n, columns };
 }
 
+// The text a header row is fingerprinted by (#4037): every non-empty cell of the header row, in column order, trimmed, NFC-normalized, lower-cased and with runs of white space as one space, joined by a
+// line feed. A buyer column's header word is in it too (it is a header, not a value, and only its hash leaves the sandbox), so two files with the same layout have the same text. The caller hashes it
+// (sha-256, hex): this package holds no hash.
+export function headerRowText(rows: StatementGrid, headerRow: number): string {
+  const row = rows.get(headerRow) ?? new Map<number, StatementCell>();
+  return [...row]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, cell]) => cellText(cell).normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim())
+    .filter((text) => text !== '')
+    .join('\n');
+}
+
 // One column and the field it was proposed (or chosen) to be.
 export interface ColumnAssignment {
   index: number;

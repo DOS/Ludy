@@ -25,12 +25,15 @@ export type MarketplaceColumnEntry = z.infer<typeof zMarketplaceColumnEntry>;
 // the profile. Computed where the file is read (the sandboxed extract step), never from a cell below the header.
 export const zMarketplaceHeaderDigest = z.string().regex(/^[0-9a-f]{64}$/);
 
-// The confirmation a person makes. The kernel re-checks here what the header row alone decides (see the command); the checks that read the rows of the file run where the file is read.
+// The confirmation a person makes (#4037): the file whose passed check they looked at, and the platform and mapping they saw checked (the same as the file's last check, or the confirmation is refused as
+// stale). No header text, no digest and no sample travels in it: the profile's headers, the header row and the digest are read from what the worker recorded for THAT file, never from the caller.
 export const zMarketplaceColumnsConfirm = z.strictObject({
+  fileId: zId,
   platform: zMarketplacePlatform,
-  headerRow: z.number().int().min(0).max(100_000),
-  columns: z.array(zMarketplaceColumnEntry).min(2).max(MARKETPLACE_COLUMN_FIELDS.length),
-  headerDigest: zMarketplaceHeaderDigest,
+  assignments: z
+    .array(z.strictObject({ index: zMarketplaceColumnEntry.shape.index, field: zMarketplaceColumnField }))
+    .min(2)
+    .max(MARKETPLACE_COLUMN_FIELDS.length),
 });
 export type MarketplaceColumnsConfirm = z.infer<typeof zMarketplaceColumnsConfirm>;
 

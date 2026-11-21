@@ -8204,7 +8204,7 @@ export const vi = {
     // Marketplace order reports no platform profile fits (#4036, slice 1c of #3850): the member reads the columns, picks the platform and which column is which field, and the worker checks that on the real file.
     marketplaceColumns: {
       title: 'Báo cáo đơn hàng của sàn chưa nhận ra',
-      hint: 'Tệp bảng tính này chưa khớp với sàn nào mà Ludy biết. Hãy xem các cột, chọn sàn và chọn mỗi cột là mục nào; Ludy sẽ đọc thử trên tệp thật và cho bạn xem các dòng đọc được. Chưa có gì được lưu.',
+      hint: 'Tệp bảng tính này chưa khớp với sàn nào mà Ludy biết. Hãy xem các cột, chọn sàn và chọn mỗi cột là mục nào; Ludy sẽ đọc thử trên tệp thật và cho bạn xem các dòng đọc được. Khi các dòng đã đúng, chủ sở hữu hoặc quản trị viên có thể lưu cách ghép này cho sàn.',
       read: 'Xem các cột',
       readAgain: 'Đọc lại tệp',
       stuck: 'Việc đọc tệp mất quá lâu và có vẻ đã bị bỏ dở; hãy bấm lại.',
@@ -8248,7 +8248,12 @@ export const vi = {
       previewTitle: 'Các dòng đọc được: hiện {shown, number} trên {total, number} dòng',
       previewSkipped: 'Có {count, number} dòng bị bỏ qua (ví dụ dòng tổng cộng).',
       previewColumns: { rowNo: 'Dòng', orderNo: 'Mã đơn', lineKey: 'Mã dòng', sku: 'SKU', itemName: 'Tên hàng', quantity: 'Số lượng', amount: 'Thành tiền', status: 'Trạng thái' },
-      notSaved: 'Chưa lưu gì: đây chỉ là bản xem trước để bạn kiểm tra. Bước xác nhận cách ghép để nhập báo cáo sẽ có sau.',
+      notSaved: 'Chưa nhập gì từ đây: đây chỉ là bản xem trước để bạn kiểm tra.',
+      save: 'Lưu cách ghép này',
+      saved: 'Đã lưu cách ghép. Ludy sẽ dùng nó cho báo cáo kế tiếp của sàn này có cùng các cột.',
+      saveOwnerOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới lưu được cách ghép.',
+      saveCheckAgain: 'Lần kiểm tra này từ phiên bản cũ nên chưa lưu được; hãy kiểm tra lại cách ghép.',
+      saveHint: 'Chỉ lưu khi các dòng này đúng như bạn mong đợi: báo cáo kế tiếp có cùng tiêu đề cột sẽ được đọc theo cách này.',
       retention: 'Các dòng này lấy từ tệp của bạn và chỉ được giữ tối đa 7 ngày.',
       failures: {
         not_a_sheet: 'Tệp này không phải bảng tính đọc được.',
@@ -14132,6 +14137,8 @@ export const vi = {
       MARKETPLACE_COLUMNS_NOT_FOUND: 'Không tìm thấy báo cáo đơn hàng này, hoặc báo cáo không còn chờ kiểm tra cột.',
       MARKETPLACE_COLUMNS_BUSY: 'Báo cáo này vừa được yêu cầu kiểm tra ở nơi khác; hãy thử lại sau giây lát.',
       MARKETPLACE_COLUMNS_INVALID: 'Kết quả kiểm tra cột không hợp lệ nên chưa được ghi lại.',
+      MARKETPLACE_COLUMNS_NOT_CHECKED: 'Cách ghép cột này chưa được kiểm tra thành công trên tệp này nên chưa lưu. Hãy kiểm tra trước.',
+      MARKETPLACE_COLUMNS_STALE: 'Cách ghép cột trên màn hình khác với cách đã kiểm tra nên chưa lưu. Hãy kiểm tra lại.',
       STOCK_MOVE_ORDER_LINE: 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao.',
       MARKETPLACE_LINE_NOT_FOUND: 'Không tìm thấy dòng đơn hàng này.',
       MARKETPLACE_LINE_NOT_SHIPPED: 'Dòng này chưa giao nên chưa có gì để ghi kho.',
