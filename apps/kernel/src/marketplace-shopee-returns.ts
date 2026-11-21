@@ -133,6 +133,9 @@ export async function readReturnList(call: ShopeeCaller, credential: ShopeeCrede
 // The facts of one return the stock rule needs and the list does not carry.
 export interface ShopeeReturnDetail {
   returnSn: string;
+  // The detail's own status and solution: the stock rule is judged on them again, since the list was read a moment earlier.
+  status: string;
+  solution: number;
   reverseStatus: string | null;
   validation: 'seller_validation' | 'warehouse_validation' | null;
   items: ShopeeReturnItem[];
@@ -150,6 +153,8 @@ export async function readReturnDetail(call: ShopeeCaller, credential: ShopeeCre
   if (validation !== undefined && validation !== null && validation !== '' && (typeof validation !== 'string' || !VALIDATION_TYPES.has(validation))) throw notRecognized();
   return {
     returnSn: value.returnSn,
+    status: value.status,
+    solution: value.solution,
     reverseStatus: typeof reverse === 'string' && reverse !== '' ? reverse : null,
     validation: validation === 'seller_validation' || validation === 'warehouse_validation' ? validation : null,
     items: value.items,
@@ -162,6 +167,8 @@ export const mayBringGoodsBack = (r: ShopeeReturn): boolean => r.solution === RE
 // The lines whose goods are back at the seller, by the stock rule above, for the lines of the order the return belongs to (line key to quantity). A line the return names that the order does not hold refuses the
 // page; a line named for fewer units than the order line holds is left alone.
 export function goodsBackLines(detail: ShopeeReturnDetail, lines: ReadonlyMap<string, number>): string[] {
+  // The five conditions of the header are all judged on the DETAIL (the list only decided that it was worth asking): a return that changed between the two reads stops being one that brings goods back.
+  if (detail.solution !== RETURN_AND_REFUND || SHOPEE_RETURN_STATUS[detail.status] !== 'accepted') return [];
   if (detail.validation !== 'seller_validation' || detail.reverseStatus !== 'LOGISTICS_DELIVERY_DONE') return [];
   const back: string[] = [];
   for (const item of detail.items) {

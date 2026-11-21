@@ -111,10 +111,22 @@ describe('the stock rule for returns', () => {
     expect(fake.calls.some((c) => c.path === '/api/v2/order/get_order_detail' && c.query.order_sn_list === 'A1')).toBe(true);
   });
 
-  it('ignores goods coming back on an order that never shipped or was cancelled', async () => {
-    const { page } = await poll([order('P1', { status: 'READY_TO_SHIP', pickupDoneMs: undefined as unknown as number }), order('C1', { status: 'CANCELLED', cancelBy: 'buyer', pickupDoneMs: undefined as unknown as number })], [ret('R1', 'P1'), ret('R2', 'C1')]);
+  it('judges the five conditions again on the detail: a return that is no longer accepted, or no longer a return and refund, brings nothing back', async () => {
+    const drift = (extra: Record<string, unknown>) => (path: string): Response | undefined =>
+      path === '/api/v2/returns/get_return_detail'
+        ? new Response(JSON.stringify({ error: '', message: '', response: { return_sn: 'R1', order_sn: 'A1', status: 'CLOSED', return_solution: 0, reverse_logistics_status: 'LOGISTICS_DELIVERY_DONE', validation_type: 'seller_validation', item: [{ item_id: 2600144043, model_id: 5074620257, amount: 2 }], ...extra } }))
+        : undefined;
+    expect(stagesOf((await poll([order('A1')], [ret('R1', 'A1', { status: 'ACCEPTED' })], drift({}))).page, 'A1')).toEqual(['returned:AT-MAU-DL', 'completed:MU-MAU']);
+    for (const extra of [{ status: 'JUDGING' }, { status: 'SELLER_DISPUTE' }, { return_solution: 1 }]) {
+      expect(stagesOf((await poll([order('A1')], [ret('R1', 'A1', { status: 'ACCEPTED' })], drift(extra))).page, 'A1'), JSON.stringify(extra)).toEqual(['completed:AT-MAU-DL+MU-MAU']);
+    }
+  });
+
+  it('ignores goods coming back on an order that never shipped or was cancelled, and asks no detail for it', async () => {
+    const { page, fake } = await poll([order('P1', { status: 'READY_TO_SHIP', pickupDoneMs: undefined as unknown as number }), order('C1', { status: 'CANCELLED', cancelBy: 'buyer', pickupDoneMs: undefined as unknown as number })], [ret('R1', 'P1'), ret('R2', 'C1')]);
     expect(stagesOf(page, 'P1')).toEqual(['placed:AT-MAU-DL+MU-MAU']);
     expect(stagesOf(page, 'C1')).toEqual(['cancelled:AT-MAU-DL+MU-MAU']);
+    expect(detailCalls(fake)).toHaveLength(0);
   });
 
   it('shipped order with goods back is returned too, with no delivery day', async () => {

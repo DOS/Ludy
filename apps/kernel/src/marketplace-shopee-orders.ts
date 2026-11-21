@@ -274,10 +274,12 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
       for (const ret of returns) {
         const order = byNumber.get(ret.orderNo);
         if (!order) throw notRecognized();
+        // An order that has not shipped (or was cancelled) cannot have goods coming back: no call is made for it.
+        if (order.stage !== 'shipped' && order.stage !== 'completed') continue;
         const detail = await readReturnDetail(caller, credential, ret, nowMs);
         const held = new Map(order.lines.map((l) => [l.lineKey, Number(l.quantity)] as const));
         const back = goodsBackLines(detail, held);
-        if (order.stage === 'shipped' || order.stage === 'completed') for (const key of back) order.returnedLines.add(key);
+        for (const key of back) order.returnedLines.add(key);
       }
       return { orders: toPortOrders(details), nextCursor: writeCursor(end, width), more: end < nowMs };
     },
