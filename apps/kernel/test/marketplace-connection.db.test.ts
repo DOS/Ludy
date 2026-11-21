@@ -885,7 +885,7 @@ suite('marketplace connections (#2519)', () => {
     expect(list.find((c) => c.id === a)).toBeUndefined();
     expect(list.find((c) => c.id === b)?.ordersWaiting).toBe(3);
     // The decision is the admin\'s own, in the audit trail (the reject command ran as that member).
-    expect(await count(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.reject' AND actor_id = $2`, [orgId, adminUser.userId])).toBeGreaterThanOrEqual(1);
+    expect(await count(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.reject' AND actor_id = $2 AND detail::text LIKE $3`, [orgId, adminUser.userId, `%${fileOf(a)}%`])).toBe(1);
 
     // Without the flag nothing waiting is touched: the report of the second connection stays staged after it is disconnected, as before.
     expect((await call('connections/disconnect', owner, { id: b })).body).toEqual({ removed: true });

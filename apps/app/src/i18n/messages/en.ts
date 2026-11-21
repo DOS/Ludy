@@ -5655,9 +5655,10 @@ export const en = {
     authorize: 'Authorize',
     authorizeAgain: 'Authorize again',
     reauthorizeBy: 'authorize again before {when}',
-    reauthorizeSoon: 'The authorization given to the marketplace ends on {when}. Press Authorize again before then so Ludy keeps pulling orders.',
-    reauthorizeEnded: 'The authorization given to the marketplace ended on {when}, so Ludy cannot pull new orders. Press Authorize again.',
-    discardWaiting: 'Also discard the {count} orders from this connection still waiting for confirmation (nothing is posted; the originals are deleted on the retention that already applies)',
+    reauthorizeSoon: 'The authorization given to the marketplace ends on {when}. An owner or admin should press Authorize again before then so Ludy keeps pulling orders.',
+    reauthorizeEnded: 'The authorization given to the marketplace ended on {when}, so Ludy cannot pull new orders. An owner or admin should press Authorize again.',
+    reauthorizeReconnect: 'The authorization given to the marketplace has ended or is about to end ({when}) and this connection cannot be authorized again. An owner or admin should disconnect it and connect again.',
+    discardWaiting: 'Also discard the orders of this connection still waiting for confirmation ({count}): nothing is posted, the originals are deleted on the retention that already applies',
     authorizeStates: {
       pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',

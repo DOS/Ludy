@@ -18,7 +18,7 @@ import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, testStateKey } from '../lib/marketplace-connections.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -126,12 +126,12 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
             <>
               <span className="self-center text-xs text-muted-foreground">{t('disconnectConfirm')}</span>
               {connection.ordersWaiting > 0 && (
-                <label htmlFor={discardId} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <label htmlFor={discardId} className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox id={discardId} checked={discard} onCheckedChange={(checked) => setDiscard(checked === true)} />
                   {t('discardWaiting', { count: String(connection.ordersWaiting) })}
                 </label>
               )}
-              <Button loading={disconnect.isPending} size="sm" variant="destructive" onClick={() => disconnect.mutate({ id: connection.id, ...(discard && connection.ordersWaiting > 0 ? { deleteStaged: true } : {}) })}>
+              <Button loading={disconnect.isPending} size="sm" variant="destructive" onClick={() => disconnect.mutate(disconnectInput(connection, discard))}>
                 {t('disconnectYes')}
               </Button>
               <Button
@@ -170,7 +170,7 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
       {connection.authorizeState && <p role="status" className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
       {notice && connection.reauthorizeBy && (
         <p role="status" className="mt-1 text-sm font-medium" data-testid="reauthorize-notice">
-          {t(notice === 'soon' ? 'reauthorizeSoon' : 'reauthorizeEnded', { when: f.dateTime(connection.reauthorizeBy) })}
+          {t(reauthorizeNoticeKey(notice, canAuthorize(connection, adapters)), { when: f.dateTime(connection.reauthorizeBy) })}
         </p>
       )}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}

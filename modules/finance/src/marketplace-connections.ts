@@ -678,8 +678,9 @@ export const marketplaceConnectionList = defineQuery({
   },
 });
 
-// The reports of one connection that wait in the Inbox (staged: no member has confirmed or rejected them), by file id, for "disconnect and discard what is waiting" (#4240 S3b). The same condition as
-// `ordersWaiting` in the list: the file's name carries the connection's id and its latest read is a staged marketplace report. Read only; the rpc runs each through `finance.marketplace.reject`, the
+// The reports of one connection that wait in the Inbox (staged: no member has confirmed or rejected them), by file id, for "disconnect and discard what is waiting" (#4240 S3b). The condition of
+// `ordersWaiting` in the list (the file's name carries the connection's id and its latest read is a staged marketplace report) and, narrower, the file belongs to the connection's own entity, so a file a
+// member uploaded under a crafted name for another entity is not taken. Read only; the rpc runs each through `finance.marketplace.reject`, the
 // member's own decision, so nothing is deleted here and the originals follow the retention that already exists for a decided report. More than the cap is refused whole, so a disconnect never discards part.
 const MARKETPLACE_DISCARD_MAX = 500;
 export const marketplaceConnectionStaged = defineQuery({
@@ -690,7 +691,7 @@ export const marketplaceConnectionStaged = defineQuery({
     const { rows } = await sql<{ file_id: string }>`
       SELECT f.id::text AS file_id
       FROM crove_finance.marketplace_connection c
-      JOIN crove_kernel.file f ON f.org_id = c.org_id AND f.filename LIKE 'don-hang-%' AND pg_catalog.strpos(f.filename, c.id::text) > 0
+      JOIN crove_kernel.file f ON f.org_id = c.org_id AND f.filename LIKE 'don-hang-%' AND pg_catalog.strpos(f.filename, c.id::text) > 0 AND f.upload_entity_id = c.legal_entity_id
       JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.id}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
         AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)

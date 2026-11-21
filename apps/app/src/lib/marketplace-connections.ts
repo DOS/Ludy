@@ -60,6 +60,14 @@ export const reauthorizeNotice = (connection: Pick<MarketplaceConnection, 'autho
   return left <= REAUTHORIZE_NOTICE_DAYS * 86_400_000 ? 'soon' : null;
 };
 
+// What the disconnect call sends: the connection, and `deleteStaged` only when the member ticked it AND orders are waiting (#4240 S3b).
+export const disconnectInput = (connection: Pick<MarketplaceConnection, 'id' | 'ordersWaiting'>, discard: boolean): { id: string; deleteStaged?: true } =>
+  discard && connection.ordersWaiting > 0 ? { id: connection.id, deleteStaged: true } : { id: connection.id };
+
+// The words of the notice: a connection the seller can authorize again says so; one that cannot (it has stopped, so the button is not offered, or the adapter is off) says to connect again.
+export const reauthorizeNoticeKey = (notice: ReauthorizeNotice, canAuthorizeAgain: boolean): 'reauthorizeSoon' | 'reauthorizeEnded' | 'reauthorizeReconnect' =>
+  canAuthorizeAgain ? (notice === 'soon' ? 'reauthorizeSoon' : 'reauthorizeEnded') : 'reauthorizeReconnect';
+
 // The platforms a connect can name: those an adapter serves.
 export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo[]): MarketplacePlatformInfo[] => platforms.filter((p) => p.adapter);
 
