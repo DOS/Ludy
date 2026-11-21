@@ -63,7 +63,6 @@ REVOKE ALL ON FUNCTION crove_finance.marketplace_connection_file_insert_guard() 
 DROP TRIGGER IF EXISTS marketplace_connection_file_insert_guard ON crove_finance.marketplace_connection_file;
 CREATE TRIGGER marketplace_connection_file_insert_guard BEFORE INSERT ON crove_finance.marketplace_connection_file
   FOR EACH ROW EXECUTE FUNCTION crove_finance.marketplace_connection_file_insert_guard();
-ALTER TABLE crove_finance.marketplace_connection_file ENABLE ALWAYS TRIGGER marketplace_connection_file_insert_guard;
 
 -- A new connection's poll brought a file again that an earlier, removed connection had brought (the same bytes are one file): the link moves to the new connection, so the file is the live connection's
 -- and the purge leaves it. Only an orphan link moves; the poll's own command calls it (system context, own org), and the foreign key refuses a connection of another org.

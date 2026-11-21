@@ -196,7 +196,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
       { filename: 'tai-len.csv', contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
       { actor: asUser(o.owner), orgId: o.orgId },
     );
-    // A link with no connection, or one that carries a disconnect time, is refused (a superuser too: the trigger is always on).
+    // A link with no connection, or one that carries a disconnect time, is refused (a superuser too: only the replica role skips a trigger, and a tenant cannot set it).
     await expect(rows("INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, NULL, $2, now() - interval '30 days')", [o.orgId, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
     await expect(rows("INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, $2, $3, now() - interval '30 days')", [o.orgId, id, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
     await disconnect(o, id);
