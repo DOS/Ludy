@@ -29,16 +29,6 @@ export async function resolveVatRates(ctx: Ctx, entityId: string, days: Iterable
 export const vatRatesOfMonth = (ctx: Ctx, entityId: string, month: SettlementMonth, memo?: Map<string, SettlementVatRate | null>): Promise<SettlementVatRates> =>
   resolveVatRates(ctx, entityId, vatDatesOf({ lines: month.lines, date: month.date }), memo);
 
-// The months (YYYY-MM) of a settlement with a piece whose day has no rate row: what the worklist says the settlement waits for.
-export async function vatRateGaps(ctx: Ctx, entityId: string, months: readonly SettlementMonth[], memo?: Map<string, SettlementVatRate | null>): Promise<string[]> {
-  const gaps: string[] = [];
-  for (const m of months) {
-    const rates = await vatRatesOfMonth(ctx, entityId, m, memo);
-    if (Object.values(rates).some((rate) => rate === null)) gaps.push(m.month);
-  }
-  return gaps;
-}
-
 // Whether the entity's chart on `date` books a refund on its own account (TT99: 521), read from the regime's map; false for a regime with no map (the gate refuses it elsewhere).
 export async function separateReturnOn(ctx: QueryContext, entityId: string, date: string, maps: Readonly<Record<string, MarketplacePostingMap>> = MARKETPLACE_POSTING_MAPS): Promise<boolean> {
   const regime = (await booksOn(ctx, entityId, date)).regime;
