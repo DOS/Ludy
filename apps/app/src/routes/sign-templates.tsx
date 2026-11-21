@@ -630,7 +630,13 @@ export function DirectLinkCard({
                         className="font-mono text-xs"
                         data-testid="sign-tpl-public-hub-url-input"
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={() => onCopyUrl(publicHubUrl)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="max-sm:min-h-11"
+                        onClick={() => onCopyUrl(publicHubUrl)}
+                      >
                         {t('copyButton')}
                       </Button>
                     </div>
