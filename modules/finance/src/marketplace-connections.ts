@@ -435,7 +435,9 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
 
 // What the worker needs to finish an authorization: the sealed code and the binding of the sealed secret, or why it must not.
 export type MarketplaceAuthorizeTarget =
-  | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_pending' | 'expired' | 'unknown_adapter' }
+  | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_pending' | 'unknown_adapter' }
+  // The code waited past the window: it is not traded, but the worker records it as failed (with the digest) so the sealed code is cleared.
+  | { action: 'expired'; id: string; codeDigest: string }
   | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string; channelVersion: string };
 
 export const marketplaceConnectionAuthorizeTarget = defineQuery({
@@ -456,7 +458,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
     if (!adapter || !MARKETPLACE_AUTHORIZED_ADAPTERS.includes(adapter)) return { action: 'none', reason: 'unknown_adapter' };
     if (row.authorize_state !== 'pending' || !row.authorize_code_key_id || !row.authorize_code_envelope) return { action: 'none', reason: 'not_pending' };
     // A code that waited past the window is not traded (the worker may have died, and the code is old): the list shows it as failed and the seller authorizes again.
-    if (pendingExpired(row.authorize_pending_at, Date.now())) return { action: 'none', reason: 'expired' };
+    if (pendingExpired(row.authorize_pending_at, Date.now())) return { action: 'expired', id: row.id, codeDigest: digestOf(row.authorize_code_envelope) };
     return {
       action: 'authorize',
       id: row.id,
@@ -525,7 +527,19 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
       .executeTakeFirst();
     // Only the pending authorization of the code the worker read.
     if (!found || found.authorize_state !== 'pending' || !found.authorize_code_envelope || digestOf(found.authorize_code_envelope) !== input.codeDigest) return { recorded: false };
-    if (pendingExpired(found.authorize_pending_at, ctx.now.getTime())) return { recorded: false };
+    // The code this command is for is spent (the platform has traded it): whatever stops the new credential being stored, the sealed code must not stay behind, so the authorization is marked failed and the code
+    // cleared in this same transaction, and the seller authorizes again.
+    const fail = async (): Promise<{ recorded: boolean }> => {
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_connection')
+        .set({ authorize_state: 'failed', authorize_code_key_id: null, authorize_code_envelope: null, authorize_pending_at: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.id)
+        .execute();
+      ctx.audit({ outcome: 'failed' });
+      return { recorded: false };
+    };
+    if (pendingExpired(found.authorize_pending_at, ctx.now.getTime())) return fail();
     // The credential is replaced only if the connection is as the worker read it (a reconnect or a refresh since then moved its version); in the same transaction as the mark below, so the two never part.
     const replaced = await ctx.run<{ refreshed: boolean }>('kernel.channel.refresh', {
       connectionId: found.channel_connection_id,
@@ -533,7 +547,7 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
       expiresAt: input.expiresAt,
       credential: input.credential,
     });
-    if (!replaced.refreshed) return { recorded: false };
+    if (!replaced.refreshed) return fail();
     await ctx.trx
       .updateTable('crove_finance.marketplace_connection')
       .set({

@@ -653,11 +653,23 @@ suite('marketplace connections (#2519)', () => {
     expect(dump).not.toContain(third);
     expect(dump).not.toContain(codeSealed.envelope.toString('base64'));
 
-    // A code left waiting past the window (the worker may have died) counts as failed: the list shows it, the worker's target and the completing command refuse it; storing a new code starts a new window.
+    // A code left waiting past the window (the worker may have died) counts as failed: the list shows it, the worker's target answers `expired` (so the worker records it and the sealed code is cleared), and the
+    // completing command, for a code the platform may already have traded, marks it failed and clears the code in its own transaction; storing a new code starts a new window.
+    const repend = async () => {
+      const h = hashOf();
+      await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: h }, owner);
+      await finish(h, owner);
+    };
+    const authorizeStateOf = async () => ((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState;
     const waitingDigest = sha256Hex(new TextEncoder().encode(codeSealed.envelope.toString('base64')));
     await rows("UPDATE crove_finance.marketplace_connection SET authorize_pending_at = now() - interval '16 minutes' WHERE org_id = $1 AND id = $2", [orgId, id]);
-    expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('failed');
-    expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'expired' });
+    expect(await authorizeStateOf()).toBe('failed');
+    expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'expired', id, codeDigest: waitingDigest });
+    expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, codeDigest: waitingDigest, outcome: 'failed' }, { actor: SYSTEM, orgId })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'failed', authorize_code_key_id: null, authorize_code_envelope: null });
+    // The completing command on an expired code: not stored, marked failed, code cleared, whatever the reason.
+    await repend();
+    await rows("UPDATE crove_finance.marketplace_connection SET authorize_pending_at = now() - interval '16 minutes' WHERE org_id = $1 AND id = $2", [orgId, id]);
     expect(
       await worker.execute(
         'finance.marketplace_connection.authorize_complete',
@@ -665,11 +677,12 @@ suite('marketplace connections (#2519)', () => {
         { actor: SYSTEM, orgId },
       ),
     ).toEqual({ recorded: false });
-    await rows("UPDATE crove_finance.marketplace_connection SET authorize_pending_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
-    expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('pending');
+    expect(await row()).toMatchObject({ authorize_state: 'failed', authorize_code_key_id: null, authorize_code_envelope: null });
+    await repend();
+    expect(await authorizeStateOf()).toBe('pending');
 
     // The worker: target (the sealed code), then the outcome. Only a pending authorization is recorded, once.
-    const target = await worker.query<{ action: string; codeEnvelope: string; adapter: string; codeDigest: string; codeAccount: string }>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
+    let target = await worker.query<{ action: string; codeEnvelope: string; adapter: string; codeDigest: string; codeAccount: string }>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
     expect(target).toMatchObject({ action: 'authorize', adapter: 'lazada', codeEnvelope: codeSealed.envelope.toString('base64'), codeAccount: marketplaceAuthorizeCodeAccount(id) });
     // The code opens only under its own binding, and the credential's envelope does not open under it.
     expect(vault.open({ keyId: codeSealed.keyId, envelope: Buffer.from(target.codeEnvelope, 'base64') }, { orgId, provider: 'marketplace_lazada', externalAccountId: target.codeAccount })).toBe('AUTH-CODE-1');
@@ -692,11 +705,15 @@ suite('marketplace connections (#2519)', () => {
       const stored = await worker.query<{ keyId: string; envelope: string }>('kernel.channel.credential', { connectionId: String((await rows<{ c: string }>('SELECT channel_connection_id AS c FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.c) }, { actor: SYSTEM, orgId });
       return vault.open({ keyId: stored.keyId, envelope: Buffer.from(stored.envelope, 'base64') }, binding);
     };
-    // Not the code the worker read, or a connection touched since: nothing is replaced and the authorization stays pending.
+    // Not the code the worker read: nothing changes and the authorization stays pending. A connection touched since the read: nothing is replaced, and the spent code is marked failed and cleared (the seller
+    // authorizes again); a fresh authorization then completes.
     expect(await complete({ codeDigest: '1'.repeat(64) })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'pending', authorize_code_key_id: codeSealed.keyId });
     expect(await complete({ ifVersion: new Date(Date.now() - 86_400_000).toISOString() })).toEqual({ recorded: false });
     expect(JSON.parse(await credentialNow())).toEqual({ appKey: '123456', appSecret: 'helloworld' });
-    expect(await row()).toMatchObject({ authorize_state: 'pending', authorize_code_key_id: codeSealed.keyId });
+    expect(await row()).toMatchObject({ authorize_state: 'failed', authorize_code_key_id: null, authorize_code_envelope: null });
+    await repend();
+    target = await worker.query<typeof target>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
     expect(await complete()).toEqual({ recorded: true });
     expect(JSON.parse(await credentialNow())).toMatchObject({ accessToken: 'NEW-ACCESS', refreshToken: 'NEW-REFRESH' });
     expect(await complete()).toEqual({ recorded: false });

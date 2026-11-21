@@ -506,9 +506,18 @@ describe('the worker finishes a seller\'s authorization (#4238)', () => {
       const settled = failing.then(() => 'resolved', (error: Error) => error.message);
       await vi.runAllTimersAsync();
       expect(await settled).toBe('connection reset');
+      // The spent code is not left sealed behind: after the third failure the job records `failed` (best effort) before it throws.
+      expect(b.executed.filter((e) => e.name === 'finance.marketplace_connection.authorize_record').map((e) => e.input)).toEqual([{ id: CONNECTION, codeDigest: TARGET.codeDigest, outcome: 'failed' }]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('records a code that waited past the window as failed without trading it, so the sealed code is cleared', async () => {
+    const a = setupAuthorize({ target: { action: 'expired', id: CONNECTION, codeDigest: 'e'.repeat(64) } });
+    expect(await a.run()).toEqual({ state: 'failed' });
+    expect(a.asked).toHaveLength(0);
+    expect(a.executed).toEqual([{ name: 'finance.marketplace_connection.authorize_record', input: { id: CONNECTION, codeDigest: 'e'.repeat(64), outcome: 'failed' } }]);
   });
 
   it('leaves a connection that has nothing pending, is gone or whose adapter is off alone', async () => {

@@ -57,11 +57,11 @@ export function MarketplaceOAuthCallbackPage() {
   const slug = !callback || callback.kind === 'lost' ? null : callback.slug;
   const busy = !callback || (callback.kind === 'finish' && (finish.isPending || finish.isIdle));
   const back = slug ? (
-    <Link to="/o/$slug/settings/connections" params={{ slug }} className="text-sm font-medium text-primary hover:underline">
+    <Link to="/o/$slug/settings/connections" params={{ slug }} className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
       {t('back')}
     </Link>
   ) : (
-    <Link to="/" className="text-sm font-medium text-primary hover:underline">
+    <Link to="/" className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
       {t('back')}
     </Link>
   );

@@ -149,7 +149,7 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           {t('pollQueued')}
         </p>
       )}
-      {connection.authorizeState && <p className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
+      {connection.authorizeState && <p role="status" className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
       {authorize.error && <ErrorText>{errorMessage(authorize.error)}</ErrorText>}
       {pull.error && <ErrorText>{errorMessage(pull.error)}</ErrorText>}

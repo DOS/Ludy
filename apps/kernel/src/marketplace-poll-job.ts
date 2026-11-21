@@ -101,6 +101,11 @@ export async function runMarketplaceAuthorize(deps: MarketplacePollDeps, job: Ma
   const options = { actor: SYSTEM, orgId: job.orgId };
   const target = await deps.runtime.query<MarketplaceAuthorizeTarget>('finance.marketplace_connection.authorize_target', { id: job.connectionId }, options);
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
+  // A code that waited past the window is not traded: it is recorded as failed (and the sealed code cleared) so the seller sees it and authorizes again.
+  if (target.action === 'expired') {
+    await deps.runtime.execute('finance.marketplace_connection.authorize_record', { id: job.connectionId, codeDigest: target.codeDigest, outcome: 'failed' }, options);
+    return { state: 'failed' };
+  }
   if (!Object.hasOwn(deps.providers, target.adapter)) return { state: 'skipped', reason: 'provider_off' };
   const provider = deps.providers[target.adapter] as MarketplaceProvider;
   if (!provider.authorize) return { state: 'skipped', reason: 'no_authorize' };
@@ -156,7 +161,11 @@ export async function runMarketplaceAuthorize(deps: MarketplacePollDeps, job: Ma
       return { state: stored.recorded ? 'authorized' : 'superseded' };
     } catch (error) {
       if (error instanceof DomainError) return record('failed');
-      if (attempt >= 3) throw error;
+      if (attempt >= 3) {
+        // The tokens are lost with this job (the code is spent): at least the sealed code is cleared and the seller sees a failure, as far as the database lets this one write through.
+        await record('failed').catch(() => undefined);
+        throw error;
+      }
       await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
     }
   }
