@@ -3,7 +3,8 @@
 // 2026-11-21 (authorization-overview-202407, sign-your-api-request, common-parameters, common-errors, get-authorized-shops-202309):
 //   - auth.tiktok-shops.com: GET /api/v2/token/get (authorization code, single use, 30 minutes) and GET /api/v2/token/refresh (rotating, the authorization end does not move), the parameters in the query;
 //   - open-api.tiktokglobalshop.com: GET /authorization/202309/shops, the signed POST /order/202309/orders/search and POST /return_refund/202602/returns/search (filtered by `update_time_ge` in the signed body, ascending by
-//     update time, paged by an opaque token) and GET /order/202507/orders (by `ids`), answering the made-up orders and returns the test hands in.
+//     update time, paged by an opaque token) and GET /order/202507/orders (by `ids`), answering the made-up orders and returns the test hands in;
+//   - the finance reads (T3 = #4266): GET /finance/202309/statements, /finance/202501/statements/{id}/statement_transactions and /finance/202605/payments, over the statements, transactions and payments the test hands in.
 // It verifies the signature with its OWN implementation of the rule (written again, over the raw query text, not the adapter's function), checks the timestamp window (5 minutes back, 30 seconds ahead) and
 // the `x-tts-access-token` header, and refuses `shop_cipher` where the endpoint does not take it. Its answers carry a seller's name and an owner e-mail on purpose, so the tests can show none of it is kept.
 // No network.
@@ -44,6 +45,10 @@ export interface FakeTiktokOptions {
   // The raw orders and returns the order, detail and return calls answer from, in TikTok's own shape (a test builds them with fakeOrder, fakeLine and fakeReturn, which carry a buyer's data on purpose).
   orders?: Array<Record<string, unknown>>;
   returns?: Array<Record<string, unknown>>;
+  // The raw statements, the transactions of each statement (by id; `currency` is the page's own) and the payments the finance reads answer from.
+  statements?: Array<Record<string, unknown>>;
+  statementTransactions?: Record<string, { currency?: string; transactions: Array<Record<string, unknown>> }>;
+  payments?: Array<Record<string, unknown>>;
   now?: () => number;
   // Crafts an answer instead of the fake's own (a refusal, a throttle, a hostile or malformed body); returns undefined to let the fake answer.
   intercept?: (host: string, path: string, query: Record<string, string>) => Response | undefined;
@@ -177,6 +182,41 @@ export function fakeTiktok(options: FakeTiktokOptions) {
       const list = isOrders ? { orders: page } : page.length === 0 ? {} : { return_orders: page };
       return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000AE', data: { next_page_token: next, total_count: matching.length, ...list } });
     }
+    // The finance reads: GET, filtered by a time window in seconds, paged by an opaque token, `shop_cipher` required.
+    const pageOf = (list: Array<Record<string, unknown>>, max: number): { page: Array<Record<string, unknown>>; next: string; total: number } | Response => {
+      const size = Number(query.page_size);
+      if (!Number.isInteger(size) || size < 1 || size > max) return failure(12052000, 'Invalid page size.', 400);
+      let offset = 0;
+      if (query.page_token) {
+        const decoded = /^o(\d{1,6})$/.exec(Buffer.from(query.page_token, 'base64').toString('utf8'));
+        if (!decoded) return failure(12052002, 'Invalid page token.', 400);
+        offset = Number(decoded[1]);
+      }
+      return { page: list.slice(offset, offset + size), next: offset + size < list.length ? Buffer.from(`o${offset + size}`).toString('base64') : '', total: list.length };
+    };
+    const inWindow = (value: unknown, geKey: string, ltKey: string) => !(Number(value) < Number(query[geKey] ?? 0)) && !(Number(value) >= Number(query[ltKey] ?? Number.MAX_SAFE_INTEGER));
+    if (method === 'GET' && (url.pathname === '/finance/202309/statements' || url.pathname === '/finance/202605/payments' || /^\/finance\/202501\/statements\/\d+\/statement_transactions$/.test(url.pathname))) {
+      if (!query.shop_cipher) return failure(36009004, 'Missing identifier. The `shop_cipher` query parameter is required for this request.', 400);
+      if (url.pathname === '/finance/202309/statements') {
+        if (query.sort_field !== 'statement_time') return failure(12052004, 'sort_field is required.', 400);
+        const got = pageOf((options.statements ?? []).filter((r) => inWindow(r.statement_time, 'statement_time_ge', 'statement_time_lt')).sort((a, b) => Number(a.statement_time) - Number(b.statement_time)), 100);
+        if (got instanceof Response) return got;
+        return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000B0', data: { next_page_token: got.next, total_count: got.total, ...(got.page.length === 0 ? {} : { statements: got.page }) } });
+      }
+      if (url.pathname === '/finance/202605/payments') {
+        if (query.sort_field !== 'create_time') return failure(12052004, 'sort_field is required.', 400);
+        const got = pageOf((options.payments ?? []).filter((r) => inWindow(r.create_time, 'create_time_ge', 'create_time_lt')).sort((a, b) => Number(a.create_time) - Number(b.create_time)), 100);
+        if (got instanceof Response) return got;
+        return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000B1', data: { next_page_token: got.next, total_count: got.total, ...(got.page.length === 0 ? {} : { payments: got.page }) } });
+      }
+      if (query.sort_field !== 'order_create_time') return failure(12052004, 'sort_field is required.', 400);
+      const id = /\/statements\/(\d+)\//.exec(url.pathname)![1]!;
+      const held = options.statementTransactions?.[id];
+      if (!held) return failure(12052005, 'Statement not found.', 404);
+      const got = pageOf(held.transactions, 100);
+      if (got instanceof Response) return got;
+      return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000B2', data: { next_page_token: got.next, id, currency: held.currency ?? 'VND', total_count: got.total, transactions: got.page } });
+    }
     if (url.pathname === '/order/202507/orders' && method === 'GET') {
       if (!query.shop_cipher) return failure(36009004, 'Missing identifier. The `shop_cipher` query parameter is required for this request.', 400);
       const ids = (query.ids ?? '').split(',').filter((id) => id !== '');
@@ -253,6 +293,66 @@ export function fakeReturn(over: Record<string, unknown> = {}): Record<string, u
     return_reason_text: 'Không vừa, liên hệ Nguyễn Văn Thử',
     role: 'BUYER',
     return_line_items: [{ return_line_item_id: '4035227657962164811', order_line_item_id: '577086512123700001', sku_id: '2729382476852921560' }],
+    ...over,
+  };
+}
+
+// A statement in TikTok's shape: a Vietnam dong statement, PAID, generated at `statement_time` and paid at `payment_time` (Unix seconds).
+export function fakeStatement(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    id: `7238804564097${String(orderSeq).padStart(5, '0')}`,
+    statement_time: 1_795_200_000,
+    settlement_amount: '1000000',
+    currency: 'VND',
+    revenue_amount: '1300000',
+    fee_amount: '-200000',
+    adjustment_amount: '0',
+    net_sales_amount: '1250000',
+    shipping_cost_amount: '-100000',
+    payment_status: 'PAID',
+    payment_id: '3459275187040258849',
+    payment_time: 1_795_210_000,
+    ...over,
+  };
+}
+
+// An ORDER transaction of a statement in TikTok's shape: the amounts as strings, fees and deductions negative, with the fee and tax breakdown objects.
+export function fakeFinanceOrder(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    id: `1636700041413${String(orderSeq).padStart(5, '0')}`,
+    type: 'ORDER',
+    order_id: `5764632204565${String(orderSeq).padStart(5, '0')}`,
+    order_create_time: 1_795_000_000,
+    settlement_amount: '82000',
+    revenue_amount: '110000',
+    revenue_breakdown: { subtotal_before_discount_amount: '120000', refund_subtotal_before_discount_amount: '0', seller_discount_amount: '-10000', seller_discount_refund_amount: '0' },
+    shipping_cost_amount: '-8000',
+    fee_tax_amount: '-20000',
+    fee_tax_breakdown: {
+      fee: { platform_commission_amount: '-9000', transaction_fee_amount: '-3000', referral_fee_amount: '-2000', vn_fix_infrastructure_fee: '-1000' },
+      tax: { vat_amount: '0', local_vat_amount: '-3500', pit_amount: '-1500' },
+    },
+    supplementary_component: { customer_payment_amount: '120000' },
+    buyer_name_on_invoice: 'Nguyễn Văn Thử',
+    ...over,
+  };
+}
+
+// A payment in TikTok's shape with a masked bank account planted on purpose (the reader must not keep it).
+export function fakePayment(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    id: `3458767051733${String(orderSeq).padStart(5, '0')}`,
+    create_time: 1_795_205_000,
+    status: 'PAID',
+    amount: { value: '1000000', currency: 'VND' },
+    settlement_amount: { value: '1000000', currency: 'VND' },
+    payment_amount_before_exchange: { value: '1000000', currency: 'VND' },
+    exchange_rate: '1.000000',
+    paid_time: 1_795_210_000,
+    bank_account: '***********1234',
     ...over,
   };
 }
