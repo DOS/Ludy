@@ -1401,6 +1401,8 @@ export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export type SignObligationStatus = (typeof SIGN_OBLIGATION_STATUSES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1442,6 +1444,10 @@ export type SignTemplateRoleTable = Refine<
   }
 >;
 export type SignTemplateFieldTable = Refine<G.SignTemplateFieldTable, { field_type: SignFieldType }>;
+export type SignEnvelopeObligationTable = Refine<
+  G.SignEnvelopeObligationTable,
+  { status: Generated<SignObligationStatus> }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1491,6 +1497,7 @@ type Refined = Tables<{
   'crove_projects.project': ProjectsProjectTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;

@@ -14,14 +14,20 @@ import { Label } from '@crove/ui/components/label';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, queryClient } from '../lib/api.ts';
-import { downloadSignFile, signApi, uploadSignPdf, type SignEnvelopeSummary } from '../lib/sign-api.ts';
+import {
+  downloadSignFile,
+  signApi,
+  uploadSignPdf,
+  type SignEnvelopeSummary,
+  type SignObligationRenewalListItem,
+} from '../lib/sign-api.ts';
 import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
 import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 
-type EnvelopeFilterTab = 'all' | 'actionNeeded' | 'waiting' | 'completed' | 'closed';
+export type EnvelopeFilterTab = 'all' | 'actionNeeded' | 'waiting' | 'completed' | 'renewals' | 'closed';
 
 const ENVELOPE_BADGE_VARIANT = {
   draft: 'secondary',
@@ -38,6 +44,7 @@ const TAB_STATUS_FILTERS: Record<EnvelopeFilterTab, readonly SignEnvelopeStatus[
   actionNeeded: ['draft', 'sent', 'in_progress'],
   waiting: ['sent', 'in_progress'],
   completed: ['completed'],
+  renewals: ['completed'],
   closed: ['declined', 'voided', 'expired'],
 };
 
@@ -69,6 +76,7 @@ export function filterEnvelopesByTab(items: readonly SignEnvelopeSummary[], tab:
     case 'waiting':
       return items.filter((item) => item.status === 'sent' || item.status === 'in_progress');
     case 'completed':
+    case 'renewals':
       return items.filter((item) => item.status === 'completed');
     case 'closed':
       return items.filter((item) => item.status === 'voided' || item.status === 'declined' || item.status === 'expired');
@@ -100,9 +108,18 @@ export function SignEnvelopesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
 
+  const isRenewalsTab = tab === 'renewals';
+
   const envelopesQuery = useQuery({
     queryKey: ['sign', 'envelopes', slug, tab],
     queryFn: () => fetchEnvelopesForTab(tab),
+    enabled: !isRenewalsTab,
+  });
+
+  const renewalsQuery = useQuery({
+    queryKey: ['sign', 'renewals', slug],
+    queryFn: () => signApi.listRenewalEnvelopes({ limit: 100 }),
+    enabled: isRenewalsTab,
   });
 
   const createMutation = useMutation({
@@ -247,6 +264,7 @@ export function SignEnvelopesPage() {
 
   const items = envelopesQuery.data?.items ?? [];
   const filtered = filterEnvelopesByTab(items, tab);
+  const renewalItems: readonly SignObligationRenewalListItem[] = renewalsQuery.data?.items ?? [];
 
   return (
     <div className="space-y-5">
@@ -266,93 +284,203 @@ export function SignEnvelopesPage() {
           <TabsTrigger value="actionNeeded">{t('tabs.actionNeeded')}</TabsTrigger>
           <TabsTrigger value="waiting">{t('tabs.waiting')}</TabsTrigger>
           <TabsTrigger value="completed">{t('tabs.completed')}</TabsTrigger>
+          <TabsTrigger value="renewals" data-testid="sign-tab-renewals">
+            {t('tabs.renewals')}
+          </TabsTrigger>
           <TabsTrigger value="closed">{t('tabs.closed')}</TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {envelopesQuery.isLoading ? <ListSkeleton rows={4} /> : null}
-      {envelopesQuery.isError ? <ErrorText>{errorMessage(envelopesQuery.error)}</ErrorText> : null}
+      {isRenewalsTab ? (
+        <>
+          {renewalsQuery.isLoading ? <ListSkeleton rows={4} /> : null}
+          {renewalsQuery.isError ? <ErrorText>{errorMessage(renewalsQuery.error)}</ErrorText> : null}
 
-      {!envelopesQuery.isLoading && !envelopesQuery.isError && filtered.length === 0 ? (
-        <Empty
-          title={t('emptyTitle')}
-          hint={t('emptyHint')}
-          action={
-            <Button type="button" onClick={() => setCreateOpen(true)}>
-              {t('createButton')}
-            </Button>
-          }
-        />
-      ) : null}
+          {!renewalsQuery.isLoading && !renewalsQuery.isError && renewalItems.length === 0 ? (
+            <Empty title={t('obligations.renewalsEmptyTitle')} hint={t('obligations.renewalsEmptyHint')} />
+          ) : null}
 
-      <ul className="space-y-3" data-testid="sign-envelope-list">
-        {filtered.map((item) => {
-          const isActive = item.status === 'sent' || item.status === 'in_progress';
-          const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
-          return (
-            <li key={item.id}>
-              <Card>
-                <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        to="/o/$slug/sign/envelopes/$id"
-                        params={{ slug, id: item.id }}
-                        className="truncate text-base font-semibold text-foreground hover:underline"
-                      >
-                        {item.title}
-                      </Link>
-                      <Badge variant={ENVELOPE_BADGE_VARIANT[item.status]}>{t(`statuses.${item.status}`)}</Badge>
-                      <Badge variant="outline">{t(`routing.${item.routingMode}`)}</Badge>
-                      {item.status === 'completed' || item.sealStatus ? (
-                        <Badge variant="secondary">{t(`sealStatuses.${item.sealStatus ?? 'pending'}`)}</Badge>
-                      ) : null}
-                      {item.signerSummary.total > 0 ? (
-                        <Badge variant="secondary">
-                          {t('progress', {
-                            signed: String(item.signerSummary.signed),
-                            total: String(item.signerSummary.total),
-                          })}
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      <span>{f.dateTime(item.createdAt)}</span>
-                      {item.pageCount ? <span>{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
-                      {item.certificateCode ? <span className="font-mono">{item.certificateCode}</span> : null}
-                    </div>
-                  </div>
+          <ul className="space-y-3" data-testid="sign-renewals-list">
+            {renewalItems.map((entry) => {
+              const { envelope: item, obligation } = entry;
+              const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+              const renewalBadge =
+                entry.daysUntilExpiry !== null ? (
+                  entry.daysUntilExpiry < 0 ? (
+                    <Badge variant="outline">{t('obligations.expiredBadge')}</Badge>
+                  ) : entry.daysUntilExpiry === 0 ? (
+                    <Badge variant="destructive">{t('obligations.expiresTodayBadge')}</Badge>
+                  ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 0 ? (
+                    <Badge variant="warning">
+                      {t('obligations.noticeWindowOpenBadge', { days: String(entry.daysUntilExpiry) })}
+                    </Badge>
+                  ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 30 ? (
+                    <Badge variant="secondary">
+                      {t('obligations.noticeSoonBadge', { days: String(entry.daysUntilNotice) })}
+                    </Badge>
+                  ) : null
+                ) : null;
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    {isActive ? (
-                      <>
-                        <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyZaloLink(item)}>
-                          {t('actions.copyZalo')}
-                        </Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => void handleRemind(item)}>
-                          {t('actions.remind')}
-                        </Button>
-                      </>
-                    ) : null}
-                    {isSealed ? (
-                      <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
-                        {t('actions.downloadSealed')}
-                      </Button>
-                    ) : null}
-                    <Link
-                      to="/o/$slug/sign/envelopes/$id"
-                      params={{ slug, id: item.id }}
-                      className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                    >
-                      {t('actions.open')}
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            </li>
-          );
-        })}
-      </ul>
+              return (
+                <li key={item.id}>
+                  <Card>
+                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            to="/o/$slug/sign/envelopes/$id"
+                            params={{ slug, id: item.id }}
+                            className="truncate text-base font-semibold text-foreground hover:underline"
+                          >
+                            {item.title}
+                          </Link>
+                          {entry.overdueObligationCount > 0 ? (
+                            <Badge variant="destructive">
+                              {t('obligations.overdueCountBadge', { count: String(entry.overdueObligationCount) })}
+                            </Badge>
+                          ) : null}
+                          {renewalBadge}
+                          {obligation.autoRenew ? (
+                            <Badge variant="outline">{t('obligations.autoRenewBadge')}</Badge>
+                          ) : null}
+                          {entry.pendingObligationCount > 0 ? (
+                            <Badge variant="secondary">
+                              {t('obligations.pendingCountBadge', { count: String(entry.pendingObligationCount) })}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          {obligation.counterpartyName ? (
+                            <span className="font-medium text-foreground">
+                              {t('obligations.counterpartyChip', { name: obligation.counterpartyName })}
+                            </span>
+                          ) : null}
+                          {obligation.contractValue !== null ? (
+                            <span className="font-mono tabular-nums text-foreground">
+                              {f.money(obligation.contractValue, obligation.currency)}
+                            </span>
+                          ) : null}
+                          {obligation.expiryDate ? (
+                            <span className="tabular-nums">
+                              {t('obligations.expiryOn', { date: f.date(obligation.expiryDate) })}
+                            </span>
+                          ) : null}
+                          {entry.nextObligationDueDate ? (
+                            <span className="tabular-nums">
+                              {t('obligations.nextDueOn', { date: f.date(entry.nextObligationDueDate) })}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isSealed ? (
+                          <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                            {t('actions.downloadSealed')}
+                          </Button>
+                        ) : null}
+                        <Link
+                          to="/o/$slug/sign/envelopes/$id"
+                          params={{ slug, id: item.id }}
+                          className={buttonVariants({ size: 'sm', variant: 'secondary' })}
+                        >
+                          {t('actions.open')}
+                        </Link>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : (
+        <>
+          {envelopesQuery.isLoading ? <ListSkeleton rows={4} /> : null}
+          {envelopesQuery.isError ? <ErrorText>{errorMessage(envelopesQuery.error)}</ErrorText> : null}
+
+          {!envelopesQuery.isLoading && !envelopesQuery.isError && filtered.length === 0 ? (
+            <Empty
+              title={t('emptyTitle')}
+              hint={t('emptyHint')}
+              action={
+                <Button type="button" onClick={() => setCreateOpen(true)}>
+                  {t('createButton')}
+                </Button>
+              }
+            />
+          ) : null}
+
+          <ul className="space-y-3" data-testid="sign-envelope-list">
+            {filtered.map((item) => {
+              const isActive = item.status === 'sent' || item.status === 'in_progress';
+              const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+              return (
+                <li key={item.id}>
+                  <Card>
+                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            to="/o/$slug/sign/envelopes/$id"
+                            params={{ slug, id: item.id }}
+                            className="truncate text-base font-semibold text-foreground hover:underline"
+                          >
+                            {item.title}
+                          </Link>
+                          <Badge variant={ENVELOPE_BADGE_VARIANT[item.status]}>{t(`statuses.${item.status}`)}</Badge>
+                          <Badge variant="outline">{t(`routing.${item.routingMode}`)}</Badge>
+                          {item.status === 'completed' || item.sealStatus ? (
+                            <Badge variant="secondary">{t(`sealStatuses.${item.sealStatus ?? 'pending'}`)}</Badge>
+                          ) : null}
+                          {item.signerSummary.total > 0 ? (
+                            <Badge variant="secondary">
+                              {t('progress', {
+                                signed: String(item.signerSummary.signed),
+                                total: String(item.signerSummary.total),
+                              })}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span>{f.dateTime(item.createdAt)}</span>
+                          {item.pageCount ? <span>{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
+                          {item.certificateCode ? <span className="font-mono">{item.certificateCode}</span> : null}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isActive ? (
+                          <>
+                            <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyZaloLink(item)}>
+                              {t('actions.copyZalo')}
+                            </Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => void handleRemind(item)}>
+                              {t('actions.remind')}
+                            </Button>
+                          </>
+                        ) : null}
+                        {isSealed ? (
+                          <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                            {t('actions.downloadSealed')}
+                          </Button>
+                        ) : null}
+                        <Link
+                          to="/o/$slug/sign/envelopes/$id"
+                          params={{ slug, id: item.id }}
+                          className={buttonVariants({ size: 'sm', variant: 'secondary' })}
+                        >
+                          {t('actions.open')}
+                        </Link>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-md" closeLabel={common('close')}>

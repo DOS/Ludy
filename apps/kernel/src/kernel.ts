@@ -183,8 +183,8 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
-  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
+  // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
+  signAi?: (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> & Partial<Pick<SignAiReader, 'extractObligations'>>) | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
