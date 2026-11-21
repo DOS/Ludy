@@ -5654,7 +5654,7 @@ export const vi = {
     reauthorizeBy: 'cần cấp quyền lại trước {when}',
     reauthorizeSoon: 'Quyền cấp cho sàn sẽ hết hạn ngày {when}. Chủ sở hữu hoặc quản trị viên hãy bấm Cấp quyền lại trước ngày đó để Ludy tiếp tục lấy đơn.',
     reauthorizeEnded: 'Quyền cấp cho sàn đã hết hạn từ {when}, Ludy không lấy được đơn mới. Chủ sở hữu hoặc quản trị viên hãy bấm Cấp quyền lại.',
-    reauthorizeReconnect: 'Quyền cấp cho sàn đã hết hạn hoặc sắp hết hạn ({when}) và kết nối này không cấp quyền lại ngay được. Chủ sở hữu hoặc quản trị viên hãy kết nối lại bằng đúng App Key và Secret cũ ở biểu mẫu kết nối bên dưới (không cần ngắt kết nối): đơn, liên kết tệp và mốc lấy đơn của kết nối được giữ nguyên.',
+    reauthorizeReconnect: 'Quyền cấp cho sàn đã hết hạn hoặc sắp hết hạn ({when}) và kết nối này không cấp quyền lại ngay được. Hãy nhập lại App Key và Secret, rồi cấp quyền lại: kết nối, đơn và mốc lấy đơn được giữ nguyên, không cần ngắt kết nối.',
     discardWaiting: 'Bỏ luôn các đơn đang chờ xác nhận của kết nối này ({count} đơn): không nhập vào sổ, bản gốc xóa theo thời hạn lưu hiện có',
     authorizeStates: {
       pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại; sau 15 phút mà chưa xong thì sẽ báo lỗi và bạn bấm Cấp quyền lại.',

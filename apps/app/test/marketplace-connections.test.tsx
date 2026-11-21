@@ -334,8 +334,10 @@ describe('the re-authorize notice (#4240 S3b)', () => {
     expect(expired).not.toContain(esc('press Authorize again'));
     const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
     // Connecting again with the same App Key and Secret keeps the connection, its orders and its poll position: the words must not send the seller to disconnect (that deletes them).
+    expect(vi).toContain('Hãy nhập lại App Key và Secret, rồi cấp quyền lại');
     expect(vi).toContain('không cần ngắt kết nối');
     expect(vi).not.toContain('ngắt kết nối rồi kết nối lại');
+    expect(expired).toContain(esc('Re-enter your App Key and Secret, then authorize again'));
     expect(expired).toContain(esc('no need to disconnect'));
     expect(expired).not.toContain(esc('disconnect it and connect again'));
   });
