@@ -208,6 +208,37 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     expect((await cardOf('ads.pause_all_approved', {})).about).toEqual([]);
   });
 
+  // A change a person's approved proposal queued, as the table holds it: the insert guard asks the change's own approved proposal, so it is set aside for the one statement.
+  async function queued(launch: string, columns: string, values: unknown[]): Promise<string> {
+    const account = (await h.q<{ ad_account_id: string }>('SELECT ad_account_id FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2', [h.orgId, launch])).rows[0]?.ad_account_id as string;
+    const id = randomUUID();
+    const marks = values.map((_, i) => `$${i + 7}`).join(', ');
+    await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
+      await c.query(`INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, proposal_id, requested_by, ${columns}) VALUES ($1, $2, $3, $4, $5, $6, ${marks})`, [h.orgId, id, account, launch, randomUUID(), h.owner, ...values]);
+    });
+    return id;
+  }
+
+  it('ads manage cancel (#4181): the launch lines, then the waiting change\'s kind, state and what it would set (a budget with its currency, or a last day)', async () => {
+    const launch = await rig();
+    const raise = await queued(launch, "kind, slot, level, object_id, from_budget, to_budget", ['budget_raise', 'ad_set', 'ad_set', 'set-x', 100000, 150000]);
+    expect((await cardOf('ads.manage.cancel_approved', { changeId: raise })).about).toEqual([
+      { label: 'launch', value: 'Khuyến mãi Tết' },
+      { label: 'adAccount', value: 'Tài khoản Tiệm Bánh' },
+      { label: 'launchState', value: 'live' },
+      { label: 'launchBudget', value: '100000 VND' },
+      { label: 'changeKind', value: 'budget_raise' },
+      { label: 'changeState', value: 'queued' },
+      { label: 'changeTo', value: '150000 VND' },
+    ]);
+    const extend = await queued(launch, 'kind, slot, level, object_id, from_end_on, to_end_on', ['schedule_extend', 'ad_set', 'ad_set', 'set-y', D(10), D(20)]);
+    expect((await cardOf('ads.manage.cancel_approved', { changeId: extend })).about?.slice(4)).toEqual([
+      { label: 'changeKind', value: 'schedule_extend' },
+      { label: 'changeState', value: 'queued' },
+      { label: 'changeTo', value: D(20) },
+    ]);
+  });
+
   it('shows the lines to owners and admins only: a member and a viewer get no card', async () => {
     const { bookingId } = await booking(540);
     const { actor } = await h.grant();
@@ -238,6 +269,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
       ['ads.object.archive_approved', { launchId: ghost, slot: 'campaign' }],
       ['ads.budget.lower_approved', { launchId: ghost, dailyBudget: '60000' }],
       ['ads.schedule.shorten_approved', { launchId: ghost, endOn: D(5) }],
+      ['ads.manage.cancel_approved', { changeId: ghost }],
     ];
     for (const [command, payload] of cases) {
       const card = await cardOf(command, payload);
