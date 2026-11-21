@@ -166,6 +166,7 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import type { AmisCallbackKey } from '@crove/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
@@ -310,6 +311,12 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // The bank feed adapters whose provider signs notices with each customer's own secret (Tingee, #4203): POST /api/bank-feed/<id>/webhook/<hookKey> exists for these alone, with finance installed. The address carries a key of one
+  // connection (only its SHA-256 is stored); the API stores the raw notice and the worker verifies it with the connection's sealed secret.
+  bankFeedHooks?: Readonly<Record<string, BankFeedProvider>>;
+  // Requests per minute per client address, checked before the body is read, and notices per minute per hook, checked once the hook is found.
+  bankFeedHookLimit?: RateLimiter;
+  bankFeedHookBudget?: RateLimiter;
   // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
   // The HMAC keys of the callback's signature: one ClientID (MISA AMIS's), or one per product the deployment holds (MISA AMIS and MISA ASP, #4103), tried all, never told apart.
   misaAmisCallback?: { clientId: string } | { keys: readonly AmisCallbackKey[] };
@@ -831,7 +838,7 @@ export function createHttpApp(deps: HttpDeps) {
       // Channels the app may offer to connect without a platform account (ADR-0025).
       // OAuth providers only with a credential key: their tokens could not be sealed otherwise.
       // Bank feeds (ADR-0039): which providers this deployment offers; none hides the feature.
-      bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
+      bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox), tingee: Boolean(deps.channels?.bankFeedHosted && Object.hasOwn(deps.channels.bankFeedHosted, 'bank_tingee')) },
       // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
       ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
       channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), ...(deps.channels?.whatsapp ? { whatsapp: true } : {}), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
@@ -1008,6 +1015,50 @@ export function createHttpApp(deps: HttpDeps) {
           return c.json({ queued: outcome.queued }, outcome.status);
         } catch (error) {
           return problem(c, error);
+        }
+      },
+    );
+  }
+
+  // A bank feed provider's signed notice at the address of one connection (Tingee, #4203, ADR-0039 as amended): public like the route above, but the provider signs with each customer's own secret, which only the worker can open,
+  // so the address carries a hook key of the connection. In order: the per-address limit (its own middleware, ahead of the body cap for the reason given above), the 16 KB cap, then acceptBankFeedHook: the headers and the
+  // timestamp window, the lookup of the key's SHA-256 (the org and the connection come from our own row, never from the body; an unknown key is a 404 and nothing is stored), a budget per hook, and the raw notice
+  // stored for the worker, which verifies the signature. Nothing of the key, the signature or the body is logged or answered.
+  const bankFeedHooks = deps.bankFeedHooks;
+  if (bankFeedHooks && Object.keys(bankFeedHooks).length > 0 && runtime.installed('finance')) {
+    const hookAddressLimit = deps.bankFeedHookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
+    const hookBudget = deps.bankFeedHookBudget ?? new RateLimiter({ perMinute: BANK_FEED_HOOKS_PER_MINUTE });
+    app.post(
+      '/api/bank-feed/:provider/webhook/:hookKey',
+      async (c, next) => {
+        if (!Object.hasOwn(bankFeedHooks, c.req.param('provider'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = hookAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_BANK_FEED_HOOK_BYTES }),
+      async (c) => {
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, header) => {
+            headers[header.toLowerCase()] = value;
+          });
+          const outcome = await acceptBankFeedHook(runtime, bankFeedHooks[c.req.param('provider')] as BankFeedProvider, { key: c.req.param('hookKey'), headers, body: await c.req.text() }, hookBudget);
+          if (outcome.status === 200) return c.json({ code: '00', message: 'Success' }, 200);
+          if (outcome.status === 404) return c.json({ code: 'NOT_FOUND' }, 404);
+          if (outcome.status === 429) {
+            c.header('retry-after', String(outcome.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: outcome.retryAfterSeconds }, 429);
+          }
+          return c.json({ code: outcome.code }, outcome.status);
+        } catch (error) {
+          // Nothing of the error is logged: a database error's DETAIL can quote the notice's body, which is personal data. The line carries the error's name only.
+          console.error('[bank-feed-hook] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL', message: 'Lỗi hệ thống' }, 500);
         }
       },
     );

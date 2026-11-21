@@ -9,7 +9,7 @@ import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('@tanstack/react-router', () => ({ Link: ({ children }: { children: unknown }) => children }));
 
-const { EngageProposalCard } = await import('../src/components/engage-proposal-card.tsx');
+const { EngageProposalCard, EngageProposalHiddenCard } = await import('../src/components/engage-proposal-card.tsx');
 
 const engage: EngageProposalView = {
   command: 'kernel.conversation.reply_approved',
@@ -131,5 +131,31 @@ describe('the card of an AI coworker\'s ask', () => {
       expect(shown[3]).toContain('100000 VND');
     }
     expect(render('en', 'pending', withAbout([{ label: 'launchState', value: 'odd_state' }]))).toContain('odd_state');
+  });
+});
+
+describe('the plain card a member or a viewer sees instead (L4 of #4160)', () => {
+  const hidden = (locale: 'vi' | 'en', status = 'pending', client: { client: string; host: string } | null = { client: 'Dy', host: 'dy.example.org' }) =>
+    renderToStaticMarkup(
+      <IntlProvider locale={locale} messages={catalog(locale)}>
+        <EngageProposalHiddenCard status={status} client={client} />
+      </IntlProvider>,
+    );
+
+  it('says it is an AI coworker\'s ask that only owners and admins see and decide, with who asked and what is true now, and shows no field', () => {
+    const vi = hidden('vi');
+    expect(vi).toContain('data-testid="engage-change-hidden"');
+    expect(vi).toContain('Chỉ chủ sở hữu hoặc quản trị viên xem được chi tiết');
+    expect(vi).toContain('dy.example.org');
+    expect(vi).toContain('Chưa có gì xảy ra');
+    expect(vi).not.toContain('engage-fields');
+    expect(vi).not.toMatch(/trợ lý/i);
+    const en = hidden('en');
+    expect(en).toContain('Only owners and admins see the details');
+    expect(en).not.toMatch(/assistant/i);
+    expect(hidden('en', 'executed')).toContain('An owner or an admin approved it');
+    expect(hidden('en', 'rejected')).toContain('nothing was done');
+    expect(hidden('en', 'expired')).toContain('closed');
+    expect(hidden('en', 'pending', null)).not.toContain('Asked by');
   });
 });

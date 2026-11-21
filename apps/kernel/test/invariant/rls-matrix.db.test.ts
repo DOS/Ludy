@@ -41,7 +41,7 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
   // #4203 (Tingee S3 of #2045, ADR-0039): a bank feed connection's webhook hook key (only the SHA-256 of 128 random bits, never the key) and the signed notices waiting for the worker to verify (the raw body is
-  // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Land before their tables (PENDING_TABLES).
+  // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant.
   'crove_finance.bank_feed_hook',
   'crove_finance.bank_feed_webhook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
@@ -98,11 +98,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_finance.bank_feed_hook',
-  'crove_finance.bank_feed_webhook_notice',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_column_profile',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -397,6 +394,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.household_profile',
   // #4037 (slice 2 of #3850): a confirmed mapping of a marketplace report's columns is a new row per org and platform, the latest wins; an earlier one is never edited or deleted.
   'crove_finance.marketplace_column_profile',
+  // #4239 (step 1 of the link table of #2840 point 3, #4238): a file a marketplace connection's poll ingested is linked to it once, in the same transaction as the ingest; the link is never edited or deleted by a tenant role (a purge or the file's own deletion removes it).
+  'crove_finance.marketplace_connection_file',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -1671,6 +1670,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
+  },
+  // #4239 (step 1 of 3 of #2840 point 3, #4238): the link between a marketplace connection and a staged file its poll ingested, written by the system context in the same transaction as the ingest, one row per file
+  // (unique per org and file), so the orders waiting for a connection are counted from the link and not from a file name. Org-level, no legal entity. Tenant roles read and insert (the poll's command); nothing updates
+  // or deletes a row, and a purge or the file's deletion removes it. Its table landed in #4250 (step 2), which removed it from PENDING_TABLES. Each row takes a connection and a file of its own.
+  'crove_finance.marketplace_connection_file': {
+    make: (o) => {
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const channel = { ...channelConnectionRow(o), provider };
+      const connection = { org_id: o.id, id: randomUUID(), channel_connection_id: channel.id, provider, platform: 'shopee' };
+      const sha256 = hex64();
+      const file = { org_id: o.id, id: randomUUID(), sha256, storage_key: `org/${o.id}/${sha256}`, filename: 'don-hang-link.csv', content_type: 'text/csv', size_bytes: 1, source: 'upload' };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.marketplace_connection', values: connection },
+          { table: 'crove_kernel.file', values: file },
+        ],
+        row: { org_id: o.id, id: randomUUID(), marketplace_connection_id: connection.id, file_id: file.id },
       };
     },
   },

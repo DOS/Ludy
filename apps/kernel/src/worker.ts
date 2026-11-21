@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
+import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -75,7 +75,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
-import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { marketplaceJobKind, runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMarketplaceColumns, type MarketplaceColumnsJob } from './marketplace-columns-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
@@ -93,6 +93,7 @@ import { failUndraftable, requestDueConversationDrafts, sweepConversationComposi
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
+import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -1568,6 +1569,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<BankFeedSyncJob | { sweep: true }>(QUEUES.bankFeedSync, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
+        // Notices of a hook that waited more than ten minutes (a worker that was away) go first, whatever they hold (#4203).
+        const swept = await sweepBankFeedHookNotices(deps.workerDb);
+        if (swept > 0) console.log(`[bank-feed-hook] swept ${swept} old notice(s)`);
         // Every active bank feed, a page of connections at a time by key.
         let after: { orgId: string; connectionId: string } | null = null;
         for (;;) {
@@ -1634,7 +1638,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (finance && marketplaceProviders && marketplaceBroker && Object.keys(marketplaceProviders).length > 0) {
     await boss.work<MarketplacePollJob | { sweep: true }>(QUEUES.marketplacePoll, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      if ('sweep' in job.data) {
+      // Only the exact scheduled `{ sweep: true }` is the sweep; any other payload (a null, `{ sweep: false }`) is checked below as a poll or a test, and refused when it is neither.
+      const isSweep = typeof job.data === 'object' && job.data !== null && Object.keys(job.data).length === 1 && (job.data as { sweep?: unknown }).sweep === true;
+      if (isSweep) {
         let after: { orgId: string; id: string } | null = null;
         for (;;) {
           const page = await marketplacePollDue(deps.workerDb, after);
@@ -1654,8 +1660,24 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         }
         return;
       }
-      const done = await runMarketplacePoll({ runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders }, job.data);
-      console.log(`[marketplace] ${job.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
+      // The payload is closed (ids and a known kind): anything else fails the job (it ends in the dead letters, where it is seen), with a fixed message: its content is neither logged nor kept.
+      const parsed = zMarketplaceJob.safeParse(job.data);
+      if (!parsed.success) throw new Error('marketplace job: the payload is not one this worker knows');
+      const marketplaceDeps = { runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders };
+      // A test only asks the provider's one cheap read and records its state: no page, no file, no cursor.
+      if (marketplaceJobKind(parsed.data) === 'test') {
+        const tested = await runMarketplaceTest(marketplaceDeps, parsed.data);
+        console.log(`[marketplace] test ${parsed.data.connectionId.slice(0, 8)}: ${tested.state}`);
+        return;
+      }
+      // The finish of a seller's authorization: the code is traded for the token pair, which replaces the connection's credential (one command); no page, no file.
+      if (marketplaceJobKind(parsed.data) === 'authorize') {
+        const authorized = await runMarketplaceAuthorize(marketplaceDeps, parsed.data);
+        console.log(`[marketplace] authorize ${parsed.data.connectionId.slice(0, 8)}: ${authorized.state}`);
+        return;
+      }
+      const done = await runMarketplacePoll(marketplaceDeps, parsed.data);
+      console.log(`[marketplace] ${parsed.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
     });
     await boss.schedule(QUEUES.marketplacePoll, MARKETPLACE_POLL_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
@@ -2305,6 +2327,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const mcpProposalNoticeTimer = setInterval(() => void mcpProposalNoticeSweep(), MCP_PROPOSAL_NOTICE_SWEEP_MS);
   void mcpProposalNoticeSweep();
 
+  // The Engage reads of an AI app (#4069): a person who connected one before the consent screen named them is told once, in the app.
+  let engageNoticing = false;
+  const mcpEngageReadsNoticeSweep = async () => {
+    if (engageNoticing) return;
+    engageNoticing = true;
+    try {
+      const done = await sweepMcpEngageReadsNotices({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (done > 0) console.log(`[mcp-engage-reads-notice] told ${done} person(s) about the Engage reads`);
+    } catch (error) {
+      console.error('[mcp-engage-reads-notice] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      engageNoticing = false;
+    }
+  };
+  const mcpEngageReadsNoticeTimer = setInterval(() => void mcpEngageReadsNoticeSweep(), MCP_ENGAGE_READS_NOTICE_SWEEP_MS);
+  void mcpEngageReadsNoticeSweep();
+
   // Detective security alerts (#996, plan §7.8): every 5 minutes, the signals worth an alert are logged and posted.
   let watching = false;
   const securitySweep = async () => {
@@ -2946,6 +2985,26 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
+              // An owner or admin asked for a marketplace connection's test (#4238): the same queue as the poll, a `kind` in the job, its own singleton key so a repeated click queues one test, and no
+              // retry (the owner presses the button again). Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_test_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId, kind: 'test' } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `test:${connectionId}`),
+                  // The queue is a standard one, so the key alone dedupes nothing: a send under the same key within this many seconds is dropped (the command also refuses a test within a minute of the last).
+                  singletonSeconds: 60,
+                  retryLimit: 0,
+                });
+              }
+              // A seller authorized a marketplace connection on the platform's page and the callback stored the sealed one-time code (#4238): the same queue, kind `authorize`, no retry (the code is single use) and no
+              // time throttle (a second authorization is a second code that must not be dropped). Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_authorize_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId, kind: 'authorize' } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `authorize:${connectionId}`),
+                  retryLimit: 0,
+                });
+              }
               // An owner or admin asked for a MISA AMIS connection's test (#3885): its job asks AMIS for a token and the company's information. Ids only in the job.
               if (finance && (deps.channels?.misaAmis || deps.channels?.misaAsp) && deps.channels.broker && row.type === 'finance.misa_amis_connection.test_requested') {
                 const connectionId = String(row.payload.connection_id);
@@ -3315,6 +3374,41 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           if (claimed < BANK_FEED_NOTICE_CLAIM) break;
         }
       }
+      // A signed notice of a bank feed whose provider signs with each customer's own secret (Tingee, #4203): the route stored the raw notice under a hook key of one connection; here the connection's sealed secret is opened,
+      // the signature (HMAC, constant-time) and the client the body names are checked, and each connection with a good notice gets one coalesced pull. A refused one is counted on its hook (ten in an hour stop it). The claim
+      // and the sends share one transaction, so a failure leaves the notices waiting (and the sweep deletes any older than ten minutes). Nothing of a notice is logged: the line below carries counts.
+      const hostedFeeds = deps.channels?.bankFeedHosted;
+      if (finance && deps.channels?.broker && hostedFeeds && Object.keys(hostedFeeds).length > 0) {
+        const broker = deps.channels.broker;
+        for (;;) {
+          const tally = { ok: 0, refused: 0, dropped: 0 };
+          // The refused notices are counted on their hooks after the batch commits (see rejectBankFeedHook): one entry per refused notice.
+          const refusedHooks: string[] = [];
+          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+            const rows = await claimBankFeedHookNotices(trx);
+            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+            const seen = new Set<string>();
+            return rows.map((row, i) => {
+              const verdict = verdicts[i] ?? 'dropped';
+              tally[verdict]++;
+              if (verdict !== 'ok' || seen.has(row.connectionId)) return async () => null;
+              seen.add(row.connectionId);
+              const target = { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
+              return (boss: JobSender) =>
+                boss.send(QUEUES.bankFeedSync, target, {
+                  singletonKey: jobKey(target.orgId, QUEUES.bankFeedSync, target.connectionId),
+                  singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
+                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+            });
+          });
+          for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
+          if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
+          if (claimed < BANK_FEED_HOOK_CLAIM) break;
+        }
+      }
       // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the
       // system context is the worker's alone. Nothing is waiting where the route does not exist (no ClientID).
       if (finance) await runMisaAmisCallbacks({ runtime: deps.runtime, workerDb: deps.workerDb });
@@ -3458,6 +3552,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(mcpProposalNoticeTimer);
+    clearInterval(mcpEngageReadsNoticeTimer);
     clearInterval(securityTimer);
     if (closingTimer) clearInterval(closingTimer);
     if (reportTimer) clearInterval(reportTimer);

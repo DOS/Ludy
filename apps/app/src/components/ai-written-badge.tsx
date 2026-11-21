@@ -14,7 +14,7 @@ export function AiWrittenBadge({ actorOrigin, tainted = false, className, showHi
   const wrote = actorOrigin === 'mcp';
   const hint = wrote ? t('hint') : t('hintEdited');
   const badge = (
-    <Badge variant="proposal" className={showHint ? undefined : className} title={t('hint')} data-testid="ai-written-badge">
+    <Badge variant="proposal" className={showHint ? undefined : className} title={hint} data-testid="ai-written-badge">
       {wrote ? t('label') : t('labelEdited')}
       {/* The hint also as text a screen reader reaches (a title shows on mouse hover only); a detail view shows it to everyone below. */}
       {!showHint && <span className="sr-only">{`. ${hint}`}</span>}

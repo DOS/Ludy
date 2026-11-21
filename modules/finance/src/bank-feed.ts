@@ -12,12 +12,14 @@
 // - finance.bank_feed.listed: the accounts a connection reaches, as the worker last listed them.
 // The worker's sync (#2044 part 2b, apps/kernel/src/bank-feed-sync.ts) runs two system commands:
 // - finance.bank_feed.record_accounts: the accounts the provider lists for a connection, replacing the last listing;
+// - finance.bank_feed.record_outcome: why a pull stopped (a closed kind, #4244), on the mapped account or on every mapped account of the connection;
 // - finance.bank_feed.record_pull: one page of a mapped account's transactions, stored as the entity's bank lines
 //   through the import's path (ingestFeedLines), and the cursor and sync time moved in the same transaction.
+import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
+import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedPullOutcome, zBankFeedHookSet, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordOutcome, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedHookCreated, type BankFeedHookStatus, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
 import { bankAccount, feedCutover, ingestFeedLines } from './bank.ts';
@@ -193,6 +195,13 @@ export const bankFeedUnmap = defineCommand({
   },
 });
 
+// How the last pull ended, as the card reads it (#4244): null before the first, the line number 1-based. The kind is checked against the closed list, so a value the database would refuse reads as no outcome.
+function lastPullOf(r: { last_pull_outcome: string | null; last_pull_outcome_at: Date | string | null; last_pull_item: number | null }): BankFeedAccountView['lastPull'] {
+  const kind = zBankFeedPullOutcome.safeParse(r.last_pull_outcome);
+  if (!kind.success || r.last_pull_outcome_at === null) return null;
+  return { outcome: kind.data, at: new Date(r.last_pull_outcome_at).toISOString(), item: kind.data === 'bad_page' && r.last_pull_item !== null ? r.last_pull_item + 1 : null };
+}
+
 export const bankFeedAccounts = defineQuery({
   name: 'finance.bank_feed.accounts',
   input: z.object({}),
@@ -201,7 +210,7 @@ export const bankFeedAccounts = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from', 'a.cursor'])
+      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from', 'a.cursor', 'a.last_pull_outcome', 'a.last_pull_outcome_at', 'a.last_pull_item'])
       .where('a.org_id', '=', ctx.orgId)
       .orderBy('c.display_name')
       .orderBy('a.external_account_id')
@@ -218,6 +227,7 @@ export const bankFeedAccounts = defineQuery({
       lastSyncedAt: r.last_synced_at ? new Date(r.last_synced_at).toISOString() : null,
       feedFrom: r.feed_from,
       feedFromEarliest: earliestFeedFrom(new Date(), r.provider, { cursor: r.cursor, feed_from: r.feed_from }),
+      lastPull: lastPullOf(r),
     }));
   },
 });
@@ -331,6 +341,50 @@ export const bankFeedRecordAccounts = defineCommand({
   },
 });
 
+// Why a pull stopped (#4244): the sync calls it when a call or a page is refused, then raises the error as before, so the job retries as it did. A closed kind and a line position, never a provider's text.
+// With an account (a refused page) it records on that account, and only while the account's cursor is still where the page was to start; without one (the account listing or the credential was refused,
+// before any pull) it records on every mapped account of the connection, so each card says the same. A connection that is no longer active, or with nothing mapped, records nothing.
+export const bankFeedRecordOutcome = defineCommand({
+  name: 'finance.bank_feed.record_outcome',
+  input: zBankFeedRecordOutcome,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ recorded: number }> => {
+    const connection = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!connection || !isBankFeedProviderId(connection.provider)) throw new DomainError('BANK_FEED_NOT_FOUND', 404, 'Không tìm thấy kết nối nguồn giao dịch ngân hàng');
+    if (connection.status !== 'active') return { recorded: 0 };
+    let update = ctx.trx
+      .updateTable('crove_finance.bank_feed_account')
+      .set({ last_pull_outcome: input.kind, last_pull_outcome_at: ctx.now, last_pull_item: input.item ?? null })
+      .where('org_id', '=', ctx.orgId)
+      .where('channel_connection_id', '=', input.connectionId);
+    if (input.feedAccountId !== undefined) {
+      update = update.where('id', '=', input.feedAccountId);
+      if (input.fromCursor !== undefined) update = input.fromCursor === null ? update.where('cursor', 'is', null) : update.where('cursor', '=', input.fromCursor);
+    } else {
+      // A connection-wide record reaches the accounts the connection still lists: one it no longer lists is never pulled again, so nothing would clear its reason.
+      update = update.where(
+        'external_account_id',
+        'in',
+        ctx.trx
+          .selectFrom('crove_finance.bank_feed_listed_account')
+          .select('external_account_id')
+          .where('org_id', '=', ctx.orgId)
+          .where('channel_connection_id', '=', input.connectionId),
+      );
+    }
+    const recorded = (await update.returning('id').execute()).length;
+    ctx.audit({ connectionId: input.connectionId, kind: input.kind, accounts: recorded });
+    return { recorded };
+  },
+});
+
 export const bankFeedRecordPull = defineCommand({
   name: 'finance.bank_feed.record_pull',
   input: zBankFeedRecordPull,
@@ -369,7 +423,8 @@ export const bankFeedRecordPull = defineCommand({
       lines.length > 0 ? await ingestFeedLines(ctx, { bankAccount: mapped.bank_account, legalEntityId: mapped.legal_entity_id, source: mapped.provider, lines }) : null;
     await ctx.trx
       .updateTable('crove_finance.bank_feed_account')
-      .set({ cursor: input.cursor, last_synced_at: ctx.now })
+      // A stored page clears why an earlier one stopped, in the same transaction as its lines (#4244).
+      .set({ cursor: input.cursor, last_synced_at: ctx.now, last_pull_outcome: 'ok', last_pull_outcome_at: ctx.now, last_pull_item: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', mapped.id)
       .execute();
@@ -381,5 +436,52 @@ export const bankFeedRecordPull = defineCommand({
   },
 });
 
-export const bankFeedCommands = [bankFeedMap, bankFeedUnmap, bankFeedRecordAccounts, bankFeedRecordPull];
-export const bankFeedQueries = [bankFeedAccounts, bankFeedConnections, bankFeedListed, bankFeedPullDue, bankFeedConnection];
+// The webhook hook key of a connection (#4203, Tingee S3): 128 random bits as 22 base64url characters, shown once; the database keeps its SHA-256 only, in a definer-only table, through
+// crove_finance.bank_feed_hook_set (owners and admins, checked there too). A second call replaces the key, so the old address stops at once and a hook stopped by refused notices takes notices again.
+export const bankFeedHookKey = () => randomBytes(16).toString('base64url');
+export const bankFeedHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
+
+export const bankFeedHookSet = defineCommand({
+  name: 'finance.bank_feed.hook_set',
+  input: zBankFeedHookSet,
+  // A row of Crove that makes an address valid or stops the old one; it posts nothing, reaches no provider and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency
+  // key, so no replay hands it out again, and the audit row keeps the input and a flag, never the key.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  // The answer holds the key in plaintext, so it must never be stored for a replay (crove_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
+  noIdempotency: true,
+  handler: async (ctx, input): Promise<BankFeedHookCreated> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của nguồn giao dịch');
+    const connection = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!connection || !isBankFeedProviderId(connection.provider)) throw new DomainError('BANK_FEED_NOT_FOUND', 404, 'Không tìm thấy kết nối nguồn giao dịch ngân hàng');
+    if (connection.status !== 'active') throw new DomainError('BANK_FEED_INACTIVE', 422, 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại');
+    const key = bankFeedHookKey();
+    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.bank_feed_hook_set(${input.connectionId}::uuid, ${bankFeedHookKeyHash(key)}) AS made`.execute(ctx.trx);
+    const created = rows[0]?.made === true;
+    ctx.audit({ created });
+    return { provider: connection.provider, key, created };
+  },
+});
+
+export const bankFeedHook = defineQuery({
+  name: 'finance.bank_feed.hook',
+  input: zBankFeedHookSet,
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<BankFeedHookStatus> => {
+    const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
+      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.bank_feed_hook_status(${input.connectionId}::uuid)`.execute(ctx.trx);
+    const row = rows[0];
+    if (!row) return { exists: false, createdAt: null, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
+    const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());
+    return { exists: true, createdAt: iso(row.created_at), rotatedAt: iso(row.rotated_at), lastSeenAt: iso(row.last_seen_at), rejectedCount: Number(row.rejected_count), stopped: row.stopped };
+  },
+});
+
+export const bankFeedCommands = [bankFeedMap, bankFeedUnmap, bankFeedRecordAccounts, bankFeedRecordOutcome, bankFeedRecordPull, bankFeedHookSet];
+export const bankFeedQueries = [bankFeedAccounts, bankFeedConnections, bankFeedListed, bankFeedPullDue, bankFeedConnection, bankFeedHook];

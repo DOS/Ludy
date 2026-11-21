@@ -498,6 +498,12 @@ export type VatReturnFiledTable = Refine<
 // Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
 export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
 export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+
+// How the last pull of a mapped bank feed account ended (#4244): a closed kind, never a provider's text. The same set as the
+// CHECK on bank_feed_account.last_pull_outcome and the contract's BANK_FEED_PULL_OUTCOMES.
+export const BANK_FEED_PULL_OUTCOMES = ['ok', 'credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+export type BankFeedPullOutcome = (typeof BANK_FEED_PULL_OUTCOMES)[number];
+export type BankFeedAccountTable = Refine<G.FinanceBankFeedAccountTable, { last_pull_outcome: ColumnType<BankFeedPullOutcome | null, BankFeedPullOutcome | null, BankFeedPullOutcome | null> }>;
 // A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
 export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
@@ -618,6 +624,8 @@ export type SupplierPaymentTable = Refine<
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
+export const MARKETPLACE_AUTHORIZE_STATES = ['pending', 'authorized', 'refused', 'failed', 'shop_changed'] as const;
+export type MarketplaceAuthorizeState = (typeof MARKETPLACE_AUTHORIZE_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
 // A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
@@ -689,9 +697,12 @@ export type MisaAmisMatchTable = Refine<
   },
   'legal_entity_id'
 >;
+// The mapping of a marketplace report's columns a person confirmed (#4037): append-only, the latest row of an org and platform wins. `columns` is a jsonb list of the mapped columns (the place, the
+// header text as the file words it and the standard field), never a cell value or a buyer column; the module reads it through its contract schema.
+export type MarketplaceColumnProfileTable = Refine<G.FinanceMarketplaceColumnProfileTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, never> }>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
-  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
+  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; authorize_state: MarketplaceAuthorizeState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
@@ -1557,10 +1568,12 @@ type Refined = Tables<{
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
   'crove_finance.bank_party_rule': BankPartyRuleTable;
+  'crove_finance.bank_feed_account': BankFeedAccountTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_column_check': MarketplaceColumnCheckTable;
+  'crove_finance.marketplace_column_profile': MarketplaceColumnProfileTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
   'crove_finance.misa_amis_match': MisaAmisMatchTable;

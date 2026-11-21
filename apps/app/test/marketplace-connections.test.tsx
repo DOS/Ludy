@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LegalEntity, MarketplaceConnection, MarketplaceProviders } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown } from '../src/lib/marketplace-connections.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, marketplaceCardShown, pollStateKey, REAUTHORIZE_NOTICE_DAYS, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../src/lib/marketplace-connections.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -67,6 +67,8 @@ const connection = (over: Partial<MarketplaceConnection> = {}): MarketplaceConne
   lastPolledAt: null,
   lastPollState: null,
   ordersWaiting: 0,
+  authorizeState: null,
+  reauthorizeBy: null,
   ...over,
 });
 
@@ -85,7 +87,7 @@ function card(role: Role, seed: Seed = {}): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <MarketplaceConnectionsCard role={role} />
+        <MarketplaceConnectionsCard role={role} orgSlug="acme" />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -203,6 +205,58 @@ describe('MarketplaceConnectionsCard', () => {
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
   });
 
+  it('tells a Lazada seller who has not authorized the app apart from one whose key was refused, and shows the App Key as text and the App Secret hidden', () => {
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
+    const notYet = card('owner', { providers: lazada, connections: [mine({ lastTestState: 'api_not_enabled', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(notYet).toContain(esc(en.marketplaceConnections.testStatesLazada.api_not_enabled));
+    expect(notYet).toContain(esc(en.marketplaceConnections.pollStatesLazada.not_authorized));
+    expect(notYet).not.toContain(esc(en.marketplaceConnections.pollStates.credentials));
+    const refused = card('owner', { providers: lazada, connections: [mine({ lastTestState: 'wrong_credentials', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(refused).toContain(esc(en.marketplaceConnections.testStatesLazada.wrong_credentials));
+    expect(refused).toContain(esc(en.marketplaceConnections.pollStates.credentials));
+    expect(refused).not.toContain(esc(en.marketplaceConnections.pollStatesLazada.not_authorized));
+    // The sandbox keeps the generic words, and a Lazada state with no words of its own does too.
+    expect(testStateKey('sandbox', 'api_not_enabled')).toBe('testStates.api_not_enabled');
+    expect(testStateKey('lazada', 'unreachable')).toBe('testStates.unreachable');
+    expect(pollStateKey(mine({ lastTestState: null }), 'credentials')).toBe('pollStates.credentials');
+    expect(pollStateKey(connection({ lastTestState: 'api_not_enabled' }), 'credentials')).toBe('pollStates.credentials');
+    expect(pollStateKey(mine({ lastTestState: 'api_not_enabled' }), 'ok')).toBe('pollStates.ok');
+    // The form: the App Key is an identifier shown as typed, the App Secret is hidden, both in words.
+    const form = card('owner', { providers: lazada, connections: [] });
+    expect(form).toMatch(/type="text"[^>]*aria-label="App Key"|aria-label="App Key"[^>]*type="text"/);
+    expect(form).toMatch(/type="password"[^>]*aria-label="App Secret"|aria-label="App Secret"[^>]*type="password"/);
+    // Vietnamese words exist for both.
+    expect(card('owner', { providers: lazada, connections: [], locale: 'vi' })).toContain('Mã bí mật ứng dụng (App Secret)');
+  });
+
+  it('offers Authorize on a live Lazada connection to an owner or admin, says where the authorization stands and until when, and offers it to no one else (#4238)', () => {
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
+    const fresh = card('owner', { providers: lazada, connections: [mine({})] });
+    expect(fresh).toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(fresh).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    const done = card('admin', { providers: lazada, connections: [mine({ authorizeState: 'authorized', reauthorizeBy: '2027-05-20T08:00:00.000Z' })] });
+    expect(done).toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    expect(done).toContain(en.marketplaceConnections.authorizeStates.authorized);
+    expect(done).toContain('authorize again before');
+    for (const state of ['pending', 'refused', 'failed'] as const) {
+      expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: state })] })).toContain(esc(en.marketplaceConnections.authorizeStates[state]));
+    }
+    // A seller who was not the seller of the connection (#4285) reads it in words, with the button to authorize again, in both languages.
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'shop_changed' })] })).toContain(esc(en.marketplaceConnections.authorizeStates.shopChanged));
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'shop_changed' })], locale: 'vi' })).toContain('không phải là người bán của kết nối này');
+    // Members and viewers read it; no button. A dead connection and the sandbox have none.
+    for (const role of ['member', 'viewer'] as const) expect(card(role, { providers: lazada, connections: [mine({ authorizeState: 'pending' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(card('owner', { providers: lazada, connections: [mine({ status: 'expired' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(card('owner')).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(canAuthorize(mine({}), lazada.adapters)).toBe(true);
+    expect(canAuthorize(mine({}), [])).toBe(false);
+    expect(canAuthorize(connection(), offered.adapters)).toBe(false);
+    // Vietnamese words exist.
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'refused' })], locale: 'vi' })).toContain('Cấp quyền lại');
+  });
+
   it('is in Vietnamese with the same keys', () => {
     const html = card('owner', { locale: 'vi', connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
     expect(html).toContain('Kết nối dùng được');
@@ -228,8 +282,8 @@ describe('the helpers of the card', () => {
     expect(connectablePlatforms(partial.platforms).map((p) => p.platform)).toEqual(['shopee']);
   });
   it('hides what is typed unless the field is a plain identifier', () => {
-    for (const name of ['user', 'username', 'appId', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
-    for (const name of ['password', 'secret', 'partnerKey', 'token']) expect(fieldIsSecret(name)).toBe(true);
+    for (const name of ['user', 'username', 'appId', 'appKey', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
+    for (const name of ['password', 'secret', 'appSecret', 'partnerKey', 'token']) expect(fieldIsSecret(name)).toBe(true);
   });
 });
 
@@ -239,5 +293,75 @@ describe('the card\'s messages', () => {
     const { vi: vietnamese } = await import('../src/i18n/messages/vi.ts');
     const shape = (value: unknown): unknown => (value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, shape(v)])) : typeof value);
     expect(shape(vietnamese.marketplaceConnections)).toEqual(shape(en.marketplaceConnections));
+  });
+});
+
+describe('the re-authorize notice (#4240 S3b)', () => {
+  const NOW = new Date('2026-11-21T08:00:00.000Z');
+  const inDays = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
+  const authorized = (reauthorizeBy: string | null, over: Partial<MarketplaceConnection> = {}) => connection({ provider: 'marketplace_lazada', platform: 'lazada', authorizeState: 'authorized', reauthorizeBy, ...over });
+
+  it('says nothing until 14 days before the date, `soon` from then, and `ended` once it has passed', () => {
+    expect(REAUTHORIZE_NOTICE_DAYS).toBe(14);
+    expect(reauthorizeNotice(authorized(inDays(60)), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(14.01)), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(14)), NOW)).toBe('soon');
+    expect(reauthorizeNotice(authorized(inDays(1)), NOW)).toBe('soon');
+    expect(reauthorizeNotice(authorized(inDays(0)), NOW)).toBe('ended');
+    expect(reauthorizeNotice(authorized(inDays(-3)), NOW)).toBe('ended');
+  });
+
+  it('has no notice without a date, for a connection that was not authorized, a disconnected one, or a date that is no date', () => {
+    expect(reauthorizeNotice(authorized(null), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(3), { authorizeState: null }), NOW)).toBeNull();
+    for (const state of ['pending', 'refused', 'failed'] as const) expect(reauthorizeNotice(authorized(inDays(3), { authorizeState: state }), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(3), { status: 'revoked' }), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized('not a date'), NOW)).toBeNull();
+    // An expired connection (the sweep refused its token) still tells the seller to authorize again once the date has passed.
+    expect(reauthorizeNotice(authorized(inDays(-1), { status: 'expired' }), NOW)).toBe('ended');
+  });
+
+  it('tells a connection that cannot be authorized again (it has stopped) to disconnect and connect again, not to press a button the card does not show', () => {
+    expect(reauthorizeNoticeKey('soon', true)).toBe('reauthorizeSoon');
+    expect(reauthorizeNoticeKey('ended', true)).toBe('reauthorizeEnded');
+    expect(reauthorizeNoticeKey('soon', false)).toBe('reauthorizeReconnect');
+    expect(reauthorizeNoticeKey('ended', false)).toBe('reauthorizeReconnect');
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    // The sweep marked it expired (the platform refused the refresh token): no Authorize button, so the notice says to connect again.
+    const expired = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
+    expect(expired).toContain(esc('cannot be authorized again'));
+    expect(expired).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    expect(expired).not.toContain(esc('press Authorize again'));
+    const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
+    // Connecting again with the same App Key and Secret keeps the connection, its orders and its poll position: the words must not send the seller to disconnect (that deletes them).
+    expect(vi).toContain('Hãy nhập lại App Key và Secret, rồi cấp quyền lại');
+    expect(vi).toContain('không cần ngắt kết nối');
+    expect(vi).not.toContain('ngắt kết nối rồi kết nối lại');
+    expect(expired).toContain(esc('Re-enter your App Key and Secret, then authorize again'));
+    expect(expired).toContain(esc('no need to disconnect'));
+    expect(expired).not.toContain(esc('disconnect it and connect again'));
+  });
+
+  it('sends `deleteStaged` only when the member ticked it and orders are waiting', () => {
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 3 }, true)).toEqual({ id: 'k1', deleteStaged: true });
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 3 }, false)).toEqual({ id: 'k1' });
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 0 }, true)).toEqual({ id: 'k1' });
+  });
+
+  it('shows the notice on the card in both languages, and only when there is one', () => {
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    const soon = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(soon).toContain('data-testid="reauthorize-notice"');
+    expect(soon).toContain(esc('The authorization given to the marketplace ends on'));
+    const ended = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString())] });
+    expect(ended).toContain(esc('The authorization given to the marketplace ended on'));
+    const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(vi).toContain('Quyền cấp cho sàn sẽ hết hạn ngày');
+    const far = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() + 90 * 86_400_000).toISOString())] });
+    expect(far).not.toContain('reauthorize-notice');
+    // A member reads the notice too (the date is not a secret), but is not offered the button.
+    const member = card('member', { ...lazada, connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(member).toContain('data-testid="reauthorize-notice"');
+    expect(member).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
   });
 });

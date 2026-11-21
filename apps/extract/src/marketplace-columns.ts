@@ -3,8 +3,9 @@
 // The kernel has no sheet parser, so both happen here, and the buyer's data never leaves: the answer is the masked sheet (@crove/l10n-vn, marketplace-columns.ts: header texts and the SHAPES of a
 // few values, a buyer column blanked) or, when the request carries the platform and a mapping, the check's verdict and, when the mapping reads the file, the lines of marketplace_orders. The
 // response schema has no field a cell's content could travel in, and the shapes are held to a character class by the schema itself.
+import { createHash } from 'node:crypto';
 import { EXTRACT_LIMITS, MarketplaceColumnsInputError, decodeMarketplaceColumnsInput, type ExtractedMarketplaceColumns } from '@crove/extract-contract';
-import { MARKETPLACE_PROFILES, checkColumnMapping, columnSheet } from '@crove/l10n-vn';
+import { MARKETPLACE_PROFILES, checkColumnMapping, columnSheet, headerRowText } from '@crove/l10n-vn';
 import { readSheetGrid } from './bank-statement.ts';
 import { readToOrders } from './marketplace-orders.ts';
 
@@ -13,7 +14,9 @@ export function readMarketplaceColumns(bytes: Uint8Array): ExtractedMarketplaceC
   const file = new Uint8Array(Buffer.from(input.fileBase64, 'base64'));
   if (file.byteLength > EXTRACT_LIMITS.maxOrderReportBytes) throw new MarketplaceColumnsInputError('marketplace_columns file is larger than allowed');
   const grid = readSheetGrid(file);
-  const sheet = grid ? columnSheet(grid) : null;
+  const found = grid ? columnSheet(grid) : null;
+  // The digest is of the file's own header row (every non-empty cell, buyer columns included): only the hash leaves the sandbox.
+  const sheet = grid && found ? { ...found, headerDigest: createHash('sha256').update(headerRowText(grid, found.headerRow), 'utf8').digest('hex') } : null;
   const mapping = input.mapping;
   if (!mapping) return { sheet, check: null };
   // A file that is no sheet at all, or has no header row, is refused as the check refuses it: the person is told the same thing either way.

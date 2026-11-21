@@ -92,6 +92,8 @@ import { misaTransport } from './einvoice-transport.ts';
 import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTransport } from '@crove/misa-amis';
 import { amisTransport } from './misa-amis-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
+import { LAZADA_HOSTS, lazadaMarketplace } from './marketplace-lazada.ts';
+import { withLazadaAuthorize } from './marketplace-lazada-authorize.ts';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -128,6 +130,10 @@ const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@crove/bank-feed';
+import { hostBoundFetch } from './marketplace-adapter-kit.ts';
+import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
+import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from './marketplace-shopee-token.ts';
+import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from './marketplace-tiktok-token.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -366,7 +372,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
-type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
+type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET' | 'MARKETPLACE_PROVIDERS'> &
   Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET' | 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
@@ -483,6 +489,8 @@ export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDE
   for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
     const id = raw.trim();
     if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
+    // Lazada (#2524, S2 = #4238): named by the deployment, never on its own. Its calls are bound to the hosts the adapter names; the seller's own App Key and Secret are sealed per connection.
+    if (id === 'lazada' && isMarketplaceAdapter(id)) out[id] = withLazadaAuthorize(lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS) }), { tokenFetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
   }
   return out;
 }
@@ -659,6 +667,15 @@ export function channelRefreshers(config: ChannelConfig): Record<string, Refresh
   if (x) refreshers.x = new XRefresher(x);
   const pinterest = pinterestApp(config);
   if (pinterest) refreshers.pinterest = new PinterestRefresher(pinterest);
+  // A Lazada connection's tokens (#2524, S3a): the refresher acts only on `marketplace_lazada` connections, which exist only where MARKETPLACE_PROVIDERS names the adapter. It holds no app
+  // credential of its own (the seller's App Key and Secret are in each connection's sealed secret) and reaches only the one host its fetch is bound to.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'lazada')) refreshers.marketplace_lazada = new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
+  // A TikTok Shop connection's tokens (#2524, T1 = #4256): the same, for `marketplace_tiktok_shop`. The seller's own app key and secret are in each connection's sealed secret; the fetch reaches only
+  // the token host, and the token URL (which carries the app secret) never leaves the token module.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'tiktok_shop')) refreshers.marketplace_tiktok_shop = new TiktokRefresher({ fetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS) });
+  // A Shopee connection's tokens (#2524, S1 = #4274): the same, for `marketplace_shopee`. The partner id and key are in each connection's sealed secret; the fetch reaches only the one API host, and the refresh
+  // token rotates and works once, so the sweep's `ifVersion` re-seal is what keeps the pair.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'shopee')) refreshers.marketplace_shopee = new ShopeeRefresher({ fetch: hostBoundFetch(SHOPEE_TOKEN_HOSTS) });
   return refreshers;
 }
 
@@ -837,6 +854,9 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
+          // The adapters whose notices are signed with each customer's own secret (Tingee, #4203): the hook route exists only for these.
+          // Only with a credential broker, as the worker's drain and nightly sweep of the stored notices need one (#4203): without it the route is not registered and no raw notice can be stored.
+          bankFeedHooks: resolved.broker.id !== 'none' ? Object.fromEntries(Object.entries(bankFeedHostedOf(config)).filter(([, p]) => p.verifyHook && p.hookTimestampFresh)) : {},
           channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
