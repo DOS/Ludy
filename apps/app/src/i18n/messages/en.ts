@@ -5706,7 +5706,7 @@ export const en = {
     },
     pollStatesTiktok: { not_authorized: 'The app is not authorized on TikTok Shop yet, so no orders can be read' },
     authorizeStatesTiktok: {
-      failed: 'The authorization could not be completed. The app must be bound to exactly one shop (none, or several, is not accepted); check that, then press Authorize again. If it keeps failing, tell the system administrator.',
+      failed: 'The authorization could not be completed. It can be a passing TikTok problem, so try Authorize again; if it fails again, check that the app is bound to exactly one shop (none, or several, is not accepted). If it keeps failing, tell the system administrator.',
     },
     pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {

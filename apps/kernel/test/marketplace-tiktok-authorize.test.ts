@@ -91,9 +91,13 @@ describe('the trade of the code and the choice of the shop', () => {
 
   it('says `failed` when the shop list cannot be read, and refused for a code TikTok does not accept (used, or not a seller\'s)', async () => {
     const down = setup({ intercept: (host, path) => (host === 'open-api.tiktokglobalshop.com' && path.includes('/shops') ? new Response('down', { status: 503 }) : undefined) });
-    expect(await down.provider.authorize!(TYPED, 'CODE1')).toEqual({ failed: 'SHOPS' });
+    const downResult = await down.provider.authorize!(TYPED, 'CODE1');
+    expect(downResult).toEqual({ failed: 'SHOPS' });
+    expect(leaks(downResult)).toEqual([]);
     const { provider } = setup();
-    expect(await provider.authorize!(TYPED, 'NOT-A-CODE')).toMatchObject({ refused: expect.any(String) });
+    const refusedResult = await provider.authorize!(TYPED, 'NOT-A-CODE');
+    expect(refusedResult).toMatchObject({ refused: expect.any(String) });
+    expect(leaks(refusedResult)).toEqual([]);
     const creator = setup({ userType: 1 });
     expect(await creator.provider.authorize!(TYPED, 'CODE1')).toMatchObject({ refused: expect.any(String) });
   });

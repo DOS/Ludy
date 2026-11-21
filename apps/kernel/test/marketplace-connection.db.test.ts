@@ -871,7 +871,7 @@ suite('marketplace connections (#2519)', () => {
     expect(typeof secret.accessToken).toBe('string');
     // Nothing readable holds the code, the state or a secret.
     const dump = JSON.stringify({ audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]), outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]), list: (await call('connections/list', owner, undefined, tiktokApp)).text });
-    for (const word of ['TT-CODE-1', 'tt-app-secret', state, String(secret.accessToken)]) expect(dump).not.toContain(word);
+    for (const word of ['TT-CODE-1', 'tt-app-secret', state, String(secret.accessToken), String(secret.refreshToken), fakeShop().cipher, fakeShop().id]) expect(dump).not.toContain(word);
     expect((await call('connections/disconnect', owner, { id }, tiktokApp)).body).toEqual({ removed: true });
   });
 
