@@ -516,7 +516,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     });
     expect(cancelled.status).toBe('cancelled');
 
-    const myRequests = await o.query<HrLeaveRequestView[]>(o.staffA, 'hr.self.leave.request_list', {
+    const myRequests = await o.query<HrLeaveRequestView[]>(o.staffA, 'hr.self.leave.requests', {
       scope: 'mine',
     });
     expect(myRequests.find((r) => r.id === subCancel.requestId)).toMatchObject({
@@ -637,7 +637,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     const soleAudit = await adminPool.query<{ detail: Record<string, unknown> }>(
       `SELECT detail FROM crove_kernel.audit_event
         WHERE org_id = $1 AND command = 'hr.leave_request.approve_final'
-        ORDER BY created_at DESC LIMIT 1`,
+        ORDER BY occurred_at DESC LIMIT 1`,
       [soleOrgId],
     );
     expect(soleAudit.rows[0]?.detail).toMatchObject({ selfApproved: true });

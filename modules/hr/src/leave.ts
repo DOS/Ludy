@@ -140,6 +140,8 @@ export const leaveSet = defineCommand({
       'created_at',
       'updated_at',
     ]),
+    // Deleting a leave entry via days = '0' triggers ON DELETE SET NULL on linked leave_request rows.
+    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['payroll_leave_entry_id']),
   ],
   handler: async (ctx, input): Promise<HrLeaveWritten> => {
     const userId = userOf(ctx.actor);
@@ -224,7 +226,10 @@ export const leaveDelete = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: (input: { entryId: string }) => ({ type: 'hr.payroll_leave_entry', id: input.entryId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_leave_entry', ['id'])],
+  writes: [
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_leave_entry', ['id']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['payroll_leave_entry_id']),
+  ],
   handler: async (ctx, input): Promise<HrLeaveWritten> => {
     userOf(ctx.actor);
     const found = await ctx.trx
