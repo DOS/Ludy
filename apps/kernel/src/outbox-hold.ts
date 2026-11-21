@@ -36,6 +36,7 @@ export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'sign.envelope.inspect_queued',
   'sign.template.inspect_queued',
   'sign.envelope.seal_queued',
+  'sign.ca.sign_queued',
 ]);
 
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.

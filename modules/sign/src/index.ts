@@ -39,6 +39,18 @@ export {
 } from './public-commands.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
+  assertSignCaProviderAllowed,
+  isSignCaBrokerAvailable,
+  isSignLiveCaEnabled,
+  setSignCaBrokerAvailable,
+  setSignLiveCaEnabled,
+  signCaCommands,
+  signCaQueries,
+  type SealedCaConnectionSecret,
+  type SignCaJobBeginResult,
+  type SignCaJobRecordResult,
+} from './ca.ts';
+export {
   signTemplateCommands,
   signTemplateQueries,
   type SignTemplateInspectJobData,
