@@ -22,7 +22,7 @@ export type SignDeliveryMode = (typeof SIGN_DELIVERY_MODES)[number];
 export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'stamp', 'date', 'text', 'checkbox'] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
 
 export const MIN_FIELD_W = 0.02;
@@ -58,6 +58,7 @@ export interface SignDetectedTag extends NormalizedBox {
 export const DEFAULT_FIELD_SIZE: Record<SignFieldType, { readonly wNorm: number; readonly hNorm: number }> = {
   signature: { wNorm: 0.24, hNorm: 0.08 },
   initials: { wNorm: 0.14, hNorm: 0.065 },
+  stamp: { wNorm: 0.18, hNorm: 0.11 },
   date: { wNorm: 0.18, hNorm: 0.048 },
   text: { wNorm: 0.24, hNorm: 0.052 },
   checkbox: { wNorm: 0.04, hNorm: 0.032 },
@@ -153,7 +154,7 @@ export function checkSendReadiness(input: {
   if (activeSigners.length === 0) return 'NO_SIGNERS';
   const sigCountBySigner = new Map<string, number>();
   for (const field of input.fields) {
-    if (field.fieldType === 'signature') {
+    if (field.fieldType === 'signature' || field.fieldType === 'stamp') {
       sigCountBySigner.set(field.signerId, (sigCountBySigner.get(field.signerId) ?? 0) + 1);
     }
   }
@@ -292,5 +293,98 @@ export function planDetectedTagsForTemplateRoles(input: {
     applicable,
     unmatchedRoleKeys,
     alreadyAppliedCount,
+  };
+}
+
+export const INITIAL_ALL_POSITIONS = ['bottom-right', 'bottom-left'] as const;
+export type InitialAllPosition = (typeof INITIAL_ALL_POSITIONS)[number];
+
+export interface PlannedInitialPlacement extends NormalizedBox {
+  signerId: string;
+  fieldType: 'initials';
+  pageNumber: number;
+  label: string | null;
+  required: boolean;
+}
+
+// Deterministically places aligned initials boxes on preceding pages 1..pageCount-1 (#3817),
+// skipping any page that already has an initials field for this signer/role so clicking twice never duplicates.
+export function planInitialAllPrecedingPages(input: {
+  signerId: string;
+  pageCount: number;
+  existingFields: readonly {
+    signerId: string;
+    fieldType: string;
+    pageNumber: number;
+    xNorm?: number;
+    yNorm?: number;
+  }[];
+  position?: InitialAllPosition;
+  label?: string | null;
+}): {
+  targetPages: number;
+  added: PlannedInitialPlacement[];
+  skippedPages: number[];
+} {
+  const precedingCount = Math.max(0, Math.floor(input.pageCount) - 1);
+  if (!input.signerId || precedingCount === 0) {
+    return { targetPages: 0, added: [], skippedPages: [] };
+  }
+
+  const position: InitialAllPosition = input.position ?? 'bottom-right';
+  const wNorm = DEFAULT_FIELD_SIZE.initials.wNorm;
+  const hNorm = DEFAULT_FIELD_SIZE.initials.hNorm;
+  const marginX = 0.05;
+  const marginY = 0.035;
+  const baseY = roundNorm(1 - marginY - hNorm);
+  const gapX = 0.015;
+
+  const added: PlannedInitialPlacement[] = [];
+  const skippedPages: number[] = [];
+
+  for (let page = 1; page <= precedingCount; page += 1) {
+    const alreadyHasSignerInitials = input.existingFields.some(
+      (f) => f.pageNumber === page && f.signerId === input.signerId && f.fieldType === 'initials',
+    );
+    if (alreadyHasSignerInitials) {
+      skippedPages.push(page);
+      continue;
+    }
+
+    const otherInitialsInFooterBand = input.existingFields.filter(
+      (f) =>
+        f.pageNumber === page &&
+        f.signerId !== input.signerId &&
+        f.fieldType === 'initials' &&
+        (f.yNorm === undefined || Math.abs(f.yNorm - baseY) <= 0.08),
+    ).length;
+
+    const slot = otherInitialsInFooterBand % 4;
+    const rawX =
+      position === 'bottom-right'
+        ? 1 - marginX - wNorm - slot * (wNorm + gapX)
+        : marginX + slot * (wNorm + gapX);
+
+    const box = clampFieldBox({
+      xNorm: rawX,
+      yNorm: baseY,
+      wNorm,
+      hNorm,
+    });
+
+    added.push({
+      signerId: input.signerId,
+      fieldType: 'initials',
+      pageNumber: page,
+      ...box,
+      label: input.label ?? null,
+      required: true,
+    });
+  }
+
+  return {
+    targetPages: precedingCount,
+    added,
+    skippedPages,
   };
 }

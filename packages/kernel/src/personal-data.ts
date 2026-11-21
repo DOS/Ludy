@@ -565,6 +565,18 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
   'crove_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
   'crove_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
+  'crove_sign.member_signature.signature_typed_text': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved typed signature text, readable and deletable by that member alone and removed when the member leaves the org",
+  },
+  'crove_sign.member_signature.signature_png_base64': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved signature or initials PNG image, readable and deletable by that member alone and removed when the member leaves the org",
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;

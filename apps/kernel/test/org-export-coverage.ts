@@ -46,6 +46,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_social.push_subscription': 'private to its member: a browser push subscription (endpoint and keys)',
   'crove_notes.todo': "private to its member: a member's own to-dos (counts are in notes.todo_count)",
   'crove_notes.todo_list': "private to its member: a member's own to-do lists (never exported under ADR-0037)",
+  'crove_sign.member_signature': "private to its member: a member's own saved signature and initials are readable by that member alone",
   'crove_notes.note_version': 'rolling 20-snapshot revision history of notes: current shared notes are exported in notes.note and private notes stay out (ADR-0037)',
   'crove_meetings.calendar_agenda': "private to its member: a member's own agenda of upcoming meetings",
   'crove_meetings.morning_notice': "private to its member: a member's own setting for the morning notice of the day's meetings (a time of day, a time zone, a language)",

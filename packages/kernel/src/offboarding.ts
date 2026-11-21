@@ -286,6 +286,7 @@ export const EXPORT_TABLES = {
   'sign.template': { from: 'crove_sign.template', omit: [] },
   'sign.template_role': { from: 'crove_sign.template_role', omit: [] },
   'sign.template_field': { from: 'crove_sign.template_field', omit: [] },
+  'sign.org_stamp': { from: 'crove_sign.org_stamp', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;

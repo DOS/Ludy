@@ -4553,6 +4553,16 @@ export function createRpcHandler(
         direct_link_set: os.sign.template.direct_link_set.handler(signNoIdempotencyCommand('sign.template.direct_link_set')),
         direct_link_rotate: os.sign.template.direct_link_rotate.handler(signNoIdempotencyCommand('sign.template.direct_link_rotate')),
       },
+      member_signature: {
+        list: os.sign.member_signature.list.handler(signQuery('sign.member_signature.list')),
+        upsert: os.sign.member_signature.upsert.handler(signCommand('sign.member_signature.upsert')),
+        delete: os.sign.member_signature.delete.handler(signCommand('sign.member_signature.delete')),
+      },
+      stamp: {
+        list: os.sign.stamp.list.handler(signQuery('sign.stamp.list')),
+        create: os.sign.stamp.create.handler(signCommand('sign.stamp.create')),
+        archive: os.sign.stamp.archive.handler(signCommand('sign.stamp.archive')),
+      },
     },
   });
 
