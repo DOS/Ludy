@@ -63,6 +63,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       // #4203 (Tingee webhook): the purge restatement that adds crove_finance.bank_feed_hook and bank_feed_webhook_notice restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_bank_feed_hook.sql',
       'crove_kernel_org_purge_marketplace_connection_file.sql',
+      // #3554 (eSign CA settings): the purge restatement that adds crove_sign.ca_signing_request and crove_sign.ca_connection restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_sign_ca.sql',
       // #4123 (capture sessions): the purge restatement that adds crove_meetings.capture_session restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_capture_session.sql',
     ]);

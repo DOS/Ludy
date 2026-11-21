@@ -1411,6 +1411,26 @@ export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
+export const SIGN_CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const;
+export type SignCaProvider = (typeof SIGN_CA_PROVIDERS)[number];
+export const SIGN_CA_CONNECTION_STATUSES = ['active', 'disabled'] as const;
+export type SignCaConnectionStatus = (typeof SIGN_CA_CONNECTION_STATUSES)[number];
+export const SIGN_CA_TEST_STATES = [
+  'works',
+  'wrong_credentials',
+  'api_not_enabled',
+  'ip_not_allowed',
+  'unreachable',
+  'signing_needs_person',
+  'usb_token_unsupported',
+] as const;
+export type SignCaTestState = (typeof SIGN_CA_TEST_STATES)[number];
+export const SIGN_CA_REQUEST_STATUSES = ['pending', 'signed', 'rejected', 'expired', 'failed'] as const;
+export type SignCaRequestStatus = (typeof SIGN_CA_REQUEST_STATUSES)[number];
+export const SIGN_CA_RETRY_SAFETIES = ['reconcile_only'] as const;
+export type SignCaRetrySafety = (typeof SIGN_CA_RETRY_SAFETIES)[number];
+export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
+export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1452,6 +1472,15 @@ export type SignTemplateRoleTable = Refine<
   }
 >;
 export type SignTemplateFieldTable = Refine<G.SignTemplateFieldTable, { field_type: SignFieldType }>;
+export type SignCaSigningRequestTable = Refine<
+  G.SignCaSigningRequestTable,
+  {
+    provider: SignCaProvider;
+    status: Generated<SignCaRequestStatus>;
+    retry_safety: Generated<SignCaRetrySafety>;
+    sub_filter: SignCaSubFilter | null;
+  }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1501,6 +1530,7 @@ type Refined = Tables<{
   'crove_notes.todo': NotesTodoTable;
   'crove_projects.project': ProjectsProjectTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
+  'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
