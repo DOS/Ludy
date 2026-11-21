@@ -390,6 +390,20 @@ export const zBankFeedMap = z.strictObject({
 });
 export type BankFeedMap = z.infer<typeof zBankFeedMap>;
 
+// How the last pull of a mapped account ended (#4244): `ok`, or why it stopped, in a closed list that the database's CHECK keeps too. Fixed sentences on the card say what each means; nothing of a provider's own text is kept.
+export const BANK_FEED_PULL_OUTCOMES = ['ok', 'credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+export const zBankFeedPullOutcome = z.enum(BANK_FEED_PULL_OUTCOMES);
+export type BankFeedPullOutcome = z.infer<typeof zBankFeedPullOutcome>;
+// The most a page's line position may be: a page holds at most 200 transactions (the database's CHECK allows far more, so a provider with larger pages needs no migration).
+export const BANK_FEED_MAX_ITEM_INDEX = 100_000;
+export const zBankFeedLastPull = z.object({
+  outcome: zBankFeedPullOutcome,
+  at: z.string(),
+  // The refused line's number, 1-based, only for `bad_page`.
+  item: z.number().int().min(1).max(BANK_FEED_MAX_ITEM_INDEX + 1).nullable(),
+});
+export type BankFeedLastPull = z.infer<typeof zBankFeedLastPull>;
+
 export const zBankFeedAccountView = z.object({
   id: zId,
   connectionId: zId,
@@ -405,6 +419,8 @@ export const zBankFeedAccountView = z.object({
   // The earliest day the cut-over may be set to now (#4218): what the date field takes as its minimum; the server refuses an earlier one.
   // Null when the account's cursor cannot be read: no day can be set then.
   feedFromEarliest: zLocalDate.nullable(),
+  // How the last pull of this account ended (#4244), or null before the first one: a closed kind and, for a page with a line it cannot read, that line's number (1-based); never a provider's text.
+  lastPull: zBankFeedLastPull.nullable(),
 });
 export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
 
@@ -434,6 +450,22 @@ export const zBankFeedRecordPull = z.strictObject({
   cursor: z.string().min(1).max(500),
 });
 export type BankFeedRecordPull = z.infer<typeof zBankFeedRecordPull>;
+
+// Why a pull stopped (#4244), recorded by the sync (the worker, as the system) when a call or a page is refused: the connection, the account it concerns (without one, every mapped account of the connection:
+// a refusal at the account listing or the credential comes before any pull) and a closed kind. `item` is the refused line's position in the page (0-based), only with `bad_page`. `ok` is not recorded
+// here: a good record_pull clears the reason in the same transaction as its lines.
+export const zBankFeedRecordOutcome = z
+  .strictObject({
+    connectionId: zId,
+    feedAccountId: zId.optional(),
+    // Where the refused page was to start from: the reason is recorded only while the account's cursor is still there, so a late sync cannot write over what a newer pull recorded. Only with `feedAccountId`.
+    fromCursor: z.string().min(1).max(500).nullable().optional(),
+    kind: zBankFeedPullOutcome.exclude(['ok']),
+    item: z.number().int().min(0).max(BANK_FEED_MAX_ITEM_INDEX).optional(),
+  })
+  .refine((v) => v.item === undefined || v.kind === 'bad_page', { message: 'a line position goes only with bad_page', path: ['item'] })
+  .refine((v) => v.fromCursor === undefined || v.feedAccountId !== undefined, { message: 'a cursor goes only with an account', path: ['fromCursor'] });
+export type BankFeedRecordOutcome = z.infer<typeof zBankFeedRecordOutcome>;
 
 // The payroll payments a money-out line may be (#2532, payroll plan 6.4): the payments of posted pay runs, not yet recorded or asked for, whose amount equals the line's. Code decides by the amount
 // and the direction; `amount_note` says the line's description also names what the payment is (the words for wages, insurance, union fee or tax), which only ranks it. A candidate names the run, the

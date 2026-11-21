@@ -688,6 +688,55 @@ suite('bank statement import (#326)', () => {
     expect((await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor))).toBe(at);
   });
 
+  // #4244: why the last pull stopped is a closed kind (and a line position for a page with a line it cannot store), kept
+  // on the mapped account, and the next good pull clears it in the same transaction as the cursor move.
+  it('records why a pull stopped per kind on the mapped account, and clears it after a good pull', async () => {
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng lý do' })).body.connectionId);
+    await sync(connectionId);
+    const first = await feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
+    const second = await feed('map', owner, { connectionId, externalAccountId: 'SBX-002', bankAccount: '1121', idempotencyKey: randomUUID() });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const view = async (id: string) => (await feed('accounts', owner)).body.find((a: { id: string }) => a.id === id);
+    const stored = async (id: string) =>
+      admin(async (c) => (await c.query<{ cursor: string | null }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]?.cursor ?? null);
+    const system = { actor: SYSTEM, orgId };
+    expect((await view(first.body.feedAccountId)).lastPull).toBeNull();
+
+    // Every kind lands on the account, as the kind alone; a line position only for bad_page.
+    for (const kind of ['credentials', 'clock', 'rate_limited', 'upstream', 'config', 'too_many_lines'] as const) {
+      await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, kind }, system);
+      expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: kind, item: null });
+    }
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, kind: 'bad_page', item: 2 }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'bad_page', item: 3 });
+    // The other account of the connection is untouched by an account-scoped record.
+    expect((await view(second.body.feedAccountId)).lastPull).toBeNull();
+
+    // A connection-wide record (no account) reaches every mapped account of the connection.
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'credentials' }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+    expect((await view(second.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+
+    // A late record, for a cursor the account has moved past, writes nothing.
+    const cursor = await stored(first.body.feedAccountId);
+    await worker.execute('finance.bank_feed.record_outcome', { connectionId, feedAccountId: first.body.feedAccountId, fromCursor: '1999-01-01', kind: 'upstream' }, system);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'credentials' });
+
+    // The shape is closed: no free kind, no position without bad_page, no cursor without an account, no text.
+    for (const bad of [{ kind: 'ok' }, { kind: 'whatever' }, { kind: 'clock', item: 1 }, { kind: 'upstream', fromCursor: '2026-01-01' }, { kind: 'upstream', message: 'secret' }]) {
+      await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, ...bad }, system)).rejects.toMatchObject({ code: 'VALIDATION' });
+    }
+    // Only the system records it: a person cannot, whatever their role.
+    await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'clock' }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // A good pull clears it, in the same step that moves the cursor.
+    await sync(connectionId);
+    expect((await view(first.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'ok', item: null });
+    expect((await view(second.body.feedAccountId)).lastPull).toMatchObject({ outcome: 'ok', item: null });
+    expect(await stored(first.body.feedAccountId)).not.toBe(cursor);
+  });
+
   it('stops syncing once the member who connected the feed may no longer use it', async () => {
     const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng của chủ cũ' })).body.connectionId);
     await sync(connectionId);
@@ -1550,6 +1599,41 @@ suite('bank statement import (#326)', () => {
       ).toEqual([]);
       expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
       expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
+    });
+
+    // #4244: a refused call or page is recorded as a closed kind on the account (or on every mapped account for a refusal of
+    // the credential, the clock or the saved connection), the job still fails as it did, and the next good pull clears it.
+    it('records why a pull stopped, still fails the job, and clears the reason after a good pull', async () => {
+      const connected = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET, displayName: 'Tingee lý do' });
+      const connectionId = String(connected.body.connectionId);
+      await tingeeSync(connectionId);
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: TINGEE_VA, bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const lastPull = async () => (await feed('accounts', owner)).body.find((a: { id: string }) => a.id === mapped.body.feedAccountId)?.lastPull;
+      const failing = (over: Partial<BankFeedProvider>) => runBankFeedSync({ runtime: worker, broker: vault, providers: { bank_tingee: { ...tingeeAdapter, ...over } } }, { orgId, connectionId });
+      const secretText = 'upstream said: 0123456789 secret detail';
+
+      await expect(failing({ pull: async () => { throw new TingeeError('bad_page', secretText, null, 1); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'bad_page', item: 2 });
+      await expect(failing({ pull: async () => { throw new TingeeError('clock', secretText, '98'); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'clock', item: null });
+      await expect(failing({ pull: async () => { throw new Error(secretText); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'upstream' });
+      // A page over the limit is recorded before it reaches the command.
+      const many = Array.from({ length: 5001 }, (_, i) => ({ date: '2026-01-01', description: 'x', amount: '1', balance: null, reference: `R${i}` }));
+      await expect(failing({ pull: async () => ({ transactions: many, cursor: '20260101000000', more: false }) })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'too_many_lines' });
+      // A refusal of the listing concerns every mapped account of the connection.
+      await expect(failing({ accounts: async () => { throw new TingeeError('credentials', secretText, '97'); } })).rejects.toThrow();
+      expect(await lastPull()).toMatchObject({ outcome: 'credentials' });
+
+      // Nothing the provider said, and no line, is kept: only the kind, a time and a position.
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_feed_account WHERE org_id = $1 AND row_to_json(bank_feed_account)::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+
+      // The next good pull clears it.
+      await tingeeSync(connectionId);
+      expect(await lastPull()).toMatchObject({ outcome: 'ok', item: null });
     });
 
     it('limits how often an org may try a credential, before any call to Tingee', async () => {

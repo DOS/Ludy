@@ -188,6 +188,20 @@ function LastSynced({ account }: { account: BankFeedAccountView }) {
   return <>{account.lastSyncedAt ? t('syncedAt', { when: f.dateTime(account.lastSyncedAt) }) : t('neverSynced')}</>;
 }
 
+// Why the last pull of an account stopped, in one plain sentence per kind (#4244). It draws nothing after a good pull
+// (the server clears the reason in the same transaction) or before any pull. `item` is 1-based; the sentence never
+// carries the bank's own text.
+function PullReason({ account }: { account: BankFeedAccountView }) {
+  const t = useTranslations('bankFeeds');
+  const last = account.lastPull;
+  if (!last || last.outcome === 'ok') return null;
+  return (
+    <p className="text-xs text-warning" role="status">
+      {last.outcome === 'bad_page' && last.item !== null ? t('pullReason.bad_page_item', { item: String(last.item) }) : t(`pullReason.${last.outcome}`)}
+    </p>
+  );
+}
+
 // One account the connection lists (or a mapped one it no longer lists): where its lines go, and the form to choose
 // that. The legal entity is chosen only by an org with more than one, and stays with a mapping once made: another one
 // takes an unmap first (the server refuses otherwise).
@@ -251,6 +265,7 @@ function AccountRow({
           {mapped.feedFrom && ` · ${t('feedFromOn', { date: f.date(mapped.feedFrom) })}`}
         </p>
       )}
+      {mapped && <PullReason account={mapped} />}
       {row.gone && (
         <p className="text-xs text-warning" role="status">
           {t('gone')}
@@ -545,6 +560,7 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
             <p className="text-xs text-subtle-foreground">
               {t('mappedTo', { account: a.bankAccount })} · <LastSynced account={a} />
             </p>
+            <PullReason account={a} />
           </li>
         ))}
       </ul>

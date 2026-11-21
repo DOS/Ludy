@@ -343,6 +343,9 @@ describe('pulling transactions', () => {
       const bad = tx('20261110090200', '9000', 'credit', { content: 'PRIVATE-TRANSFER-TEXT', ...over });
       const error = await failure(() => pullAll(setup({ transactions: [ok, bad] }).adapter));
       expect(error.kind).toBe('bad_page');
+      // The position is a number of its own, so a screen shows it without reading the message.
+      expect(typeof (error as { itemIndex?: unknown }).itemIndex).toBe('number');
+      expect(error.message).toContain(`transaction ${(error as { itemIndex: number }).itemIndex} of the page`);
       expect(error.message).toMatch(/^tingee: transaction \d+ of the page has /);
       expect(error.message).toContain(what);
       expect(error.message).not.toContain('PRIVATE-TRANSFER-TEXT');
@@ -363,7 +366,7 @@ describe('pulling transactions', () => {
 
     const oneDay = Array.from({ length: 5200 }, (_, i) => tx(`20261020${String(Math.floor(i / 300) + 1).padStart(2, '0')}${String(i % 60).padStart(2, '0')}00`, '1000'));
     const error = await failure(() => setup({ transactions: oneDay }).adapter.pull(credential(), VA, null));
-    expect(error).toMatchObject({ kind: 'bad_page' });
+    expect(error).toMatchObject({ kind: 'too_many_lines', itemIndex: null });
     expect(error.message).toContain('a single day');
   });
 });
