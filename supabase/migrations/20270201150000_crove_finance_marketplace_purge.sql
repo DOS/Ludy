@@ -2,7 +2,7 @@
 -- Crove finance (issue #4284, owner-line decision of 2026-11-21 on #4276, ADR-0045 point 8): the reports a marketplace connection's poll brought in that were NEVER booked are destroyed a short time after
 -- the connection is gone, not after the 90 days of the decided reports (Lazada's terms ask for the platform's data to be destroyed within 14 days of revocation). Idempotent; applied files stay untouched.
 --
--- What is "booked": a report whose latest extraction version is a marketplace read (marketplace_orders or marketplace_income) in the state `imported` (a member confirmed it: its orders became order lines and moved
+-- What is "booked": a report any of whose extraction versions is a marketplace read (marketplace_orders or marketplace_income) in the state `imported` (a member confirmed it: its orders became order lines and moved
 -- stock, or its income became a settlement). Those, and everything derived from them, are never touched here (they keep the 90 days of the originals and the retention accounting law asks for). Never booked
 -- is everything else a poll brought in: still waiting (`staged`), skipped (`rejected`), or never read. Also never touched: a file under an evidence hold (held_until), a file a purchase document names as its
 -- source, and any file that is not a poll's own (a CSV upload whose reads are all marketplace reads, or none yet): a bank statement or an invoice is never reachable.
@@ -40,7 +40,10 @@ CREATE OR REPLACE FUNCTION crove_finance.marketplace_connection_link_stamp() RET
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   UPDATE crove_finance.marketplace_connection_file l
-     SET disconnected_at = pg_catalog.now()
+     -- A channel already revoked (a disconnect that stopped between its two steps) keeps its revocation time: a late unlink does not restart the clock.
+     SET disconnected_at = COALESCE(
+           (SELECT ch.updated_at FROM crove_kernel.channel_connection ch WHERE ch.org_id = OLD.org_id AND ch.id = OLD.channel_connection_id AND ch.status = 'revoked'),
+           pg_catalog.now())
    WHERE l.org_id = OLD.org_id AND l.marketplace_connection_id = OLD.id AND l.disconnected_at IS NULL;
   RETURN OLD;
 END $$;
@@ -119,7 +122,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
       SELECT 1 FROM crove_kernel.extraction x
       WHERE x.org_id = f.org_id AND x.file_id = f.id
         AND x.status = 'done'
-        AND NOT (x.method = 'unsupported' AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income'))
+        AND NOT (x.method = 'unsupported' AND COALESCE(x.result ->> 'kind', '') IN ('marketplace_orders', 'marketplace_income'))
     )
     -- Booked: ANY version of the file is a marketplace read a member imported (not only the newest: a later version never un-books it).
     AND NOT EXISTS (
@@ -144,8 +147,8 @@ BEGIN
     -- The columns are paired through confkey: the referencing column that points at the file's org_id and the one that points at its id, whatever order the constraint lists them in.
     SELECT c.conrelid::pg_catalog.regclass::text AS rel, oa.attname::text AS org_col, fa.attname::text AS file_col
     FROM pg_catalog.pg_constraint c
-    CROSS JOIN LATERAL pg_catalog.unnest(c.conkey, c.confkey) AS o(ckey, fkey)
-    CROSS JOIN LATERAL pg_catalog.unnest(c.conkey, c.confkey) AS f(ckey, fkey)
+    CROSS JOIN LATERAL ROWS FROM (pg_catalog.unnest(c.conkey), pg_catalog.unnest(c.confkey)) AS o(ckey, fkey)
+    CROSS JOIN LATERAL ROWS FROM (pg_catalog.unnest(c.conkey), pg_catalog.unnest(c.confkey)) AS f(ckey, fkey)
     JOIN pg_catalog.pg_attribute po ON po.attrelid = c.confrelid AND po.attnum = o.fkey AND po.attname = 'org_id'
     JOIN pg_catalog.pg_attribute pf ON pf.attrelid = c.confrelid AND pf.attnum = f.fkey AND pf.attname = 'id'
     JOIN pg_catalog.pg_attribute oa ON oa.attrelid = c.conrelid AND oa.attnum = o.ckey

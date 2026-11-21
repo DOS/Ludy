@@ -125,8 +125,11 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
   const fileRow = async (fileId: string) => (await rows<{ original_deleted_at: string | null; storage_key: string; sha256: string }>('SELECT original_deleted_at::text, storage_key, sha256 FROM crove_kernel.file WHERE id = $1', [fileId]))[0];
   const versions = (fileId: string) => rows<{ version: number; state: string | null }>("SELECT version, result -> 'summary' ->> 'state' AS state FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
   const link = (fileId: string) => rows<{ marketplace_connection_id: string | null; disconnected_at: string | null }>('SELECT marketplace_connection_id, disconnected_at::text FROM crove_finance.marketplace_connection_file WHERE file_id = $1', [fileId]);
-  const cursor = async (connectionId: string) => (await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM crove_finance.marketplace_connection WHERE id = $1', [connectionId]))[0]?.poll_cursor ?? 'no row';
-  const run = () => runMarketplacePurge({ runtime: worker, workerDb, store, log: { log: () => undefined, error: () => undefined } });
+  const cursor = async (connectionId: string) => {
+    const found = await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM crove_finance.marketplace_connection WHERE id = $1', [connectionId]);
+    return found.length === 0 ? 'no row' : (found[0] as { poll_cursor: string | null }).poll_cursor;
+  };
+  const run = (batch?: number) => runMarketplacePurge({ runtime: worker, workerDb, store, ...(batch === undefined ? {} : { batch }), log: { log: () => undefined, error: () => undefined } });
   const system = (o: Org) => ({ actor: { type: 'system' as const, component: 'test' }, orgId: o.orgId });
 
   beforeAll(async () => {
@@ -369,6 +372,73 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect(await link(file)).toEqual([{ marketplace_connection_id: second, disconnected_at: null }]);
   });
 
+  it('does not link a page whose bytes are a member\'s own upload, so the purge never reaches it', async () => {
+    const o = await org();
+    const bytes = new TextEncoder().encode(`own upload ${randomUUID()}`);
+    const sha256 = sha256Hex(bytes);
+    const storageKey = fileKey(o.orgId, sha256);
+    const generation = await store.put(storageKey, bytes);
+    const { fileId: own } = await rt.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'cua-toi.csv', contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+    const id = await connection(o, 'shopee');
+    // The platform's page carries the same bytes: the intake answers the member's file as a duplicate.
+    const input = { marketplaceConnectionId: id, filename: 'trang.csv', contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation };
+    const out = await worker.execute<{ fileId: string; duplicate: boolean }>('finance.marketplace_connection.ingest_page', input, { actor: { type: 'system', component: 'marketplace-poll' }, orgId: o.orgId });
+    expect(out).toMatchObject({ fileId: own, duplicate: true });
+    expect(await link(own)).toEqual([]);
+    await disconnect(o, id);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 0 });
+    expect(await fileRow(own)).toBeDefined();
+    expect(store.has(storageKey)).toBe(true);
+  });
+
+  it('keeps the revocation time when a revoked channel is unlinked late: the clock is not restarted', async () => {
+    const o = await org();
+    const id = await connection(o, 'shopee');
+    const file = await polled(o, id, ['staged']);
+    // The disconnect stopped after revoking the channel ten days ago; the unlink comes only now.
+    await channel(o, id, 'revoked', GRACE + 3);
+    await disconnect(o, id);
+    const [stamped] = await link(file);
+    expect(stamped?.marketplace_connection_id).toBeNull();
+    const days = (Date.now() - Date.parse(String(stamped?.disconnected_at))) / 86_400_000;
+    expect(days).toBeGreaterThan(GRACE + 2);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
+    expect(await fileRow(file)).toBeUndefined();
+  });
+
+  it('a finished read of no recognised kind keeps the file out of the purge', async () => {
+    const o = await org();
+    const id = await connection(o, 'shopee');
+    const file = await polled(o, id, []);
+    await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', '{}'::jsonb, '[]')", [o.orgId, file]);
+    await disconnect(o, id);
+    await age(o, file, 400);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 0 });
+    expect(await fileRow(file)).toBeDefined();
+  });
+
+  it('files another table points at do not hide the newer files behind them in a batch', async () => {
+    const o = await org();
+    const id = await connection(o, 'shopee');
+    const used = await polled(o, id, ['staged']);
+    const free = await polled(o, id, ['staged']);
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES crove_kernel.file (org_id, id))');
+    await rows('INSERT INTO public.purge_probe (org_id, file_id) VALUES ($1, $2)', [o.orgId, used]);
+    await disconnect(o, id);
+    // The referenced file is the oldest, so a batch of one lists it first.
+    await age(o, used, GRACE + 5);
+    await age(o, free, GRACE + 1);
+    expect(await run(1)).toMatchObject({ failed: 0, deleted: 1 });
+    expect(await fileRow(free)).toBeUndefined();
+    expect(await fileRow(used)).toBeDefined();
+    await rows('DELETE FROM public.purge_probe WHERE file_id = $1', [used]);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
+  });
+
   it('leaves a file another table still points at, whatever order its foreign key lists the columns in: nothing of it is deleted, and it goes once the reference is gone', async () => {
     const o = await org();
     const id = await connection(o, 'shopee');
@@ -448,8 +518,11 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_key($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
-    await expect(workerPool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, randomUUID(), file])).rejects.toBeDefined();
-    await expect(pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, randomUUID(), file])).rejects.toBeDefined();
+    // A real connection of the same org, so only the context guard can be what refuses.
+    const target = await connection(o, 'lazada');
+    for (const target_pool of [workerPool, pool]) {
+      await expect(target_pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MARKETPLACE_PURGE_WORKER_ONLY') });
+    }
     // The rule and the reference check are nobody's to call: no role executes them (the definers do, as their owner).
     for (const target of [workerPool, pool]) {
       await expect(target.query('SELECT * FROM crove_finance.marketplace_purge_candidates(NULL, NULL, $1, $2)', [GRACE, EXPIRED])).rejects.toBeDefined();

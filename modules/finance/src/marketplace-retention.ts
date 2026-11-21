@@ -5,7 +5,7 @@
 // summary: counts, totals, the settlement) and the file row (its sha256, so the same bytes are still recognised) stay. The database checks the kind, the decision and the age again,
 // so a bug in the job can fail a run but never delete a bank statement, an invoice, a report still waiting for a member, or anything before day 90.
 // The same two commands also serve the purge of what a GONE connection's poll brought in and no member imported (#4284, `disconnected: true`): MARKETPLACE_PURGE_GRACE_DAYS after the connection was
-// disconnected or its channel revoked (or MARKETPLACE_PURGE_EXPIRED_DAYS after it expired with no new authorization), the file row, its original and every read of it go (crove_finance.marketplace_purge_*,
+// disconnected or its channel revoked (or after it has stayed expired for MARKETPLACE_PURGE_EXPIRED_DAYS with no new authorization, and then the same grace: 30 + 7 = 37 days by default), the file row, its original and every read of it go (crove_finance.marketplace_purge_*,
 // worker only), never a report a member imported. One command name, so the per-org app gate treats it as the retention it is.
 // The audit trail carries the file id and counts only: nothing of the file.
 import { sql } from 'kysely';

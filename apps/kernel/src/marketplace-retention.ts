@@ -74,14 +74,14 @@ async function sweep(deps: SweepDeps, kind: SweepKind): Promise<MarketplaceReten
   const log = deps.log ?? console;
   const run: MarketplaceRetentionRun = { deleted: 0, objects: 0, versions: 0, failed: 0 };
   const actor: SystemActor = { type: 'system', component: kind.component };
-  // Files that failed in this run: asked for again past them, so a few failing rows never stall the others (the next run tries them again).
+  // Files left in this run, because they failed or were skipped (not due any more, or still referenced by another table): asked for again past them, so a few such rows never stall the others (the next run
+  // tries them again).
   const failedNow = new Set<string>();
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
     const size = deps.batch ?? DUE_BATCH;
     const limit = Math.min(size + failedNow.size, 1000);
     const listed = await kind.list(deps.workerDb, limit);
     const rows = listed.filter((r) => !failedNow.has(r.file_id));
-    let progress = 0;
     for (const row of rows) {
       const options = { actor, orgId: row.org_id };
       try {
@@ -97,11 +97,14 @@ async function sweep(deps: SweepDeps, kind: SweepKind): Promise<MarketplaceReten
           if (out.applied) {
             run.deleted += 1;
             run.versions += out.versions;
-            progress += 1;
             // The same bytes uploaded between the first delete and the marker are stored under the same key (the file was still unmarked, so nothing cleared or refused it): deleting once more
             // after the marker closes that window. From here on a duplicate upload clears the marker (file_original_restore) and the next run deletes it again.
             if (!key.shared) await deps.store.delete(key.storageKey, { retention: 'expire' });
+          } else {
+            failedNow.add(row.file_id);
           }
+        } else {
+          failedNow.add(row.file_id);
         }
       } catch (error) {
         run.failed += 1;
@@ -110,8 +113,9 @@ async function sweep(deps: SweepDeps, kind: SweepKind): Promise<MarketplaceReten
         log.error(`${kind.tag} file ${row.file_id.slice(0, 8)} in org ${row.org_id.slice(0, 8)} not removed`, error instanceof Error ? error.name : typeof error);
       }
     }
-    // A batch that removed nothing would list the same files again; they are tried on the next run.
-    if (progress === 0 || listed.length < limit) break;
+    // Nothing new in this batch (every row was already left in this run): they are tried on the next run. A full batch of skipped rows does not hide the newer ones behind it: the next list is asked for
+    // that many more.
+    if (rows.length === 0 || listed.length < limit) break;
   }
   log.log(`${kind.tag} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
   if (run.failed > 0) opsAlert(`${kind.tag} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
