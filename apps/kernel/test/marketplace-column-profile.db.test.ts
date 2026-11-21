@@ -161,6 +161,8 @@ suite('the confirmed column mapping (#4037)', () => {
   });
 
   it('is refused for a member and a viewer of the org, which store nothing, and both still read the profile', async () => {
+    // The owner's mapping is confirmed here too (a no-op when an earlier test did it), so the reads below do not depend on the profile another test left.
+    await confirm('shopee', [...mapping(), { index: 5, header: 'Product', field: 'itemName' }]);
     const before = await stored();
     const body = { platform: 'shopee', headerRow: 1, columns: mapping([{ index: 12, header: 'Member tried', field: 'variation' }]), headerDigest: 'c'.repeat(64) };
     for (const who of [member, viewer]) {
