@@ -5687,7 +5687,7 @@ export const en = {
   marketplaceVatRate: {
     title: 'Marketplaces: VAT on your sales',
     intro:
-      'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books use it to split output VAT (33311) from the sales. A change is a new row from its date, never an edit.',
+      'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books use it to split output VAT (33311) from the sales. A change or a correction is a new row from its date, never an edit: enter the date again to fix a wrong row.',
     entity: 'Company',
     empty: 'No VAT rate saved yet. Until one covers a month, that month of marketplace sales is held back instead of posted with a guessed rate.',
     statusNone: 'No rate saved yet',
@@ -5697,9 +5697,11 @@ export const en = {
     rowDeduction: 'VAT by deduction, {percent}%',
     rowNone: 'No output VAT line (not on the deduction method)',
     inForce: 'in force now',
-    suggestion: 'Suggested schedule (Resolution 204/2025/QH15):',
+    suggestion: 'Pick the method first. For VAT by deduction, a schedule is suggested (Resolution 204/2025/QH15):',
+    suggestMethodLabel: 'Method',
+    suggestMethodPick: 'Choose a method',
     suggestionNote: 'Nothing is saved until you confirm. Check it with your accountant if your goods are not all at one rate.',
-    confirmSuggestion: 'Confirm this schedule',
+    confirmSuggestion: 'Confirm and save',
     addTitle: 'Add a VAT row',
     dateLabel: 'From date',
     methodLabel: 'Method',
@@ -5709,7 +5711,6 @@ export const en = {
     add: 'Add row',
     problems: {
       date: 'Enter a valid date.',
-      order: 'The date must be after the latest saved row.',
       rate: 'Enter a rate from 0 to 100 with at most two decimals.',
     },
     oneRateNote: 'One rate per company. Goods at different rates are not split here; talk to your accountant.',
@@ -13855,7 +13856,6 @@ export const en = {
       HOUSEHOLD_PROFILE_ORDER: 'A new profile must take effect after the latest one; a change is a new row from its date',
       HOUSEHOLD_PROFILE_LOCKED: 'The period is locked; the new profile must take effect after the locked period',
       MARKETPLACE_VAT_RATE_DATE: 'The effective date is not valid',
-      MARKETPLACE_VAT_RATE_ORDER: 'A new VAT rate must take effect after the latest one; a change is a new row from its date',
       MARKETPLACE_VAT_RATE_LOCKED: 'The period is locked; the new VAT rate must take effect after the locked period',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'The household profile of this legal entity does not require the S1a book in the period chosen',
       HOUSEHOLD_TRADES_CHANGED: 'The household trades change inside the period chosen, so the book cannot split revenue by trade; choose shorter periods, before and after the change date',

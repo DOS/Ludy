@@ -5684,7 +5684,7 @@ export const vi = {
   marketplaceVatRate: {
     title: 'Sàn: thuế GTGT trên doanh thu bán hàng',
     intro:
-      'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; sổ sách dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi thì thêm dòng mới từ ngày đó, không sửa dòng cũ.',
+      'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; sổ sách dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi hay sửa chỗ nhập sai thì thêm dòng mới từ ngày đó (nhập lại cùng ngày để thay dòng sai), không sửa dòng cũ.',
     entity: 'Công ty',
     empty: 'Chưa lưu thuế suất nào. Tháng nào chưa có dòng nào phủ tới thì doanh thu sàn của tháng đó được giữ lại, không hạch toán với thuế suất đoán.',
     statusNone: 'Chưa lưu thuế suất',
@@ -5694,9 +5694,11 @@ export const vi = {
     rowDeduction: 'GTGT khấu trừ, {percent}%',
     rowNone: 'Không có dòng thuế GTGT đầu ra (không theo phương pháp khấu trừ)',
     inForce: 'đang áp dụng',
-    suggestion: 'Lịch gợi ý (Nghị quyết 204/2025/QH15):',
+    suggestion: 'Hãy chọn phương pháp trước. Với GTGT khấu trừ, có lịch gợi ý (Nghị quyết 204/2025/QH15):',
+    suggestMethodLabel: 'Phương pháp',
+    suggestMethodPick: 'Chọn phương pháp',
     suggestionNote: 'Chưa lưu gì cho tới khi bạn xác nhận. Hãy hỏi kế toán nếu hàng của bạn không cùng một thuế suất.',
-    confirmSuggestion: 'Xác nhận lịch này',
+    confirmSuggestion: 'Xác nhận và lưu',
     addTitle: 'Thêm một dòng thuế GTGT',
     dateLabel: 'Từ ngày',
     methodLabel: 'Phương pháp',
@@ -5706,7 +5708,6 @@ export const vi = {
     add: 'Thêm dòng',
     problems: {
       date: 'Hãy nhập ngày hợp lệ.',
-      order: 'Ngày phải sau dòng đã lưu gần nhất.',
       rate: 'Hãy nhập thuế suất từ 0 đến 100, tối đa hai chữ số thập phân.',
     },
     oneRateNote: 'Mỗi công ty một thuế suất. Hàng có thuế suất khác nhau chưa được tách ở đây; hãy trao đổi với kế toán.',
@@ -13854,7 +13855,6 @@ export const vi = {
       HOUSEHOLD_PROFILE_ORDER: 'Hồ sơ mới phải có hiệu lực sau hồ sơ gần nhất; một thay đổi là một dòng mới từ ngày đó',
       HOUSEHOLD_PROFILE_LOCKED: 'Kỳ này đã khóa sổ; hồ sơ mới phải có hiệu lực sau kỳ đã khóa',
       MARKETPLACE_VAT_RATE_DATE: 'Ngày hiệu lực không hợp lệ',
-      MARKETPLACE_VAT_RATE_ORDER: 'Thuế suất mới phải có hiệu lực sau thuế suất gần nhất; một thay đổi là một dòng mới từ ngày đó',
       MARKETPLACE_VAT_RATE_LOCKED: 'Kỳ này đã khóa sổ; thuế suất mới phải có hiệu lực sau kỳ đã khóa',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S1a trong kỳ đã chọn',
       HOUSEHOLD_TRADES_CHANGED: 'Ngành nghề của hộ kinh doanh đổi trong kỳ đã chọn nên sổ chưa chia được doanh thu theo ngành; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi',

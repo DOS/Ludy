@@ -2733,9 +2733,9 @@ export const contract = {
       // for a state that is wrong, used, ended, another member's or another org's.
       authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
     },
-    // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated rows, oldest first; every role reads, owners and admins add rows from a date (R1, audited, a change is a later row, never an edit).
-    // The suggested schedule on the settings field applies only when a person confirms it. MARKETPLACE_VAT_RATE_ORDER (409) when a row does not start after the entity's latest, MARKETPLACE_VAT_RATE_LOCKED (409)
-    // inside a locked period, MARKETPLACE_VAT_RATE_DATE (422), FORBIDDEN (403) unless owner or admin.
+    // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated entries, by effective date and, within a date, in the order entered (the last of a date is in force); every role reads, owners and admins add rows from a date
+    // (R1, audited; append-only, a wrong row is corrected by a later entry for any date outside a locked period). The suggested schedule on the settings field applies only when a person picks the method and confirms it.
+    // MARKETPLACE_VAT_RATE_LOCKED (409) inside a locked period, MARKETPLACE_VAT_RATE_DATE (422), FORBIDDEN (403) unless owner or admin.
     vatRates: {
       list: oc.input(zMarketplaceVatRatesGet).output(zMarketplaceVatRates),
       set: oc.input(zMarketplaceVatRateSet.extend({ idempotencyKey: zId })).output(zMarketplaceVatRates),

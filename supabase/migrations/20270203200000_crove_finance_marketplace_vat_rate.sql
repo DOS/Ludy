@@ -5,8 +5,10 @@
 -- crove_finance.marketplace_vat_rate   per legal entity and effective date: the VAT method of its marketplace sales (`deduction`: the entity declares VAT by deduction, so a sale carries output VAT on
 --                                      33311; `none`: it does not, e.g. a household on the percentage method or a direct-method company, so no 33311 line) and, for `deduction`, the rate in percent.
 --                                      A row exists only because an owner or admin entered it, so a row IS the person's confirmation: until one covers a month the sales posting holds that month back.
---                                      A change is a new row from its date, never an edit of an earlier one (the books of a closed period keep the rate they were posted with). Tenant roles read and
---                                      insert; nothing updates or deletes a row. One rate for all goods of the entity (a seller with goods at several rates waits for the item-level rate, #4303 option A).
+--                                      A change is a new row, never an edit of an earlier one: the table is append-only, and a wrong row is corrected by entering a later row for the same date (or any date
+--                                      outside a locked period, which the command checks). The rate on a day D is the row with the greatest effective_from <= D and, among rows of that date, the
+--                                      latest entered (created_at, then id). Tenant roles read and insert; nothing updates or deletes a row. One rate for all goods of the entity (a seller with goods at
+--                                      several rates waits for the item-level rate, #4303 option A).
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
@@ -21,13 +23,15 @@ CREATE TABLE IF NOT EXISTS crove_finance.marketplace_vat_rate (
   vat_percent numeric(5, 2) CHECK (vat_percent IS NULL OR vat_percent BETWEEN 0 AND 100),
   CONSTRAINT marketplace_vat_rate_pair_ck CHECK ((method = 'deduction' AND vat_percent IS NOT NULL) OR (method = 'none' AND vat_percent IS NULL)),
   created_by uuid,
-  created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  -- The moment of entry, at insert (not at the start of the transaction): writers of one entity are serialized by the command, so this orders the entries of one date.
+  created_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (org_id, id),
-  CONSTRAINT marketplace_vat_rate_entity_date_uq UNIQUE (org_id, legal_entity_id, effective_from),
   CONSTRAINT marketplace_vat_rate_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
   CONSTRAINT marketplace_vat_rate_member_fk FOREIGN KEY (org_id, created_by) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (created_by)
 );
-CREATE INDEX IF NOT EXISTS marketplace_vat_rate_entity_idx ON crove_finance.marketplace_vat_rate (legal_entity_id, org_id);
+-- The lookup of the row in force on a date: the greatest date at or before it, the latest entry of that date.
+CREATE INDEX IF NOT EXISTS marketplace_vat_rate_entity_idx ON crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS marketplace_vat_rate_entity_fk_idx ON crove_finance.marketplace_vat_rate (legal_entity_id, org_id);
 CREATE INDEX IF NOT EXISTS marketplace_vat_rate_created_by_idx ON crove_finance.marketplace_vat_rate (org_id, created_by) WHERE created_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.marketplace_vat_rate');
 REVOKE UPDATE, DELETE ON crove_finance.marketplace_vat_rate FROM crove_tenant;
