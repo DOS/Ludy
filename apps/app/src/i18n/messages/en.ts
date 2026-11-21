@@ -13938,7 +13938,7 @@ export const en = {
       HR_SELF_NOT_LINKED: 'Your account is not linked to any employee record in this organization',
       HR_LEAVE_REQUEST_NOT_FOUND: 'Leave request not found',
       HR_LEAVE_REQUEST_INVALID_STATE: 'The current state of this leave request does not allow this action',
-      HR_LEAVE_REQUEST_SELF_APPROVAL: 'A department manager cannot L1-approve or reject their own leave request',
+      HR_LEAVE_REQUEST_SELF_APPROVAL: 'You cannot approve or reject your own leave request',
       HR_LEAVE_REQUEST_MULTI_MONTH: 'Each leave request must fall within a single calendar month; split requests spanning two months',
       HR_LEAVE_REQUEST_DAYS_EXCEED_SPAN: 'Requested leave days cannot exceed the calendar day span',
       HR_RUN_NOT_FOUND: 'This pay run was not found',

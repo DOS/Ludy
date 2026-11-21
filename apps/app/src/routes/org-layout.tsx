@@ -14,7 +14,7 @@ import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, type NavItem } from '../lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
@@ -97,20 +97,12 @@ export function OrgLayout() {
   // HR payroll/admin screens stay restricted to owners and admins, while Cổng nhân viên (`hrMy`) is open to org members too (viewers still see none).
   const managerHere = roleHere === 'owner' || roleHere === 'admin';
   const hrMemberHere = managerHere || roleHere === 'member';
+  const showAiConnections = aiConnectionsVisible(getConfig().mcpEnabled);
+  const visibility = { manager: managerHere, hrMember: hrMemberHere, showAiConnections };
   // Items left out of the menu and the palette for a member/viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
   // exist only where this system runs MCP. Their screens still answer anyone who types the address.
-  const hidden = (item: NavItem) =>
-    (item.module === 'hr' && (item.label === 'hrMy' ? !hrMemberHere : !managerHere)) ||
-    (item.label === 'aiUsage' && !managerHere) ||
-    (item.label === 'aiConnections' && !aiConnectionsVisible(getConfig().mcpEnabled));
-  const NAV = useMemo(() => allNav.filter((n) => !hidden(n)), [allNav, managerHere, hrMemberHere]); // oxlint-disable-line react-hooks/exhaustive-deps
-  const apps = useMemo(
-    () =>
-      allApps
-        .filter((a) => hrMemberHere || a.id !== 'hr')
-        .map((a) => ({ ...a, groups: a.groups.map((g) => ({ ...g, items: g.items.filter((i) => !hidden(i)) })).filter((g) => g.items.length > 0) })),
-    [allApps, managerHere, hrMemberHere], // oxlint-disable-line react-hooks/exhaustive-deps
-  );
+  const NAV = useMemo(() => allNav.filter((n) => !isShellItemHidden(n, visibility)), [allNav, managerHere, hrMemberHere, showAiConnections]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const apps = useMemo(() => visibleApps(allApps, visibility), [allApps, managerHere, hrMemberHere, showAiConnections]); // oxlint-disable-line react-hooks/exhaustive-deps
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),
     enabled: roleHere === 'owner' || roleHere === 'admin',

@@ -13938,7 +13938,7 @@ export const vi = {
       HR_SELF_NOT_LINKED: 'Tài khoản của bạn chưa được liên kết với hồ sơ nhân viên nào trong tổ chức',
       HR_LEAVE_REQUEST_NOT_FOUND: 'Không tìm thấy đơn xin nghỉ phép này',
       HR_LEAVE_REQUEST_INVALID_STATE: 'Trạng thái hiện tại của đơn nghỉ phép không cho phép thực hiện thao tác này',
-      HR_LEAVE_REQUEST_SELF_APPROVAL: 'Quản lý bộ phận không thể tự duyệt cấp 1 hoặc từ chối đơn nghỉ phép của chính mình',
+      HR_LEAVE_REQUEST_SELF_APPROVAL: 'Bạn không thể tự duyệt hoặc từ chối đơn xin nghỉ của chính mình',
       HR_LEAVE_REQUEST_MULTI_MONTH: 'Mỗi đơn xin nghỉ chỉ nằm trong một tháng dương lịch; nếu qua tháng sau hãy tách thành hai đơn',
       HR_LEAVE_REQUEST_DAYS_EXCEED_SPAN: 'Số ngày nghỉ đăng ký không thể lớn hơn số ngày lịch trong khoảng ngày đã chọn',
       HR_RUN_NOT_FOUND: 'Không tìm thấy bảng lương này',
