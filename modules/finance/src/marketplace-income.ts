@@ -122,7 +122,7 @@ async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Prom
 const lockReport = (ctx: QueryContext, fileId: string) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace_income.report:${ctx.orgId}:${fileId}`}, 0))`.execute(ctx.trx);
 const notStaged = () => new DomainError('MARKETPLACE_INCOME_NOT_STAGED', 409, 'Báo cáo thu nhập này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
 
-const PLATFORM_NAME: Record<Platform, string> = { shopee: 'Shopee', tiktok_shop: 'TikTok Shop' };
+const PLATFORM_NAME: Record<Platform, string> = { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' };
 const dmy = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
 const day = (value: unknown) => String(value).slice(0, 10);
 
@@ -444,7 +444,7 @@ export async function readMarketplaceIncomeFile(deps: MarketplaceIncomeFileDeps,
     await record('failed', {
       error: (blocking.length > 0
         ? `Báo cáo thu nhập ${income.platform} có ${blocking.length} dòng không đọc được (dòng ${rows.join(', ')} của tệp): số tiền, ngày hoặc mã đơn không đúng định dạng; hãy kiểm tra lại tệp hoặc báo cho người hỗ trợ nếu sàn đã đổi mẫu báo cáo`
-        : 'Không nhận ra báo cáo thu nhập của Shopee hoặc TikTok Shop'
+        : 'Không nhận ra báo cáo thu nhập của Shopee, TikTok Shop hoặc Lazada'
       ).slice(0, 2000),
     });
     return { handled: true };

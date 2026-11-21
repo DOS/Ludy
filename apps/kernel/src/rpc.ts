@@ -73,6 +73,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
+import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
@@ -560,6 +561,10 @@ export function createRpcHandler(
     suggestionBudget(),
   );
   const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
+  const signAcceptanceCoworker = signAcceptanceAi(
+    conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -4549,6 +4554,22 @@ export function createRpcHandler(
           ),
         ),
         get: os.sign.ai.get.handler(signQuery('sign.ai_analysis.get')),
+      },
+      acceptance: {
+        draft_summary: os.sign.acceptance.draft_summary.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            draftProjectAcceptanceSummary({
+              ai: signAcceptanceCoworker,
+              runtime,
+              orgId,
+              actor,
+              projectId: input.projectId,
+              ...(input.language ? { language: input.language } : {}),
+              meter: aiMeter ? aiMeter(actor) : 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
       },
       template: {
         list: os.sign.template.list.handler(signQuery('sign.template.list')),
