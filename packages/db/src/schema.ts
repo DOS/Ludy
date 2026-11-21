@@ -548,6 +548,10 @@ export type HouseholdProfileTable = Refine<
   { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; vat_cut_eligible: ColumnType<HouseholdVatCutAnswer | null, HouseholdVatCutAnswer | null, G.NotGranted>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// The VAT method of an entity's marketplace sales (#4303 S3a): `deduction` carries a rate, `none` carries no output VAT line.
+export const MARKETPLACE_VAT_METHODS = ['deduction', 'none'] as const;
+export type MarketplaceVatMethod = (typeof MARKETPLACE_VAT_METHODS)[number];
+export type MarketplaceVatRateTable = Refine<G.FinanceMarketplaceVatRateTable, { method: MarketplaceVatMethod; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
 // The 2026 reductions as dated law rows (#3710): `kind` is the tax the cut applies to.
 export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
@@ -1660,6 +1664,7 @@ type Refined = Tables<{
   'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
   'crove_finance.stock_alias': StockAliasTable;
   'crove_finance.household_profile': HouseholdProfileTable;
+  'crove_finance.marketplace_vat_rate': MarketplaceVatRateTable;
   'crove_finance.household_threshold': HouseholdThresholdTable;
   'crove_finance.household_trade_rate': HouseholdTradeRateTable;
   'crove_finance.household_tax_reduction': HouseholdTaxReductionTable;

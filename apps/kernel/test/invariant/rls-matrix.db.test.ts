@@ -104,7 +104,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_vat_rate',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -1756,7 +1755,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4303 S3a: the VAT method and rate of an entity's marketplace sales (parent #2520), one row per (org, entity, effective_from): `deduction` with a rate in percent (the output VAT on 33311 of the sales posting), or `none` with
   // no rate (a household on the percentage method, a direct-method company). A change is a new dated row. Tenant roles read and insert; nothing updates or deletes it. Its factory lands before the table (step 1 of 2),
-  // so PENDING_TABLES holds it until the migration of step 2. Each seeded row names an entity of its own.
+  // its migration (step 2) removed it from PENDING_TABLES. Each seeded row names an entity of its own.
   'crove_finance.marketplace_vat_rate': {
     make: (o) => {
       const entity = randomUUID();
