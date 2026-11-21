@@ -7,9 +7,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MarketplaceFeeAccrual, MarketplaceFeeAccrualReversal, MarketplaceInvoiceToClear, MarketplacePayoutToMatch, MarketplaceSettlementToPost } from '@crove/kernel-contract';
+import type { MarketplaceFeeAccrual, MarketplaceFeeAccrualReversal, MarketplaceInvoiceToClear, MarketplacePayoutAdjustment, MarketplacePayoutToMatch, MarketplaceSettlementToPost } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Button } from '@crove/ui/components/button';
+import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
@@ -87,41 +88,111 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
   );
 }
 
+// The kinds a person may give a line the report does not explain (#4303 S4): money paid beyond the sales is a seller incentive or a compensation for goods the carrier lost; tax withheld from a seller that is no
+// household is a mistake of the platform. The server checks each against the stored line again, when asked and when approved; nothing is guessed here, and the request waits until every line has a kind.
+const KINDS = { other: ['incentive', 'carrier_compensation'], withheld: ['withheld_in_error'] } as const;
+const WHOLE_DONG = /^\d{1,15}$/;
+
 function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) {
   const t = useTranslations('marketplaceActions');
   const f = useFormat();
   const [chosen, setChosen] = useState('');
+  // The kind and, for a compensation, the cost of the goods the person states, by line and source (a line can carry both an `other` amount and a withheld tax).
+  const [kinds, setKinds] = useState<Record<string, string>>({});
+  const [costs, setCosts] = useState<Record<string, string>>({});
   const bankLineId = chosen !== '' && p.candidates.some((c) => c.id === chosen) ? chosen : (p.candidates[0]?.id ?? '');
+  const slot = (a: MarketplacePayoutToMatch['adjustable'][number]) => `${a.lineId}:${a.source}`;
+  const adjustments: MarketplacePayoutAdjustment[] = [];
+  let ready = true;
+  for (const a of p.adjustable) {
+    const kind = kinds[slot(a)] ?? '';
+    const allowed: readonly string[] = KINDS[a.source];
+    if (!allowed.includes(kind)) ready = false;
+    else if (kind === 'carrier_compensation') {
+      const costAmount = (costs[slot(a)] ?? '').trim();
+      if (WHOLE_DONG.test(costAmount)) adjustments.push({ kind: 'carrier_compensation', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, ''), costAmount });
+      else ready = false;
+    } else adjustments.push({ kind: kind as 'incentive' | 'withheld_in_error', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, '') });
+  }
   return (
-    <TableRow data-testid="marketplace-action-payout">
-      <TableCell className="px-4 py-3">{p.platformName}</TableCell>
-      <TableCell className="px-4 py-3">{period(p.periodFrom, p.periodTo)}</TableCell>
-      <TableCell className={NUM}>{f.money(p.received)}</TableCell>
-      <TableCell className="px-4 py-3">
-        {p.proposalId !== null ? null : p.candidates.length === 0 ? (
-          <span className="text-subtle-foreground" data-testid="marketplace-no-candidates">
-            {t('noCandidates')}
-          </span>
-        ) : (
-          <NativeSelect value={bankLineId} onChange={(e) => setChosen(e.target.value)} aria-label={t('pickLine')} data-testid="marketplace-line-select">
-            {p.candidates.map((c) => (
-              <NativeSelectOption key={c.id} value={c.id}>
-                {[c.date, f.money(c.amount), c.reference].filter((x) => x !== null && x !== '').join(' - ')}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        )}
-      </TableCell>
-      <TableCell className="px-4 py-3 text-right">
-        <AskButton
-          label={t('record')}
-          disabled={!open || bankLineId === ''}
-          testId="marketplace-record"
-          pending={p.proposalId}
-          ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_payout.record', idempotencyKey, input: { settlementId: p.settlementId, bankLineId } })}
-        />
-      </TableCell>
-    </TableRow>
+    <>
+      <TableRow data-testid="marketplace-action-payout">
+        <TableCell className="px-4 py-3">{p.platformName}</TableCell>
+        <TableCell className="px-4 py-3">{period(p.periodFrom, p.periodTo)}</TableCell>
+        <TableCell className={NUM}>{f.money(p.received)}</TableCell>
+        <TableCell className="px-4 py-3">
+          {p.proposalId !== null ? null : p.candidates.length === 0 ? (
+            <span className="text-subtle-foreground" data-testid="marketplace-no-candidates">
+              {t('noCandidates')}
+            </span>
+          ) : (
+            <NativeSelect value={bankLineId} onChange={(e) => setChosen(e.target.value)} aria-label={t('pickLine')} data-testid="marketplace-line-select">
+              {p.candidates.map((c) => (
+                <NativeSelectOption key={c.id} value={c.id}>
+                  {[c.date, f.money(c.amount), c.reference].filter((x) => x !== null && x !== '').join(' - ')}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          )}
+        </TableCell>
+        <TableCell className="px-4 py-3 text-right">
+          <AskButton
+            label={t('record')}
+            disabled={!open || bankLineId === '' || !ready}
+            testId="marketplace-record"
+            pending={p.proposalId}
+            ask={(idempotencyKey) =>
+              client.inbox.request({
+                command: 'finance.marketplace_payout.record',
+                idempotencyKey,
+                input: { settlementId: p.settlementId, bankLineId, ...(adjustments.length > 0 ? { adjustments } : {}) },
+              })
+            }
+          />
+        </TableCell>
+      </TableRow>
+      {p.proposalId === null && p.adjustable.length > 0 && (
+        <TableRow data-testid="marketplace-payout-adjustments">
+          <TableCell colSpan={5} className="px-4 py-3">
+            <p className="mb-2 text-sm text-subtle-foreground">{t('adjustHint')}</p>
+            <ul className="flex flex-col gap-2">
+              {p.adjustable.map((a) => {
+                const kind = kinds[slot(a)] ?? '';
+                return (
+                  <li key={slot(a)} className="flex flex-wrap items-center gap-2" data-testid="marketplace-adjustment">
+                    <span className="min-w-40 tabular-nums">{t(a.source === 'other' ? 'adjustOther' : 'adjustWithheld', { amount: f.money(a.amount) })}</span>
+                    <NativeSelect
+                      value={kind}
+                      onChange={(e) => setKinds({ ...kinds, [slot(a)]: e.target.value })}
+                      aria-label={t('adjustKindLabel', { amount: f.money(a.amount) })}
+                      data-testid="marketplace-adjustment-kind"
+                    >
+                      <NativeSelectOption value="">{t('adjustChoose')}</NativeSelectOption>
+                      {KINDS[a.source].map((k) => (
+                        <NativeSelectOption key={k} value={k}>
+                          {t(`adjustKind_${k}`)}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    {kind === 'carrier_compensation' && (
+                      <Input
+                        inputMode="numeric"
+                        value={costs[slot(a)] ?? ''}
+                        onChange={(e) => setCosts({ ...costs, [slot(a)]: e.target.value })}
+                        aria-label={t('adjustCostLabel', { amount: f.money(a.amount) })}
+                        placeholder={t('adjustCost')}
+                        className="w-48"
+                        data-testid="marketplace-adjustment-cost"
+                      />
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
 

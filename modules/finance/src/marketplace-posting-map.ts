@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The account map of a marketplace's money (#2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4), keyed by the books regime like PAYROLL_POSTING_MAPS.
 // The accounts are the researched rules of docs/research/marketplace-accounting-2026-11-21.md (owner decision 2026-11-21: do not wait for the accountant, apply the public law and mark what is uncertain;
-// #2520, #4303). Every row stays `commentary` here: a path flips to `confirmed` only in the change whose postings match the rules it names (#4303 S3 for the sales path, S4 for lost goods and incentives), and
-// until then nothing is posted from it: requireConfirmedMarketplaceMap refuses with MARKETPLACE_POSTING_MAP_UNCONFIRMED, as hr and finance do for the pay accounts (HR_POSTING_MAP_UNCONFIRMED). A comment that
+// #2520, #4303). A row is `commentary` until the change whose postings match the rules it names flips it to `confirmed` (#4303 S3 for the sales path; S4 did it for the three rows of `payout_adjustments`:
+// otherReceivable, costOfGoods, otherIncome). The map's own `status` stays `commentary` and requireConfirmedMarketplaceMap asks for it for every path, so nothing is posted from any row yet: it refuses with
+// MARKETPLACE_POSTING_MAP_UNCONFIRMED, as hr and finance do for the pay accounts (HR_POSTING_MAP_UNCONFIRMED). A comment that
 // starts `Uncertain (#2520)` names a point the research itself leaves open (L: a legal reading, F: what a platform field means in a real export); the research file lists them all.
 // The gate is per path (#3711 slice 1): each posting asks only for the rows it uses, so a path opens when ITS rows are confirmed and the household tax path (whose debit account is still the
 // accountant's choice) stays closed without holding the rest.
@@ -67,7 +68,7 @@ function deepFreeze<T extends object>(value: T): T {
   return Object.freeze(value);
 }
 
-const row = (code: string, comment: string): MarketplaceAccount => ({ code, status: 'commentary', comment });
+const row = (code: string, comment: string, status: MarketplaceMapStatus = 'commentary'): MarketplaceAccount => ({ code, status, comment });
 
 const R = 'docs/research/marketplace-accounting-2026-11-21.md';
 
@@ -90,10 +91,10 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     pitOwnerEquity: row('4212', `Rule 4 (research A4, D2): the PIT a platform withheld on a household's revenue is never an expense of the business; it is booked against the owner's equity in the internal ledger, Dr this account / Cr 3335. Uncertain (#2520, L): 4212 is a proposal, the accountant names the account; this row keeps the household tax path closed until then.`),
     outputVat: row('33311', `Rule 1: the output VAT inside the item price net of the seller's voucher, Cr 33311 beside Cr 5111, at the item's VAT rate (never a hard-coded 8% or 10%); the sales path splits it from #4303 S3. A line with no known rate is held back, never guessed.`),
     feeInputVat: row('1331', `Rule 3: the input VAT of a platform fee on a VAT invoice, Dr 1331 beside the fee expense / Cr 331; a fee rebate with an adjusting invoice reduces the expense and 1331. Uncertain (#2520): the VAT rate per fee type on all three platforms.`),
-    otherReceivable: row('1388', `Rule 2: goods lost or damaged by the carrier, cost already in 632 at shipment: Dr 1388 (the platform) for the compensation / Cr 632, any excess Cr 711. Rule 4: tax withheld from a company by mistake: Dr 1388 / Cr 131 (not a prepayment). No output VAT, no invoice; input VAT stays deductible. Uncertain (#2520): L net into 632 against gross into 711 (research A: the accountant's choice, B: net); F whether the compensation is paid at the selling price for a buyer who received the goods; L household VAT on a compensation; CIT deduction of a carrier loss.`),
+    otherReceivable: row('1388', `Rule 2: goods lost or damaged by the carrier, cost already in 632 at shipment: Dr 1388 (the platform) for the compensation / Cr 632, any excess Cr 711. Rule 4: tax withheld from a company by mistake: Dr 1388 / Cr 131 (not a prepayment). No output VAT, no invoice; input VAT stays deductible. Posted by the payout from #4303 S4 (path payout_adjustments, a person classifies each line; the compensation is netted with its receipt in the payout, so only the withheld tax debits 1388 there; 1381 is not used). Uncertain (#2520): L the tax may be refunded by the tax office instead of the platform; L net into 632 against gross into 711 (research A: the accountant's choice, B: net); F whether the compensation is paid at the selling price for a buyer who received the goods; L household VAT on a compensation; CIT deduction of a carrier loss.`, 'confirmed'),
     assetAwaitingHandling: row('1381', `Rule 2, the optional first step while a claim is not yet decided: the loss waits on 1381 (Tài sản thiếu chờ xử lý), Dr 1381 / Cr 632 at the loss; when the claim is decided the compensation clears it (Dr 1388 / Cr 1381 up to the loss) and any excess over the cost is other income (Cr 711), the same entries as the direct route of otherReceivable. Uncertain (#2520): the table gives only the direct route (Dr 1388 / Cr 632, excess 711); the 1381 step is the research's wording for an undecided claim, and S4 posts one route, not both.`),
-    costOfGoods: row('632', `Rule 2: the compensation for lost goods reduces 632 up to the cost already booked at shipment (Cr 632).`),
-    otherIncome: row('711', `Rules 2 and 3: the compensation above cost, and a seller incentive not tied to a sale, are other income (Cr 711); a platform price subsidy tied to an order is revenue instead (rule 1). Uncertain (#2520): L whether an incentive is 711 or a taxed service; L/F whether a fee rebate arrives as an adjusting invoice or as a bonus.`),
+    costOfGoods: row('632', `Rule 2: the compensation for lost goods reduces 632 up to the cost already booked at shipment (Cr 632). #4303 S4: Cr 632 = the smaller of the compensation and the cost a person states for the line (never computed from stock: a follow-up may suggest it); below cost the shortfall stays a loss in 632 with no extra line. Uncertain (#2520): L net into 632 against gross into 711 (research A: the accountant's choice, B: net); F whether the compensation is paid at the selling price for a buyer who received the goods.`, 'confirmed'),
+    otherIncome: row('711', `Rules 2 and 3: the compensation above cost, and a seller incentive not tied to a sale, are other income (Cr 711); a platform price subsidy tied to an order is revenue instead (rule 1). Posted by the payout from #4303 S4 (a person classifies the line as an incentive or a carrier compensation). Uncertain (#2520): L whether an incentive is 711 or a taxed service; L/F whether a fee rebate arrives as an adjusting invoice or as a bonus.`, 'confirmed'),
     otherExpense: row('811', `Rule 7: the books are in whole dong; a 1-dong difference between an invoice and the settlement goes to 811 (or 711 the other way). Uncertain (#2520): L no general VAT rounding rule exists; research A and B differ on where the dong goes (A: half up, remainder on the last line; B: into the net amount, not the VAT); F the tax XML schema may limit decimals.`),
   },
   // Circular 99/2025/TT-BTC (#3711 slice 4). The same rules, with the TT99 accounts (research file): the platform's fees are a selling expense (641, sub-account 6417 "Chi phí dịch vụ mua ngoài", not 6421, which is
@@ -117,18 +118,19 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     pitOwnerEquity: row('4212', `Same as tt133 (rule 4, research A4, D2): the PIT a platform withheld on a household's revenue is booked against the owner's equity, never as an expense. Uncertain (#2520, L): 4212 is a proposal, the accountant names the account; the household tax path stays closed until then.`),
     outputVat: row('33311', `Same as tt133 (rule 1): Cr 33311 for the output VAT inside the item price net of the seller's voucher, at the item's VAT rate; the sales path splits it from #4303 S3.`),
     feeInputVat: row('1331', `Same as tt133 (rule 3): Dr 1331 for the input VAT of a platform fee on a VAT invoice, beside Dr 6417.`),
-    otherReceivable: row('1388', `Same as tt133 (rules 2 and 4): the compensation for goods lost by the carrier, Dr 1388 / Cr 632, the excess Cr 711; tax withheld from a company by mistake, Dr 1388 / Cr 131. Uncertain (#2520): the same as tt133.`),
+    otherReceivable: row('1388', `Same as tt133 (rules 2 and 4): the compensation for goods lost by the carrier, Dr 1388 / Cr 632, the excess Cr 711; tax withheld from a company by mistake, Dr 1388 / Cr 131; posted by the payout from #4303 S4. Uncertain (#2520): the same as tt133 (the tax may be refunded by the tax office instead of the platform).`, 'confirmed'),
     assetAwaitingHandling: row('1381', `Same as tt133 (rule 2): the optional first step for a claim not yet decided. Uncertain (#2520): the same as tt133 (one route is posted, not both).`),
-    costOfGoods: row('632', `Same as tt133 (rule 2): the compensation for lost goods reduces 632 up to the cost already booked.`),
-    otherIncome: row('711', `Same as tt133 (rules 2 and 3): the compensation above cost, and a seller incentive not tied to a sale. Uncertain (#2520): the same as tt133.`),
+    costOfGoods: row('632', `Same as tt133 (rule 2): the compensation for lost goods reduces 632 up to the cost already booked, the smaller of the compensation and the cost a person states (#4303 S4). Uncertain (#2520): the same as tt133 (net into 632 against gross into 711).`, 'confirmed'),
+    otherIncome: row('711', `Same as tt133 (rules 2 and 3): the compensation above cost, and a seller incentive not tied to a sale (posted by the payout from #4303 S4). Uncertain (#2520): the same as tt133.`, 'confirmed'),
     otherExpense: row('811', `Same as tt133 (rule 7): a 1-dong difference goes to 811 (or 711 the other way). Uncertain (#2520): the same as tt133.`),
   },
 });
 
 // The postings a map gates, each with the rows it posts to (#3711 slice 1). `sales`: the settlement voucher without household tax (131 against 511, a refund reducing 511). `payout`: the money received
 // (cash, fees against the platform's 331, 131 cleared). `fee_accrual`: the month-end accrual of fees not yet invoiced (expense against 335). `household_tax`: the VAT and PIT a platform withheld for a
-// household seller, in the settlement voucher and again in the payout; its debit side is the owner's equity (pitOwnerEquity), not an expense. 333 and the retired 1388 row belong to no path.
-export type MarketplacePath = 'sales' | 'payout' | 'fee_accrual' | 'household_tax';
+// household seller, in the settlement voucher and again in the payout; its debit side is the owner's equity (pitOwnerEquity), not an expense. `payout_adjustments`: the incentives, lost-goods compensation and
+// tax withheld from a company a person classified on a payout (#4303 S4). 333 and the retired 1388 row belong to no path.
+export type MarketplacePath = 'sales' | 'payout' | 'fee_accrual' | 'household_tax' | 'payout_adjustments';
 type MarketplaceRow = 'receivable' | 'revenue' | 'salesReturn' | 'cash' | 'feePayable' | 'feeAwaitingInvoice' | 'taxWithheld' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity' | 'feeExpense' | 'accruedExpense' | 'outputVat' | 'feeInputVat' | 'otherReceivable' | 'assetAwaitingHandling' | 'costOfGoods' | 'otherIncome' | 'otherExpense';
 
 export const MARKETPLACE_PATH_ROWS: Readonly<Record<MarketplacePath, readonly MarketplaceRow[]>> = Object.freeze({
@@ -136,6 +138,9 @@ export const MARKETPLACE_PATH_ROWS: Readonly<Record<MarketplacePath, readonly Ma
   payout: Object.freeze<MarketplaceRow[]>(['receivable', 'cash', 'feePayable']),
   fee_accrual: Object.freeze<MarketplaceRow[]>(['feeExpense', 'accruedExpense']),
   household_tax: Object.freeze<MarketplaceRow[]>(['vatPayable', 'pitPayable', 'pitOwnerEquity']),
+  // #4303 S4: the lines of a payout a person classified (incentive and compensation above cost to 711, compensation up to cost to 632, tax withheld from a company to 1388). Asked only by a request that carries adjustments,
+  // beside `payout`: the payout path itself stays closed until the PR that opens it, so nothing runs yet.
+  payout_adjustments: Object.freeze<MarketplaceRow[]>(['otherIncome', 'costOfGoods', 'otherReceivable']),
 });
 
 // The rows the retired fee clearing asks for when no path is named. The rows added for the researched rules (outputVat, feeInputVat, otherReceivable, assetAwaitingHandling, costOfGoods, otherIncome, otherExpense) are

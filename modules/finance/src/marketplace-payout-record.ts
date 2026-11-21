@@ -13,7 +13,7 @@
 // test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutProposal } from '@crove/kernel-contract';
+import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutAdjustment, type MarketplacePayoutProposal } from '@crove/kernel-contract';
 import { Decimal, money } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
@@ -22,7 +22,7 @@ import { bankLineStates, findBankLine, lockBankLine, type StoredBankLine } from 
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
-import { payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
+import { payoutPaths, payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
 import { postedSettlementTax, postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
@@ -54,6 +54,10 @@ interface Built {
   receivable: string;
   // The account of the platform's fees (331), the line that names the platform's party beside 131.
   feePayable: string;
+  // The account of what the platform owes that is not a sale (1388): the line of tax withheld by mistake names the platform's party too (#4303 S4).
+  otherReceivable: string;
+  // The classification the entry was built with (ids, kinds and amounts), carried in the proposal so the approver's rebuild uses the same.
+  adjustments: readonly MarketplacePayoutAdjustment[];
   party: { id: string; name: string; taxCode: string | null };
 }
 
@@ -72,7 +76,7 @@ async function checkBankLine(ctx: QueryContext, line: StoredBankLine, legalEntit
 
 // Everything the proposal and the posting share, read in the caller's context: the stored settlement and its lines, the posting that stands, the bank line, the entity's chart, the gate, and the
 // platform's party. `lock` takes the locks (the platform's, which the settlement guards use, 20261126110000, and the bank line's) for the rest of the transaction.
-async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, bankLineId: string, lock: boolean): Promise<Built> {
+async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, bankLineId: string, lock: boolean, adjustments: readonly MarketplacePayoutAdjustment[] = []): Promise<Built> {
   const settlement = await ctx.trx
     .selectFrom('crove_finance.channel_settlement')
     .select(['id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'reversal_of'])
@@ -86,8 +90,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   const periodTo = String(settlement.period_end).slice(0, 10);
   // The chart of the entity on the day the entry is dated (the day of the transfer), then the gate: the accountant has not confirmed the map, nothing is requested or posted.
   const regime = (await booksOn(ctx, settlement.legal_entity_id, line.date)).regime;
-  // The early gate asks for the payout path; payoutProposal asks again for the household tax rows when the settlement posted tax lines.
-  const map = requireConfirmedMarketplaceMap(regime, maps, ['payout']);
+  // The early gate asks for the payout path (and the adjustment rows when a person classified lines); payoutProposal asks again for the household tax rows when the settlement posted tax lines.
+  const map = requireConfirmedMarketplaceMap(regime, maps, payoutPaths(false, adjustments.length > 0));
   if (lock) {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
     await lockBankLine(ctx, line.id);
@@ -116,10 +120,12 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   }
   const lines = await ctx.trx
     .selectFrom('crove_finance.channel_settlement_line')
-    .select(['sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net'])
+    .select(['id', 'sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net'])
     .where('org_id', '=', ctx.orgId)
     .where('settlement_id', '=', settlement.id)
     .execute();
+  // A household's withheld tax is the settlement's 3331 and 3335; only a seller that is no household can have tax withheld by mistake (#4303 S4).
+  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', settlement.legal_entity_id).executeTakeFirst();
   // The settlement's posting created the platform's party and its link, so a settlement whose posting stands has one; without it the stored books are not as the posting left them.
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
@@ -141,7 +147,10 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
       periodTo,
       partyId: link.id,
       cashAccount: line.bankAccount,
+      adjustments,
+      household: entity?.kind === 'household',
       lines: lines.map((l) => ({
+        id: l.id,
         sales: l.sales,
         sellerDiscount: l.seller_discount,
         commission: l.commission,
@@ -173,6 +182,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     proposal,
     receivable: map.receivable.code,
     feePayable: map.feePayable.code,
+    otherReceivable: map.otherReceivable.code,
+    adjustments,
     party: { id: link.id, name: link.name, taxCode: link.tax_code },
   };
 }
@@ -185,7 +196,7 @@ function proposalPayload(built: Built): MarketplacePayoutProposal {
     description: proposal.description,
     lines: proposal.lines.map((l) => ({
       account: l.account,
-      party: l.account === built.receivable || l.account === built.feePayable ? { id: built.party.id, name: built.party.name, taxCode: built.party.taxCode } : null,
+      party: l.account === built.receivable || l.account === built.feePayable || (l.account === built.otherReceivable && l.debit !== '0') ? { id: built.party.id, name: built.party.name, taxCode: built.party.taxCode } : null,
       debit: l.debit,
       credit: l.credit,
       memo: l.memo,
@@ -200,7 +211,17 @@ function proposalPayload(built: Built): MarketplacePayoutProposal {
     received: proposal.received,
     fees: proposal.fees,
     taxWithheld: proposal.taxWithheld,
+    adjustments: [...built.adjustments],
   });
+}
+
+// The classification of two proposals is the same: the same lines, kinds and amounts, in any order (the cost a person stated for a compensation counts too).
+function sameAdjustments(a: readonly MarketplacePayoutAdjustment[], b: readonly MarketplacePayoutAdjustment[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (x: MarketplacePayoutAdjustment) => `${x.lineId.toLowerCase()}|${x.kind}|${money(x.amount).toFixed()}|${x.kind === 'carrier_compensation' ? money(x.costAmount).toFixed() : ''}`;
+  const left = a.map(key).sort();
+  const right = b.map(key).sort();
+  return left.every((k, i) => k === right[i]);
 }
 
 // What a stored proposal holds that the settlement and the bank line, rebuilt now, do not: the first difference, or null when they are the same. A line naming a party must be the line the rebuilt one
@@ -213,6 +234,7 @@ export function payoutProposalMismatch(stored: MarketplacePayoutProposal, built:
   if (stored.periodFrom !== built.periodFrom || stored.periodTo !== built.periodTo || stored.date !== built.date) return 'period';
   if (stored.description !== built.description) return 'description';
   for (const key of ['received', 'fees', 'taxWithheld', 'total'] as const) if (!money(stored[key]).equals(money(built[key]))) return key;
+  if (!sameAdjustments(stored.adjustments, built.adjustments)) return 'adjustments';
   if (stored.lines.length !== built.lines.length) return 'lines';
   for (const [i, line] of built.lines.entries()) {
     const have = stored.lines[i];
@@ -234,7 +256,7 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
     access: REQUESTERS,
     writes: [],
     handler: async (ctx, input) => {
-      const built = await buildPayout(ctx, maps, input.settlementId, input.bankLineId, false);
+      const built = await buildPayout(ctx, maps, input.settlementId, input.bankLineId, false, input.adjustments ?? []);
       await assertUsableAccounts(ctx, built.proposal.lines.map((l) => l.account));
       const payload = proposalPayload(built);
       return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_PAYOUT_COMMAND, title: journalVoucherTitle(payload), payload };
@@ -253,7 +275,7 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
       if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
       // The entry is built again from the stored settlement and bank line, in the approver's context, and the stored proposal must equal it: a proposal row not written by the preparer (raw SQL) cannot
       // post lines the settlement does not hold, nor into another entity, nor settle a line the transfer does not match.
-      const built = await buildPayout(ctx, maps, payload.settlementId, payload.bankLineId, true);
+      const built = await buildPayout(ctx, maps, payload.settlementId, payload.bankLineId, true, payload.adjustments);
       const rebuilt = proposalPayload(built);
       const wrong = payoutProposalMismatch(payload, rebuilt);
       if (wrong) throw mismatch(wrong);

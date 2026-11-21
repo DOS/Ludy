@@ -65,6 +65,7 @@ const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => (
         { id: lineA, date: '2026-10-20', amount: '304000', reference: 'FT2610200001' },
         { id: lineB, date: '2026-10-22', amount: '304000', reference: null },
       ],
+      adjustable: [],
     },
   ],
   invoices: [{ documentId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', invoice: '1C26TPF00000007', date: '2026-10-25', clearable: '28000', proposalId: null }],
@@ -125,6 +126,31 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html).toContain('2026-10-25');
     expect(html.match(/data-testid="marketplace-action-settlement"/g)).toHaveLength(1);
     expect(html.match(/data-testid="marketplace-action-invoice"/g)).toHaveLength(1);
+  });
+
+  it('lists the lines a person must classify before a payout can be asked for (#4303 S4): none classified, the request stays disabled; an offered kind per source, never free text but the cost of lost goods', () => {
+    const base = FULL();
+    const payout = base.payouts[0]!;
+    const html = render({
+      ...base,
+      payouts: [{ ...payout, adjustable: [{ lineId: lineA, source: 'other', amount: '6000' }, { lineId: lineB, source: 'withheld', amount: '2000' }] }],
+    });
+    expect(html).toContain('data-testid="marketplace-payout-adjustments"');
+    expect(html.match(/data-testid="marketplace-adjustment"/g)).toHaveLength(2);
+    expect(html).toContain('The platform paid');
+    expect(html).toContain('The platform withheld tax');
+    expect(html).toContain('Incentive from the platform (other income)');
+    expect(html).toContain('Compensation for goods lost or damaged');
+    expect(html).toContain('Withheld by mistake (a company is not withheld)');
+    // Nothing is chosen yet: the request is disabled, and no cost field shows before a compensation is picked.
+    expect(disabled(html, 'marketplace-record')).toBe(true);
+    expect(html).not.toContain('marketplace-adjustment-cost');
+    // A payout with nothing to classify has no such row and its request stays enabled.
+    const plain = render(FULL());
+    expect(plain).not.toContain('marketplace-payout-adjustments');
+    expect(disabled(plain, 'marketplace-record')).toBe(false);
+    // Vietnamese too.
+    expect(render({ ...base, payouts: [{ ...payout, adjustable: [{ lineId: lineA, source: 'other', amount: '6000' }] }] }, 'vi')).toContain('Bồi thường hàng bị mất hoặc hỏng');
   });
 
   it('shows the months of delivery of a settlement in one row, and a settlement that waits for a delivery day with no button', () => {

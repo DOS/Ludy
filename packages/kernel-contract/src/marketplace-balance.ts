@@ -3,6 +3,7 @@
 // read from the ledger by account and by the platform's party (crove_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
+import { MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX } from './marketplace.ts';
 import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.optional() });
@@ -93,6 +94,9 @@ export const zMarketplacePayoutToMatch = z.object({
   received: zMoney,
   candidates: z.array(zMarketplacePayoutCandidate),
   proposalId: zId.nullable(),
+  // The lines a person must classify before asking for the payout (#4303 S4): a line with money the report does not explain (`other`, above zero) or tax withheld from a seller that is no household
+  // (`withheld`). Empty when nothing needs it. The payout command refuses the request until every one of them is classified (finance.marketplace_payout.record, `adjustments`).
+  adjustable: z.array(z.strictObject({ lineId: zId, source: z.enum(['other', 'withheld']), amount: zMoney })).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX),
 });
 export type MarketplacePayoutToMatch = z.infer<typeof zMarketplacePayoutToMatch>;
 // A platform's fee invoice that can clear fees waiting on 1388: `clearable` is what a clearing would take now (the smaller of what the invoice still has to clear and the platform's 1388 balance).
