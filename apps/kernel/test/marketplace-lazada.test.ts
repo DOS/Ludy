@@ -532,6 +532,34 @@ describe('testConnection', () => {
   });
 });
 
+// The path argument (the second) of every call of `call(...)` in a source text, read with the brackets counted so a first argument that is an object or a call itself does not hide it.
+// The function's own declaration is not a call.
+function requestPaths(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(?<![\w.])call\(/g)) {
+    const start = (m.index ?? 0) + m[0].length;
+    if (/function\s+$/.test(text.slice(0, m.index ?? 0))) continue;
+    const args: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i]!;
+      if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+      if (ch === ')' || ch === ']' || ch === '}') {
+        if (depth === 0) break;
+        depth -= 1;
+      }
+      if (ch === ',' && depth === 0) {
+        args.push(current.trim());
+        current = '';
+      } else current += ch;
+    }
+    args.push(current.trim());
+    out.push(args[1] ?? '');
+  }
+  return out;
+}
+
 describe('what the adapter is allowed to reach', () => {
   const source = readFileSync(new URL('../src/marketplace-lazada.ts', import.meta.url), 'utf8');
   const code = source.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
@@ -542,10 +570,10 @@ describe('what the adapter is allowed to reach', () => {
     // No other string in the file looks like an API path.
     const slashed = [...code.matchAll(/'(\/[A-Za-z0-9_/.-]*)'/g)].map((m) => m[1]);
     expect([...new Set(slashed)].sort()).toEqual(['/orders/get', '/orders/items/get']);
-    // Every call of the one request function names one of the two constants, never a literal or a computed path.
-    const calls = [...code.matchAll(/\bcall\(credential, ([^,)]*)/g)].map((m) => m[1]);
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c === 'ORDERS_PATH' || c === 'ITEMS_PATH')).toBe(true);
+    // Every call of the one request function, whatever its first argument is, gives one of the two constants as the path, never a literal or a computed one.
+    const paths = requestPaths(code);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((c) => c === 'ORDERS_PATH' || c === 'ITEMS_PATH')).toBe(true);
     expect([...code.matchAll(/\b(?:readOrders|readItems)\(/g)]).not.toHaveLength(0);
   });
 
@@ -558,5 +586,12 @@ describe('what the adapter is allowed to reach', () => {
     expect(code).not.toMatch(/\bglobalThis\.fetch\b|[^.\w]fetch\(|node:https?|undici|XMLHttpRequest|WebSocket/);
     expect(code).not.toMatch(/\/(product|order\/(cancel|reverse|status)|reverse|fulfillment|finance)\//);
     expect(LAZADA_HOSTS).toEqual(['api.lazada.vn']);
+  });
+
+  it('sees a computed or literal path whatever the first argument looks like (the scan itself is checked)', () => {
+    expect(requestPaths("await call(credential, ORDERS_PATH, params);\nawait call({ ...credential }, ITEMS_PATH, { a: f(1, 2) });")).toEqual(['ORDERS_PATH', 'ITEMS_PATH']);
+    expect(requestPaths('await call({ ...credential }, ORDERS_PATH + params.extra, params);')).toEqual(['ORDERS_PATH + params.extra']);
+    expect(requestPaths("await call(other(1, 2), '/product/remove', params);")).toEqual(["'/product/remove'"]);
+    expect(requestPaths('async function call(credential: C, path: string, apiParams: P): Promise<unknown> {')).toEqual([]);
   });
 });
