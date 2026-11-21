@@ -252,6 +252,37 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     }
   }
 
+  async function probeBlindLeaveRequestStatusSweep(
+    actor: ActorSession,
+    targetStatus: 'cancelled' | 'pending_final',
+    allowedIds: readonly string[],
+    label: string,
+  ) {
+    const out = await runAs<{ id: string }>(actor, async (c) => {
+      const upd = await c.query(`UPDATE crove_hr.leave_request SET status = $1`, [targetStatus]);
+      const rowCount = upd.rowCount ?? 0;
+      const vis = await c.query<{ id: string }>(
+        `SELECT id::text AS id FROM crove_hr.leave_request WHERE status = $1 ORDER BY id`,
+        [targetStatus],
+      );
+      return { ...vis, rowCount };
+    });
+    if (!out.ok) {
+      expect(out.code, `${label}: expected 42501 refusal, got ${out.message}`).toBe('42501');
+      return;
+    }
+    if (out.rowCount === 0) return;
+    const visibleIds = out.rows.map((r) => r.id);
+    expect(out.rowCount, `${label}: blind UPDATE rowCount must not exceed allowed rows`).toBeLessThanOrEqual(
+      allowedIds.length,
+    );
+    expect(out.rowCount, `${label}: blind UPDATE touched rows hidden from SELECT`).toBe(visibleIds.length);
+    expect(
+      visibleIds.every((id) => allowedIds.includes(id)),
+      `${label}: blind UPDATE touched forbidden rows (${visibleIds.join(', ')})`,
+    ).toBe(true);
+  }
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -689,32 +720,45 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       expect((insertLr as { code?: string }).code).toBe('42501');
     }
 
-    // Demoting an already-linked member (userA -> role 'viewer') must immediately revoke all self-service reads and writes.
-    await withClient(adminUrl, async (c) => {
-      await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
-        org1Id,
-        users.userA,
-      ]);
-    });
-    try {
-      for (const table of tables) {
-        await probeTableBlocked(userAActor, table);
-      }
-      const demotedInsertLr = await runAs(userAActor, (c) =>
-        c.query(
-          `INSERT INTO crove_hr.leave_request (org_id, employee_id, department_id, month, start_on, end_on, kind, days)
-           VALUES ($1, $2, $3, '2026-12', '2026-12-05', '2026-12-05', 'annual_leave', 1)`,
-          [org1Id, ids.empA, ids.dept1],
-        ),
-      );
-      expect(demotedInsertLr).toMatchObject({ ok: false, code: '42501' });
-    } finally {
+    // Demoting an already-linked member or L1 manager to 'viewer' must immediately revoke all self-service and manager reads/writes.
+    for (const [demotedActor, demotedUid, demotedLabel] of [
+      [userAActor, users.userA, 'linked member userA'],
+      [managerMActor, users.managerM, 'L1 managerM'],
+    ] as const) {
       await withClient(adminUrl, async (c) => {
-        await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+        await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
           org1Id,
-          users.userA,
+          demotedUid,
         ]);
       });
+      try {
+        for (const table of tables) {
+          await probeTableBlocked(demotedActor, table);
+        }
+        expectBlockedWrite(
+          await runAs(demotedActor, (c) => c.query(`UPDATE crove_hr.leave_request SET status = 'pending_final'`)),
+          `demoted ${demotedLabel} blind pending_final`,
+        );
+        expectBlockedWrite(
+          await runAs(demotedActor, (c) => c.query(`UPDATE crove_hr.leave_request SET status = 'approved'`)),
+          `demoted ${demotedLabel} blind approved`,
+        );
+        const demotedInsertLr = await runAs(demotedActor, (c) =>
+          c.query(
+            `INSERT INTO crove_hr.leave_request (org_id, employee_id, department_id, month, start_on, end_on, kind, days)
+             VALUES ($1, $2, $3, '2026-12', '2026-12-05', '2026-12-05', 'annual_leave', 1)`,
+            [org1Id, ids.empA, ids.dept1],
+          ),
+        );
+        expect(demotedInsertLr).toMatchObject({ ok: false, code: '42501' });
+      } finally {
+        await withClient(adminUrl, async (c) => {
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+            org1Id,
+            demotedUid,
+          ]);
+        });
+      }
     }
   });
 
@@ -855,13 +899,22 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       );
     }
 
+    await probeBlindLeaveRequestStatusSweep(
+      userAActor,
+      'cancelled',
+      [ids.lrA_pendingL1],
+      'userA blind cancel leave_request',
+    );
+
     for (const [label, sqlText, params] of [
       ['approve own leave_request', `UPDATE crove_hr.leave_request SET status = 'approved' WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
       ['skip L1 to pending_final', `UPDATE crove_hr.leave_request SET status = 'pending_final' WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
       ['reject own leave_request', `UPDATE crove_hr.leave_request SET status = 'rejected' WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
       ['tamper days on own leave_request', `UPDATE crove_hr.leave_request SET days = 20 WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
+      ['blind tamper days without WHERE', `UPDATE crove_hr.leave_request SET days = 20`, []],
       ['blind approve without WHERE', `UPDATE crove_hr.leave_request SET status = 'approved'`, []],
       ['blind decision_note without WHERE', `UPDATE crove_hr.leave_request SET decision_note = 'tamper'`, []],
+      ['blind delete leave_request without WHERE', `DELETE FROM crove_hr.leave_request`, []],
       ['delete own leave_request', `DELETE FROM crove_hr.leave_request WHERE org_id = $1 AND id = $2`, [org1Id, ids.lrA_pendingL1]],
     ] as const) {
       expectBlockedWrite(
@@ -930,6 +983,16 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     expectBlockedWrite(
       await runAs(managerMActor, (c) => c.query(`UPDATE crove_hr.leave_request SET status = 'approved'`)),
       'managerM blind-approving leave_request',
+    );
+    expectBlockedWrite(
+      await runAs(managerMActor, (c) => c.query(`DELETE FROM crove_hr.leave_request`)),
+      'unlinked managerM blind-deleting leave_request',
+    );
+    await probeBlindLeaveRequestStatusSweep(
+      managerMActor,
+      'pending_final',
+      [ids.lrA_pendingL1, ids.lrA2_pendingL1],
+      'unlinked managerM blind L1 approve leave_request',
     );
     expectBlockedWrite(
       await runAs(managerMActor, (c) =>
@@ -1016,10 +1079,21 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
         expect(rows).toEqual([{ status: 'pending_l1' }]);
       });
 
-      // Blind sweeps remain { ok: true, rowCount: 0 } even when managerM is also a linked employee.
+      // Blind sweeps remain { ok: true, rowCount: 0 } even when managerM is also a linked employee,
+      // and blind L1 sweep on leave_request never reaches dept2, scoped, org2, or own lrM_pendingL1.
       await assertMasterWriteSweepsBlocked(managerMActor, users.managerM);
+      expectBlockedWrite(
+        await runAs(managerMActor, (c) => c.query(`DELETE FROM crove_hr.leave_request`)),
+        'linked managerM blind-deleting leave_request',
+      );
+      await probeBlindLeaveRequestStatusSweep(
+        managerMActor,
+        'pending_final',
+        [ids.lrA_pendingL1, ids.lrA2_pendingL1],
+        'linked managerM blind L1 approve leave_request',
+      );
 
-      // Unassign managerM from dept1 (and unlink empM): managerM immediately sees 0 leave_request rows.
+      // Unassign managerM from dept1 (and unlink empM): managerM immediately sees 0 leave_request rows and changes 0 rows.
       await withClient(adminUrl, async (c) => {
         await c.query(`UPDATE crove_hr.department SET manager_user_id = NULL WHERE org_id = $1 AND id = $2`, [
           org1Id,
@@ -1034,6 +1108,18 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
       expect(await selectIds(managerMActor, 'crove_hr.leave_request')).toEqual([]);
       expect(await selectIds(managerMActor, 'crove_hr.payroll_employee')).toEqual([]);
       expect(await selectIds(managerMActor, 'crove_hr.payroll_line')).toEqual([]);
+      expectBlockedWrite(
+        await runAs(managerMActor, (c) => c.query(`UPDATE crove_hr.leave_request SET status = 'pending_final'`)),
+        'post-unassign managerM blind pending_final',
+      );
+      expectBlockedWrite(
+        await runAs(managerMActor, (c) => c.query(`UPDATE crove_hr.leave_request SET status = 'approved'`)),
+        'post-unassign managerM blind approved',
+      );
+      expectBlockedWrite(
+        await runAs(managerMActor, (c) => c.query(`DELETE FROM crove_hr.leave_request`)),
+        'post-unassign managerM blind delete leave_request',
+      );
     } finally {
       await withClient(adminUrl, async (c) => {
         await c.query(`DELETE FROM crove_hr.leave_request WHERE org_id = $1 AND id = $2`, [org1Id, lrM_pendingL1]);
