@@ -37,10 +37,10 @@ BEGIN
      OR p_body ->> 'type' IS DISTINCT FROM p_type THEN
     RETURN false;
   END IF;
-  IF pg_catalog.jsonb_typeof(p_body -> 'created_at') <> 'string' OR (p_body ->> 'created_at') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$' THEN
+  IF pg_catalog.jsonb_typeof(p_body -> 'created_at') IS DISTINCT FROM 'string' OR (p_body ->> 'created_at') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$' THEN
     RETURN false;
   END IF;
-  IF pg_catalog.jsonb_typeof(p_body -> 'data') <> 'object' THEN
+  IF pg_catalog.jsonb_typeof(p_body -> 'data') IS DISTINCT FROM 'object' THEN
     RETURN false;
   END IF;
   IF p_type = 'ping' THEN
@@ -51,7 +51,7 @@ BEGIN
         RETURN false;
       END IF;
     END LOOP;
-    RETURN pg_catalog.jsonb_typeof(p_body #> '{data,date}') = 'string' AND (p_body #>> '{data,date}') ~ '^\d{4}-\d{2}-\d{2}$';
+    RETURN COALESCE(pg_catalog.jsonb_typeof(p_body #> '{data,date}') = 'string' AND (p_body #>> '{data,date}') ~ '^\d{4}-\d{2}-\d{2}$', false);
   ELSIF p_type = 'signal.fired' THEN
     FOR k IN SELECT pg_catalog.jsonb_object_keys(p_body -> 'data') LOOP
       IF k <> 'items' THEN
@@ -59,11 +59,11 @@ BEGIN
       END IF;
     END LOOP;
     v_items := p_body #> '{data,items}';
-    IF pg_catalog.jsonb_typeof(v_items) <> 'array' OR pg_catalog.jsonb_array_length(v_items) NOT BETWEEN 1 AND 20 THEN
+    IF pg_catalog.jsonb_typeof(v_items) IS DISTINCT FROM 'array' OR pg_catalog.jsonb_array_length(v_items) NOT BETWEEN 1 AND 20 THEN
       RETURN false;
     END IF;
     FOR v_item IN SELECT * FROM pg_catalog.jsonb_array_elements(v_items) LOOP
-      IF pg_catalog.jsonb_typeof(v_item) <> 'object' THEN
+      IF pg_catalog.jsonb_typeof(v_item) IS DISTINCT FROM 'object' THEN
         RETURN false;
       END IF;
       FOR k IN SELECT pg_catalog.jsonb_object_keys(v_item) LOOP
@@ -71,29 +71,29 @@ BEGIN
           RETURN false;
         END IF;
       END LOOP;
-      IF pg_catalog.jsonb_typeof(v_item -> 'rule') <> 'string'
+      IF pg_catalog.jsonb_typeof(v_item -> 'rule') IS DISTINCT FROM 'string'
          OR (v_item ->> 'rule') NOT IN ('kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed')
-         OR pg_catalog.jsonb_typeof(v_item -> 'key') <> 'string'
+         OR pg_catalog.jsonb_typeof(v_item -> 'key') IS DISTINCT FROM 'string'
          OR (v_item ->> 'key') !~ '^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}){1,3}$'
-         OR pg_catalog.jsonb_typeof(v_item -> 'severity') <> 'string' OR (v_item ->> 'severity') NOT IN ('info', 'warn', 'block') THEN
+         OR pg_catalog.jsonb_typeof(v_item -> 'severity') IS DISTINCT FROM 'string' OR (v_item ->> 'severity') NOT IN ('info', 'warn', 'block') THEN
         RETURN false;
       END IF;
       FOREACH k IN ARRAY ARRAY['party_id', 'deal_id', 'invoice_id'] LOOP
-        IF v_item ? k AND (pg_catalog.jsonb_typeof(v_item -> k) <> 'string' OR (v_item ->> k) !~ c_uuid) THEN
+        IF v_item ? k AND (pg_catalog.jsonb_typeof(v_item -> k) IS DISTINCT FROM 'string' OR (v_item ->> k) !~ c_uuid) THEN
           RETURN false;
         END IF;
       END LOOP;
-      IF v_item ? 'amount' AND (pg_catalog.jsonb_typeof(v_item -> 'amount') <> 'string' OR (v_item ->> 'amount') !~ '^-?(0|[1-9][0-9]{0,17})(\.[0-9]{1,4})?$') THEN
+      IF v_item ? 'amount' AND (pg_catalog.jsonb_typeof(v_item -> 'amount') IS DISTINCT FROM 'string' OR (v_item ->> 'amount') !~ '^-?(0|[1-9][0-9]{0,17})(\.[0-9]{1,4})?$') THEN
         RETURN false;
       END IF;
       -- A currency names the unit of an amount and has no meaning without one.
-      IF v_item ? 'currency' AND (NOT (v_item ? 'amount') OR pg_catalog.jsonb_typeof(v_item -> 'currency') <> 'string' OR (v_item ->> 'currency') !~ '^[A-Z]{3}$') THEN
+      IF v_item ? 'currency' AND (NOT (v_item ? 'amount') OR pg_catalog.jsonb_typeof(v_item -> 'currency') IS DISTINCT FROM 'string' OR (v_item ->> 'currency') !~ '^[A-Z]{3}$') THEN
         RETURN false;
       END IF;
-      IF v_item ? 'due_on' AND (pg_catalog.jsonb_typeof(v_item -> 'due_on') <> 'string' OR (v_item ->> 'due_on') !~ '^\d{4}-\d{2}-\d{2}$') THEN
+      IF v_item ? 'due_on' AND (pg_catalog.jsonb_typeof(v_item -> 'due_on') IS DISTINCT FROM 'string' OR (v_item ->> 'due_on') !~ '^\d{4}-\d{2}-\d{2}$') THEN
         RETURN false;
       END IF;
-      IF v_item ? 'days' AND (pg_catalog.jsonb_typeof(v_item -> 'days') <> 'number' OR (v_item ->> 'days') !~ '^[0-9]{1,4}$' OR (v_item ->> 'days')::integer > 3650) THEN
+      IF v_item ? 'days' AND (pg_catalog.jsonb_typeof(v_item -> 'days') IS DISTINCT FROM 'number' OR (v_item ->> 'days') !~ '^[0-9]{1,4}$' OR (v_item ->> 'days')::integer > 3650) THEN
         RETURN false;
       END IF;
     END LOOP;
@@ -105,9 +105,13 @@ BEGIN
         RETURN false;
       END IF;
     END LOOP;
-    RETURN pg_catalog.jsonb_typeof(p_body #> '{data,meeting_id}') = 'string' AND (p_body #>> '{data,meeting_id}') ~ c_uuid
-       AND pg_catalog.jsonb_typeof(p_body #> '{data,published_at}') = 'string'
-       AND (p_body #>> '{data,published_at}') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$';
+    RETURN COALESCE(
+      pg_catalog.jsonb_typeof(p_body #> '{data,meeting_id}') = 'string'
+      AND (p_body #>> '{data,meeting_id}') ~ c_uuid
+      AND pg_catalog.jsonb_typeof(p_body #> '{data,published_at}') = 'string'
+      AND (p_body #>> '{data,published_at}') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$',
+      false
+    );
   END IF;
   -- An event type a line registered (crove_kernel.mcp_wake_event_type, filled only by the migration of the line): the keys of `data` are exactly the registered fields, each one string of its kind, and nothing else.
   SELECT t.fields INTO v_fields FROM crove_kernel.mcp_wake_event_type t WHERE t.type = p_type;
@@ -165,7 +169,7 @@ BEGIN
   ALTER TABLE crove_kernel.agent_wake_delivery DROP CONSTRAINT IF EXISTS agent_wake_delivery_check;
   ALTER TABLE crove_kernel.agent_wake_delivery DROP CONSTRAINT IF EXISTS agent_wake_delivery_body_fixed;
   ALTER TABLE crove_kernel.agent_wake_delivery ADD CONSTRAINT agent_wake_delivery_body_fixed
-    CHECK (type NOT IN ('signal.fired', 'schedule.due', 'ping', 'meetings.minutes_published') OR crove_kernel.mcp_wake_body_ok(body, id, org_id, grant_id, type)) NOT VALID;
+    CHECK (type NOT IN ('signal.fired', 'schedule.due', 'ping', 'meetings.minutes_published') OR crove_kernel.mcp_wake_body_ok(body, id, org_id, grant_id, type) IS TRUE) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 ALTER TABLE crove_kernel.agent_wake_delivery VALIDATE CONSTRAINT agent_wake_delivery_body_fixed;

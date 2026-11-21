@@ -307,7 +307,6 @@ export interface McpWakeDeliveryRow {
   grantId: string;
   type: string;
   body: Record<string, unknown>;
-  body: Record<string, unknown>;
   status: 'queued' | 'sent' | 'failed' | 'dropped';
   attempts: number;
 }
