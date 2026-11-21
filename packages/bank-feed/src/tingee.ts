@@ -41,22 +41,27 @@ export type TingeeErrorKind =
   | 'clock'
   // Too many calls from this address (code 1001): the job retries later.
   | 'rate_limited'
-  // A page the adapter will not store: a bad line, or more lines than one pull may carry. The cursor stays where it was.
+  // A page the adapter will not store: a line it cannot read. The cursor stays where it was.
   | 'bad_page'
+  // A single day has more transactions than one pull may carry (a smaller window cannot help). The cursor stays where it was.
+  | 'too_many_lines'
   // Tingee answered something else, or not at all (an HTTP error, a code the adapter does not know, a duplicate request).
   | 'upstream'
   // The adapter was asked something it cannot do (a malformed credential or cursor, a host that is not Tingee's).
   | 'config';
 
 // An error about a call or a page. Its message carries Tingee's numeric code and the position of a bad item, never the credential, a response body or a transaction's text.
+// `itemIndex` is that position as a number (0-based, within the page Tingee answered; null when the error is not about one item), so a screen can show it without reading the message.
 export class TingeeError extends Error {
   readonly kind: TingeeErrorKind;
   readonly tingeeCode: string | null;
-  constructor(kind: TingeeErrorKind, message: string, tingeeCode: string | null = null) {
+  readonly itemIndex: number | null;
+  constructor(kind: TingeeErrorKind, message: string, tingeeCode: string | null = null, itemIndex: number | null = null) {
     super(message);
     this.name = 'TingeeError';
     this.kind = kind;
     this.tingeeCode = tingeeCode;
+    this.itemIndex = itemIndex;
   }
 }
 
@@ -160,7 +165,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 // One transaction as Tingee reports it, as a line; a message names what is wrong with it (never its content).
 function toLine(item: unknown, index: number): BankFeedTransaction | null {
   const bad = (what: string): never => {
-    throw new TingeeError('bad_page', `tingee: transaction ${index} of the page has ${what}`);
+    throw new TingeeError('bad_page', `tingee: transaction ${index} of the page has ${what}`, null, index);
   };
   if (!isRecord(item)) return bad('an unreadable shape');
   const type = item.type;
@@ -382,7 +387,7 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
           if (page === MAX_PAGES - 1) throw new TingeeError('upstream', 'tingee: the transaction list never ended');
         }
         if (tooMany) {
-          if (days <= 1) throw new TingeeError('bad_page', 'tingee: a single day has more transactions than one pull may carry');
+          if (days <= 1) throw new TingeeError('too_many_lines', 'tingee: a single day has more transactions than one pull may carry');
           days = Math.max(1, Math.floor(days / 2));
           continue;
         }

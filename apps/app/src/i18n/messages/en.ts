@@ -5776,6 +5776,17 @@ export const en = {
     mappedTo: 'Goes to bank account {account}',
     syncedAt: 'Last synced {when}',
     neverSynced: 'Not synced yet',
+    // Why the last pull stopped (#4244): one plain sentence per kind, never the bank's own text.
+    pullReason: {
+      credentials: 'The last pull stopped: the bank did not accept the saved key. Connect again below.',
+      clock: 'The last pull stopped: the bank rejected the time of this server. Try again later; if it keeps happening, contact support.',
+      rate_limited: 'The last pull stopped: the bank asked us to slow down. It will try again on its own.',
+      upstream: 'The last pull stopped: the bank did not answer properly. It will try again on its own.',
+      config: 'The last pull stopped: the saved connection is not set up correctly. Connect again below.',
+      bad_page: 'The last pull stopped: the bank sent a transaction this account cannot store.',
+      bad_page_item: 'The last pull stopped: transaction {item} in the bank page cannot be stored.',
+      too_many_lines: 'The last pull stopped: the bank sent more transactions for one day than a single pull can take.',
+    },
     gone: 'The bank no longer lists this account. Transactions already stored stay; unmap it to remove the link.',
   },
   // Ads (ADR-0040, #2217): the screen of the ads module, read only, next to the books.

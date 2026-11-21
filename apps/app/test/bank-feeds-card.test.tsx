@@ -48,6 +48,7 @@ const account = (id: string, externalAccountId: string, over: Partial<BankFeedAc
   lastSyncedAt: null,
   feedFrom: null,
   feedFromEarliest: '2026-11-13',
+  lastPull: null,
   ...over,
 });
 
@@ -224,5 +225,39 @@ describe('BankFeedsCard Tingee connect form', () => {
 
   it('shows no Tingee form to a member or viewer', () => {
     expect(card('member', { mapped: [account('m1', 'SBX-001')] }, { sandbox: false, tingee: true })).not.toContain(en.bankFeeds.tingee.title);
+  });
+});
+
+// Why the last pull stopped (#4244): one plain sentence per kind, cleared after a good pull, never the bank's text.
+describe('BankFeedsCard pull reason', () => {
+  beforeEach(() => client.current.clear());
+  const kinds = ['credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+
+  it.each(kinds)('shows the %s sentence in English and Vietnamese for an owner', (kind) => {
+    const mapped = [account('m1', 'SBX-001', { lastPull: { outcome: kind, at, item: null } })];
+    expect(card('owner', { mapped })).toContain(en.bankFeeds.pullReason[kind]);
+    expect(card('owner', { mapped, locale: 'vi' })).toContain(viMessages.bankFeeds.pullReason[kind]);
+  });
+
+  it('names the position of a line it cannot store, counted from 1', () => {
+    const html = card('owner', { mapped: [account('m1', 'SBX-001', { lastPull: { outcome: 'bad_page', at, item: 3 } })] });
+    expect(html).toContain(en.bankFeeds.pullReason.bad_page_item.replace('{item}', '3'));
+  });
+
+  it('says nothing after a good pull or before any pull', () => {
+    for (const lastPull of [null, { outcome: 'ok' as const, at, item: null }]) {
+      const html = card('owner', { mapped: [account('m1', 'SBX-001', { lastPull })] });
+      for (const kind of kinds) expect(html).not.toContain(en.bankFeeds.pullReason[kind]);
+    }
+  });
+
+  it('shows it to a member or viewer too, in a status region', () => {
+    const html = card('viewer', { mapped: [account('m1', 'SBX-001', { lastPull: { outcome: 'credentials', at, item: null } })] });
+    expect(html).toContain(en.bankFeeds.pullReason.credentials);
+    expect(html).toContain('role="status"');
+  });
+
+  it('has the same kinds in both languages', () => {
+    expect(Object.keys(viMessages.bankFeeds.pullReason).sort()).toEqual(Object.keys(en.bankFeeds.pullReason).sort());
   });
 });

@@ -918,6 +918,9 @@ export interface FinanceBankFeedAccountTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   feed_from: string | null;
+  last_pull_outcome: string | null;
+  last_pull_outcome_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_pull_item: number | null;
 }
 
 /** crove_finance.bank_feed_listed_account */

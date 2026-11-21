@@ -5773,6 +5773,17 @@ export const vi = {
     mappedTo: 'Đưa vào tài khoản ngân hàng {account}',
     syncedAt: 'Đồng bộ lần cuối {when}',
     neverSynced: 'Chưa đồng bộ',
+    // Lý do lần lấy giao dịch gần nhất dừng (#4244): mỗi loại một câu, không bao giờ chép lời của ngân hàng.
+    pullReason: {
+      credentials: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng không chấp nhận khóa đã lưu. Hãy kết nối lại bên dưới.',
+      clock: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng từ chối giờ của máy chủ này. Hãy thử lại sau; nếu vẫn lặp lại, hãy liên hệ hỗ trợ.',
+      rate_limited: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng yêu cầu chậm lại. Hệ thống sẽ tự thử lại.',
+      upstream: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng trả lời không đúng. Hệ thống sẽ tự thử lại.',
+      config: 'Lần lấy giao dịch gần nhất đã dừng: kết nối đã lưu chưa được thiết lập đúng. Hãy kết nối lại bên dưới.',
+      bad_page: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng gửi một giao dịch mà tài khoản này không lưu được.',
+      bad_page_item: 'Lần lấy giao dịch gần nhất đã dừng: giao dịch thứ {item} trong trang của ngân hàng không lưu được.',
+      too_many_lines: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng gửi nhiều giao dịch trong một ngày hơn mức một lần lấy nhận được.',
+    },
     gone: 'Ngân hàng không còn liệt kê tài khoản này. Các giao dịch đã lưu vẫn giữ; hãy gỡ liên kết nếu không cần nữa.',
   },
   // Ads (ADR-0040, #2217): the screen of the ads module, read only, next to the books.
