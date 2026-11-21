@@ -157,6 +157,7 @@ export const EXPORT_TABLES = {
   'finance.period_balance_delta': { from: 'crove_finance.period_balance_delta', omit: [] },
   'finance.legal_entity_books': { from: 'crove_finance.legal_entity_books', omit: [] },
   'finance.household_profile': { from: 'crove_finance.household_profile', omit: [] },
+  'finance.marketplace_vat_rate': { from: 'crove_finance.marketplace_vat_rate', omit: [] },
   // How long a customer has to pay, and the weekly reminder item.
   'finance.collection_setting': { from: 'crove_finance.collection_setting', omit: [] },
   'finance.customer_collection': { from: 'crove_finance.customer_collection', omit: [] },

@@ -61,6 +61,7 @@ export const financeManifest = defineModule({
       // A raw push waiting for the worker (#4316): the dedupe key, the header as sent and the body as bytes (treated as personal data), deleted when the worker claims it or after ten minutes; definer-only.
       marketplace_hook_notice: columns(['org_id', 'id', 'hook_id', 'dedupe_key', 'authorization_header', 'received_at'], { body: 'pii', request_url: 'pii' }),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
+      marketplace_vat_rate: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'method', 'vat_percent', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),
       // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
