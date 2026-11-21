@@ -18,7 +18,7 @@ import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
+import { adapterIdOf, authorizeStateKey, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -28,8 +28,6 @@ const refresh = async () => {
 // A test the worker runs answers `queued`; its state reaches the list a moment later, so the card reads the list again every few seconds for up to this long.
 const TEST_WATCH_MS = 3000;
 const TEST_WATCH_TIMES = 10;
-
-const AUTHORIZE_STATE_KEYS = { pending: 'authorizeStates.pending', authorized: 'authorizeStates.authorized', refused: 'authorizeStates.refused', failed: 'authorizeStates.failed', shop_changed: 'authorizeStates.shopChanged' } as const;
 
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
 
@@ -167,7 +165,7 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           {t('pollQueued')}
         </p>
       )}
-      {connection.authorizeState && <p role="status" className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
+      {connection.authorizeState && <p role="status" className="mt-1 text-sm text-muted-foreground">{t(authorizeStateKey(adapterIdOf(connection), connection.authorizeState) as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
       {notice && connection.reauthorizeBy && (
         <p role="status" className="mt-1 text-sm font-medium" data-testid="reauthorize-notice">
           {t(reauthorizeNoticeKey(notice, canAuthorize(connection, adapters)), { when: f.dateTime(connection.reauthorizeBy) })}

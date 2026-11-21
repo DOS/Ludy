@@ -12,7 +12,7 @@ import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts'
 import { takeOAuthAttempt } from '../lib/oauth.ts';
 
 // The marketplaces with an authorization step: a fixed list, so an address with any other name finishes nothing.
-const KNOWN = ['lazada'] as const;
+const KNOWN = ['lazada', 'tiktok_shop'] as const;
 
 type Callback = { kind: 'finish'; slug: string; state: string; code: string } | { kind: 'cancelled'; slug: string | null } | { kind: 'lost' };
 

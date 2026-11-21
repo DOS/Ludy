@@ -163,7 +163,7 @@ suite('the glossary an organization keeps (#4043)', () => {
     await wipe();
     const one = await add('owner', 'Crove');
     // The table's own CHECK refuses what the contract refuses, whatever wrote it (the admin connection skips the policy, not the CHECK).
-    for (const bad of ['', ' Crove', 'x'.repeat(41), '12345', 'an@example.com', 'a\u200bb', 'see www.example.com', 'Crove\n']) {
+    for (const bad of ['', ' Crove', 'x'.repeat(41), '12345', 'an@example.com', 'an＠example.com', 'a\u200bb', 'a\u206ab', 'a\uffa0b', 'see www.example.com', 'www．example.com', 'www․example.com', 'Crove\n']) {
       const code = await sqlAdmin(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3)`, [orgId, bad, users.owner]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR');
       expect(code, JSON.stringify(bad)).toBe('23514');
     }
