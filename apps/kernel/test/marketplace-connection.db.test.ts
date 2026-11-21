@@ -255,6 +255,8 @@ suite('marketplace connections (#2519)', () => {
         lastPolledAt: null,
         lastPollState: null,
         ordersWaiting: 0,
+        authorizeState: null,
+        reauthorizeBy: null,
       },
     ]);
     expect((await rpc('marketplace/connections/list', await tokenFor(outsider), undefined, otherSlug)).body).toEqual([]);
@@ -575,6 +577,98 @@ suite('marketplace connections (#2519)', () => {
     expect(await stateOf()).toBe('api_not_enabled');
     expect(await rows('SELECT last_poll_state, last_polled_at FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, first.body.id])).toEqual([{ last_poll_state: null, last_polled_at: null }]);
     expect((await call('connections/disconnect', owner, { id: first.body.id }, lazadaApp)).body).toEqual({ removed: true });
+  });
+
+  it('authorizes a Lazada connection in steps (#4238): the state works once, only for the member who made it, in its org and before it ends; the code is stored sealed; the worker records the outcome', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh cấp quyền', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
+    const as = (who: Account) => ({ actor: asUser(who), orgId });
+    const exec = <T,>(name: string, input: unknown, who: Account) => rt.execute<T>(name, input, { ...as(who), idempotencyKey: randomUUID() });
+    const hashOf = () => `sha256:${randomBytes(32).toString('hex')}`;
+    const binding = { orgId, provider: 'marketplace_lazada', externalAccountId: `${entity}:lazada` };
+    const sealed = vault.seal(JSON.stringify({ appKey: '123456', appSecret: 'helloworld' }), binding);
+    const connected = await exec<{ id: string }>(
+      'finance.marketplace_connection.connect',
+      { adapter: 'lazada', platform: 'lazada', legalEntityId: entity, displayName: 'lazada (lazada)', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') }, appKey: '123456' },
+      owner,
+    );
+    const id = connected.id;
+    const row = async () => (await rows<Record<string, unknown>>('SELECT authorize_state, authorize_state_hash, authorize_by, authorize_code_key_id, authorize_code_envelope, reauthorize_by, app_key FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0] as Record<string, unknown>;
+    expect(await row()).toMatchObject({ app_key: '123456', authorize_state: null, authorize_state_hash: null });
+
+    // Only an owner or admin starts one, and only for an adapter that has an authorization and a connection that has an App Key.
+    const first = hashOf();
+    for (const who of [member, viewer]) await expect(exec('finance.marketplace_connection.authorize_begin', { id, stateHash: first }, who)).rejects.toMatchObject({ status: 403 });
+    const begun = await exec<{ appKey: string; expiresAt: string }>('finance.marketplace_connection.authorize_begin', { id, stateHash: first }, owner);
+    expect(begun.appKey).toBe('123456');
+    expect(Date.parse(begun.expiresAt) - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(Date.parse(begun.expiresAt) - Date.now()).toBeLessThanOrEqual(10 * 60_000);
+    expect(await row()).toMatchObject({ authorize_state_hash: first, authorize_by: owner.userId });
+    const sandboxConnection = await connection('shopee');
+    await expect(exec('finance.marketplace_connection.authorize_begin', { id: sandboxConnection.id, stateHash: hashOf() }, owner)).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_UNSUPPORTED' });
+    await rows('UPDATE crove_finance.marketplace_connection SET app_key = NULL WHERE org_id = $1 AND id = $2', [orgId, id]);
+    await expect(exec('finance.marketplace_connection.authorize_begin', { id, stateHash: hashOf() }, owner)).rejects.toMatchObject({ code: 'MARKETPLACE_APP_KEY_MISSING' });
+    await rows("UPDATE crove_finance.marketplace_connection SET app_key = '123456' WHERE org_id = $1 AND id = $2", [orgId, id]);
+
+    // The lookup answers the member who started it, read only; no one else, no other state.
+    expect(await rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: first }, as(owner))).toEqual({ id, provider: 'marketplace_lazada', externalAccountId: `${entity}:lazada` });
+    await expect(rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: first }, as(adminUser))).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    await expect(rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: hashOf() }, as(owner))).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    // Another org never finds it.
+    await expect(rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: first }, { actor: asUser(outsider), orgId: randomUUID() })).rejects.toBeDefined();
+
+    // A second start replaces the first: the first state no longer works.
+    const second = hashOf();
+    await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: second }, owner);
+    const finish = (stateHash: string, who: Account, extra: Record<string, unknown> = {}) =>
+      exec<{ id: string }>('finance.marketplace_connection.authorize_finish', { stateHash, codeKeyId: sealed.keyId, codeEnvelope: sealed.envelope.toString('base64'), ...extra }, who);
+    await expect(finish(first, owner)).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    // Not the member who made it: refused, and nothing is consumed (the rightful member can still finish).
+    await expect(finish(second, adminUser)).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    expect(await row()).toMatchObject({ authorize_state_hash: second, authorize_state: null });
+    // An ended state is refused, by the lookup too.
+    await rows("UPDATE crove_finance.marketplace_connection SET authorize_expires_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2", [orgId, id]);
+    await expect(finish(second, owner)).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    await expect(rt.query('finance.marketplace_connection.authorize_lookup', { stateHash: second }, as(owner))).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    const third = hashOf();
+    await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: third }, owner);
+
+    // The right member, in time: the state is consumed, the code is stored sealed, an event with ids only is queued.
+    const eventsBefore = await count("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_authorize_requested'", [orgId]);
+    expect(await finish(third, owner)).toEqual({ id });
+    expect(await row()).toMatchObject({ authorize_state: 'pending', authorize_state_hash: null, authorize_by: null, authorize_code_key_id: sealed.keyId });
+    expect(await count("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_authorize_requested'", [orgId])).toBe(eventsBefore + 1);
+    const events = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_authorize_requested'", [orgId]);
+    expect(events.map((e) => e.payload)).toEqual([{ connection_id: id }]);
+    // Single use: the same state and code again do nothing.
+    await expect(finish(third, owner)).rejects.toMatchObject({ code: 'MARKETPLACE_AUTHORIZE_INVALID' });
+    // The list says where it stands, and never the code or the state; audit and outbox hold neither.
+    const listed = ((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null; reauthorizeBy: string | null }>).find((c) => c.id === id);
+    expect(listed).toMatchObject({ authorizeState: 'pending', reauthorizeBy: null });
+    const dump = JSON.stringify({ audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]), outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]), list: (await call('connections/list', owner)).text });
+    expect(dump).not.toContain(third);
+    expect(dump).not.toContain(sealed.envelope.toString('base64'));
+
+    // The worker: target (the sealed code), then the outcome. Only a pending authorization is recorded, once.
+    const target = await worker.query<{ action: string; codeEnvelope: string; adapter: string }>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
+    expect(target).toMatchObject({ action: 'authorize', adapter: 'lazada', codeEnvelope: sealed.envelope.toString('base64') });
+    await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_test_state = 'api_not_enabled', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
+    const reauthorizeBy = new Date(Date.now() + 150 * 86_400_000).toISOString();
+    expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, outcome: 'authorized', reauthorizeBy }, { actor: SYSTEM, orgId })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', authorize_code_key_id: null, authorize_code_envelope: null });
+    expect(Math.floor(new Date(String((await row()).reauthorize_by)).getTime() / 1000)).toBe(Math.floor(Date.parse(reauthorizeBy) / 1000));
+    expect(await rows('SELECT last_poll_state, last_test_state FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ last_poll_state: null, last_test_state: null }]);
+    expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, outcome: 'failed' }, { actor: SYSTEM, orgId })).toEqual({ recorded: false });
+    expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_pending' });
+    // A person cannot call the worker's commands.
+    await expect(rt.execute('finance.marketplace_connection.authorize_record', { id, outcome: 'authorized' }, { ...as(owner), idempotencyKey: randomUUID() })).rejects.toBeDefined();
+    // A reconnect ends the authorization with the credential it belonged to.
+    await exec('finance.marketplace_connection.connect', { adapter: 'lazada', platform: 'lazada', legalEntityId: entity, displayName: 'lazada (lazada)', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') }, appKey: '654321' }, owner);
+    expect(await row()).toMatchObject({ app_key: '654321', authorize_state: null, reauthorize_by: null });
+    // A refused outcome keeps nothing of the code either.
+    await exec('finance.marketplace_connection.authorize_begin', { id, stateHash: (hashOf()) }, owner);
+    await call('connections/list', owner);
+    expect((await call('connections/disconnect', owner, { id })).body).toEqual({ removed: true });
   });
 
   it('closes the connection: the credential is dropped, the row is gone, what was staged stays, and a second disconnect finds nothing', async () => {
