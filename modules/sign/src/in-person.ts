@@ -13,6 +13,7 @@ import {
 import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
+import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
   SIGNING_EVENT_WRITE,
@@ -39,7 +40,7 @@ export const signerStartInPerson = defineCommand({
     const userId = userIdOf(ctx);
     const row = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select(['id', 'status', 'source_kind', 'created_by', 'expires_at', 'source_sha256'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'expires_at', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .forUpdate()
@@ -48,6 +49,7 @@ export const signerStartInPerson = defineCommand({
       throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     }
     assertCanAccessEnvelopeRow(ctx, row);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, row);
 
     if (row.status !== 'sent' && row.status !== 'in_progress') {
       throw new DomainError(

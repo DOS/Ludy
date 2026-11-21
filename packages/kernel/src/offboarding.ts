@@ -28,7 +28,11 @@ export const EXPORT_TABLES = {
   'kernel.member_invite': { from: 'crove_kernel.member_invite', omit: ['token_sha256'] },
   'kernel.party': { from: 'crove_kernel.party', omit: ['search'] },
   // The file rows of meeting audio and video are left out (ADR-0047 point 7, #2579): no export carries a recording, and the rows name the meeting.
-  'kernel.file': { from: "(SELECT f.* FROM crove_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video'))", omit: [] },
+  // Files of attendees-only meeting_minutes eSign envelopes and unattached member sign_document uploads stay out too (#3811).
+  'kernel.file': {
+    from: "(SELECT f.* FROM crove_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video') AND crove_sign.is_exportable_sign_file(f.org_id, f.id, f.source))",
+    omit: [],
+  },
   'kernel.inbound_message': { from: 'crove_kernel.inbound_message', omit: [] },
   'kernel.extraction': { from: 'crove_kernel.extraction', omit: [] },
   'kernel.proposal': { from: 'crove_kernel.proposal', omit: [] },
@@ -278,16 +282,34 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  // eSign (#3323, #3526, #3554): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out.
-  'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
-  'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
-  'sign.field': { from: 'crove_sign.field', omit: [] },
-  'sign.ai_analysis': { from: 'crove_sign.ai_analysis', omit: [] },
-  'sign.signing_event': { from: 'crove_sign.signing_event', omit: [] },
+  // eSign (#3323, #3526, #3554, #3811): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
+  'sign.envelope': {
+    from: '(SELECT e.* FROM crove_sign.envelope e WHERE crove_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
+    omit: [],
+  },
+  'sign.signer': {
+    from: '(SELECT s.* FROM crove_sign.signer s WHERE crove_sign.is_exportable_envelope_id(s.org_id, s.envelope_id))',
+    omit: ['signer_ip_hash'],
+  },
+  'sign.field': {
+    from: '(SELECT f.* FROM crove_sign.field f WHERE crove_sign.is_exportable_envelope_id(f.org_id, f.envelope_id))',
+    omit: [],
+  },
+  'sign.ai_analysis': {
+    from: '(SELECT a.* FROM crove_sign.ai_analysis a WHERE crove_sign.is_exportable_envelope_id(a.org_id, a.envelope_id))',
+    omit: [],
+  },
+  'sign.signing_event': {
+    from: '(SELECT ev.* FROM crove_sign.signing_event ev WHERE crove_sign.is_exportable_envelope_id(ev.org_id, ev.envelope_id))',
+    omit: [],
+  },
   'sign.template': { from: 'crove_sign.template', omit: [] },
   'sign.template_role': { from: 'crove_sign.template_role', omit: [] },
   'sign.template_field': { from: 'crove_sign.template_field', omit: [] },
-  'sign.ca_signing_request': { from: 'crove_sign.ca_signing_request', omit: ['idempotency_key'] },
+  'sign.ca_signing_request': {
+    from: '(SELECT r.* FROM crove_sign.ca_signing_request r WHERE crove_sign.is_exportable_envelope_id(r.org_id, r.envelope_id))',
+    omit: ['idempotency_key'],
+  },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;
