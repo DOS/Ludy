@@ -332,6 +332,7 @@ describe('the scan recognizes what it must', () => {
     for (const text of [
       reader,
       `const y = defineCommand<I, O>({ name: 'a.b.d', handler: async (ctx) => { await ctx.trx.selectFrom('crove_kernel.member_vy_result as v').execute(); } });`,
+      `const y2 = defineCommand<I, O>({ name: 'a.b.e', handler: async (ctx) => { await ctx.trx.selectFrom('ludy_kernel.member_vy_result as v').execute(); } });`,
       `const T = 'member_vy_result';`,
       "const t = 'member_vy_' + kind;",
       'const u = `member_vy_${kind}`;',

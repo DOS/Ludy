@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { LocalDiskStore, Runtime, sha256Hex } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
@@ -30,6 +30,7 @@ import { STREAM_REDEEM_FAILURES_PER_MINUTE, createHttpApp, type HttpDeps, type S
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { StreamHub, createDbTicketStore, createPgNotificationSource, type TicketStore } from '../../src/stream.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -49,6 +50,7 @@ interface SseEvent {
 suite('invariant: the invalidation stream', () => {
   const dbName = `crove_test_stream_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let runtime: Runtime;
   let hub: StreamHub;
@@ -61,7 +63,7 @@ suite('invariant: the invalidation stream', () => {
   const userIds = new Map<string, string>();
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -201,11 +203,12 @@ suite('invariant: the invalidation stream', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 6 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 6 }, dbIds);
     const db = createDb(pool);
     const config = loadConfig({
       DATABASE_URL: appUrl.toString(),

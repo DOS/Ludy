@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, myOrgs, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ suite('offboarding and retention invariants (#38)', () => {
   // it, as a CREATEROLE migration runner that created crove_app does on PostgreSQL 16+.
   const staffRole = `crove_test_staff_${stamp}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let staffUrl = '';
   let pool: pg.Pool;
@@ -47,7 +49,7 @@ suite('offboarding and retention invariants (#38)', () => {
   }
 
   async function connect<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -94,7 +96,8 @@ suite('offboarding and retention invariants (#38)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const owner = await admin(async (c) => (await c.query<{ owner: string }>(`SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = 'crove_kernel.tenant'::regclass`)).rows[0]?.owner);
     await admin(async (c) => {
       await c.query(`CREATE ROLE ${staffRole} LOGIN NOSUPERUSER PASSWORD 'test-staff-pw'`);
@@ -103,14 +106,14 @@ suite('offboarding and retention invariants (#38)', () => {
     });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     staffUrl = loginUrl(staffRole, 'test-staff-pw');
-    pool = createPool({ connectionString: appUrl, max: 4 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
+    workerPool = createDbPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 2 }, dbIds);
     db = createDb(pool);
     workerDb = createDb(workerPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });

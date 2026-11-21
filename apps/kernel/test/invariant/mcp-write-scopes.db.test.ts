@@ -17,14 +17,15 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { MCP_SCOPE_IDS, MCP_WRITE_SCOPE_IDS } from '@ludy/kernel-contract';
 import { DomainError, MCP_SCOPES, MCP_WRITE_CONTEXT_SCOPES, MCP_WRITE_SCOPES, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { holdsWriteScope, visibleTools } from '../../src/mcp-endpoint.ts';
 import type { ToolDescriptor } from '../../src/mcp-protocol.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -99,6 +100,7 @@ describe('the tool list is filtered by the grant\'s role and scopes (ADR-0051 de
 suite('what the database and the runtime do with a grant that holds a new write scope (#3858 slice c)', () => {
   const dbName = `crove_test_mcp_write_scopes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let orgA = '';
@@ -114,7 +116,7 @@ suite('what the database and the runtime do with a grant that holds a new write 
   });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -154,11 +156,12 @@ suite('what the database and the runtime do with a grant that holds a new write 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const pool = createPool({ connectionString: url.toString(), max: 4 });
+    const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     // One command of a line that declares each new scope, in the narrow shape: it must never run while the scope has no sealed write context.
@@ -222,7 +225,7 @@ suite('what the database and the runtime do with a grant that holds a new write 
 
   it('keeps the social draft entry to its own scope: it refuses a grant that holds only the new ones, in the database', async () => {
     const grantId = await insert(['ludy.read', ENGAGE, ADS]);
-    const c = new pg.Client({ connectionString: (() => { const u = new URL(adminUrl); u.username = 'crove_app'; u.password = 'test-app-pw'; return u.toString(); })() });
+    const c = createDbClient({ connectionString: (() => { const u = new URL(adminUrl); u.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app'; u.password = 'test-app-pw'; return u.toString(); })() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');

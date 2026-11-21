@@ -664,7 +664,8 @@ function routesOf(node: N, sources: Sources, known: Known, seen: Set<N> = new Se
     if (p.type === 'ArrowFunctionExpression' && call?.type === 'CallExpression' && textOf(call.callee) === 'rows.map') {
       let block: N | undefined = call;
       while (block && block.type !== 'BlockStatement') block = parentOf(block);
-      if (block !== undefined && textOf(block).includes('crove_kernel.outbox_claim(')) return [{ events, within: 'the outbox relay' }];
+      const blockText = block === undefined ? '' : textOf(block);
+      if (blockText.includes('crove_kernel.outbox_claim(') || blockText.includes('ludy_kernel.outbox_claim(')) return [{ events, within: 'the outbox relay' }];
     }
     if (bossCall(p, 'work') && p.arguments.at(-1) === child) return [{ events: null, within: `${queuesOf(p.arguments[0], sources, known).join(', ')} handler` }];
     const holder = p.type === 'FunctionDeclaration' && p.id ? p : isFunction(p) && parentOf(p)?.type === 'VariableDeclarator' && parentOf(p)?.id.type === 'Identifier' ? parentOf(p) : null;

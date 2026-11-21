@@ -33,16 +33,17 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { installDdlWatch, migrate } from '../../src/migrate.ts';
+import { resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 
 // The org itself: the only table a tenant foreign key may reference by org_id alone.
-const ORG_TABLE = 'crove_kernel.tenant';
+const CANONICAL_ORG_TABLE = 'crove_kernel.tenant';
 // Column names that hold an amount of money: the ledger's words, and those of a budget or a currency (#1219).
 const MONEY_NAME = /(^|_)(amount|cost|price|subtotal|total|debit|credit|balance|fee|budget|spend|spent|vnd|usd)$/;
 // Money columns the naming rule does not catch.
-const MONEY_COLUMNS = new Set(['crove_kernel.budget_policy.monthly_limit']);
+const CANONICAL_MONEY_COLUMNS = ['crove_kernel.budget_policy.monthly_limit'];
 
 // Tenant tables whose primary key is not (org_id, id), with the key they have. Every one still leads with org_id
 // except outbox_pending, which is keyed by its global sequence.
@@ -52,7 +53,7 @@ const PK_EXCEPTIONS: Record<string, { pk: string; reason: string }> = {
   'crove_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number.' },
   'crove_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key.' },
   'crove_finance.purchase_line': { pk: 'org_id,document_id,line_no', reason: 'A line of a purchase document, keyed by its document and line number.' },
-  'crove_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and row number.' },
+  'crove_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and line number.' },
   'crove_finance.vendor_account_rule': { pk: 'org_id,party_id', reason: 'One posting rule per vendor: the party is the key.' },
   'crove_kernel.auth_session_org': { pk: 'org_id,user_id,session_id', reason: 'Which org a login session acts in: a pairing of session, user and org.' },
   'crove_kernel.credential': { pk: 'org_id,connection_id', reason: 'The sealed secret of one channel connection (ADR-0025): the connection is the key.' },
@@ -66,6 +67,25 @@ const PK_EXCEPTIONS: Record<string, { pk: string; reason: string }> = {
   'crove_kernel.tenant_member': { pk: 'org_id,user_id', reason: 'Membership is a pairing of org and user.' },
   'crove_social.chat_alert_target': { pk: 'org_id,alert_id', reason: 'The sealed target of one team chat alert (#863): the alert is the key.' },
   'crove_social.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
+  'ludy_ads.ad_token_seal': { pk: 'org_id,revoke_id', reason: 'The sealed copy of the token of one closed ads connection, kept for its revoke (#2296, ADR-0025 amendment, ADR-0054 twin): the revoke is the key.' },
+  'ludy_finance.journal_line': { pk: 'org_id,entry_id,line_no', reason: 'A line of an append-only journal entry, keyed by its entry and line number (ADR-0054 twin).' },
+  'ludy_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number (ADR-0054 twin).' },
+  'ludy_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key (ADR-0054 twin).' },
+  'ludy_finance.purchase_line': { pk: 'org_id,document_id,line_no', reason: 'A line of a purchase document, keyed by its document and line number (ADR-0054 twin).' },
+  'ludy_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and row number (ADR-0054 twin).' },
+  'ludy_finance.vendor_account_rule': { pk: 'org_id,party_id', reason: 'One posting rule per vendor: the party is the key (ADR-0054 twin).' },
+  'ludy_kernel.auth_session_org': { pk: 'org_id,user_id,session_id', reason: 'Which org a login session acts in: a pairing of session, user and org (ADR-0054 twin).' },
+  'ludy_kernel.credential': { pk: 'org_id,connection_id', reason: 'The sealed secret of one channel connection (ADR-0025, ADR-0054 twin): the connection is the key.' },
+  'ludy_kernel.idempotency_key': { pk: 'org_id,actor_key,key', reason: 'A command idempotency key is unique per org and actor; it has no id of its own (ADR-0054 twin).' },
+  'ludy_kernel.inbound_drop': { pk: 'org_id,address_id', reason: 'The drop counter of one inbound address (#37, ADR-0054 twin): the address is the key.' },
+  'ludy_kernel.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind) (ADR-0054 twin).' },
+  'ludy_kernel.outbox_archive': { pk: 'org_id,day', reason: 'One archive batch per org and day (ADR-0054 twin).' },
+  'ludy_kernel.outbox_pending': { pk: 'seq', reason: 'The global outbox hand-off queue, ordered by its sequence; definer-only machinery (ADR-0054 twin).' },
+  'ludy_kernel.refusal_tally': { pk: 'org_id,window_start,actor_key,command,code', reason: 'A refusal counter per time window, actor, command and code (ADR-0054 twin).' },
+  'ludy_kernel.tenant': { pk: 'org_id', reason: 'The org itself: its id is org_id (ADR-0054 twin).' },
+  'ludy_kernel.tenant_member': { pk: 'org_id,user_id', reason: 'Membership is a pairing of org and user (ADR-0054 twin).' },
+  'ludy_social.chat_alert_target': { pk: 'org_id,alert_id', reason: 'The sealed target of one team chat alert (#863, ADR-0054 twin): the alert is the key.' },
+  'ludy_social.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind) (ADR-0054 twin).' },
 };
 // Tenant foreign keys (<table>.<constraint>) that have no supporting index, with their columns. None today: #1212
 // added the last missing ones.
@@ -75,9 +95,11 @@ const FK_INDEX_EXCEPTIONS: Record<string, { cols: string; reason: string }> = {}
 const COLUMN_EXCEPTIONS: Record<string, { rule: 'timestamp' | 'money'; type: string; reason: string }> = {
   'crove_jobs.instance.pool_total': { rule: 'money', type: 'integer', reason: 'pg-boss: the size of a worker connection pool, a count and not money.' },
   'crove_jobs.job.singleton_on': { rule: 'timestamp', type: 'timestamp without time zone', reason: 'pg-boss: the singleton time slot, set and compared by pg-boss itself.' },
+  'ludy_jobs.instance.pool_total': { rule: 'money', type: 'integer', reason: 'pg-boss: the size of a worker connection pool, a count and not money (ADR-0054 twin).' },
+  'ludy_jobs.job.singleton_on': { rule: 'timestamp', type: 'timestamp without time zone', reason: 'pg-boss: the singleton time slot, set and compared by pg-boss itself (ADR-0054 twin).' },
 };
-// Event triggers that run a crove_* function, with their event, function, enabled state (pg_event_trigger.evtenabled:
-// O origin, A always, R replica, D disabled) and the command tags they are limited to, or all.
+// Event triggers that run a crove_* or ludy_* function, with their event, function, enabled state
+// (pg_event_trigger.evtenabled: O origin, A always, R replica, D disabled) and command tags, or all.
 const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }> = {
   crove_ddl_watch: {
     shape: 'ddl_command_end crove_kernel.ddl_watch() A all',
@@ -87,12 +109,65 @@ const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }
     shape: 'sql_drop crove_kernel.ddl_watch() A all',
     reason: 'The DDL watch (#1202) for dropped objects; installDdlWatch attaches it.',
   },
+  ludy_ddl_watch: {
+    shape: 'ddl_command_end ludy_kernel.ddl_watch() A all',
+    reason: 'The DDL watch (#1202, ADR-0054 twin): records DDL run outside the migration pipeline; installDdlWatch attaches it.',
+  },
+  ludy_ddl_watch_drop: {
+    shape: 'sql_drop ludy_kernel.ddl_watch() A all',
+    reason: 'The DDL watch (#1202, ADR-0054 twin) for dropped objects; installDdlWatch attaches it.',
+  },
 };
-// Exceptions whose object an open PR adds or fixes. CI runs main's copy of this file on that PR, so the entry has to
-// be on main first; while it is listed here, an exception that matches nothing is not stale. Remove the key once the
-// PR is merged. One key per line, sorted, with a trailing comma.
+// Exceptions whose object an open PR adds, fixes, or renames (ADR-0054 twins). CI runs main's copy of this file on
+// that PR, so both crove_* and ludy_* twins stay listed until #3972 removes the legacy crove_* keys.
+// One key per line, sorted, with a trailing comma.
 const PENDING_EXCEPTIONS = new Set<string>([
-  // 'crove_schema.table_name',
+  'crove_ads.ad_token_seal',
+  'crove_ddl_watch',
+  'crove_ddl_watch_drop',
+  'crove_finance.journal_line',
+  'crove_finance.portal_invoice_row',
+  'crove_finance.purchase_document_void',
+  'crove_finance.purchase_line',
+  'crove_finance.purchase_tax_rate',
+  'crove_finance.vendor_account_rule',
+  'crove_jobs.instance.pool_total',
+  'crove_jobs.job.singleton_on',
+  'crove_kernel.auth_session_org',
+  'crove_kernel.credential',
+  'crove_kernel.idempotency_key',
+  'crove_kernel.inbound_drop',
+  'crove_kernel.notification_mute',
+  'crove_kernel.outbox_archive',
+  'crove_kernel.outbox_pending',
+  'crove_kernel.refusal_tally',
+  'crove_kernel.tenant',
+  'crove_kernel.tenant_member',
+  'crove_social.chat_alert_target',
+  'crove_social.notification_mute',
+  'ludy_ads.ad_token_seal',
+  'ludy_ddl_watch',
+  'ludy_ddl_watch_drop',
+  'ludy_finance.journal_line',
+  'ludy_finance.portal_invoice_row',
+  'ludy_finance.purchase_document_void',
+  'ludy_finance.purchase_line',
+  'ludy_finance.purchase_tax_rate',
+  'ludy_finance.vendor_account_rule',
+  'ludy_jobs.instance.pool_total',
+  'ludy_jobs.job.singleton_on',
+  'ludy_kernel.auth_session_org',
+  'ludy_kernel.credential',
+  'ludy_kernel.idempotency_key',
+  'ludy_kernel.inbound_drop',
+  'ludy_kernel.notification_mute',
+  'ludy_kernel.outbox_archive',
+  'ludy_kernel.outbox_pending',
+  'ludy_kernel.refusal_tally',
+  'ludy_kernel.tenant',
+  'ludy_kernel.tenant_member',
+  'ludy_social.chat_alert_target',
+  'ludy_social.notification_mute',
 ]);
 
 type Rule = 'pk' | 'fk-shape' | 'fk-index' | 'timestamp' | 'money' | 'cross-module' | 'trigger' | 'event-trigger';
@@ -118,8 +193,10 @@ function onlyKeyNotNull(predicate: string, keyColumns: string[]): boolean {
 }
 
 // Every deviation from the conventions in the database, exceptions included.
-async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
+async function findViolations(client: pg.ClientBase, ids: DbIdentifiers): Promise<Violation[]> {
   const out: Violation[] = [];
+  const orgTable = ids.table(CANONICAL_ORG_TABLE);
+  const moneyColumns = new Set(CANONICAL_MONEY_COLUMNS.map((c) => ids.table(c)));
 
   const tenants = await client.query<{ name: string; pk: string | null }>(
     `SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS name,
@@ -130,7 +207,8 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
              WHERE p.conrelid = c.oid AND p.contype = 'p') AS pk
      FROM pg_catalog.pg_class c
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-     WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND starts_with(n.nspname, 'crove_')
+     WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition
+       AND (starts_with(n.nspname, 'crove_') OR starts_with(n.nspname, 'ludy_'))
        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
                    WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND a.attnum > 0 AND NOT a.attisdropped)
      ORDER BY 1`,
@@ -150,7 +228,7 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
   }>(
     `WITH tenant AS (
        SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE c.relkind IN ('r', 'p') AND starts_with(n.nspname, 'crove_')
+       WHERE c.relkind IN ('r', 'p') AND (starts_with(n.nspname, 'crove_') OR starts_with(n.nspname, 'ludy_'))
          AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
                      WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND a.attnum > 0 AND NOT a.attisdropped))
      SELECT pg_catalog.format('%s.%I', co.conrelid::regclass, co.conname) AS key,
@@ -175,7 +253,7 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
   );
   for (const fk of fks.rows) {
     const leadsWithOrg = fk.cols[0] === 'org_id' && fk.refcols[0] === 'org_id';
-    if (!leadsWithOrg || (fk.cols.length < 2 && fk.target !== ORG_TABLE)) {
+    if (!leadsWithOrg || (fk.cols.length < 2 && fk.target !== orgTable)) {
       out.push({ rule: 'fk-shape', key: fk.key, detail: `(${fk.cols.join(',')}) -> ${fk.target} (${fk.refcols.join(',')})` });
     }
     const wanted = new Set(fk.attnums);
@@ -201,7 +279,8 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
        FROM pg_catalog.pg_attribute a
        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition AND starts_with(n.nspname, 'crove_')
+       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition
+         AND (starts_with(n.nspname, 'crove_') OR starts_with(n.nspname, 'ludy_'))
          AND a.attnum > 0 AND NOT a.attisdropped),
      chain(start, oid, deep) AS (
        SELECT DISTINCT start, start, false FROM col
@@ -225,18 +304,21 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
   for (const { key, type, chain, deep } of columns.rows) {
     if (deep.includes('timestamp without time zone')) out.push({ rule: 'timestamp', key, detail: type });
     const column = key.slice(key.lastIndexOf('.') + 1);
-    const isMoney = MONEY_NAME.test(column) || MONEY_COLUMNS.has(key);
+    const isMoney = MONEY_NAME.test(column) || moneyColumns.has(key);
     if (deep.includes('money') || (isMoney && !chain.includes('numeric'))) out.push({ rule: 'money', key, detail: type });
   }
 
-  // Foreign keys from any crove_* table to another schema than its own or crove_kernel.
+  // Foreign keys from any crove_* or ludy_* table to another schema than its own or the active kernel schema.
   const crossing = await client.query<{ key: string; target: string }>(
     `SELECT pg_catalog.format('%s.%I', co.conrelid::regclass, co.conname) AS key, co.confrelid::regclass::text AS target
      FROM pg_catalog.pg_constraint co
      JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
+     JOIN pg_catalog.pg_namespace cn ON cn.oid = c.relnamespace
      JOIN pg_catalog.pg_class r ON r.oid = co.confrelid
-     WHERE co.contype = 'f' AND co.conparentid = 0 AND starts_with(c.relnamespace::regnamespace::text, 'crove_')
-       AND r.relnamespace <> c.relnamespace AND r.relnamespace <> 'crove_kernel'::regnamespace
+     WHERE co.contype = 'f' AND co.conparentid = 0
+       AND (starts_with(cn.nspname, 'crove_') OR starts_with(cn.nspname, 'ludy_'))
+       AND r.relnamespace <> c.relnamespace
+       AND r.relnamespace <> COALESCE(pg_catalog.to_regnamespace('ludy_kernel'), pg_catalog.to_regnamespace('crove_kernel'))
      ORDER BY 1`,
   );
   for (const { key, target } of crossing.rows) out.push({ rule: 'cross-module', key, detail: target });
@@ -245,9 +327,12 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
     `SELECT pg_catalog.format('%s.%I', t.tgrelid::regclass, t.tgname) AS key, t.tgfoid::regprocedure::text AS fn
      FROM pg_catalog.pg_trigger t
      JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+     JOIN pg_catalog.pg_namespace cn ON cn.oid = c.relnamespace
      JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
-     WHERE NOT t.tgisinternal AND NOT starts_with(c.relnamespace::regnamespace::text, 'crove_')
-       AND starts_with(p.pronamespace::regnamespace::text, 'crove_')
+     JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
+     WHERE NOT t.tgisinternal
+       AND NOT (starts_with(cn.nspname, 'crove_') OR starts_with(cn.nspname, 'ludy_'))
+       AND (starts_with(pn.nspname, 'crove_') OR starts_with(pn.nspname, 'ludy_'))
      ORDER BY 1`,
   );
   for (const { key, fn } of triggers.rows) out.push({ rule: 'trigger', key, detail: fn });
@@ -259,7 +344,7 @@ async function findViolations(client: pg.ClientBase): Promise<Violation[]> {
      FROM pg_catalog.pg_event_trigger e
      JOIN pg_catalog.pg_proc p ON p.oid = e.evtfoid
      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-     WHERE starts_with(n.nspname, 'crove_')
+     WHERE starts_with(n.nspname, 'crove_') OR starts_with(n.nspname, 'ludy_')
      ORDER BY 1`,
   );
   for (const { key, detail } of eventTriggers.rows) out.push({ rule: 'event-trigger', key, detail });
@@ -289,6 +374,7 @@ function compare(violations: Violation[], pending: ReadonlySet<string> = PENDING
 suite('tenant schema conformance (G3)', () => {
   const dbName = `crove_test_conformance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let admin: pg.Client;
+  let ids: DbIdentifiers;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -302,6 +388,7 @@ suite('tenant schema conformance (G3)', () => {
     expect(await installDdlWatch({ adminUrl: url.toString() }), 'CROVE_TEST_ADMIN_URL must be a superuser to attach the DDL watch').toBe('installed');
     admin = new pg.Client({ connectionString: url.toString() });
     await admin.connect();
+    ids = await resolveDbIdentifiers(admin);
   }, 300_000);
 
   afterAll(async () => {
@@ -314,14 +401,17 @@ suite('tenant schema conformance (G3)', () => {
 
   it('finds tenant tables to check', async () => {
     const { rows } = await admin.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-       WHERE a.attname = 'org_id' AND c.relkind IN ('r', 'p') AND starts_with(c.relnamespace::regnamespace::text, 'crove_')`,
+      `SELECT count(*)::int AS n FROM pg_catalog.pg_attribute a
+       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE a.attname = 'org_id' AND c.relkind IN ('r', 'p')
+         AND (starts_with(n.nspname, 'crove_') OR starts_with(n.nspname, 'ludy_'))`,
     );
     expect(rows[0]?.n).toBeGreaterThan(50);
   });
 
-  it('every crove_* table meets the tenant conventions or is a recorded exception', async () => {
-    const { unexpected, stale } = compare(await findViolations(admin));
+  it('every crove_* or ludy_* table meets the tenant conventions or is a recorded exception', async () => {
+    const { unexpected, stale } = compare(await findViolations(admin, ids));
     expect(unexpected, 'deviations from the tenant conventions: fix the migration, or record an exception with its reason').toEqual([]);
     expect(stale, 'exceptions that match no deviation any more: remove them (or list them in PENDING_EXCEPTIONS)').toEqual([]);
   });
@@ -341,7 +431,7 @@ suite('tenant schema conformance (G3)', () => {
     await admin.query('BEGIN');
     try {
       await admin.query(sql);
-      return await findViolations(admin);
+      return await findViolations(admin, ids);
     } finally {
       await admin.query('ROLLBACK');
     }
@@ -364,6 +454,7 @@ suite('tenant schema conformance (G3)', () => {
   });
 
   it('fails a foreign key between tenant tables that does not lead with org_id on both sides', async () => {
+    const kernel = ids.schema('kernel');
     const found = await withFixture(`${parent}
       CREATE TABLE ${FIXTURE}.child (org_id uuid NOT NULL, id uuid NOT NULL, parent_id uuid, PRIMARY KEY (org_id, id),
         CONSTRAINT single FOREIGN KEY (parent_id) REFERENCES ${FIXTURE}.parent (id),
@@ -371,7 +462,7 @@ suite('tenant schema conformance (G3)', () => {
         CONSTRAINT crossed FOREIGN KEY (org_id, parent_id) REFERENCES ${FIXTURE}.parent (id, org_id),
         CONSTRAINT org_only FOREIGN KEY (org_id) REFERENCES ${FIXTURE}.parent (id),
         CONSTRAINT good FOREIGN KEY (org_id, parent_id) REFERENCES ${FIXTURE}.parent (org_id, id),
-        CONSTRAINT to_org FOREIGN KEY (org_id) REFERENCES crove_kernel.tenant (org_id));
+        CONSTRAINT to_org FOREIGN KEY (org_id) REFERENCES ${kernel}.tenant (org_id));
       CREATE INDEX ON ${FIXTURE}.child (org_id, parent_id);`);
     expect(named(found, 'fk-shape')).toEqual([
       `${FIXTURE}.child.crossed: (org_id,parent_id) -> ${FIXTURE}.parent (id,org_id)`,
@@ -413,6 +504,7 @@ suite('tenant schema conformance (G3)', () => {
   });
 
   it('fails a timestamp without time zone column', async () => {
+    const jobs = ids.schema('jobs');
     const found = await withFixture(`${parent}
       CREATE DOMAIN ${FIXTURE}.local_time AS timestamp;
       CREATE TYPE ${FIXTURE}.stamped AS (at timestamp, n integer);
@@ -426,7 +518,7 @@ suite('tenant schema conformance (G3)', () => {
       CREATE TABLE ${FIXTURE}.times_split (org_id uuid NOT NULL, id uuid NOT NULL, at timestamp, PRIMARY KEY (org_id, id))
         PARTITION BY LIST (org_id);
       CREATE TABLE ${FIXTURE}.times_split_rest PARTITION OF ${FIXTURE}.times_split DEFAULT;
-      ALTER TABLE crove_jobs.queue ADD COLUMN g3_fixture_at timestamp;`);
+      ALTER TABLE ${jobs}.queue ADD COLUMN g3_fixture_at timestamp;`);
     expect(named(found, 'timestamp')).toEqual([
       `${FIXTURE}.times.composite: ${FIXTURE}.stamped`,
       `${FIXTURE}.times.nested: ${FIXTURE}.nested`,
@@ -439,18 +531,20 @@ suite('tenant schema conformance (G3)', () => {
       `${FIXTURE}.times_split.at: timestamp without time zone`,
       `${FIXTURE}.times_view.seen: timestamp without time zone`,
       // The vendored pg-boss schema has exceptions for its own columns only.
-      'crove_jobs.queue.g3_fixture_at: timestamp without time zone',
+      `${jobs}.queue.g3_fixture_at: timestamp without time zone`,
     ]);
   });
 
   it('fails a money column that is not numeric', async () => {
+    const finance = ids.schema('finance');
+    const jobs = ids.schema('jobs');
     const found = await withFixture(`${parent}
       CREATE TYPE ${FIXTURE}.priced AS (label text, fee money);
       CREATE TABLE ${FIXTURE}.prices (org_id uuid NOT NULL, id uuid NOT NULL, PRIMARY KEY (org_id, id),
-        amount bigint, unit_price double precision, vat_amount text, fee money, subtotal crove_finance.amount,
+        amount bigint, unit_price double precision, vat_amount text, fee money, subtotal ${finance}.amount,
         total numeric(20,4), quantity real, budget integer, spent bigint, total_vnd double precision,
         monthly_budget numeric, priced ${FIXTURE}.priced);
-      ALTER TABLE crove_jobs.queue ADD COLUMN g3_fixture_fee integer;`);
+      ALTER TABLE ${jobs}.queue ADD COLUMN g3_fixture_fee integer;`);
     expect(named(found, 'money')).toEqual([
       `${FIXTURE}.prices.amount: bigint`,
       `${FIXTURE}.prices.budget: integer`,
@@ -460,77 +554,106 @@ suite('tenant schema conformance (G3)', () => {
       `${FIXTURE}.prices.total_vnd: double precision`,
       `${FIXTURE}.prices.unit_price: double precision`,
       `${FIXTURE}.prices.vat_amount: text`,
-      'crove_jobs.queue.g3_fixture_fee: integer',
+      `${jobs}.queue.g3_fixture_fee: integer`,
     ]);
   });
 
-  it('fails a foreign key between module schemas, from the kernel to a module, or out of crove_*', async () => {
+  it('fails a foreign key between module schemas, from the kernel to a module, or out of crove_*/ludy_*', async () => {
+    const finance = ids.schema('finance');
+    const kernel = ids.schema('kernel');
     const found = await withFixture(`${parent}
       CREATE TABLE ${FIXTURE}.to_finance (org_id uuid NOT NULL, id uuid NOT NULL, entry_id uuid, PRIMARY KEY (org_id, id),
-        CONSTRAINT to_finance FOREIGN KEY (org_id, entry_id) REFERENCES crove_finance.journal_entry (org_id, id),
-        CONSTRAINT to_kernel FOREIGN KEY (org_id) REFERENCES crove_kernel.tenant (org_id));
+        CONSTRAINT to_finance FOREIGN KEY (org_id, entry_id) REFERENCES ${finance}.journal_entry (org_id, id),
+        CONSTRAINT to_kernel FOREIGN KEY (org_id) REFERENCES ${kernel}.tenant (org_id));
       CREATE TABLE public.g3_fixture_outside (id uuid PRIMARY KEY);
       CREATE TABLE ${FIXTURE}.to_outside (id uuid PRIMARY KEY REFERENCES public.g3_fixture_outside (id));
-      CREATE TABLE crove_kernel.g3_fixture_kernel (org_id uuid NOT NULL, id uuid NOT NULL, PRIMARY KEY (org_id, id),
+      CREATE TABLE ${kernel}.g3_fixture_kernel (org_id uuid NOT NULL, id uuid NOT NULL, PRIMARY KEY (org_id, id),
         CONSTRAINT to_module FOREIGN KEY (org_id, id) REFERENCES ${FIXTURE}.parent (org_id, id));`);
     expect(named(found, 'cross-module')).toEqual([
-      `crove_kernel.g3_fixture_kernel.to_module: ${FIXTURE}.parent`,
-      `${FIXTURE}.to_finance.to_finance: crove_finance.journal_entry`,
+      `${kernel}.g3_fixture_kernel.to_module: ${FIXTURE}.parent`,
+      `${FIXTURE}.to_finance.to_finance: ${finance}.journal_entry`,
       `${FIXTURE}.to_outside.to_outside_id_fkey: g3_fixture_outside`,
     ].sort());
   });
 
-  it('fails a Crove trigger on a table outside the crove_* schemas', async () => {
+  it('fails a Crove or Ludy trigger on a table outside the crove_*/ludy_* schemas', async () => {
+    const kernel = ids.schema('kernel');
     const found = await withFixture(`${parent}
       CREATE TABLE public.g3_fixture_outside (id uuid PRIMARY KEY);
       CREATE TRIGGER g3_fixture_guard BEFORE UPDATE ON public.g3_fixture_outside
-        FOR EACH ROW EXECUTE FUNCTION crove_kernel.reject_mutation();
+        FOR EACH ROW EXECUTE FUNCTION ${kernel}.reject_mutation();
       CREATE TRIGGER g3_fixture_inside BEFORE UPDATE ON ${FIXTURE}.parent
-        FOR EACH ROW EXECUTE FUNCTION crove_kernel.reject_mutation();`);
-    expect(named(found, 'trigger')).toEqual(['g3_fixture_outside.g3_fixture_guard: crove_kernel.reject_mutation()']);
+        FOR EACH ROW EXECUTE FUNCTION ${kernel}.reject_mutation();`);
+    expect(named(found, 'trigger')).toEqual([`g3_fixture_outside.g3_fixture_guard: ${kernel}.reject_mutation()`]);
   });
 
-  it('fails an event trigger running a crove_* function that is not recorded, or recorded with another shape', async () => {
+  it('fails an event trigger running a crove_*/ludy_* function that is not recorded, or recorded with another shape', async () => {
+    const kernel = ids.schema('kernel');
+    const ddlWatchDrop = `${ids.ddlWatch}_drop`;
     const found = await withFixture(`${parent}
       CREATE FUNCTION ${FIXTURE}.on_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN END $$;
       CREATE FUNCTION public.g3_fixture_outside_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN END $$;
       CREATE EVENT TRIGGER g3_fixture_crove ON ddl_command_start WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION ${FIXTURE}.on_ddl();
       CREATE EVENT TRIGGER g3_fixture_outside ON ddl_command_start EXECUTE FUNCTION public.g3_fixture_outside_ddl();
-      ALTER EVENT TRIGGER crove_ddl_watch_drop DISABLE;`);
-    // A trigger of a function outside crove_* is not Crove's.
+      ALTER EVENT TRIGGER ${ddlWatchDrop} DISABLE;`);
+    // A trigger of a function outside crove_*/ludy_* is not Ludy's.
     expect(named(found, 'event-trigger')).toEqual([`g3_fixture_crove: ddl_command_start ${FIXTURE}.on_ddl() O CREATE TABLE`]);
     expect(compare(found).unexpected).toEqual([
-      'event-trigger crove_ddl_watch_drop: sql_drop crove_kernel.ddl_watch() D all (exception records sql_drop crove_kernel.ddl_watch() A all)',
+      `event-trigger ${ddlWatchDrop}: sql_drop ${kernel}.ddl_watch() D all (exception records sql_drop ${kernel}.ddl_watch() A all)`,
       `event-trigger g3_fixture_crove: ddl_command_start ${FIXTURE}.on_ddl() O CREATE TABLE`,
     ]);
   });
 
+  it('enforces tenant conventions on ludy_* schemas today (#3969)', async () => {
+    const finance = ids.schema('finance');
+    const found = await withFixture(`
+      CREATE SCHEMA ludy_conformance_probe;
+      CREATE TABLE ludy_conformance_probe.bad (
+        org_id uuid NOT NULL,
+        id uuid PRIMARY KEY,
+        entry_id uuid,
+        CONSTRAINT to_fin FOREIGN KEY (org_id, entry_id) REFERENCES ${finance}.journal_entry (org_id, id)
+      );`);
+    expect(found.filter((v) => v.key.startsWith('ludy_conformance_probe.')).map((v) => `${v.rule} ${v.key}: ${v.detail}`).sort()).toEqual([
+      `cross-module ludy_conformance_probe.bad.to_fin: ${finance}.journal_entry`,
+      'fk-index ludy_conformance_probe.bad.to_fin: org_id,entry_id',
+      'pk ludy_conformance_probe.bad: id',
+    ]);
+  });
+
   it('reports a new deviation, a changed one and a stale exception', async () => {
+    const orgTable = ids.table('crove_kernel.tenant');
+    const journalLine = ids.table('crove_finance.journal_line');
+    const testPending = new Set([...PENDING_EXCEPTIONS].filter((k) => k !== orgTable && k !== journalLine));
     const found = await withFixture(`${parent} CREATE TABLE ${FIXTURE}.by_id (org_id uuid NOT NULL, id uuid PRIMARY KEY);`);
     const { unexpected, stale } = compare(
       found
         // The org table conforms now: its exception is stale.
-        .filter((v) => !(v.rule === 'pk' && v.key === 'crove_kernel.tenant'))
+        .filter((v) => !(v.rule === 'pk' && v.key === orgTable))
         // A journal line keyed differently from its exception.
-        .map((v) => (v.rule === 'pk' && v.key === 'crove_finance.journal_line' ? { ...v, detail: 'org_id,line_no' } : v)),
+        .map((v) => (v.rule === 'pk' && v.key === journalLine ? { ...v, detail: 'org_id,line_no' } : v)),
+      testPending,
     );
     expect(unexpected).toEqual([
-      'pk crove_finance.journal_line: org_id,line_no (exception records org_id,entry_id,line_no)',
+      `pk ${journalLine}: org_id,line_no (exception records org_id,entry_id,line_no)`,
       `pk ${FIXTURE}.by_id: id`,
     ]);
-    expect(stale).toEqual(['pk crove_finance.journal_line', 'pk crove_kernel.tenant']);
+    expect(stale).toEqual([`pk ${journalLine}`, `pk ${orgTable}`].sort());
   });
 
   it('accepts a pending exception with or without its deviation, and no other stale one', async () => {
-    const found = await findViolations(admin);
-    const pending = new Set([...PENDING_EXCEPTIONS, 'crove_kernel.tenant']);
+    const orgTable = ids.table('crove_kernel.tenant');
+    const journalLine = ids.table('crove_finance.journal_line');
+    const testPending = new Set([...PENDING_EXCEPTIONS].filter((k) => k !== orgTable && k !== journalLine));
+    const found = await findViolations(admin, ids);
+    const pending = new Set([...testPending, orgTable]);
     // Before its PR lands, the pending exception still matches its deviation.
     expect(compare(found, pending)).toEqual({ unexpected: [], stale: [] });
     // After, the org table and the journal line conform: only the pending one is let through.
-    const fixed = found.filter((v) => !(v.rule === 'pk' && ['crove_kernel.tenant', 'crove_finance.journal_line'].includes(v.key)));
-    expect(compare(fixed, pending)).toEqual({ unexpected: [], stale: ['pk crove_finance.journal_line'] });
+    const fixed = found.filter((v) => !(v.rule === 'pk' && [orgTable, journalLine].includes(v.key)));
+    expect(compare(fixed, pending)).toEqual({ unexpected: [], stale: [`pk ${journalLine}`] });
     // A pending key spares only a stale exception: a changed shape is still reported.
-    const changed = found.map((v) => (v.rule === 'pk' && v.key === 'crove_kernel.tenant' ? { ...v, detail: 'id' } : v));
-    expect(compare(changed, pending).unexpected).toEqual(['pk crove_kernel.tenant: id (exception records org_id)']);
+    const changed = found.map((v) => (v.rule === 'pk' && v.key === orgTable ? { ...v, detail: 'id' } : v));
+    expect(compare(changed, pending).unexpected).toEqual([`pk ${orgTable}: id (exception records org_id)`]);
   });
 });

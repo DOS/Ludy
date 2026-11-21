@@ -18,11 +18,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -32,6 +33,7 @@ const CANARY = 'BÍ MẬT-3858';
 suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that it writes nothing (#3858 slice b)', () => {
   const dbName = `crove_test_mcp_grant_read_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let orgA = '';
   let orgB = '';
@@ -42,7 +44,7 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
   const channel: Record<string, string> = {};
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -62,7 +64,7 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
   const person = (org: string, who: string): Sealed => ({ v: 1, org, actor: 'user', user: users[who], role: roles[who] ?? 'member', le_scope: ['*'], flags: [] });
 
   async function asSealed<T>(ctx: Sealed, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -91,11 +93,12 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const pool = createPool({ connectionString: url.toString(), max: 4 });
+    const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -358,10 +361,10 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
       return id;
     };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
     const through = async (entry: string, grantId: string): Promise<{ conversations: string[]; refused: boolean }> => {
-      const c = new pg.Client({ connectionString: app.toString() });
+      const c = createDbClient({ connectionString: app.toString() }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');
@@ -410,7 +413,7 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
   it('keeps the member function to the tenant role and its members, a definer with a pinned search path, answering false to every context but a member grant\'s and reading no kind by name', async () => {
     const fn = 'crove_kernel.conversation_access_mcp_member(text, uuid)';
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
       for (const { rolname } of logins) {
         const ok = (await c.query(`SELECT has_function_privilege($1, '${fn}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
         // The tenant role and the logins that are members of it (the API runs its queries as crove_tenant) hold it; no other role and not the public.

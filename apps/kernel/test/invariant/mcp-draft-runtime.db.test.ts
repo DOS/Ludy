@@ -10,12 +10,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -30,6 +31,7 @@ interface Created {
 suite('the MCP draft command is the only write an MCP grant has (#3227)', () => {
   const dbName = `crove_test_mcp_draft_runtime_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let workerRuntime: Runtime;
@@ -42,7 +44,7 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
   const mcp = (userId: string, grantId: string, scopes: readonly string[]): UserActor => ({ type: 'user', userId, aal: 'aal1', mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -96,11 +98,12 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const pool = createPool({ connectionString: url.toString(), max: 6 });
+    const pool = createDbPool({ connectionString: url.toString(), max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...socialQueries] });

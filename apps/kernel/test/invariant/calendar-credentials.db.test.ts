@@ -19,12 +19,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type SealedCalendarCredential } from '@ludy/kernel';
 import { CredentialVault, parseVaultKey, Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -34,6 +35,7 @@ const SECRET = JSON.stringify({ accessToken: 'ya29.calendar-access-secret', refr
 suite('calendar credentials on PostgreSQL (#2123)', () => {
   const dbName = `crove_test_calendar_cred_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appPool: pg.Pool;
   let workerPool: pg.Pool;
   let api: Runtime;
@@ -44,13 +46,13 @@ suite('calendar credentials on PostgreSQL (#2123)', () => {
   const system = { type: 'system' as const, component: 'calendar-cred-test' };
   const urlFor = (user: string, password: string) => {
     const u = new URL(adminUrl);
-    u.username = user;
+    u.username = dbIds ? dbIds.roleName(user) : user;
     u.password = password;
     return u.toString();
   };
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -92,7 +94,7 @@ suite('calendar credentials on PostgreSQL (#2123)', () => {
 
   // Runs SQL as crove_app in a member's context, the way the runtime enters it, skipping the commands.
   async function asMemberSql<T extends pg.QueryResultRow>(userId: string, orgId: string, text: string, values: unknown[]): Promise<pg.QueryResult<T>> {
-    const client = new pg.Client({ connectionString: urlFor('crove_app', 'test-app-pw') });
+    const client = createDbClient({ connectionString: urlFor('crove_app', 'test-app-pw') }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');
@@ -106,7 +108,7 @@ suite('calendar credentials on PostgreSQL (#2123)', () => {
 
   // Runs SQL as crove_worker in the system context of an org, as a sync would.
   async function asWorkerSql<T extends pg.QueryResultRow>(orgId: string, text: string, values: unknown[]): Promise<pg.QueryResult<T>> {
-    const client = new pg.Client({ connectionString: urlFor('crove_worker', 'test-worker-pw') });
+    const client = createDbClient({ connectionString: urlFor('crove_worker', 'test-worker-pw') }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');
@@ -129,9 +131,10 @@ suite('calendar credentials on PostgreSQL (#2123)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = createPool({ connectionString: urlFor('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: urlFor('crove_worker', 'test-worker-pw'), max: 4 });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    appPool = createDbPool({ connectionString: urlFor('crove_app', 'test-app-pw'), max: 4 }, dbIds);
+    workerPool = createDbPool({ connectionString: urlFor('crove_worker', 'test-worker-pw'), max: 4 }, dbIds);
     appDb = createDb(appPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(defs);
@@ -297,7 +300,7 @@ suite('calendar credentials on PostgreSQL (#2123)', () => {
     await expect(begin(member, a.orgId, 'google_calendar', 'plain-state')).rejects.toThrow('OAUTH_INVALID');
     // An attempt lives in the database, not in a transaction that rolled back: start one and finish it with commits.
     const state = hash();
-    const client = new pg.Client({ connectionString: urlFor('crove_app', 'test-app-pw') });
+    const client = createDbClient({ connectionString: urlFor('crove_app', 'test-app-pw') }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');

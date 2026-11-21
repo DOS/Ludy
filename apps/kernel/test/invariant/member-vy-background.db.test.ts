@@ -23,8 +23,8 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, createPool } from "@ludy/db";
-import { migrate, setRolePasswords } from "@ludy/db/migrate";
+import { createDb } from "@ludy/db";
+import { migrate } from "@ludy/db/migrate";
 import {
   createOrg,
   kernelCommands,
@@ -36,6 +36,7 @@ import { financeCommands, financeQueries } from "@ludy/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -115,6 +116,7 @@ const NON_SYSTEM =
 suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const dbName = `crove_test_member_vy_bg_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = "";
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = "";
   let workerUrl = "";
   const pools: pg.Pool[] = [];
@@ -127,7 +129,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const has = { entry: false, catalog: false, kind: false, notes: false };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -141,7 +143,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     fn: (c: pg.Client) => Promise<T>,
     commit = false,
   ): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query("BEGIN");
@@ -288,21 +290,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
     FEAT = await admin((c) => aiRunFeature(c));
-    await setRolePasswords(adminUrl, {
+    await setActiveRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
-    });
+    }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login("crove_app", "test-app-pw");
     workerUrl = login("crove_worker", "test-worker-pw");
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       const db = createDb(pool);
       return {
@@ -473,7 +476,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
       expect(logins.length).toBeGreaterThan(0);
       for (const { rolname } of logins) {
         const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
@@ -523,7 +526,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
       expect(logins.length).toBeGreaterThan(0);
       for (const { rolname } of logins) {
         const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
@@ -727,7 +730,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const privileges = await admin((c) =>
       c.query<{ r: string; p: string }>(
         `SELECT r.rolname AS r, p AS p FROM pg_roles r, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
-         WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+         WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
            AND (has_table_privilege(r.rolname, 'crove_kernel.member_vy_table', p)
                 OR (p IN ('INSERT', 'UPDATE') AND has_any_column_privilege(r.rolname, 'crove_kernel.member_vy_table', p)))`,
       ),
@@ -1069,7 +1072,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   it("takes FOR SHARE on the member's membership row, so a removal waits for an entering transaction (55P03)", async () => {
     const run = await liveRun("vyUser");
-    const holder = new pg.Client({ connectionString: workerUrl });
+    const holder = createDbClient({ connectionString: workerUrl }, dbIds);
     await holder.connect();
     try {
       await holder.query("BEGIN");
@@ -1111,7 +1114,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   it("enters in a READ ONLY transaction without the membership lock, reads as the member and writes nothing", async () => {
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser);
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query("BEGIN READ ONLY");
@@ -1202,7 +1205,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         c.query<{ name: string }>(
           `SELECT n.nspname || '.' || c.relname AS name
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+           WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
              AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal AND t.tgenabled = 'O')
            ORDER BY 1`,
         ),
@@ -1798,7 +1801,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname LIKE 'crove\\_%' AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
+         WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
       ),
     );
     const names = [...new Set(found.rows.map((r) => r.fn))];
@@ -2079,7 +2082,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           await c.query<{ name: string; exempt: boolean }>(
             `SELECT n.nspname || '.' || c.relname AS name, crove_kernel.agent_write_exempt(c.oid::regclass) AS exempt
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+             WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
                AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal
                                  AND t.tgenabled IN ('O', 'A') AND t.tgfoid = 'crove_kernel.agent_write_guard()'::regprocedure)
              ORDER BY 1`,
@@ -2187,7 +2190,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ok: false,
       code: "42501",
       message: "AGENT_FORBIDDEN",
-      detail: "crove_kernel.refusal_tally",
+      detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.refusal_tally`,
     });
     // The control: the same call in an org-chart agent context counts (the function and its grant work; only member mode is refused).
     const control = await inContext(workerUrl, agentEnter, (c) =>
@@ -2236,7 +2239,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ok: false,
       code: "42501",
       message: "AGENT_FORBIDDEN",
-      detail: "crove_kernel.member_vy_result",
+      detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.member_vy_result`,
     });
     // Through the worker login the column grant refuses first (run_id is not updatable by crove_tenant): pinned too, with its own code.
     const viaWorker = await inContext(workerUrl, memberEnter(run.agentId, run.runId), (c) =>
@@ -2254,7 +2257,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const mine = await addResult(run.runId, users.vyUser, "ready");
     // The member's acceptance clears the taint in the member's own context; here as the superuser outside any context.
     await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
-    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN", detail: "crove_kernel.member_vy_result" };
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN", detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.member_vy_result` };
     for (const url of [workerUrl, adminUrl]) {
       const who = url === workerUrl ? "the worker login" : "the superuser";
       const attempts = await inContext(url, memberEnter(run.agentId, run.runId), async (c) => {

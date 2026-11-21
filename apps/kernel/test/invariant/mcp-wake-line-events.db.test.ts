@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { LINE_WAKE_EVENTS, lineTypeProblem, wakeBody, wakeEvent, type LineWakeRegistry } from '../../src/mcp-wake-body.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -106,13 +107,14 @@ describe('the builder of a line wake body (#3858 slice e)', () => {
 suite('what the database holds of a line wake event (#3858 slice e)', () => {
   const dbName = `crove_test_mcp_wake_line_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let orgA = '';
   let owner = '';
   let member = '';
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -123,9 +125,9 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
   const q = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const asLogin = async (login: string, password: string) => {
     const u = new URL(adminUrl);
-    u.username = login;
+    u.username = dbIds ? dbIds.roleName(login) : login;
     u.password = password;
-    const c = new pg.Client({ connectionString: u.toString() });
+    const c = createDbClient({ connectionString: u.toString() }, dbIds);
     await c.connect();
     return c;
   };
@@ -171,11 +173,12 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const pool = createPool({ connectionString: url.toString(), max: 4 });
+    const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -199,7 +202,7 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
     const rows = (await q<{ type: string; scope: string; fields: unknown }>(`SELECT type, scope, fields FROM crove_kernel.mcp_wake_event_type ORDER BY type`)).rows;
     expect(rows.map((r) => [r.type, r.scope, r.fields])).toEqual(Object.keys(LINE_WAKE_EVENTS).sort().map((type) => [type, LINE_WAKE_EVENTS[type]?.scope, LINE_WAKE_EVENTS[type]?.fields]));
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
       for (const { rolname } of logins) {
         for (const right of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) {
           expect((await c.query(`SELECT has_table_privilege($1, 'crove_kernel.mcp_wake_event_type', $2) AS ok`, [rolname, right])).rows[0]?.ok, `${rolname} ${right}`).toBe(false);

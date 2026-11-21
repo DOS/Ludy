@@ -10,11 +10,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, parseVaultKey, type CommandDef } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -26,6 +27,7 @@ const DEFINERS = ['subject_key_reseal_due(text,text[],integer,uuid,uuid)', 'subj
 suite('the reseal pass for subject keys keeps its guards on PostgreSQL (#2643)', () => {
   const dbName = `crove_test_reseal_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let appRt: Runtime;
@@ -47,7 +49,7 @@ suite('the reseal pass for subject keys keeps its guards on PostgreSQL (#2643)',
   }) as CommandDef<unknown, unknown>;
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -80,15 +82,16 @@ suite('the reseal pass for subject keys keeps its guards on PostgreSQL (#2643)',
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 3 });
+    pool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 }, dbIds);
+    workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 3 }, dbIds);
     appRt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }).register({ commands: [...kernelCommands, SEAL], queries: kernelQueries({ inboundDomain: null }) });
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   }, 120_000);

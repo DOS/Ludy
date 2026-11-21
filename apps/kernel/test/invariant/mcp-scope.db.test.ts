@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { adsCommands, adsQueries } from '@ludy/mod-ads';
@@ -28,6 +28,7 @@ import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -240,6 +241,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
 suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', () => {
   const dbName = `crove_test_mcp_scope_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
@@ -251,7 +253,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   const mcp = (userId: string, grantId: string, scopes: readonly string[] = ['ludy.read']): UserActor => ({ type: 'user', userId, aal: 'aal1', mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -292,12 +294,13 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    const pool = createPool({ connectionString: appUrl, max: 6 });
+    const pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     // No session source: a grant's standing is checked whatever the deployment's session mode.
@@ -435,7 +438,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   });
 
   it('lets the API login reach the grant tables and the authorization storage only through the definers, and the worker not at all', async () => {
-    const app = new pg.Client({ connectionString: appUrl });
+    const app = createDbClient({ connectionString: appUrl }, dbIds);
     await app.connect();
     try {
       for (const table of ['crove_kernel.agent_grant', 'crove_kernel.oauth_record']) {

@@ -20,13 +20,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { aiRunFeature } from './fixtures/ai-run-feature.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -4131,10 +4132,12 @@ async function prepare() {
   const url = new URL(ADMIN as string);
   url.pathname = `/${dbName}`;
   const adminUrl = url.toString();
-  const admin = new pg.Client({ connectionString: adminUrl });
+  let admin: pg.Client | undefined;
   try {
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     AI_RUN_FEATURE = (await aiRunFeature(admin)).cols ? { feature: 'notes.summary' } : {};
     const { rows } = await admin.query<Relation>(
@@ -4160,7 +4163,7 @@ async function prepare() {
            WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND a.attnum > 0 AND NOT a.attisdropped)
        ORDER BY 1`,
     );
-    return { dbName, adminUrl, relations: rows };
+    return { dbName, adminUrl, relations: rows, dbIds };
   } catch (error) {
     const cleanup = new pg.Client({ connectionString: ADMIN });
     await cleanup.connect();
@@ -4168,7 +4171,7 @@ async function prepare() {
     await cleanup.end();
     throw error;
   } finally {
-    await admin.end().catch(() => {});
+    await admin?.end().catch(() => {});
   }
 }
 
@@ -4181,7 +4184,7 @@ type Outcome = { ok: true; rows: Array<{ org: string }>; rowCount: number } | { 
 type SweepOutcome = { ok: true; visible: number; changed: number } | { ok: false; code: string; message: string };
 
 suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
-  const { dbName, adminUrl } = setup ?? { dbName: '', adminUrl: '' };
+  const { dbName, adminUrl, dbIds } = setup ?? { dbName: '', adminUrl: '', dbIds: undefined as DbIdentifiers | undefined };
   const clients: pg.Client[] = [];
   let pool: pg.Pool | undefined;
   const orgs: Record<'A' | 'B', OrgFixture> = {} as Record<'A' | 'B', OrgFixture>;
@@ -4225,7 +4228,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   const privileges = new Map<string, Map<string, Set<Op>>>();
 
   async function connect(url: string) {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -4396,11 +4399,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     admin = await connect(adminUrl);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 });
+    pool = createDbPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });

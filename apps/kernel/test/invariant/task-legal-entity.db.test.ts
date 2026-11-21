@@ -16,13 +16,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { enterUser } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -39,6 +40,7 @@ interface TaskRow {
 suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
   const dbName = `crove_test_task_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let before = '';
@@ -58,7 +60,7 @@ suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -69,7 +71,7 @@ suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
 
   // Runs SQL as crove_app inside a member's context, always rolled back.
   async function asMember<T>(userId: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -83,7 +85,7 @@ suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
 
   function connect(upgraded = false) {
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       // Before the upgrade no context token key: the database is at a version before enter_user_context. After it the
       // suite's key (CROVE_CONTEXT_TOKEN_KEY, which migrate installed): #1822 step 2 revokes enter_context from crove_app.
@@ -152,10 +154,11 @@ suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
@@ -226,6 +229,7 @@ suite('tasks and task comments per legal entity on PostgreSQL (#1762)', () => {
     });
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
     // Connections opened before the migration may hold plans of the tables as they were.
     for (const pool of pools.splice(0)) await pool.end();
     connect(true);

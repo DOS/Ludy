@@ -302,8 +302,8 @@ const NOT_A_COLUMN = /^(constraint|primary|unique|check|foreign|exclude|column|i
 function columnsIn(sql: string, table: string): string[] {
   const found: string[] = [];
   const text = sql.replace(/--.*$/gm, '');
-  const create = new RegExp(`CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+crove_meetings\\.${table}\\s*\\(([\\s\\S]*?)\\n\\s*\\)\\s*;`, 'gi');
-  const alter = new RegExp(`ALTER TABLE(?:\\s+(?:IF EXISTS|ONLY))*\\s+crove_meetings\\.${table}\\b([\\s\\S]*?);`, 'gi');
+  const create = new RegExp(`CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+(?:crove|ludy)_meetings\\.${table}\\s*\\(([\\s\\S]*?)\\n\\s*\\)\\s*;`, 'gi');
+  const alter = new RegExp(`ALTER TABLE(?:\\s+(?:IF EXISTS|ONLY))*\\s+(?:crove|ludy)_meetings\\.${table}\\b([\\s\\S]*?);`, 'gi');
   for (const match of text.matchAll(create)) {
     for (const line of (match[1] ?? '').split('\n')) {
       const column = /^\s*([a-z_][a-z0-9_]*)\s+[a-z]/i.exec(line)?.[1];
@@ -326,24 +326,28 @@ describe('the minutes webhook tables', () => {
     for (const table of TABLES) {
       const columns = columnsOf(table);
       // A migration that names the table must be read as a table: a statement this scan cannot parse (dynamic SQL, an unusual closing) is a failure, never a pass.
-      if (naming(MIGRATIONS, `crove_meetings.${table}`).length > 0) expect(columns.map((c) => c.column), `the columns of crove_meetings.${table} are read`).toContain('org_id');
+      if (naming(MIGRATIONS, `crove_meetings.${table}`).length > 0 || naming(MIGRATIONS, `ludy_meetings.${table}`).length > 0) {
+        expect(columns.map((c) => c.column), `the columns of ${table} are read`).toContain('org_id');
+      }
       const bad = columns.filter((c) => NEVER_A_COLUMN.test(c.column));
-      expect(bad, `crove_meetings.${table} must not hold such a column`).toEqual([]);
+      expect(bad, `${table} must not hold such a column`).toEqual([]);
     }
   });
 
   it('the delivery table checks the body in the database, as the wake-up does: a CHECK that calls a body check function', () => {
-    const files = naming(MIGRATIONS, 'crove_meetings.hook_delivery');
+    const files = [...new Set([...naming(MIGRATIONS, 'crove_meetings.hook_delivery'), ...naming(MIGRATIONS, 'ludy_meetings.hook_delivery')])];
     if (files.length === 0) return;
     const sql = files.map((f) => read(f).replace(/--.*$/gm, '')).join('\n');
-    expect(sql, 'crove_meetings.hook_delivery carries a CHECK on the body').toMatch(/CHECK\s*\(\s*(crove_meetings\.)?[a-z_]*body_ok\(/i);
+    expect(sql, 'hook_delivery carries a CHECK on the body').toMatch(/CHECK\s*\(\s*((?:crove|ludy)_meetings\.)?[a-z_]*body_ok\(/i);
   });
 
   it('the column scan reads every spelling of a planted column', () => {
     const t = 'hook_delivery';
     const cases: Array<[string, string[]]> = [
       ['CREATE TABLE IF NOT EXISTS crove_meetings.hook_delivery (\n  org_id uuid NOT NULL,\n  transcript_text text,\n  PRIMARY KEY (org_id, id)\n);', ['org_id', 'transcript_text']],
+      ['CREATE TABLE IF NOT EXISTS ludy_meetings.hook_delivery (\n  org_id uuid NOT NULL,\n  transcript_text text,\n  PRIMARY KEY (org_id, id)\n);', ['org_id', 'transcript_text']],
       ['ALTER TABLE crove_meetings.hook_delivery ADD COLUMN audio_key text;', ['audio_key']],
+      ['ALTER TABLE ludy_meetings.hook_delivery ADD COLUMN audio_key text;', ['audio_key']],
       ['ALTER TABLE crove_meetings.hook_delivery ADD audio_key text;', ['audio_key']],
       ['ALTER TABLE crove_meetings.hook_delivery ADD COLUMN IF NOT EXISTS audio_key text;', ['audio_key']],
       ['ALTER TABLE IF EXISTS ONLY crove_meetings.hook_delivery ADD attendee_email text;', ['attendee_email']],
@@ -354,7 +358,7 @@ describe('the minutes webhook tables', () => {
       ['ALTER TABLE crove_meetings.hook_delivery ADD CONSTRAINT x CHECK (true);', []],
       ['ALTER TABLE crove_meetings.hook_delivery ADD PRIMARY KEY (org_id, id);', []],
       ['ALTER TABLE crove_meetings.hook_delivery RENAME TO other;', []],
-      ['ALTER TABLE crove_meetings.member_hook ADD COLUMN audio_key text;', []],
+      ['crove_meetings.member_hook ADD COLUMN audio_key text;', []],
     ];
     for (const [sql, want] of cases) expect(columnsIn(sql, t), sql).toEqual(want);
   });
@@ -371,7 +375,7 @@ describe('the minutes webhook tables', () => {
 
 // The feature exists once any source or migration names one of its marks, with the schema in front of a table so an unrelated table of the same name elsewhere is not taken for it (the
 // builder's own file names meetingHookBody, so it counts).
-const MARKS = ['crove_meetings.member_hook', 'crove_meetings.hook_delivery', 'kernel-meeting-hook', 'meetingHookBody'];
+const MARKS = ['crove_meetings.member_hook', 'ludy_meetings.member_hook', 'crove_meetings.hook_delivery', 'ludy_meetings.hook_delivery', 'kernel-meeting-hook', 'meetingHookBody'];
 const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
 const hookQueues: Array<[string, string]> = Object.entries(QUEUES).filter(([, name]) => /meeting-hook/.test(name));
 const RUNNERS = KERNEL_SRC.filter((f) => /(^|\/)meeting-hook[^/]*\.ts$/.test(f));

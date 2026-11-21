@@ -12,7 +12,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -21,9 +22,10 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the sealed context of a member-bound MCP grant and its catalog (#2975, slice 3, step 3b)', () => {
   const dbName = `crove_test_mcp_member_context_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -33,9 +35,9 @@ suite('the sealed context of a member-bound MCP grant and its catalog (#2975, sl
   }
   const asLogin = async (login: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = login;
+    url.username = dbIds ? dbIds.roleName(login) : login;
     url.password = password;
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     return c;
   };
@@ -50,7 +52,8 @@ suite('the sealed context of a member-bound MCP grant and its catalog (#2975, sl
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
   }, 120_000);
 
   afterAll(async () => {
@@ -89,7 +92,7 @@ suite('the sealed context of a member-bound MCP grant and its catalog (#2975, sl
         expect(r.mode, r.table_name).toBe('read');
         expect((await c.query(`SELECT to_regclass($1) IS NOT NULL AS ok`, [r.table_name])).rows[0].ok, r.table_name).toBe(true);
       }
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
+      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
       for (const { rolname } of logins) {
         for (const right of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) {
           const ok = (await c.query(`SELECT has_table_privilege($1, 'crove_kernel.mcp_member_table', $2) AS ok`, [rolname, right])).rows[0].ok as boolean;
@@ -103,7 +106,7 @@ suite('the sealed context of a member-bound MCP grant and its catalog (#2975, sl
     const exists = await admin((c) => c.query(`SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid, uuid)') IS NOT NULL AS ok`).then((r) => r.rows[0].ok as boolean));
     if (!exists) return;
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
+      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
       for (const { rolname } of logins) {
         const ok = (await c.query(`SELECT has_function_privilege($1, 'crove_kernel.enter_mcp_member_context(uuid, uuid)', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
         expect(ok, `${rolname} execute enter_mcp_member_context`).toBe(rolname === 'crove_app');

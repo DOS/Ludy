@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, defineCommand, defineQuery, type Lookup } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -56,6 +57,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('ctx.query access (ADR-0031, #199)', () => {
   const dbName = `crove_test_ctx_query_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let runtime: Runtime;
@@ -72,11 +74,12 @@ suite('ctx.query access (ADR-0031, #199)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 2 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 2 }, dbIds);
     db = createDb(pool);
     // finance is a module the deployment ships but leaves out here.
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, absentModules: ['finance'] }).register({
@@ -87,7 +90,7 @@ suite('ctx.query access (ADR-0031, #199)', () => {
     users.member = await upsertIdentity(db, { issuer: 'test', subject: 'cq-member', email: 'member@cq.test', name: null });
     users.viewer = await upsertIdentity(db, { issuer: 'test', subject: 'cq-viewer', email: 'viewer@cq.test', name: null });
     orgId = (await createOrg(runtime, asUser(users.owner), 'Ctx Query')).orgId;
-    const seed = new pg.Client({ connectionString: adminUrl });
+    const seed = createDbClient({ connectionString: adminUrl }, dbIds);
     await seed.connect();
     await seed.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [
       orgId,

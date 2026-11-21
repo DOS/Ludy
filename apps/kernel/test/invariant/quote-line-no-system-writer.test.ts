@@ -41,8 +41,8 @@ const productionSources = (): Array<{ file: string; text: string }> => {
 };
 
 // A write to the lines: the query builder's insertInto, updateTable and deleteFrom naming the table, and raw SQL (any spacing and case, with or without the schema).
-const TABLE = String.raw`(?:"?crove_crm"?\s*\.\s*)?"?quote_line"?`;
-const BUILDER_WRITE = new RegExp(String.raw`\.\s*(?:insertInto|updateTable|deleteFrom)\s*\(\s*['"\x60](?:crove_crm\s*\.\s*)?quote_line['"\x60]`, 'i');
+const TABLE = String.raw`(?:"?(?:crove|ludy)_crm"?\s*\.\s*)?"?quote_line"?`;
+const BUILDER_WRITE = new RegExp(String.raw`\.\s*(?:insertInto|updateTable|deleteFrom)\s*\(\s*['"\x60](?:(?:crove|ludy)_crm\s*\.\s*)?quote_line['"\x60]`, 'i');
 const SQL_WRITE = new RegExp(String.raw`\b(?:insert\s+into|update|delete\s+from|merge\s+into)\s+(?:only\s+)?${TABLE}\b`, 'i');
 const writes = (text: string): boolean => BUILDER_WRITE.test(text) || SQL_WRITE.test(text);
 // Code that reaches the table without naming it in one expression (a table name held in a variable, a generic helper) cannot be read here; the literal name is what the guard pins.

@@ -7,57 +7,166 @@
 -- create (T17). The runner rolls the transaction back.
 SELECT plan(9);
 
--- Two orgs, each with its owner and one party (written as the superuser, which bypasses row-level security).
-SELECT set_config('test.user_a', crove_kernel.identity_upsert('pgtap', 'rls-a', 'rls-a@example.com', 'RLS A owner')::text, true);
-SELECT set_config('test.user_b', crove_kernel.identity_upsert('pgtap', 'rls-b', 'rls-b@example.com', 'RLS B owner')::text, true);
-SELECT set_config('test.org_a', crove_kernel.create_or_replay_org(current_setting('test.user_a')::uuid, 'pgtap-rls-a', 'pgTAP RLS A', NULL)::text, true);
-SELECT set_config('test.org_b', crove_kernel.create_or_replay_org(current_setting('test.user_b')::uuid, 'pgtap-rls-b', 'pgTAP RLS B', NULL)::text, true);
-INSERT INTO crove_kernel.party (org_id, id, name) VALUES
-  (current_setting('test.org_a')::uuid, '00000000-0000-7000-8000-00000000000a', 'Party of A'),
-  (current_setting('test.org_b')::uuid, '00000000-0000-7000-8000-00000000000b', 'Party of B');
+-- Resolve active kernel schema (crove_kernel or ludy_kernel) and API login role, seed two orgs and parties,
+-- sign a context token as the superuser, and enter the API role inside the enclosing runner transaction.
+DO $$
+DECLARE
+  v_kernel text := CASE WHEN pg_catalog.to_regnamespace('ludy_kernel') IS NOT NULL THEN 'ludy_kernel' ELSE 'crove_kernel' END;
+  v_role text := CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ludy_app') THEN 'ludy_app' ELSE 'crove_app' END;
+  v_user_a uuid;
+  v_user_b uuid;
+  v_org_a uuid;
+  v_org_b uuid;
+  v_token_a text;
+BEGIN
+  PERFORM pg_catalog.set_config('test.kernel', v_kernel, true);
+  PERFORM pg_catalog.set_config('test.app_role', v_role, true);
 
--- A context token for org A's owner (#1822, ADR-0028 section 9), signed as the superuser with the key the migration
--- runner installed: crove_app enters a user's context only with one.
-SELECT set_config('test.token_a', (
-  SELECT m.msg || '.' || pg_catalog.encode(pg_catalog.sha256(k.k_opad || pg_catalog.sha256(k.k_ipad || pg_catalog.convert_to(m.msg, 'UTF8'))), 'hex')
-  FROM (SELECT 'v1.' || current_setting('test.user_a') || '.-.' || current_setting('test.org_a') || '.aal1.-.'
-               || (pg_catalog.floor(pg_catalog.date_part('epoch', pg_catalog.clock_timestamp()))::bigint + 60)::text AS msg) m,
-       crove_kernel.context_token_key k
-  WHERE k.slot = 'current'), true);
+  EXECUTE pg_catalog.format('SELECT %I.identity_upsert($1, $2, $3, $4)', v_kernel)
+    INTO v_user_a USING 'pgtap', 'rls-a', 'rls-a@example.com', 'RLS A owner';
+  EXECUTE pg_catalog.format('SELECT %I.identity_upsert($1, $2, $3, $4)', v_kernel)
+    INTO v_user_b USING 'pgtap', 'rls-b', 'rls-b@example.com', 'RLS B owner';
+  PERFORM pg_catalog.set_config('test.user_a', v_user_a::text, true);
+  PERFORM pg_catalog.set_config('test.user_b', v_user_b::text, true);
 
-SET LOCAL ROLE crove_app;
+  EXECUTE pg_catalog.format('SELECT %I.create_or_replay_org($1, $2, $3, $4)', v_kernel)
+    INTO v_org_a USING v_user_a, 'pgtap-rls-a', 'pgTAP RLS A', NULL::text;
+  EXECUTE pg_catalog.format('SELECT %I.create_or_replay_org($1, $2, $3, $4)', v_kernel)
+    INTO v_org_b USING v_user_b, 'pgtap-rls-b', 'pgTAP RLS B', NULL::text;
+  PERFORM pg_catalog.set_config('test.org_a', v_org_a::text, true);
+  PERFORM pg_catalog.set_config('test.org_b', v_org_b::text, true);
+
+  EXECUTE pg_catalog.format(
+    'INSERT INTO %I.party (org_id, id, name) VALUES ($1, $2, $3), ($4, $5, $6)',
+    v_kernel
+  ) USING v_org_a, '00000000-0000-7000-8000-00000000000a'::uuid, 'Party of A',
+          v_org_b, '00000000-0000-7000-8000-00000000000b'::uuid, 'Party of B';
+
+  EXECUTE pg_catalog.format(
+    'SELECT m.msg || ''.'' || pg_catalog.encode(pg_catalog.sha256(k.k_opad || pg_catalog.sha256(k.k_ipad || pg_catalog.convert_to(m.msg, ''UTF8''))), ''hex'') '
+    || 'FROM (SELECT ''v1.'' || $1 || ''.-.'' || $2 || ''.aal1.-.'' || (pg_catalog.floor(pg_catalog.date_part(''epoch'', pg_catalog.clock_timestamp()))::bigint + 60)::text AS msg) m, %I.context_token_key k '
+    || 'WHERE k.slot = ''current''',
+    v_kernel
+  ) INTO v_token_a USING v_user_a::text, v_org_a::text;
+  PERFORM pg_catalog.set_config('test.token_a', v_token_a, true);
+
+  EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_role);
+END $$;
 
 -- The refused inserts name the message, not only 42501, so a lost INSERT grant ("permission denied", also 42501)
 -- cannot pass for row-level security. PostgreSQL names a policy in that message only when a RESTRICTIVE one fails;
 -- tenant_isolation is PERMISSIVE, so the message names the table alone.
 
 -- No context: nothing is visible and nothing can be written.
-SELECT is((SELECT pg_catalog.count(*) FROM crove_kernel.party), 0::bigint, 'without a context crove_app sees no party');
-SELECT throws_ok($$
-  INSERT INTO crove_kernel.party (org_id, id, name)
-  VALUES (current_setting('test.org_a')::uuid, '00000000-0000-7000-8000-0000000000a1', 'No context')$$,
-  '42501', 'new row violates row-level security policy for table "party"', 'without a context crove_app inserts no party');
+SELECT is(
+  (pg_catalog.xpath(
+    '/table/row/n/text()',
+    pg_catalog.query_to_xml(
+      pg_catalog.format('SELECT pg_catalog.count(*)::bigint AS n FROM %I.party', pg_catalog.current_setting('test.kernel')),
+      false, false, ''
+    )
+  ))[1]::text::bigint,
+  0::bigint,
+  'without a context app sees no party'
+);
+SELECT throws_ok(
+  pg_catalog.format(
+    $$INSERT INTO %I.party (org_id, id, name) VALUES (%L::uuid, '00000000-0000-7000-8000-0000000000a1', 'No context')$$,
+    pg_catalog.current_setting('test.kernel'),
+    pg_catalog.current_setting('test.org_a')
+  ),
+  '42501', 'new row violates row-level security policy for table "party"', 'without a context app inserts no party'
+);
 
 -- Org A's context: its own party only.
-SELECT is(crove_kernel.enter_user_context(current_setting('test.org_a')::uuid, current_setting('test.token_a')), 'owner',
-  'the owner of org A enters its context');
-SELECT is((SELECT pg_catalog.count(*) FROM crove_kernel.party WHERE org_id = current_setting('test.org_a')::uuid), 1::bigint,
-  'org A sees its own party');
-SELECT is((SELECT pg_catalog.count(*) FROM crove_kernel.party WHERE org_id <> current_setting('test.org_a')::uuid), 0::bigint,
-  'org A sees no party of another org');
-SELECT throws_ok($$
-  INSERT INTO crove_kernel.party (org_id, id, name)
-  VALUES (current_setting('test.org_b')::uuid, '00000000-0000-7000-8000-0000000000a2', 'Planted by A')$$,
-  '42501', 'new row violates row-level security policy for table "party"', 'org A inserts no party into org B');
-SELECT lives_ok($$UPDATE crove_kernel.party SET name = 'Renamed by A' WHERE org_id = current_setting('test.org_b')::uuid$$,
-  'an update aimed at org B runs');
-SELECT lives_ok($$DELETE FROM crove_kernel.party WHERE org_id = current_setting('test.org_b')::uuid$$,
-  'a delete aimed at org B runs');
+SELECT is(
+  (pg_catalog.xpath(
+    '/table/row/v/text()',
+    pg_catalog.query_to_xml(
+      pg_catalog.format(
+        'SELECT %I.enter_user_context(%L::uuid, %L::text)::text AS v',
+        pg_catalog.current_setting('test.kernel'),
+        pg_catalog.current_setting('test.org_a'),
+        pg_catalog.current_setting('test.token_a')
+      ),
+      false, false, ''
+    )
+  ))[1]::text,
+  'owner',
+  'the owner of org A enters its context'
+);
+SELECT is(
+  (pg_catalog.xpath(
+    '/table/row/n/text()',
+    pg_catalog.query_to_xml(
+      pg_catalog.format(
+        'SELECT pg_catalog.count(*)::bigint AS n FROM %I.party WHERE org_id = %L::uuid',
+        pg_catalog.current_setting('test.kernel'),
+        pg_catalog.current_setting('test.org_a')
+      ),
+      false, false, ''
+    )
+  ))[1]::text::bigint,
+  1::bigint,
+  'org A sees its own party'
+);
+SELECT is(
+  (pg_catalog.xpath(
+    '/table/row/n/text()',
+    pg_catalog.query_to_xml(
+      pg_catalog.format(
+        'SELECT pg_catalog.count(*)::bigint AS n FROM %I.party WHERE org_id <> %L::uuid',
+        pg_catalog.current_setting('test.kernel'),
+        pg_catalog.current_setting('test.org_a')
+      ),
+      false, false, ''
+    )
+  ))[1]::text::bigint,
+  0::bigint,
+  'org A sees no party of another org'
+);
+SELECT throws_ok(
+  pg_catalog.format(
+    $$INSERT INTO %I.party (org_id, id, name) VALUES (%L::uuid, '00000000-0000-7000-8000-0000000000a2', 'Planted by A')$$,
+    pg_catalog.current_setting('test.kernel'),
+    pg_catalog.current_setting('test.org_b')
+  ),
+  '42501', 'new row violates row-level security policy for table "party"', 'org A inserts no party into org B'
+);
+SELECT lives_ok(
+  pg_catalog.format(
+    $$UPDATE %I.party SET name = 'Renamed by A' WHERE org_id = %L::uuid$$,
+    pg_catalog.current_setting('test.kernel'),
+    pg_catalog.current_setting('test.org_b')
+  ),
+  'an update aimed at org B runs'
+);
+SELECT lives_ok(
+  pg_catalog.format(
+    $$DELETE FROM %I.party WHERE org_id = %L::uuid$$,
+    pg_catalog.current_setting('test.kernel'),
+    pg_catalog.current_setting('test.org_b')
+  ),
+  'a delete aimed at org B runs'
+);
 
 RESET ROLE;
 
 -- ... and touched no row of org B.
-SELECT is((SELECT pg_catalog.string_agg(name, ', ') FROM crove_kernel.party WHERE org_id = current_setting('test.org_b')::uuid),
-  'Party of B', 'org B keeps its party, unchanged');
+SELECT is(
+  (pg_catalog.xpath(
+    '/table/row/v/text()',
+    pg_catalog.query_to_xml(
+      pg_catalog.format(
+        $$SELECT pg_catalog.string_agg(name, ', ') AS v FROM %I.party WHERE org_id = %L::uuid$$,
+        pg_catalog.current_setting('test.kernel'),
+        pg_catalog.current_setting('test.org_b')
+      ),
+      false, false, ''
+    )
+  ))[1]::text,
+  'Party of B',
+  'org B keeps its party, unchanged'
+);
 
 SELECT * FROM finish();

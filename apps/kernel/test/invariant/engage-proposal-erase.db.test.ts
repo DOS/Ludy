@@ -15,11 +15,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, defineCommand, type Actor, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -55,6 +56,7 @@ const asSystem = defineCommand({
 suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)', () => {
   const dbName = `crove_test_engage_erase_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let orgId = '';
   const pools: pg.Pool[] = [];
   const users = { owner: '', admin: '', member: '', viewer: '' };
@@ -64,7 +66,7 @@ suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)',
   let identId = '';
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -109,12 +111,13 @@ suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)',
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
-      const pool = createPool({ connectionString: url.toString(), max: 4 });
+      const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
       pools.push(pool);
       return createDb(pool);
     };
@@ -234,9 +237,9 @@ suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)',
       [orgId, grantId, users.owner, `oauth-${grantId}`, `client-${grantId}`],
     );
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -251,9 +254,9 @@ suite('the erasure of an AI coworker\'s proposals keeps its guarantees (#4234)',
   it('keeps a Meta deletion request open when its erasure fails, and claims it again every five minutes without limit: a rolling deploy cannot lose it (#4234 item 4)', async () => {
     const as = async (role: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = role;
+      url.username = dbIds ? dbIds.roleName(role) : role;
       url.password = password;
-      const c = new pg.Client({ connectionString: url.toString() });
+      const c = createDbClient({ connectionString: url.toString() }, dbIds);
       await c.connect();
       return c;
     };

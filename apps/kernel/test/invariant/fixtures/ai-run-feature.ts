@@ -9,6 +9,6 @@ export type AiRunFeature = { cols: string; vals: string };
 /** `{ cols: ', feature', vals: ", 'notes.summary'" }` when ai_run has the column, else both empty. Append `cols` to the column list and `vals` to the VALUES list. */
 export async function aiRunFeature(client: pg.Client, feature = 'notes.summary'): Promise<AiRunFeature> {
   if (!/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(feature)) throw new Error(`not a feature key: ${feature}`);
-  const { rows } = await client.query("SELECT 1 FROM information_schema.columns WHERE table_schema = 'crove_kernel' AND table_name = 'ai_run' AND column_name = 'feature'");
+  const { rows } = await client.query("SELECT 1 FROM information_schema.columns WHERE table_schema IN ('crove_kernel', 'ludy_kernel') AND table_name = 'ai_run' AND column_name = 'feature'");
   return rows.length > 0 ? { cols: ', feature', vals: `, '${feature}'` } : { cols: '', vals: '' };
 }

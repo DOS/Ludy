@@ -12,13 +12,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { contextToken } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
   const dbName = `crove_test_meetings_transcript_taint_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
@@ -36,7 +38,7 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
   const otherMeetingId = randomUUID();
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -48,7 +50,7 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
 
   // Runs sql in a transaction that is always rolled back, as the recorder (the app login in their context) or as the superuser; reports the error code or the rows.
   async function attempt(who: 'recorder' | 'superuser', text: string, params: unknown[] = []): Promise<{ code: string | null; message: string; rows: number }> {
-    const c = new pg.Client({ connectionString: who === 'recorder' ? appUrl : adminUrl });
+    const c = createDbClient({ connectionString: who === 'recorder' ? appUrl : adminUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -67,7 +69,7 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
 
   // Runs fn as the recorder in a transaction that is COMMITTED (a review is meant to stay).
   async function withRecorder<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -84,7 +86,7 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
   }
   // As another member (the owner) or with no context at all, rolled back.
   async function attemptAs(who: 'owner' | 'none', text: string, params: unknown[]): Promise<{ code: string | null }> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -111,12 +113,13 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    const pool = createPool({ connectionString: appUrl, max: 4 });
+    const pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
@@ -230,7 +233,7 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, text, stage, tainted) VALUES ($1, $2, $3, 0, 5, 'Đã chia sẻ', 'published', false)`, [orgId, published, meetingId]));
     // The files that define the trigger function: the migration of the backfill, then the later one that restated it (#2951), in order, as a deploy would leave them.
     const files = readdirSync(MIGRATIONS)
-      .filter((f) => /crove_meetings\.(transcript_segment_taint|draft_review)\(/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && /CREATE OR REPLACE FUNCTION crove_meetings\.(transcript_segment_taint|draft_review)/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && f >= '20261216100000')
+      .filter((f) => /(?:crove|ludy)_meetings\.(transcript_segment_taint|draft_review)\(/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && /CREATE OR REPLACE FUNCTION (?:crove|ludy)_meetings\.(transcript_segment_taint|draft_review)/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && f >= '20261216100000')
       .sort();
     await admin(async (c) => {
       await c.query('BEGIN');

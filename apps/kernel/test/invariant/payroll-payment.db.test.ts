@@ -13,8 +13,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { HrRunSheet, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
@@ -23,6 +23,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
 // rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
@@ -52,13 +53,14 @@ const TEAM: { name: string; wage: string; payFunction?: string }[] = [
 suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
   const dbName = `crove_test_payinv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let rt: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -130,10 +132,11 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    pool = createPool({ connectionString: url.toString(), max: 4 });
+    pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     rt = new Runtime(createDb(pool), {
       manifests: TEST_MANIFESTS,
       subjectVault: new SubjectVault(new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]).deriveKeys(SUBJECT_WRAP_INFO)),
@@ -230,9 +233,9 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
   // The totals function called directly in a user's (or the system's) context as the real login roles, so its own gate is exercised, not only the command's.
   const callTotals = async (who: { kind: 'user'; userId: string } | { kind: 'system' }, orgId: string, runId: string) => {
     const url = new URL(adminUrl);
-    url.username = who.kind === 'user' ? 'crove_app' : 'crove_worker';
+    url.username = dbIds ? dbIds.roleName(who.kind === 'user' ? 'crove_app' : 'crove_worker') : (who.kind === 'user' ? 'crove_app' : 'crove_worker');
     url.password = who.kind === 'user' ? 'test-app-pw' : 'test-worker-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -406,9 +409,9 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     const { runId } = await approvedRun(o);
     const appClient = () => {
       const url = new URL(adminUrl);
-      url.username = 'crove_app';
+      url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
       url.password = 'test-app-pw';
-      return new pg.Client({ connectionString: url.toString() });
+      return createDbClient({ connectionString: url.toString() }, dbIds);
     };
     const approvedPostingProposal = (entityId: string | null = null, decider = o.owner) =>
       withAdmin(
