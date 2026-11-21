@@ -3524,13 +3524,13 @@ export function createRpcHandler(
                 displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
                 credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
                 // The App Key is a public identifier, stored in the clear beside the sealed secret it belongs to (the same handler makes both, so they never disagree).
-                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields.appKey } : {}),
+                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields[provider.authorizePublicField ?? 'appKey'] } : {}),
               },
               { actor, orgId },
             );
             // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
             // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
-            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+            if (provider.hosts.length > 0 && isMarketplaceAuthorized(input.adapter)) {
               await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
             }
             return { id: connected.id };
