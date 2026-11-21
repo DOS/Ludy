@@ -10,6 +10,7 @@ import {
   buildD02Lt,
   buildD02LtListing,
   buildQuarterly,
+  buildQuarterlyListing,
   fallbackTaxCode,
   quarterMonths,
   type DeclarationBreakdown,
@@ -36,7 +37,7 @@ const person = (id: string, name: string, extra: Partial<DeclarationPerson> = {}
 });
 
 const FUNDS: InsuranceFundKey[] = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'];
-function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: 'not_insured' | 'unpaid_leave' | null = null): DeclarationBreakdown {
+function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: DeclarationBreakdown['insurance']['suspended'] = null): DeclarationBreakdown {
   return {
     insurance: { suspended, funds: FUNDS.map((fund) => ({ fund, wage: suspended ? '0' : wage, employee: '0', employer: '0' })) },
     tax: { mode, exemptMealCash: '0', exemptOvertime: '100000', exemptNightWork: '0', personalDeduction: '15500000', dependentDeduction: '0', pensionDeduction: '0', assessableIncome: '4500000' },
@@ -627,5 +628,57 @@ describe('CodeRabbit follow-ups (#2748)', () => {
     expect(fallbackTaxCode('123456789')).toBeNull();
     expect(fallbackTaxCode('079-111-222-333')).toBeNull();
     expect(fallbackTaxCode(null)).toBeNull();
+  });
+
+  it('surfaces sickness/maternity BHXH suspension notes in D02-LT and 20% non-resident PIT in 05/KK-TNCN and 03/TNCN', () => {
+    const an = person('1', 'An');
+    const binh = person('2', 'Bình');
+    const guest = person('3', 'Guest', { taxCode: null, identityNumber: 'P9000001', insuranceNumber: null });
+    const d02 = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [an, binh],
+      lines: [
+        line('1', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'sickness_leave') }),
+        line('2', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'maternity_leave') }),
+      ],
+      previousLines: [
+        line('1', '2026-08', '0', { breakdown: breakdown('10000000') }),
+        line('2', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      ],
+    });
+    const d02Notes = d02.notes.join(' ');
+    expect(d02Notes).toContain('2 người tạm dừng đóng bảo hiểm trong tháng');
+    expect(d02Notes).toContain('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ ốm đau hưởng BHXH)');
+    expect(d02Notes).toContain('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ thai sản hưởng BHXH)');
+
+    const nonResLine = line('3', '2026-09', '6000000', {
+      gross: '30000000',
+      taxableIncome: '30000000',
+      breakdown: breakdown('0', 'non_resident_flat', 'not_insured'),
+    });
+    const { document: kk, printed } = buildQuarterlyListing({
+      quarter: '2026-Q3',
+      employer,
+      persons: [guest],
+      lines: [nonResLine],
+      approvedMonths: ['2026-09'],
+    });
+    expect(printed.has('3')).toBe(true);
+    expect(kk.sheets[0]?.rows.find((r) => r.item === 'Trong đó: khấu trừ 10%')?.value).toBe('0');
+    expect(kk.sheets[0]?.rows.find((r) => r.item === 'Trong đó: khấu trừ 20% (không cư trú)')?.value).toBe('1');
+    expect(kk.sheets[2]?.rows).toEqual([]);
+    expect(kk.sheets[3]?.name).toBe('Khấu trừ 20% (không cư trú)');
+    expect(kk.sheets[3]?.rows[0]?.note).toContain('Không cư trú (20%)');
+    expect(kk.notes.join(' ')).toContain('cá nhân không cư trú khấu trừ 20%');
+
+    const certs = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [guest],
+      lines: [nonResLine],
+      approvedMonths: ['2026-09'],
+    });
+    expect(certs.sheets[0]?.rows[0]?.note).toContain('Khấu trừ 20% (cá nhân không cư trú)');
   });
 });

@@ -13,6 +13,7 @@ import {
   HR_DEPARTMENT_NAME_MAX,
   HR_JOB_TITLE_MAX,
   HR_LEAVE_REQUEST_STATUSES,
+  HR_PAY_BASES,
   HR_PAY_FUNCTIONS,
   HR_PROBATION_ROLE_TIERS,
   HR_REGIONS,
@@ -30,6 +31,7 @@ import {
   type HrEmploymentView,
   type HrLeaveRequestStatus,
   type HrLeaveRequestView,
+  type HrPayBasis,
   type HrPayFunction,
   type HrProbationRoleTier,
   type HrRegion,
@@ -68,6 +70,10 @@ export interface TermsState {
   region: HrRegion;
   baseWage: string;
   payFunction: HrPayFunction;
+  payBasis: HrPayBasis;
+  hourlyRate: string;
+  pieceRate: string;
+  taxResident: boolean;
   contractForm: HrContractForm | '';
   termMonths: string;
   contractEndOn: string;
@@ -83,6 +89,10 @@ export const blankTerms = (): TermsState => ({
   region: 'I',
   baseWage: '',
   payFunction: 'admin',
+  payBasis: 'monthly',
+  hourlyRate: '',
+  pieceRate: '',
+  taxResident: true,
   contractForm: '',
   termMonths: '',
   contractEndOn: '',
@@ -93,7 +103,14 @@ export const blankTerms = (): TermsState => ({
 });
 
 export const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
+export const workPermitNumberOk = (v: string) => v.trim() === '' || /^[A-Za-z0-9][A-Za-z0-9 ./-]{3,29}$/.test(v.trim());
 const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
+const positiveWageOk = (v: string) => wageOk(v) && /[1-9]/.test(v);
+export function termsValid(terms: TermsState): boolean {
+  if (terms.payBasis === 'hourly') return positiveWageOk(terms.hourlyRate);
+  if (terms.payBasis === 'piece_rate') return positiveWageOk(terms.pieceRate);
+  return wageOk(terms.baseWage);
+}
 
 function hasContractDetails(terms: TermsState): boolean {
   return (
@@ -114,8 +131,12 @@ export function buildEmploymentPayload(terms: TermsState): HrEmploymentTerms {
     effectiveFrom: terms.effectiveFrom,
     contractType: terms.contractType,
     region: terms.region,
-    baseWage: terms.baseWage,
+    baseWage: terms.payBasis === 'monthly' ? terms.baseWage : '0',
     payFunction: terms.payFunction,
+    payBasis: terms.payBasis,
+    ...(terms.payBasis === 'hourly' && terms.hourlyRate.trim() !== '' ? { hourlyRate: terms.hourlyRate.trim() } : {}),
+    ...(terms.payBasis === 'piece_rate' && terms.pieceRate.trim() !== '' ? { pieceRate: terms.pieceRate.trim() } : {}),
+    taxResident: terms.taxResident,
     ...(terms.contractForm !== '' ? { contractForm: terms.contractForm } : {}),
     ...(termMonthsRaw !== '' ? { termMonths: Number(termMonthsRaw) } : {}),
     ...(terms.contractEndOn !== '' ? { contractEndOn: terms.contractEndOn } : {}),
@@ -145,6 +166,12 @@ export function previewContractCheck(terms: TermsState): LaborContractFinding[] 
   const derivedEndOn = terms.contractEndOn !== '' ? terms.contractEndOn : autoEndDateFor(terms);
   const hasProbation =
     terms.probationRoleTier !== '' || terms.probationEndOn !== '' || terms.probationWage.trim() !== '';
+  const contractualWage =
+    terms.payBasis === 'hourly'
+      ? terms.hourlyRate
+      : terms.payBasis === 'piece_rate'
+        ? terms.pieceRate
+        : terms.baseWage;
   const result = checkLaborContractTerms({
     contractKind: terms.contractType === 'none' ? 'under_one_month' : terms.contractType,
     ...(terms.contractForm !== '' ? { form: terms.contractForm } : {}),
@@ -152,7 +179,7 @@ export function previewContractCheck(terms: TermsState): LaborContractFinding[] 
     endDate: derivedEndOn,
     termMonths: parsedTermMonths,
     fixedTermSequence: terms.fixedTermSequence === '' ? null : Number(terms.fixedTermSequence),
-    ...(wageOk(terms.baseWage) ? { contractWage: terms.baseWage } : {}),
+    ...(wageOk(contractualWage) ? { contractWage: contractualWage } : {}),
     probation: hasProbation
       ? {
           roleTier: terms.probationRoleTier,
@@ -182,11 +209,19 @@ function formatContractAlert(t: ReturnType<typeof useTranslations<'hrEmployees'>
     case 'contract_expired':
     case 'contract_expiring_soon':
     case 'probation_ending_soon':
+    case 'work_permit_expired':
+    case 'work_permit_expiring_soon':
       return t(`alerts.${alert.code}`, { days, date });
     case 'final_fixed_term_renewal':
     case 'must_convert_to_indefinite':
       return t(`alerts.${alert.code}`);
   }
+}
+
+function formatPaySummary(t: ReturnType<typeof useTranslations<'hrEmployees'>>, f: ReturnType<typeof useFormat>, row: HrEmploymentView): string {
+  if (row.payBasis === 'hourly') return t('hourlyRateUnit', { rate: f.money(row.hourlyRate ?? '0', 'VND') });
+  if (row.payBasis === 'piece_rate') return t('pieceRateUnit', { rate: f.money(row.pieceRate ?? '0', 'VND') });
+  return f.money(row.baseWage, 'VND');
 }
 
 function ContractAlertBadges({ alerts }: { alerts: readonly HrContractAlert[] }) {
@@ -303,8 +338,63 @@ export function TermsFields({
         </NativeSelect>
       </div>
       <div className="space-y-1">
-        <Label htmlFor={`${id}-wage`}>{t('baseWage')}</Label>
-        <Input id={`${id}-wage`} value={value.baseWage} inputMode="numeric" maxLength={19} onChange={(e) => onChange({ baseWage: e.target.value.replace(/[^\d.]/g, '') })} />
+        <Label htmlFor={`${id}-pay-basis`}>{t('payBasis')}</Label>
+        <NativeSelect
+          id={`${id}-pay-basis`}
+          value={value.payBasis}
+          onChange={(e) => onChange({ payBasis: e.target.value as HrPayBasis })}
+          data-testid="hr-terms-pay-basis"
+        >
+          {HR_PAY_BASES.map((k) => (
+            <NativeSelectOption key={k} value={k}>
+              {t(`payBases.${k}`)}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      {value.payBasis === 'monthly' && (
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-wage`}>{t('baseWage')}</Label>
+          <Input id={`${id}-wage`} value={value.baseWage} inputMode="numeric" maxLength={19} onChange={(e) => onChange({ baseWage: e.target.value.replace(/[^\d.]/g, '') })} />
+        </div>
+      )}
+      {value.payBasis === 'hourly' && (
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-hourly-rate`}>{t('hourlyRate')}</Label>
+          <Input
+            id={`${id}-hourly-rate`}
+            value={value.hourlyRate}
+            inputMode="decimal"
+            maxLength={19}
+            onChange={(e) => onChange({ hourlyRate: e.target.value.replace(/[^\d.]/g, '') })}
+            data-testid="hr-terms-hourly-rate"
+          />
+        </div>
+      )}
+      {value.payBasis === 'piece_rate' && (
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-piece-rate`}>{t('pieceRate')}</Label>
+          <Input
+            id={`${id}-piece-rate`}
+            value={value.pieceRate}
+            inputMode="decimal"
+            maxLength={19}
+            onChange={(e) => onChange({ pieceRate: e.target.value.replace(/[^\d.]/g, '') })}
+            data-testid="hr-terms-piece-rate"
+          />
+        </div>
+      )}
+      <div className="space-y-1">
+        <Label htmlFor={`${id}-tax-resident`}>{t('taxResidency')}</Label>
+        <NativeSelect
+          id={`${id}-tax-resident`}
+          value={value.taxResident ? 'resident' : 'non_resident'}
+          onChange={(e) => onChange({ taxResident: e.target.value === 'resident' })}
+          data-testid="hr-terms-tax-resident"
+        >
+          <NativeSelectOption value="resident">{t('taxResidencyOptions.resident')}</NativeSelectOption>
+          <NativeSelectOption value="non_resident">{t('taxResidencyOptions.non_resident')}</NativeSelectOption>
+        </NativeSelect>
       </div>
       <div className="sm:col-span-full space-y-2">
         <Button
@@ -910,6 +1000,10 @@ export interface EditEmployeeDraft {
   birth: string;
   tax: string;
   insurance: string;
+  isForeign: '' | 'true' | 'false';
+  workPermitExempt: '' | 'true' | 'false';
+  workPermitNumber: string;
+  workPermitExpiresOn: string;
   clear: {
     department: boolean;
     jobTitle: boolean;
@@ -920,6 +1014,8 @@ export interface EditEmployeeDraft {
     birth: boolean;
     tax: boolean;
     insurance: boolean;
+    workPermitNumber: boolean;
+    workPermitExpiresOn: boolean;
   };
 }
 
@@ -934,6 +1030,10 @@ export const blankEditDraft = (): EditEmployeeDraft => ({
   birth: '',
   tax: '',
   insurance: '',
+  isForeign: '',
+  workPermitExempt: '',
+  workPermitNumber: '',
+  workPermitExpiresOn: '',
   clear: {
     department: false,
     jobTitle: false,
@@ -944,6 +1044,8 @@ export const blankEditDraft = (): EditEmployeeDraft => ({
     birth: false,
     tax: false,
     insurance: false,
+    workPermitNumber: false,
+    workPermitExpiresOn: false,
   },
 });
 
@@ -959,6 +1061,10 @@ export function hasEditEmployeeChanges(draft: EditEmployeeDraft): boolean {
       draft.birth ||
       draft.tax.trim() ||
       draft.insurance.trim() ||
+      draft.isForeign !== '' ||
+      draft.workPermitExempt !== '' ||
+      draft.workPermitNumber.trim() ||
+      draft.workPermitExpiresOn ||
       draft.clear.department ||
       draft.clear.jobTitle ||
       draft.clear.address ||
@@ -967,26 +1073,42 @@ export function hasEditEmployeeChanges(draft: EditEmployeeDraft): boolean {
       draft.clear.bank ||
       draft.clear.birth ||
       draft.clear.tax ||
-      draft.clear.insurance,
+      draft.clear.insurance ||
+      draft.clear.workPermitNumber ||
+      draft.clear.workPermitExpiresOn,
   );
 }
 
 /** Builds the `hr.payroll.employee.edit` payload from an edit draft (`clear` flags emit explicit `null`, empty fields stay omitted). */
 export function buildEditPayload(employeeId: string, draft: EditEmployeeDraft): HrEmployeeEdit {
-  return {
-    employeeId,
-    ...(draft.name.trim() ? { displayName: draft.name.trim() } : {}),
-    ...(draft.clear.department ? { departmentId: null } : draft.departmentId ? { departmentId: draft.departmentId } : {}),
-    ...(draft.clear.jobTitle ? { jobTitle: null } : draft.jobTitle.trim() ? { jobTitle: draft.jobTitle.trim() } : {}),
-    // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
-    ...(draft.clear.address ? { address: null } : draft.address.trim() ? { address: draft.address.trim() } : {}),
-    ...(draft.clear.identity ? { identityNumber: null } : draft.identity.trim() ? { identityNumber: draft.identity.trim() } : {}),
-    ...(draft.clear.account ? { accountNumber: null } : draft.account.trim() ? { accountNumber: draft.account.trim() } : {}),
-    ...(draft.clear.bank ? { bankCode: null } : draft.bank ? { bankCode: draft.bank } : {}),
-    ...(draft.clear.birth ? { birthDate: null } : draft.birth ? { birthDate: draft.birth } : {}),
-    ...(draft.clear.tax ? { taxCode: null } : draft.tax.trim() ? { taxCode: draft.tax.trim() } : {}),
-    ...(draft.clear.insurance ? { insuranceNumber: null } : draft.insurance.trim() ? { insuranceNumber: draft.insurance.trim() } : {}),
-  };
+  const payload: HrEmployeeEdit = { employeeId };
+  if (draft.name.trim()) payload.displayName = draft.name.trim();
+  if (draft.clear.department) payload.departmentId = null;
+  else if (draft.departmentId) payload.departmentId = draft.departmentId;
+  if (draft.clear.jobTitle) payload.jobTitle = null;
+  else if (draft.jobTitle.trim()) payload.jobTitle = draft.jobTitle.trim();
+  // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
+  if (draft.clear.address) payload.address = null;
+  else if (draft.address.trim()) payload.address = draft.address.trim();
+  if (draft.clear.identity) payload.identityNumber = null;
+  else if (draft.identity.trim()) payload.identityNumber = draft.identity.trim();
+  if (draft.clear.account) payload.accountNumber = null;
+  else if (draft.account.trim()) payload.accountNumber = draft.account.trim();
+  if (draft.clear.bank) payload.bankCode = null;
+  else if (draft.bank) payload.bankCode = draft.bank;
+  if (draft.clear.birth) payload.birthDate = null;
+  else if (draft.birth) payload.birthDate = draft.birth;
+  if (draft.clear.tax) payload.taxCode = null;
+  else if (draft.tax.trim()) payload.taxCode = draft.tax.trim();
+  if (draft.clear.insurance) payload.insuranceNumber = null;
+  else if (draft.insurance.trim()) payload.insuranceNumber = draft.insurance.trim();
+  if (draft.isForeign !== '') payload.isForeign = draft.isForeign === 'true';
+  if (draft.workPermitExempt !== '') payload.workPermitExempt = draft.workPermitExempt === 'true';
+  if (draft.clear.workPermitNumber) payload.workPermitNumber = null;
+  else if (draft.workPermitNumber.trim()) payload.workPermitNumber = draft.workPermitNumber.trim();
+  if (draft.clear.workPermitExpiresOn) payload.workPermitExpiresOn = null;
+  else if (draft.workPermitExpiresOn) payload.workPermitExpiresOn = draft.workPermitExpiresOn;
+  return payload;
 }
 
 function ClearStoredCheckbox({
@@ -1031,6 +1153,10 @@ export function EditForm({
     | 'birthDate'
     | 'taxCode'
     | 'insuranceNumber'
+    | 'isForeign'
+    | 'workPermitExempt'
+    | 'workPermitExpiresOn'
+    | 'hasWorkPermitNumber'
   >;
   departments: readonly HrDepartmentView[];
   draft: EditEmployeeDraft;
@@ -1041,15 +1167,16 @@ export function EditForm({
 }) {
   const t = useTranslations('hrEmployees');
   const limited = employee.status !== 'active';
-  const fields = useFieldErrors<'taxCode' | 'insuranceNumber'>((field) => {
+  const fields = useFieldErrors<'taxCode' | 'insuranceNumber' | 'workPermitNumber'>((field) => {
     if (field === 'taxCode') return !draft.clear.tax && !idNumberOk(draft.tax) ? t('taxCodeInvalid') : null;
-    return !draft.clear.insurance && !idNumberOk(draft.insurance) ? t('insuranceNumberInvalid') : null;
+    if (field === 'insuranceNumber') return !draft.clear.insurance && !idNumberOk(draft.insurance) ? t('insuranceNumberInvalid') : null;
+    return !draft.clear.workPermitNumber && !workPermitNumberOk(draft.workPermitNumber) ? t('workPermitNumberInvalid') : null;
   });
   const hasChange = hasEditEmployeeChanges(draft);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!hasChange || pending) return;
-    if (!fields.checkAll(['taxCode', 'insuranceNumber'])) {
+    if (!fields.checkAll(['taxCode', 'insuranceNumber', 'workPermitNumber'])) {
       focusFirstInvalid(event.currentTarget);
       return;
     }
@@ -1264,6 +1391,85 @@ export function EditForm({
           />
         )}
       </div>
+      {!limited && (
+        <>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-is-foreign">{t('isForeignWorker')}</Label>
+            <NativeSelect
+              id="hr-edit-is-foreign"
+              value={draft.isForeign}
+              onChange={(ev) => onChange({ ...draft, isForeign: ev.target.value as EditEmployeeDraft['isForeign'] })}
+              data-testid="hr-edit-is-foreign"
+            >
+              <NativeSelectOption value="">{t('departments.keepCurrent')}</NativeSelectOption>
+              <NativeSelectOption value="true">{t('isForeignOptions.foreign')}</NativeSelectOption>
+              <NativeSelectOption value="false">{t('isForeignOptions.domestic')}</NativeSelectOption>
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-work-permit-exempt">{t('workPermitExempt')}</Label>
+            <NativeSelect
+              id="hr-edit-work-permit-exempt"
+              value={draft.workPermitExempt}
+              onChange={(ev) => onChange({ ...draft, workPermitExempt: ev.target.value as EditEmployeeDraft['workPermitExempt'] })}
+              data-testid="hr-edit-work-permit-exempt"
+            >
+              <NativeSelectOption value="">{t('departments.keepCurrent')}</NativeSelectOption>
+              <NativeSelectOption value="true">{t('workPermitExemptOptions.exempt')}</NativeSelectOption>
+              <NativeSelectOption value="false">{t('workPermitExemptOptions.required')}</NativeSelectOption>
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-work-permit-number">{t('workPermitNumber')}</Label>
+            <Input
+              {...fieldControl('hr-edit-work-permit-number', { error: Boolean(fields.of('workPermitNumber')) })}
+              value={draft.workPermitNumber}
+              maxLength={30}
+              autoComplete="off"
+              disabled={draft.clear.workPermitNumber}
+              onChange={(ev) => {
+                onChange({ ...draft, workPermitNumber: ev.target.value });
+                fields.edit('workPermitNumber');
+              }}
+              onBlur={(ev) => {
+                if (!draft.clear.workPermitNumber) fields.blur('workPermitNumber', ev.target.value);
+              }}
+              data-testid="hr-edit-work-permit-number"
+            />
+            <FieldError id="hr-edit-work-permit-number">{fields.of('workPermitNumber')}</FieldError>
+            {employee.hasWorkPermitNumber && (
+              <ClearStoredCheckbox
+                checked={draft.clear.workPermitNumber}
+                label={t('clearStored')}
+                onChange={(checked) => {
+                  onChange({ ...draft, clear: { ...draft.clear, workPermitNumber: checked } });
+                  if (checked) fields.edit('workPermitNumber');
+                }}
+                testId="hr-edit-work-permit-number-clear"
+              />
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-work-permit-expires">{t('workPermitExpiresOn')}</Label>
+            <Input
+              id="hr-edit-work-permit-expires"
+              type="date"
+              value={draft.workPermitExpiresOn}
+              disabled={draft.clear.workPermitExpiresOn}
+              onChange={(ev) => onChange({ ...draft, workPermitExpiresOn: ev.target.value })}
+              data-testid="hr-edit-work-permit-expires"
+            />
+            {employee.workPermitExpiresOn !== null && (
+              <ClearStoredCheckbox
+                checked={draft.clear.workPermitExpiresOn}
+                label={t('clearStored')}
+                onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, workPermitExpiresOn: checked } })}
+                testId="hr-edit-work-permit-expires-clear"
+              />
+            )}
+          </div>
+        </>
+      )}
       <p className="text-xs text-subtle-foreground sm:col-span-2">{t('editHint')}</p>
       <div className="flex flex-wrap gap-2 sm:col-span-2">
         <Button type="submit" loading={pending} disabled={!hasChange} data-testid="hr-edit-save">
@@ -1313,11 +1519,16 @@ export function AddForm({
   const [birth, setBirth] = useState('');
   const [tax, setTax] = useState('');
   const [insurance, setInsurance] = useState('');
+  const [isForeign, setIsForeign] = useState(false);
+  const [workPermitExempt, setWorkPermitExempt] = useState(false);
+  const [workPermitNumber, setWorkPermitNumber] = useState('');
+  const [workPermitExpiresOn, setWorkPermitExpiresOn] = useState('');
   const [terms, setTerms] = useState(blankTerms);
   const contractErrors = previewContractCheck(terms).filter((item) => item.severity === 'error');
-  const fields = useFieldErrors<'taxCode' | 'insuranceNumber'>((field) => {
+  const fields = useFieldErrors<'taxCode' | 'insuranceNumber' | 'workPermitNumber'>((field) => {
     if (field === 'taxCode') return idNumberOk(tax) ? null : t('taxCodeInvalid');
-    return idNumberOk(insurance) ? null : t('insuranceNumberInvalid');
+    if (field === 'insuranceNumber') return idNumberOk(insurance) ? null : t('insuranceNumberInvalid');
+    return !isForeign || workPermitExempt || workPermitNumberOk(workPermitNumber) ? null : t('workPermitNumberInvalid');
   });
   const save = useMutation({
     mutationFn: () =>
@@ -1333,6 +1544,10 @@ export function AddForm({
         ...(birth ? { birthDate: birth } : {}),
         ...(tax.trim() ? { taxCode: tax.trim() } : {}),
         ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
+        isForeign,
+        workPermitExempt: isForeign ? workPermitExempt : false,
+        ...(isForeign && !workPermitExempt && workPermitNumber.trim() ? { workPermitNumber: workPermitNumber.trim() } : {}),
+        ...(isForeign && !workPermitExempt && workPermitExpiresOn ? { workPermitExpiresOn } : {}),
         employment: buildEmploymentPayload(terms),
       }),
     onSuccess: async () => {
@@ -1343,8 +1558,8 @@ export function AddForm({
   const id = 'hr-add';
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (name.trim() === '' || !wageOk(terms.baseWage) || contractErrors.length > 0 || save.isPending) return;
-    if (!fields.checkAll(['taxCode', 'insuranceNumber'])) {
+    if (name.trim() === '' || !termsValid(terms) || contractErrors.length > 0 || save.isPending) return;
+    if (!fields.checkAll(['taxCode', 'insuranceNumber', 'workPermitNumber'])) {
       focusFirstInvalid(event.currentTarget);
       return;
     }
@@ -1462,6 +1677,65 @@ export function AddForm({
             />
             <FieldError id={`${id}-insurance`}>{fields.of('insuranceNumber')}</FieldError>
           </div>
+          <label className="flex items-center gap-2 text-sm max-md:min-h-11 sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={isForeign}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setIsForeign(next);
+                if (!next) fields.edit('workPermitNumber');
+              }}
+              data-testid="hr-add-is-foreign"
+            />
+            {t('isForeignWorker')}
+          </label>
+          {isForeign && (
+            <div className="grid gap-3 rounded-md border p-3 sm:col-span-2 sm:grid-cols-2" data-testid="hr-add-foreign-section">
+              <label className="flex items-center gap-2 text-sm max-md:min-h-11 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={workPermitExempt}
+                  onChange={(e) => {
+                    setWorkPermitExempt(e.target.checked);
+                    fields.edit('workPermitNumber');
+                  }}
+                  data-testid="hr-add-work-permit-exempt"
+                />
+                {t('workPermitExempt')}
+              </label>
+              {!workPermitExempt && (
+                <>
+                  <div className="space-y-1">
+                    <Label htmlFor={`${id}-work-permit-number`}>{t('workPermitNumber')}</Label>
+                    <Input
+                      {...fieldControl(`${id}-work-permit-number`, { error: Boolean(fields.of('workPermitNumber')) })}
+                      value={workPermitNumber}
+                      maxLength={30}
+                      autoComplete="off"
+                      onChange={(e) => {
+                        setWorkPermitNumber(e.target.value);
+                        fields.edit('workPermitNumber');
+                      }}
+                      onBlur={(e) => fields.blur('workPermitNumber', e.target.value)}
+                      data-testid="hr-add-work-permit-number"
+                    />
+                    <FieldError id={`${id}-work-permit-number`}>{fields.of('workPermitNumber')}</FieldError>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`${id}-work-permit-expires`}>{t('workPermitExpiresOn')}</Label>
+                    <Input
+                      id={`${id}-work-permit-expires`}
+                      type="date"
+                      value={workPermitExpiresOn}
+                      onChange={(e) => setWorkPermitExpiresOn(e.target.value)}
+                      data-testid="hr-add-work-permit-expires"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <TermsFields
             id={id}
             value={terms}
@@ -1477,7 +1751,7 @@ export function AddForm({
           <Button
             type="submit"
             loading={save.isPending}
-            disabled={name.trim() === '' || !wageOk(terms.baseWage) || contractErrors.length > 0}
+            disabled={name.trim() === '' || !termsValid(terms) || contractErrors.length > 0}
             data-testid="hr-employee-save"
           >
             {t('save')}
@@ -1687,6 +1961,16 @@ export function Detail({
             <dt className="text-subtle-foreground">{t('insuranceNumber')}</dt>
             <dd data-testid="hr-employee-insurance">{e.insuranceNumber === null ? none : shown ? e.insuranceNumber : '••••••••'}</dd>
           </div>
+          {e.isForeign && (
+            <div>
+              <dt className="text-subtle-foreground">{t('workPermitStatus')}</dt>
+              <dd data-testid="hr-employee-work-permit">
+                {e.workPermitExempt
+                  ? t('workPermitExemptTag')
+                  : [e.workPermitNumber, e.workPermitExpiresOn ? f.date(e.workPermitExpiresOn) : null].filter(Boolean).join(' - ') || none}
+              </dd>
+            </div>
+          )}
           {e.endedOn && (
             <div>
               <dt className="text-subtle-foreground">{t('endedOn')}</dt>
@@ -1754,7 +2038,19 @@ export function Detail({
               <TableCell className="px-4 py-3">{formatContractTermSummary(t, f, row)}</TableCell>
               <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
               <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
-              <TableCell className={NUM}>{f.money(row.baseWage, 'VND')}</TableCell>
+              <TableCell className={NUM}>
+                {formatPaySummary(t, f, row)}
+                {row.payBasis !== 'monthly' && (
+                  <Badge className="ml-2" variant="secondary">
+                    {t(`payBases.${row.payBasis}`)}
+                  </Badge>
+                )}
+                {!row.taxResident && (
+                  <Badge className="ml-2" variant="warning">
+                    {t('taxResidencyOptions.non_resident')}
+                  </Badge>
+                )}
+              </TableCell>
               {!e.erased && signEnabled && (
                 <TableCell className="px-4 py-3" data-testid="hr-terms-sign-cell">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1811,7 +2107,7 @@ export function Detail({
         <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <TermsFields id="hr-terms" value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />
           <div className="sm:col-span-4">
-            <Button loading={addTerms.isPending} disabled={!wageOk(terms.baseWage) || contractErrors.length > 0} onClick={() => addTerms.mutate()} data-testid="hr-terms-add">
+            <Button loading={addTerms.isPending} disabled={!termsValid(terms) || contractErrors.length > 0} onClick={() => addTerms.mutate()} data-testid="hr-terms-add">
               {t('addTerms')}
             </Button>
             <span className="ml-2 text-xs text-subtle-foreground">{t('termsHint')}</span>
@@ -2207,7 +2503,7 @@ export function HrEmployeesPage() {
                 </TableCell>
                 <TableCell className="px-4 py-3">{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
                 <TableCell className="px-4 py-3">{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>
-                <TableCell className={NUM}>{r.current ? f.money(r.current.baseWage, 'VND') : '-'}</TableCell>
+                <TableCell className={NUM}>{r.current ? formatPaySummary(t, f, r.current) : '-'}</TableCell>
                 <TableCell className="px-4 py-3 text-right">
                   <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-employee-open">
                     {t('open')}

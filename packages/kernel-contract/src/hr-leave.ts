@@ -10,7 +10,7 @@ import {
 import { HR_RUN_STATUSES, zHrMonth, zHrRuleRef } from './hr-payroll.ts';
 import { zId, zLocalDate } from './schemas.ts';
 
-export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'] as const;
 export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
 
 export const HR_LEAVE_REQUEST_KINDS = ['annual_leave', 'personal_paid', 'unpaid_leave'] as const;
@@ -103,6 +103,10 @@ export const zHrLeaveBalanceSummary = z.object({
   exceededAnnualDays: z.string(),
   personalPaidDays: z.string(),
   unpaidDaysByMonth: z.record(z.string(), z.string()),
+  sicknessBhxhDays: z.string(),
+  maternityBhxhDays: z.string(),
+  sicknessBhxhDaysByMonth: z.record(z.string(), z.string()),
+  maternityBhxhDaysByMonth: z.record(z.string(), z.string()),
   rulesUsed: z.array(zHrRuleRef),
 });
 export type HrLeaveBalanceSummary = z.infer<typeof zHrLeaveBalanceSummary>;

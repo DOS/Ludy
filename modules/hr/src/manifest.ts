@@ -28,7 +28,7 @@ export const hrManifest = defineModule({
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
       payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
-      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'user_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
+      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'user_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'is_foreign', 'work_permit_exempt', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
         // The code of the bank the person is paid at (#2897): a plain column (a bank's code alone identifies no one), read only by the audited sensitive paths, cleared by the erasure.
         bank_code: 'payment',
@@ -39,10 +39,12 @@ export const hrManifest = defineModule({
         address: 'contact',
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
+        work_permit_expires_on: 'pii',
+        work_permit_number_sealed: 'national_id',
       }),
       payroll_employment: columns(
-        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'created_by', 'created_at'],
-        { base_wage: 'sensitive', probation_wage: 'sensitive' },
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'pay_basis', 'tax_resident', 'created_by', 'created_at'],
+        { base_wage: 'sensitive', probation_wage: 'sensitive', hourly_rate: 'sensitive', piece_rate: 'sensitive' },
       ),
       // Monthly employee leave ledger (#3394, #3411, #2540 slice 1c-2): opening balance, annual leave, personal paid leave and unpaid leave.
       // Kept `internal` (unlike `payroll_line.inputs`, which holds VND pay amounts): `days` holds plain day counts (0..366) with no money, PII or free text,
