@@ -552,6 +552,21 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_record',
     reason: 'Signer phone number preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
+  'crove_sign.signer.delegated_from_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Delegator legal name preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
+  },
+  'crove_sign.signer.delegated_from_email': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason: 'Delegator email address preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
+  },
+  'crove_sign.signer.delegation_reason': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Audited delegation reason preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
+  },
   'crove_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
   'crove_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
   'crove_sign.signer.signer_ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of signer IP address preserved for execution integrity without storing raw IP' },
@@ -565,6 +580,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
   'crove_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
   'crove_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
+  'crove_sign.ca_connection.secret_envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -1341,6 +1362,9 @@ export const personalDataErase = defineCommand({
         userAgents: number;
         fieldSignatures: number;
         otps: number;
+        delegatedNames?: number;
+        delegatedEmails?: number;
+        delegationReasons?: number;
       };
     }>`
       SELECT crove_sign.personal_erase_unsealed_signers(${probe.kind}, ${probeValue(probe)}) AS counts
@@ -1354,6 +1378,9 @@ export const personalDataErase = defineCommand({
       add('crove_sign.signer.signature_typed_text', erasedSign.typedSignatures);
       add('crove_sign.signer.signer_user_agent', erasedSign.userAgents);
       add('crove_sign.field.signature_png_base64', erasedSign.fieldSignatures);
+      add('crove_sign.signer.delegated_from_name', erasedSign.delegatedNames ?? 0);
+      add('crove_sign.signer.delegated_from_email', erasedSign.delegatedEmails ?? 0);
+      add('crove_sign.signer.delegation_reason', erasedSign.delegationReasons ?? 0);
     }
     if (probe.kind === 'email') {
       const { rows: signOtp } = await sql<{ count: number }>`

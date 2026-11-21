@@ -6,14 +6,14 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { cn } from '@crove/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
-import { ErrorText, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
+import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import { publicSignApi, PublicSignError, type PublicFieldSubmission, type PublicSignField, type PublicSignViewState } from '../lib/sign-api.ts';
 import { forgetSignToken, pendingSignToken, readSignTokenFromHash, rememberSignToken, scrubSignTokenHash, subscribeToHash } from '../lib/sign-hash.ts';
 import { toast } from '../lib/toast.ts';
@@ -164,6 +164,13 @@ export function SignCeremonyPage() {
   const [declineError, setDeclineError] = useState<string | null>(null);
   const [declining, setDeclining] = useState(false);
 
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateName, setDelegateName] = useState('');
+  const [delegateEmail, setDelegateEmail] = useState('');
+  const [delegateReason, setDelegateReason] = useState('');
+  const [delegateError, setDelegateError] = useState<string | null>(null);
+  const [delegating, setDelegating] = useState(false);
+
   const fieldCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const requestGenRef = useRef(0);
 
@@ -187,6 +194,11 @@ export function SignCeremonyPage() {
     setDeclineOpen(false);
     setDeclineReason('');
     setDeclineError(null);
+    setDelegateOpen(false);
+    setDelegateName('');
+    setDelegateEmail('');
+    setDelegateReason('');
+    setDelegateError(null);
     setPageNumber(1);
   }, []);
 
@@ -226,6 +238,7 @@ export function SignCeremonyPage() {
       if (
         view.state === 'already_completed' ||
         view.state === 'declined' ||
+        view.state === 'delegated' ||
         view.state === 'voided' ||
         view.state === 'expired'
       ) {
@@ -448,6 +461,56 @@ export function SignCeremonyPage() {
     }
   };
 
+  const handleDelegate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || viewState?.state !== 'ready') return;
+    const trimmedName = delegateName.trim();
+    const trimmedEmail = delegateEmail.trim().toLowerCase();
+    const trimmedReason = delegateReason.trim();
+    if (!trimmedName || !isEmailAddress(trimmedEmail)) {
+      setDelegateError(t('delegateInvalidFields'));
+      return;
+    }
+    if (!trimmedReason) {
+      setDelegateError(t('delegateReasonRequired'));
+      return;
+    }
+    setDelegating(true);
+    setDelegateError(null);
+    try {
+      const res = await publicSignApi.delegate({
+        token,
+        delegateName: trimmedName,
+        delegateEmail: trimmedEmail,
+        reason: trimmedReason,
+      });
+      forgetSignToken();
+      setDelegateOpen(false);
+      toast(t('delegateSuccessToast'));
+      setViewState({
+        state: 'delegated',
+        title: viewState.title,
+        delegateName: res.delegateName,
+        maskedDelegateEmail: res.maskedDelegateEmail,
+      });
+      setPdfBytes(null);
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setDelegateOpen(false);
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        setDelegateError(error instanceof Error ? error.message : t('invalidTitle'));
+      }
+    } finally {
+      setDelegating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <ScreenTitle name={viewState?.title ?? t('invalidTitle')} />
@@ -489,6 +552,18 @@ export function SignCeremonyPage() {
           <Card data-testid="sign-ceremony-declined">
             <CardHeader>
               <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverDeclinedTitle' : 'declinedTitle')}</CardTitle>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'delegated' ? (
+          <Card data-testid="sign-ceremony-delegated">
+            <CardHeader>
+              <CardTitle>{t('delegatedTitle')}</CardTitle>
+              <CardDescription>
+                {t('delegatedHint', {
+                  name: viewState.delegateName,
+                  email: viewState.maskedDelegateEmail ?? '',
+                })}
+              </CardDescription>
             </CardHeader>
           </Card>
         ) : viewState?.state === 'voided' ? (
@@ -576,6 +651,12 @@ export function SignCeremonyPage() {
             declineReason={declineReason}
             declining={declining}
             declineError={declineError}
+            delegateOpen={delegateOpen}
+            delegateName={delegateName}
+            delegateEmail={delegateEmail}
+            delegateReason={delegateReason}
+            delegating={delegating}
+            delegateError={delegateError}
             padFieldId={padFieldId}
             onPageChange={setPageNumber}
             onScaleChange={setScale}
@@ -601,6 +682,14 @@ export function SignCeremonyPage() {
             onDeclineOpenChange={setDeclineOpen}
             onDeclineReasonChange={setDeclineReason}
             onDeclineSubmit={(event) => void handleDecline(event)}
+            onDelegateOpenChange={(open) => {
+              setDelegateOpen(open);
+              if (!open) setDelegateError(null);
+            }}
+            onDelegateNameChange={setDelegateName}
+            onDelegateEmailChange={setDelegateEmail}
+            onDelegateReasonChange={setDelegateReason}
+            onDelegateSubmit={(event) => void handleDelegate(event)}
             setFieldCardRef={(fieldId, el) => {
               fieldCardRefs.current[fieldId] = el;
             }}
@@ -628,6 +717,12 @@ export interface SignCeremonyReadyViewProps {
   declineReason: string;
   declining: boolean;
   declineError: string | null;
+  delegateOpen?: boolean;
+  delegateName?: string;
+  delegateEmail?: string;
+  delegateReason?: string;
+  delegating?: boolean;
+  delegateError?: string | null;
   padFieldId: string | null;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
@@ -640,6 +735,11 @@ export interface SignCeremonyReadyViewProps {
   onDeclineOpenChange: (open: boolean) => void;
   onDeclineReasonChange: (reason: string) => void;
   onDeclineSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onDelegateOpenChange?: (open: boolean) => void;
+  onDelegateNameChange?: (name: string) => void;
+  onDelegateEmailChange?: (email: string) => void;
+  onDelegateReasonChange?: (reason: string) => void;
+  onDelegateSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   setFieldCardRef?: (fieldId: string, el: HTMLDivElement | null) => void;
 }
 
@@ -650,6 +750,12 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
   const common = useTranslations('common');
 
   const isApproverCeremony = isApproverCeremonyMode(viewState);
+  const canDelegateCeremony = Boolean(
+    viewState.allowDelegation &&
+      viewState.signerRole !== 'cc' &&
+      (viewState.delegationCount ?? 0) < 2 &&
+      props.onDelegateOpenChange,
+  );
   const incompleteRequired = useMemo(
     () => viewState.fields.filter((field) => !isFieldComplete(field, answers[field.id])),
     [viewState.fields, answers],
@@ -671,6 +777,11 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
             {viewState.signerName}
             {viewState.roleLabel ? ` (${viewState.roleLabel})` : ''}
           </p>
+          {viewState.delegatedFromName ? (
+            <p className="truncate text-xs text-muted-foreground" data-testid="ceremony-delegated-from">
+              {t('delegatedFromNotice', { name: viewState.delegatedFromName })}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {incompleteRequired.length > 0 ? (
@@ -908,15 +1019,28 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
           ) : null}
 
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => props.onDeclineOpenChange(true)}
-              data-testid="ceremony-decline-btn"
-            >
-              {t(isApproverCeremony ? 'approverDeclineButton' : 'declineButton')}
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => props.onDeclineOpenChange(true)}
+                data-testid="ceremony-decline-btn"
+              >
+                {t(isApproverCeremony ? 'approverDeclineButton' : 'declineButton')}
+              </Button>
+              {canDelegateCeremony ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => props.onDelegateOpenChange?.(true)}
+                  data-testid="ceremony-delegate-btn"
+                >
+                  {t('delegateButton')}
+                </Button>
+              ) : null}
+            </div>
             <Button
               type="button"
               className="min-h-11"
@@ -982,6 +1106,64 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
           </form>
         </DialogContent>
       </Dialog>
+
+      {canDelegateCeremony ? (
+        <Dialog open={Boolean(props.delegateOpen)} onOpenChange={props.onDelegateOpenChange}>
+          <DialogContent className="sm:max-w-md" closeLabel={common('close')} data-testid="ceremony-delegate-dialog">
+            <DialogHeader>
+              <DialogTitle>{t('delegateTitle')}</DialogTitle>
+              <DialogDescription>{t('delegateDescription')}</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={props.onDelegateSubmit} className="space-y-3">
+              {props.delegateError ? <ErrorText>{props.delegateError}</ErrorText> : null}
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-name-input">{t('delegateNameLabel')}</Label>
+                <Input
+                  id="delegate-name-input"
+                  className="min-h-11"
+                  value={props.delegateName ?? ''}
+                  onChange={(e) => props.onDelegateNameChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-email-input">{t('delegateEmailLabel')}</Label>
+                <Input
+                  id="delegate-email-input"
+                  type="email"
+                  className="min-h-11"
+                  value={props.delegateEmail ?? ''}
+                  onChange={(e) => props.onDelegateEmailChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-reason-input">{t('delegateReasonLabel')}</Label>
+                <Input
+                  id="delegate-reason-input"
+                  className="min-h-11"
+                  value={props.delegateReason ?? ''}
+                  onChange={(e) => props.onDelegateReasonChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => props.onDelegateOpenChange?.(false)}
+                >
+                  {common('cancel')}
+                </Button>
+                <Button type="submit" className="min-h-11" loading={Boolean(props.delegating)}>
+                  {t('delegateConfirm')}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

@@ -358,6 +358,10 @@ export const envelopeGet = defineQuery({
         'otp_verified_at',
         'signature_kind',
         'consent_accepted_at',
+        'delegated_from_name',
+        'delegated_from_email',
+        'delegation_reason',
+        'delegation_count',
         'created_at',
         'updated_at',
       ])
@@ -426,6 +430,7 @@ export const envelopeGet = defineQuery({
         message: env.message,
         status: env.status,
         routingMode: env.routing_mode,
+        allowDelegation: env.allow_delegation,
         sourceKind: env.source_kind,
         sourceId: env.source_id,
         sourceFileId: env.source_file_id,
@@ -491,6 +496,10 @@ export const envelopeGet = defineQuery({
         otpVerifiedAt: isoOrNull(s.otp_verified_at),
         signatureKind: s.signature_kind,
         consentAcceptedAt: isoOrNull(s.consent_accepted_at),
+        delegatedFromName: s.delegated_from_name,
+        delegatedFromEmail: s.delegated_from_email,
+        delegationReason: s.delegation_reason,
+        delegationCount: s.delegation_count,
         createdAt: new Date(s.created_at).toISOString(),
         updatedAt: new Date(s.updated_at).toISOString(),
       })),
@@ -769,6 +778,9 @@ export const envelopeSealJobData = defineQuery({
         'otp_verified_at',
         'signature_kind',
         'signer_ip_hash',
+        'delegated_from_name',
+        'delegated_from_email',
+        'delegation_count',
         'created_at',
       ])
       .where('org_id', '=', ctx.orgId)
@@ -830,6 +842,7 @@ export const envelopeSealJobData = defineQuery({
 });
 
 import { signAcceptanceQueries } from './acceptance.ts';
+import { signCaQueries } from './ca.ts';
 import { signTemplateQueries } from './templates.ts';
 import { signToday } from './today-and-reminders.ts';
 
@@ -927,4 +940,5 @@ export const signQueries = [
   signDrafterRenderPdf,
   ...signTemplateQueries,
   ...signAcceptanceQueries,
+  ...signCaQueries,
 ];

@@ -32,7 +32,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
       Object.fromEntries(
         Object.values(QUEUES).map((name) => [
           name,
-          name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal
+          name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal || name === QUEUES.signCaReconcile
             ? 'exclusive'
             : name === QUEUES.agentWake ||
                 name === QUEUES.adsSync ||
@@ -50,6 +50,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
     expect(queueOptions(QUEUES.adsSync)).toBe('{"policy":"stately","deadLetter":"kernel-job.dlq"}');
     expect(queueOptions(QUEUES.signPdfInspect)).toBe('{"policy":"exclusive","deadLetter":"kernel-job.dlq"}');
     expect(queueOptions(QUEUES.signPdfSeal)).toBe('{"policy":"exclusive","deadLetter":"kernel-job.dlq"}');
+    expect(queueOptions(QUEUES.signCaReconcile)).toBe('{"policy":"exclusive","deadLetter":"kernel-job.dlq"}');
     expect(queueOptions(QUEUES.extract)).toBe('{"policy":"standard","deadLetter":"kernel-job.dlq"}');
   });
 

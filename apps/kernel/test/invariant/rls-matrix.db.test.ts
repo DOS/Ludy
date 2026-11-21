@@ -106,6 +106,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_hook',
   'crove_finance.marketplace_hook_notice',
+  'crove_finance.marketplace_vat_rate',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -124,8 +125,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_sign.ca_connection',
-  'crove_sign.ca_signing_request',
   'crove_sign.envelope_obligation',
   'crove_sign.member_signature',
   'crove_sign.org_stamp',
@@ -408,6 +407,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.marketplace_column_profile',
   // #4239 (step 1 of the link table of #2840 point 3, #4238): a file a marketplace connection's poll ingested is linked to it once, in the same transaction as the ingest; the link is never edited or deleted by a tenant role (a purge or the file's own deletion removes it).
   'crove_finance.marketplace_connection_file',
+  // #4303 S3a: the VAT method and rate of an entity's marketplace sales from a date: a change is a new dated row, never an edit (the books of a closed period keep the rate they were posted with).
+  'crove_finance.marketplace_vat_rate',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -1749,6 +1750,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
         row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
+      };
+    },
+  },
+  // #4303 S3a: the VAT method and rate of an entity's marketplace sales (parent #2520), one row per (org, entity, effective_from): `deduction` with a rate in percent (the output VAT on 33311 of the sales posting), or `none` with
+  // no rate (a household on the percentage method, a direct-method company). A change is a new dated row. Tenant roles read and insert; nothing updates or deletes it. Its factory lands before the table (step 1 of 2),
+  // so PENDING_TABLES holds it until the migration of step 2. Each seeded row names an entity of its own.
+  'crove_finance.marketplace_vat_rate': {
+    make: (o) => {
+      const entity = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix VAT rate ${tag()}`, kind: 'branch', created_by: o.owner } }],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, effective_from: '2026-01-01', method: 'deduction', vat_percent: '8', created_by: o.owner },
       };
     },
   },
