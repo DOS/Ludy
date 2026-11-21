@@ -303,22 +303,27 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
 describe('the rows of the researched rules (#4303 S2)', () => {
   const NEW = ['outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
   const CODES = ['33311', '1331', '1388', '1381', '632', '711', '811'];
-  it('names the same accounts in both regimes: the output VAT row is confirmed with the sales path (#4303 S3b), the rest still `commentary`', () => {
+  // #4303 S3b confirmed the output VAT row with the sales path and S4 the three rows its payout adjustments post to (otherReceivable, costOfGoods, otherIncome); every other new row stays `commentary` until the change that posts to it.
+  const CONFIRMED = ['outputVat', 'otherReceivable', 'costOfGoods', 'otherIncome'];
+  it('names the same accounts in both regimes; only the output VAT row (S3b) and the three rows of the payout adjustments (S4) are `confirmed`', () => {
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       expect(NEW.map((key) => map[key].code), regime).toEqual(CODES);
-      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe(key === 'outputVat' ? 'confirmed' : 'commentary');
+      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe(CONFIRMED.includes(key) ? 'confirmed' : 'commentary');
     }
   });
   it('opens only the sales path: the rows are gated by the paths that post them (S3b flipped sales, S4 is next), and the retired no-path gate still asks for the original twelve only', () => {
     for (const regime of ['tt133', 'tt99']) {
       for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      // The adjustments path has its three rows confirmed and opens on its own, but it is asked only beside `payout`, which stays closed: together they are refused.
+      expect(() => requireConfirmedMarketplaceMap(regime, undefined, ['payout_adjustments']), regime).not.toThrow();
+      expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, ['payout', 'payout_adjustments'])), regime).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     }
     const original = confirmed();
     expect(requireConfirmedMarketplaceMap('tt133', original).regime).toBe('tt133');
   });
   it('keeps every point the research leaves open findable in the row that applies it (an "Uncertain (#2520)" comment), and cites the research file or the first regime', () => {
-    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'otherIncome', 'otherExpense'] as const;
+    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       for (const key of MARKED) expect(map[key].comment, `${regime} ${key}`).toContain('Uncertain (#2520');

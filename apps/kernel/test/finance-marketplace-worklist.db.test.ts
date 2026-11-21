@@ -4,7 +4,7 @@
 // - the gate: `postingConfirmed` is false while the account map is `commentary` (the shipped read) and true where it is confirmed;
 // - the settlements to post: stored settlements that stand and are not posted, with the net their entry would post; a posted one leaves the list;
 // - the payouts to match: a posted settlement with no payout voucher, with the bank lines it may be (the entity's, money in, equal to the net, not before the period, free), and gone once its payout
-//   is posted; a settlement with an unexplained adjustment is not offered;
+//   is posted; a settlement with a deduction nobody can classify is not offered, one with money to classify is offered with those lines (#4303 S4);
 // - the invoices to clear: a platform's posted fee invoice while fees wait on 1388, with what a clearing would take; gone once cleared, and another supplier's or a reversed invoice is not offered;
 // - the facts count the posted settlements without a payout, and no more once the payout is posted.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
@@ -188,7 +188,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     runtime.query<{
       postingConfirmed: boolean;
       settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
-      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
+      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[]; adjustable: { lineId: string; source: string; amount: string }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
   const facts = (o: Org) => rt.query<{ settlementsToPost: number; payoutsToMatch: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId });
@@ -323,12 +323,52 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     expect((await worklist(o)).invoices.map((i) => [i.documentId, i.proposalId])).toEqual([[doc, pendingClearing.proposalId]]);
   });
 
-  it('does not offer a payout the command would refuse: an unexplained adjustment, nothing to collect', async () => {
+  it('does not offer a payout the command would refuse: a deduction nobody can classify, nothing to collect', async () => {
     const o = await org();
-    const odd = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }]);
+    // Money the report does not explain, below zero in one line and not adding up to zero: a person cannot classify a deduction, so the settlement is not offered (the accountant handles it).
+    const odd = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', other: '-200' }]);
     await post(o, odd);
-    await bankLine(o, '2026-10-20', '100500');
+    await bankLine(o, '2026-10-20', '150300');
     expect((await worklist(o)).payouts).toEqual([]);
+  });
+
+  it('lists the lines a person must classify (#4303 S4): money paid beyond the sales, and tax withheld from a seller that is no household; nothing for an offsetting pair or a household\'s tax', async () => {
+    const lineIds = async (o: Org, settlement: string) => (await rows<{ id: string; line_key: string }>('SELECT id, line_key FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2 ORDER BY line_key', [o.orgId, settlement]));
+    const company = await org('tt133', false);
+    const s1 = await seed(company, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', tax: '1500' }, { sales: '20000' }]);
+    await post(company, s1);
+    await bankLine(company, '2026-10-20', '169000');
+    const ids = await lineIds(company, s1);
+    const [item] = (await worklist(company)).payouts;
+    expect(item?.settlementId).toBe(s1);
+    expect(item?.adjustable).toEqual([
+      { lineId: ids[0]?.id, source: 'other', amount: '500' },
+      { lineId: ids[1]?.id, source: 'withheld', amount: '1500' },
+    ].sort((a, b) => String(a.lineId).localeCompare(String(b.lineId))));
+    // A household's withheld tax goes through 3331 and 3335: only the other money is offered.
+    const house = await org();
+    const s2 = await seed(house, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500', tax: '1000' }]);
+    await post(house, s2);
+    await bankLine(house, '2026-10-20', '99500');
+    expect((await worklist(house)).payouts[0]?.adjustable).toEqual([{ lineId: (await lineIds(house, s2))[0]?.id, source: 'other', amount: '500' }]);
+    // An offsetting pair is no adjustment: offered as before, with nothing to classify.
+    const pair = await org();
+    const s3 = await seed(pair, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', other: '-500' }]);
+    await post(pair, s3);
+    await bankLine(pair, '2026-10-20', '150000');
+    expect((await worklist(pair)).payouts.map((p) => [p.settlementId, p.adjustable])).toEqual([[s3, []]]);
+    // A line with a fraction of a dong cannot be classified (an adjustment is whole dong): the settlement is not offered, never a request that fails validation.
+    const frac = await org('tt133', false);
+    const s5 = await seed(frac, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '6000.5' }]);
+    await post(frac, s5);
+    await bankLine(frac, '2026-10-20', '106000.5');
+    expect((await worklist(frac)).payouts).toEqual([]);
+    // More lines than a request can carry: not offered (an accountant's), never cut short.
+    const many = await org('tt133', false);
+    const s4 = await seed(many, 'shopee', '2026-10-01', '2026-10-15', Array.from({ length: 101 }, () => ({ sales: '1000', other: '10' })));
+    await post(many, s4);
+    await bankLine(many, '2026-10-20', '102010');
+    expect((await worklist(many)).payouts).toEqual([]);
   });
 
   it("lists the platform's fee invoices that can clear while fees wait, with the amount a clearing would take, and drops them once cleared", async () => {

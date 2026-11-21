@@ -44,7 +44,9 @@ export const HR_RECURRING_INPUTS = [
 export const zHrMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM');
 // Days in whole or half units (unpaid leave, days not employed, the working days of the month) and hours of overtime: decimal strings, never JS numbers.
 export const zHrDays = z.string().regex(/^\d{1,2}(\.\d)?$/, 'days');
+export const zHrBhxhDays = z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, 'bhxh days');
 export const zHrHours = z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, 'hours');
+export const zHrWorkUnits = z.string().regex(/^\d{1,7}(\.\d{1,2})?$/, 'units');
 const zHrOvertimeEntry = z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS), night: z.boolean(), hours: zHrHours });
 // A signed amount of an adjustment line.
 export const zHrSignedAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/, 'signed decimal string');
@@ -68,6 +70,12 @@ const zHrPayrollInputsObject = z.strictObject({
   unpaidLeaveDays: zHrDays.default('0'),
   unpaidLeaveFromLedger: z.boolean().nullable().default(null),
   daysNotEmployed: zHrDays.default('0'),
+  workedHours: zHrHours.nullable().default(null),
+  pieceCount: zHrWorkUnits.nullable().default(null),
+  sicknessBhxhDays: zHrBhxhDays.default('0'),
+  sicknessBhxhFromLedger: z.boolean().nullable().default(null),
+  maternityBhxhDays: zHrBhxhDays.default('0'),
+  maternityBhxhFromLedger: z.boolean().nullable().default(null),
   overtime: z.array(zHrOvertimeEntry).max(30).default([]),
   nightHours: zHrHours.default('0'),
   bonus: zHrWage.default('0'),
@@ -84,9 +92,16 @@ export type HrPayrollInputsInput = z.input<typeof zHrPayrollInputs>;
 
 const zHrLineInputsEdit = zHrPayrollInputsObject
   .extend({
+    contractTermMonths: z.number().int().min(1).max(36).nullable().optional(),
     leaveCategory: z.enum(HR_LEAVE_CATEGORIES).optional(),
     standardAnnualDays: zHrAnnualLeaveBaseline.nullable().optional(),
     unpaidLeaveFromLedger: z.boolean().nullable().optional(),
+    workedHours: zHrHours.nullable().optional(),
+    pieceCount: zHrWorkUnits.nullable().optional(),
+    sicknessBhxhDays: zHrBhxhDays.optional(),
+    sicknessBhxhFromLedger: z.boolean().nullable().optional(),
+    maternityBhxhDays: zHrBhxhDays.optional(),
+    maternityBhxhFromLedger: z.boolean().nullable().optional(),
   })
   .refine(
     (v) =>
@@ -239,7 +254,7 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'probation_ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check', 'annual_leave_exceeded'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'probation_ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check', 'annual_leave_exceeded', 'work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
 
 export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap', 'overtime_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });

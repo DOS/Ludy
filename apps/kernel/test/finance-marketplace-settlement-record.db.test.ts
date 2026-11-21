@@ -5,7 +5,7 @@
 // - the platform's party and its link are created on the platform's first posting, once even when two first postings run together, and reused by the next;
 // - the entry is built again at approval: a stored proposal that differs from the settlement is refused; a settlement posts once; a reversal or a reversed settlement, a closed period and a chart
 //   with no map are refused;
-// - the shipped set of commands (every row of the account map is `commentary`) refuses both the request and the approval with 409 until the accountant confirms the map (#2520).
+// - the shipped set of commands (the map and the rows of the sales, payout and fee paths are `commentary`) refuses both the request and the approval with 409 until the accountant confirms the map (#2520).
 // The tests that post use a command set made with a confirmed copy of the map; the shipped map is never changed. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
