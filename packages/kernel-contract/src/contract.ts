@@ -201,6 +201,7 @@ import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMi
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
+import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -2708,6 +2709,11 @@ export const contract = {
     columnsFiles: oc.input(z.strictObject({})).output(z.array(zMarketplaceColumnsFile)),
     columns: oc.input(z.object({ fileId: zId })).output(zMarketplaceColumnsStatus),
     columnsProposal: oc.input(zMarketplaceColumnsProposalAsk).output(zMarketplaceColumnsProposal),
+    // Saves the mapping of a passed check (#4037, slice 3 of #3850): the file whose check the person looked at and the platform and mapping they saw, which must be the file's last check (done, with parsed lines,
+    // the same platform and mapping), or MARKETPLACE_COLUMNS_NOT_CHECKED / MARKETPLACE_COLUMNS_STALE (409); the profile's headers and digest come from what the worker recorded, and the check row is deleted in the
+    // same transaction. Owners and admins; a person only. `columnsProfile` reads the org's latest saved mapping of a platform (every member).
+    columnsConfirm: oc.input(zMarketplaceColumnsConfirm.extend({ idempotencyKey: zId })).output(zMarketplaceColumnsConfirmed),
+    columnsProfile: oc.input(zMarketplaceColumnProfileQuery).output(zMarketplaceColumnProfile.nullable()),
   },
   // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). `status` says whether this deployment offers the connector (it does only when it holds the integrator's ClientID; the value is
   // never in any answer). The customer's access code is sealed in the kernel at the edge and never in an answer, a log or an audit row: the screen shows only "connected since". Every role reads the

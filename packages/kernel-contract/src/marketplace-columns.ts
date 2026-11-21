@@ -41,6 +41,11 @@ const zSampleShape = z
   .regex(/^[9a \-/.,:;@#()+%_]*$/, 'a masked shape');
 export const zMarketplaceColumnSheet = z.strictObject({
   headerRow: z.number().int().min(0).max(1_048_576),
+  // The hash of the file's header row (#4037), made in the sandbox: what a saved mapping is found and checked by. Optional so a sheet stored before it existed still reads (its check must be asked again to be saved).
+  headerDigest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   columns: z
     .array(
       z

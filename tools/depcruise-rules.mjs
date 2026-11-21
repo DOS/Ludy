@@ -75,6 +75,8 @@ export const EXCEPTIONS = [
       'apps/kernel/test/finance-missing-invoices.db.test.ts',
       'apps/kernel/test/finance-portal-list.db.test.ts',
       'apps/kernel/test/http.test.ts',
+      'apps/kernel/test/marketplace-column-apply.db.test.ts',
+      'apps/kernel/test/marketplace-column-apply.test.ts',
       'apps/kernel/test/portal-sync.db.test.ts',
       'apps/kernel/test/tax-portal.test.ts',
       'e2e/tests/bulk-intake.spec.ts',
