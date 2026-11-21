@@ -26,7 +26,8 @@ describe('manifest permission list', () => {
     expect(notes.permissions).toEqual([]);
     expect([...WEB_CLIPPER_OPTIONAL_PERMISSIONS].sort()).toEqual(['activeTab', 'scripting']);
     expect([...OPTIONAL_PERMISSIONS].sort()).toEqual(['activeTab', 'offscreen', 'scripting', 'tabCapture']);
-    expect([...meetings.permissions, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS].sort()).toEqual([...(m.optional_permissions as string[])].sort());
+    expect([...new Set([...meetings.permissions, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS])].sort()).toEqual([...(m.optional_permissions as string[])].sort());
+    expect(meetings.permissions).toContain('activeTab');
     expect(OPTIONAL_PERMISSIONS.some((p) => p.includes('/') || p.includes('*'))).toBe(false);
   });
 

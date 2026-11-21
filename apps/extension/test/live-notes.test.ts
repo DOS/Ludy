@@ -93,7 +93,8 @@ const params = (liveNotes: boolean): CaptureParams => ({
 function setup(sendLiveChunk: Client['sendLiveChunk'] = () => Promise.resolve()) {
   const calls: string[] = [];
   const client = {
-    createMeeting: vi.fn(() => Promise.resolve({ meetingId: 'm1' })),
+    createMeeting: vi.fn((_input: Parameters<Client['createMeeting']>[0]) => Promise.resolve({ meetingId: 'm1' })),
+    captureHeartbeat: vi.fn((_input: Parameters<Client['captureHeartbeat']>[0]) => Promise.resolve({ open: true })),
     sendLiveChunk: vi.fn(async (input: Parameters<Client['sendLiveChunk']>[0]) => {
       calls.push(`live ${input.seq}`);
       await sendLiveChunk(input);
@@ -265,5 +266,96 @@ describe('ending a recording with no media', () => {
     const { stopped: _stopped, ...unseen } = meta;
     await reportEnded(client as unknown as Client, unseen);
     expect(client.recordingStopped).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'unknown' }));
+  });
+});
+
+// One meeting, one live capture (ADR-0055 slice 1, #4123): the tab's address is a hint to the server, a capture of a call that is already held is refused in words, and the recording keeps the server told it is alive.
+describe('the capture of a call', () => {
+  it('sends the tab address with the meeting, and nothing when the browser gave none', async () => {
+    const { client, deps } = setup();
+    const first = await startCapture({ ...params(false), joinUrl: 'https://meet.google.com/abc-defg-hij' }, deps);
+    expect(first.ok).toBe(true);
+    expect(client.createMeeting).toHaveBeenCalledWith(expect.objectContaining({ joinUrl: 'https://meet.google.com/abc-defg-hij' }));
+    if (first.ok) await first.running.stop();
+    const again = setup();
+    const second = await startCapture(params(false), again.deps);
+    expect(second.ok).toBe(true);
+    expect(again.client.createMeeting.mock.calls[0]?.[0]).not.toHaveProperty('joinUrl');
+    if (second.ok) await second.running.stop();
+  });
+
+  it('is refused in words when the call is already held: the kind and the time, no meeting made, nothing to report as ended', async () => {
+    const { client, deps } = setup();
+    client.createMeeting.mockImplementationOnce(() => Promise.reject(new LudyError('CAPTURE_ALREADY_RUNNING', 409, 'This meeting is already being recorded', { kind: 'app', since: '2027-01-20T07:02:00.000Z' })));
+    const started = await startCapture(params(false), deps);
+    expect(started).toEqual({ ok: false, reason: 'captureRunning', held: { kind: 'app', since: '2027-01-20T07:02:00.000Z' } });
+    expect(client.recordingStopped).not.toHaveBeenCalled();
+    expect(client.uploadMedia).not.toHaveBeenCalled();
+  });
+
+  it('is still refused when the refusal carries no readable details, and any other failure stays a failed setup', async () => {
+    const { client, deps } = setup();
+    client.createMeeting.mockImplementationOnce(() => Promise.reject(new LudyError('CAPTURE_ALREADY_RUNNING', 409, 'x')));
+    expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'captureRunning' });
+    client.createMeeting.mockImplementationOnce(() => Promise.reject(new LudyError('INTERNAL', 500, 'down')));
+    expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'setup' });
+  });
+
+  it('ends the capture and cleans up when recorder.start throws after the meeting is made', async () => {
+    const { client, deps } = setup();
+    const originalStart = FakeRecorder.prototype.start;
+    FakeRecorder.prototype.start = function () {
+      throw new Error('recorder start failed');
+    };
+    try {
+      expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'setup' });
+      expect(client.captureHeartbeat).toHaveBeenCalledWith({ meetingId: 'm1', end: true });
+      expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', reason: 'unknown', lengthSeconds: 0 });
+    } finally {
+      FakeRecorder.prototype.start = originalStart;
+    }
+  });
+
+  it('never waits for the end of the capture: a stalled network does not hold up the stop or the upload', async () => {
+    const { client, deps, calls } = setup();
+    client.captureHeartbeat.mockImplementation(() => new Promise<{ open: boolean }>(() => undefined));
+    const started = await startCapture(params(false), deps);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    FakeRecorder.instances[0]!.piece('five seconds');
+    const stopped = await started.running.stop();
+    expect(stopped.uploaded).toBe(true);
+    expect(calls).toEqual(['final upload']);
+    expect(client.captureHeartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+  });
+
+  it('beats every 30 seconds while recording and ends the capture at once when the member stops, whatever the server answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, deps } = setup();
+      const started = await startCapture(params(false), deps);
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      expect(client.captureHeartbeat).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(client.captureHeartbeat).toHaveBeenCalledTimes(1);
+      expect(client.captureHeartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1' });
+      // A beat the server cannot take, and one it answers "not open", never stop the recording.
+      client.captureHeartbeat.mockImplementationOnce(() => Promise.reject(new LudyError('OFFLINE', 0, 'offline')));
+      await vi.advanceTimersByTimeAsync(30_000);
+      client.captureHeartbeat.mockImplementationOnce(() => Promise.resolve({ open: false }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(client.captureHeartbeat).toHaveBeenCalledTimes(3);
+      client.captureHeartbeat.mockImplementationOnce(() => Promise.reject(new LudyError('OFFLINE', 0, 'offline')));
+      const stopped = await started.running.stop();
+      expect(stopped.uploaded).toBe(true);
+      expect(client.captureHeartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+      // No beat after the stop.
+      const beats = client.captureHeartbeat.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(client.captureHeartbeat).toHaveBeenCalledTimes(beats);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -83,7 +83,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
+import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -480,6 +480,9 @@ export function createRpcHandler(
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
   const noteSummaryBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const noteSuggestBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Notes v2 (#3563): independent budgets for Vy daily planner and unfiled inbox organizer.
+  const noteTodoPlanBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  const noteOrganizeBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -1254,6 +1257,16 @@ export function createRpcHandler(
       suggestTodos: os.notes.suggestTodos.handler(({ context, input }) =>
         inNotes(context, (orgId, actor) =>
           runNotesSuggestTodos({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteSuggestBudget }, orgId, actor, input),
+        ),
+      ),
+      todoPlan: os.notes.todoPlan.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesTodoPlan({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteTodoPlanBudget }, orgId, actor, input),
+        ),
+      ),
+      organize: os.notes.organize.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesOrganize({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteOrganizeBudget }, orgId, actor, input),
         ),
       ),
       vyResults: os.notes.vyResults.handler(({ context, input }) =>
