@@ -351,7 +351,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     });
     expect(store.storage.size).toBe(2);
 
-    // Intra-batch duplicates targeting a brand-new notebook keep only the first note and delete the second note's staged blob.
+    // Intra-batch duplicates + distinct notes targeting the same brand-new notebook create 1 notebook, count 0 reused, keep non-duplicates, and delete skipped duplicate blobs.
     const intraBatchEnex = `<?xml version="1.0" encoding="UTF-8"?>
 <en-export>
   <notebook>Fresh Batch Book</notebook>
@@ -365,17 +365,22 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     <content><![CDATA[<en-note><p>Duplicate inside same batch</p></en-note>]]></content>
     <resource><data encoding="base64">${pdfB64}</data><mime>application/pdf</mime><resource-attributes><file-name>dup.pdf</file-name></resource-attributes></resource>
   </note>
+  <note>
+    <title>Unique Second</title>
+    <content><![CDATA[<en-note><p>Second note in same brand-new notebook</p></en-note>]]></content>
+  </note>
 </en-export>`;
     const batchRes = await uploadEnex('member', intraBatchEnex, { skipDuplicates: 'true' });
     expect(batchRes.status, JSON.stringify(batchRes.body)).toBe(201);
     expect(batchRes.body).toMatchObject({
-      importedNotes: 1,
+      importedNotes: 2,
       createdNotebooks: 1,
       reusedNotebooks: 0,
       attachmentsCount: 1,
       skippedDuplicates: 1,
       unusedStorageKeys: [],
     });
+    expect((batchRes.body as unknown as EnexImportResult).notebookIds).toHaveLength(1);
     // Only the first note's blob remains added (+1 -> total 3).
     expect(store.storage.size).toBe(3);
   });

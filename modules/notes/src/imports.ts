@@ -122,6 +122,7 @@ export const noteImportEnex = defineCommand({
 
     const createdNoteIds: string[] = [];
     const createdNotebookIds: string[] = [];
+    const createdNotebookIdSet = new Set<string>();
     const reusedNotebookIds = new Set<string>();
     const unusedStorageKeys: string[] = [];
     let attachmentsCount = 0;
@@ -138,11 +139,15 @@ export const noteImportEnex = defineCommand({
         const noteDupKey = `${noteNotebookId ?? 'unfiled'}:${titleKey}`;
         if (input.skipDuplicates && seenNoteKeys.has(noteDupKey)) {
           skippedDuplicates += 1;
-          for (const att of item.attachments) unusedStorageKeys.push(att.storageKey);
+          for (const att of item.attachments) {
+            if (att.storageKey === `notes/${ctx.orgId}/${att.attachmentId}`) {
+              unusedStorageKeys.push(att.storageKey);
+            }
+          }
           continue;
         }
         seenNoteKeys.add(noteDupKey);
-        if (noteNotebookId !== null && targetNotebookId === null) {
+        if (noteNotebookId !== null && targetNotebookId === null && !createdNotebookIdSet.has(noteNotebookId)) {
           reusedNotebookIds.add(noteNotebookId);
         }
       } else {
@@ -189,6 +194,7 @@ export const noteImportEnex = defineCommand({
         lastNotebookSortKey = nextSortKey;
         totalOwnedNotebooks += 1;
         privateNotebookByName.set(nbKey, nbRow.id);
+        createdNotebookIdSet.add(nbRow.id);
         createdNotebookIds.push(nbRow.id);
         noteNotebookId = nbRow.id;
         seenNoteKeys.add(`${noteNotebookId}:${titleKey}`);

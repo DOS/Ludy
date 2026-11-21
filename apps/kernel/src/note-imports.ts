@@ -205,12 +205,15 @@ export async function handleEnexImportUpload(deps: {
     );
 
     if (result.unusedStorageKeys.length > 0) {
+      const uploadedKeySet = new Set(uploadedKeys);
       await Promise.allSettled(
-        result.unusedStorageKeys.map((key) =>
-          deps.store.delete(key).catch((err: unknown) => {
-            console.error('[notes-import] failed to delete skipped-duplicate blob', err instanceof Error ? err.name : 'error');
-          }),
-        ),
+        result.unusedStorageKeys
+          .filter((key) => uploadedKeySet.has(key))
+          .map((key) =>
+            deps.store.delete(key).catch((err: unknown) => {
+              console.error('[notes-import] failed to delete skipped-duplicate blob', err instanceof Error ? err.name : 'error');
+            }),
+          ),
       );
     }
 
