@@ -39,7 +39,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
-import { pruneMarketplaceColumnChecks, runMarketplaceRetention } from './marketplace-retention.ts';
+import { pruneMarketplaceColumnChecks, runMarketplacePurge, runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
@@ -1173,6 +1173,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (deps.runtime.installed('finance')) {
         await runMarketplaceRetention({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion failed; the error is in the worker log', error);
+        });
+        // What a disconnected connection's poll brought in and no member imported (#4284): destroyed a week after the disconnect, inside the platform's 14 days; a report a member imported is never touched.
+        await runMarketplacePurge({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
+          opsAlert('[marketplace-purge] ALERT the nightly purge of a disconnected connection\'s files failed; the error is in the worker log', error);
         });
         // The column checks of unrecognised order reports older than a week, with their previews (#4036): personal data kept seven days at most.
         await pruneMarketplaceColumnChecks({ workerDb: deps.workerDb }).catch((error: unknown) => {

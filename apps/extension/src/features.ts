@@ -2,6 +2,8 @@
 // The features of the shell. A feature shows only when the signed-in org runs its module and the token carries its scope
 // (the kernel answers both in /api/extension/me), and it asks the browser for its permissions only when the member turns
 // it on. Meetings is the first and, for now, the only one.
+import { MEETINGS_OPTIONAL_PERMISSIONS, WEB_CLIPPER_OPTIONAL_PERMISSIONS } from './manifest-policy.ts';
+
 export type FeatureId = 'meetings' | 'notes';
 
 export interface Feature {
@@ -12,9 +14,19 @@ export interface Feature {
 }
 
 export const FEATURES: readonly Feature[] = [
-  { id: 'meetings', scope: 'meetings', permissions: ['offscreen', 'tabCapture'] },
+  { id: 'meetings', scope: 'meetings', permissions: MEETINGS_OPTIONAL_PERMISSIONS },
   { id: 'notes', scope: 'notes', permissions: [] },
 ];
+
+// Permissions to hand back when turning a feature off: keep `activeTab` if the other feature using it is still on.
+export function permissionsToRemove(turningOff: 'meetings' | 'clipper', enabled: Record<string, boolean>): string[] {
+  const dropping = turningOff === 'meetings' ? MEETINGS_OPTIONAL_PERMISSIONS : WEB_CLIPPER_OPTIONAL_PERMISSIONS;
+  const kept = turningOff === 'meetings'
+    ? (enabled.clipper === true ? WEB_CLIPPER_OPTIONAL_PERMISSIONS : [])
+    : (enabled.meetings === true ? MEETINGS_OPTIONAL_PERMISSIONS : []);
+  const keep = new Set<string>(kept);
+  return dropping.filter((p) => !keep.has(p));
+}
 
 export interface Me {
   tokenId: string;
