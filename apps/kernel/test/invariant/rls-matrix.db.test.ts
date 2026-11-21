@@ -120,8 +120,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_notes.note_template',
-  'crove_notes.note_version',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
 ]);

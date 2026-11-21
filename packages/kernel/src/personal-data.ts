@@ -19,6 +19,7 @@ import type { MemberRole } from '@crove/db';
 import {
   FOLLOWUP_MAIL_SOURCE,
   NOTE_BODY_MAX,
+  NOTE_TEMPLATE_NAME_MAX,
   NOTE_TITLE_MAX,
   NOTEBOOK_NAME_MAX,
   NOTEBOOK_STACK_MAX,
@@ -394,6 +395,13 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details, tags and steps, rebuilt from them" },
   'crove_notes.todo_list.name': { kind: 'free_text', handling: 'erase', reason: 'Name of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo_list.sections': { kind: 'free_text', handling: 'erase', reason: 'Section names of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'crove_notes.note_template.name': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.note_template.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.note_template.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.note_template.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared', list: true },
+  'crove_notes.note_version.title': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.note_version.body': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.note_version.tags': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared', list: true },
   // Meetings (ADR-0047 points 7 and 11, issues #2579, #2594): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), and
   // what was said, summarized and promised may name or describe a person. The text columns are free text the finder searches (freeTextMatch): the rows an actor reads
   // are listed like any other (row security keeps an attendees-only meeting and every draft to its readers), and what the owner cannot read is counted per recorder through
@@ -800,7 +808,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     // not listed, so every author's are reported alike.
     const shared =
       entry.privateRows === 'unless_shared'
-        ? schema === 'crove_notes' && table === 'attachment'
+        ? schema === 'crove_notes' && (table === 'attachment' || table === 'note_version')
           ? sql`AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')`
           : sql`AND t.visibility = 'org'`
         : sql``;
@@ -1052,7 +1060,7 @@ export const personalDataNotify = defineCommand({
     const authors = new Map<string, { authorUserId: string; notes: number; todos: number; meetings: number }>();
     for (const row of rows) {
       const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0, meetings: 0 };
-      if (row.item_type === 'note' || row.item_type === 'note_attachment' || row.item_type === 'notebook') a.notes += 1;
+      if (row.item_type === 'note' || row.item_type === 'note_template' || row.item_type === 'note_attachment' || row.item_type === 'notebook') a.notes += 1;
       else a.todos += 1;
       authors.set(row.author_user_id, a);
     }
@@ -1085,6 +1093,7 @@ export const personalDataNotify = defineCommand({
       kind: probe.kind,
       key: keys[0]?.key ?? null,
       notes: items('note'),
+      note_templates: items('note_template'),
       note_attachments: items('note_attachment'),
       notebooks: items('notebook'),
       todos: items('todo'),
@@ -1368,6 +1377,20 @@ export const personalDataErase = defineCommand({
     const tagsOf = (alias: string) => sql`pg_catalog.array_to_string(${sql.ref(`${alias}.tags`)}, ' ')`;
     const keptTags = sql`ARRAY(SELECT g.v FROM pg_catalog.unnest(t.tags) WITH ORDINALITY AS g(v, i) WHERE NOT ${freeTextMatch(probe, sql.ref('g.v'))} ORDER BY g.i)`;
     const stillAcross = freeTextMatch(probe, sql`pg_catalog.array_to_string(${keptTags}, ' ')`);
+    // Lock every shared note whose text or any snapshot names the value first, in id order (#3562). A restore of a
+    // snapshot (notes.note.restore_version) locks its note before it reads the snapshot, so it either lands before
+    // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
+    // gone: an erased value never comes back from the version history.
+    await sql`
+      SELECT n.id FROM crove_notes.note n
+       WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
+         AND (${mentions('n.title')} OR ${mentions('n.body')} OR ${freeTextMatch(probe, tagsOf('n'))}
+              OR EXISTS (
+                SELECT 1 FROM crove_notes.note_version v
+                 WHERE v.org_id = n.org_id AND v.note_id = n.id
+                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
+       ORDER BY n.id
+       FOR UPDATE OF n`.execute(ctx.trx);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
       UPDATE crove_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
@@ -1381,6 +1404,35 @@ export const personalDataErase = defineCommand({
     add('crove_notes.note.title', notes.filter((n) => n.title).length);
     add('crove_notes.note.body', notes.filter((n) => n.body).length);
     add('crove_notes.note.tags', notes.filter((n) => n.tags).length);
+    // Shared note templates (#3562): redact mentions in place so the org's template stays usable, matching shared notes.
+    const { rows: noteTemplates } = await sql<{ name: boolean; title: boolean; body: boolean; tags: boolean }>`
+      UPDATE crove_notes.note_template t
+         SET name = COALESCE(
+               NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTE_TEMPLATE_NAME_MAX}::int)), ''),
+               ${ERASED_TEXT_MARK}
+             ),
+             title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
+             body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
+             tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
+             revision = t.revision + 1, updated_at = ${ctx.now}
+        FROM crove_notes.note_template o
+       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
+         AND (${mentions('t.name')} OR ${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
+       RETURNING ${mentions('o.name')} AS name, ${mentions('o.title')} AS title, ${mentions('o.body')} AS body, ${freeTextMatch(probe, tagsOf('o'))} AS tags`.execute(ctx.trx);
+    add('crove_notes.note_template.name', noteTemplates.filter((n) => n.name).length);
+    add('crove_notes.note_template.title', noteTemplates.filter((n) => n.title).length);
+    add('crove_notes.note_template.body', noteTemplates.filter((n) => n.body).length);
+    add('crove_notes.note_template.tags', noteTemplates.filter((n) => n.tags).length);
+    // Version snapshots of shared notes (#3562): immutable rows, so matching snapshots are deleted rather than edited in place.
+    const { rows: noteVersions } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
+      DELETE FROM crove_notes.note_version t
+       WHERE t.org_id = ${ctx.orgId}::uuid
+         AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')
+         AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
+       RETURNING ${mentions('t.title')} AS title, ${mentions('t.body')} AS body, ${freeTextMatch(probe, tagsOf('t'))} AS tags`.execute(ctx.trx);
+    add('crove_notes.note_version.title', noteVersions.filter((n) => n.title).length);
+    add('crove_notes.note_version.body', noteVersions.filter((n) => n.body).length);
+    add('crove_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
     const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
       DELETE FROM crove_notes.attachment a
        WHERE a.org_id = ${ctx.orgId}::uuid

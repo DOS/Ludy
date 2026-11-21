@@ -20,6 +20,16 @@ export const notesManifest = defineModule({
         ['org_id', 'id', 'author_user_id', 'notebook_id', 'visibility', 'pinned', 'tainted', 'summary_run_ids', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
         { title: 'pii', body: 'pii', tags: 'pii', search: 'pii' },
       ),
+      // Quick note templates (#3562), private to their author or shared with the org.
+      note_template: columns(
+        ['org_id', 'id', 'author_user_id', 'visibility', 'revision', 'created_at', 'updated_at'],
+        { name: 'pii', title: 'pii', body: 'pii', tags: 'pii' },
+      ),
+      // Rolling 20-snapshot version history of a note (#3562), inheriting its parent note's visibility.
+      note_version: columns(
+        ['org_id', 'id', 'note_id', 'author_user_id', 'revision', 'tainted', 'created_at'],
+        { title: 'pii', body: 'pii', tags: 'pii' },
+      ),
       // Notebooks and 2-level stacks (#3559), private to their author or shared with the org: name and stack_name are free text, so pii.
       notebook: columns(
         ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'sort_key', 'revision', 'created_at', 'updated_at'],
@@ -48,6 +58,7 @@ export const notesManifest = defineModule({
     { type: 'notes.attachment', table: 'attachment', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.note', table: 'note', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.notebook', table: 'notebook', legalEntityScoped: false, audit: 'command' },
+    { type: 'notes.template', table: 'note_template', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo', table: 'todo', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo_list', table: 'todo_list', legalEntityScoped: false, audit: 'command' },
   ],

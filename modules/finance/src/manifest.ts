@@ -16,7 +16,7 @@ export const financeManifest = defineModule({
       bank_feed_hook: columns(['org_id', 'id', 'channel_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
-      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted within ten minutes; definer-only.
+      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted when the worker claims it and, once older than ten minutes, by the next claim or the nightly sweep; definer-only.
       bank_feed_webhook_notice: columns(['org_id', 'id', 'hook_id', 'request_id', 'notice_timestamp', 'signature', 'received_at'], { body: 'pii' }),
       // MISA AMIS's callback results waiting for the worker (#3903): ids, codes and flags, and MISA's own capped text for a refusal (untrusted, never logged), deleted once the relay is done.
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', counterparty_account: 'payment', description: 'pii' }),

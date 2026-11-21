@@ -28,6 +28,7 @@ import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-a
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
+import { NewFromTemplateButton, NoteVersionHistoryButton, SaveAsTemplateButton } from '../components/note-templates-history.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
@@ -704,33 +705,76 @@ function Editor({
         </div>
       )}
 
-      {mayManage && (
+      {(mayManage || (!inTrash && role !== undefined)) && (
         <div className="flex flex-wrap gap-2 border-t pt-3">
           {inTrash ? (
-            <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
-              {t('restore')}
-            </Button>
+            mayManage && (
+              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
+                {t('restore')}
+              </Button>
+            )
           ) : (
             <>
-              {note.mine && !confirmShare && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={blocked || inPrivateNotebook}
-                  onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}
-                >
-                  {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
-                </Button>
+              {role !== undefined && (
+                <NoteVersionHistoryButton
+                  slug={slug}
+                  note={note}
+                  currentTitle={editable ? values.title : note.title}
+                  currentBody={editable ? values.body : note.body}
+                  currentTags={editable ? parseTags(values.tags) : note.tags}
+                  canRestore={editable && !locked && state !== 'conflict' && state !== 'error'}
+                  disabled={blocked}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                  prepareRestore={
+                    editable
+                      ? async () => {
+                          await saver.settle();
+                          return !saver.dirty();
+                        }
+                      : undefined
+                  }
+                  getCurrentRevision={editable ? () => saver.revision() : undefined}
+                  onRestored={async () => {
+                    await reload();
+                    await refreshNotes();
+                  }}
+                />
               )}
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
-                {note.pinned ? t('unpin') : t('pin')}
-              </Button>
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
-                {note.archivedAt ? t('restore') : t('archive')}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
-                {t('delete')}
-              </Button>
+              {writer && (
+                <SaveAsTemplateButton
+                  slug={slug}
+                  title={editable ? values.title : note.title}
+                  body={editable ? values.body : note.body}
+                  tags={editable ? parseTags(values.tags) : note.tags}
+                  defaultVisibility={note.visibility}
+                  disabled={blocked || note.tainted}
+                  disabledHint={note.tainted ? t('templates.taintedBlocked') : undefined}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                />
+              )}
+              {mayManage && (
+                <>
+                  {note.mine && !confirmShare && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={blocked || inPrivateNotebook}
+                      onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}
+                    >
+                      {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
+                    {note.pinned ? t('unpin') : t('pin')}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
+                    {note.archivedAt ? t('restore') : t('archive')}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
+                    {t('delete')}
+                  </Button>
+                </>
+              )}
             </>
           )}
           {act.isPending && <Spinner />}
@@ -838,6 +882,8 @@ export function NotesPage() {
       stack: t('export.stack'),
       todos: t('export.todos'),
       todoLists: t('export.todoLists'),
+      templates: t('export.templates'),
+      templateTitle: t('templates.titleLabel'),
       private: t('export.private'),
       shared: t('export.shared'),
       tags: t('export.tags'),
@@ -867,6 +913,14 @@ export function NotesPage() {
         <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
+        <NewFromTemplateButton
+          slug={slug}
+          role={role}
+          onCreated={(noteId) => {
+            setCreated(noteId);
+            go({ list: 'mine', note: noteId });
+          }}
+        />
         {newButton}
       </div>
     ) : undefined;

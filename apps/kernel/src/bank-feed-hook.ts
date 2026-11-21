@@ -6,7 +6,7 @@
 //   notice for the worker (crove_finance.bank_feed_hook_put_notice): the request id, the provider's timestamp and signature as sent, the body. It checks no signature (it has no secret) and stores no transaction.
 //   The worker (claimBankFeedHookNotices, verifyBankFeedHookNotices): claims the waiting notices, opens each connection's sealed secret, has the adapter verify the HMAC (constant-time) and that the body names the
 //   connection's own client, and queues one coalesced pull for each connection with a good notice (apps/kernel/src/worker.ts). A refused one is counted on the hook; ten in an hour stop it until it is rotated.
-// The notice's body is personal data (the transfer content and the payer's name): it is kept only until the worker verifies it (at most ten minutes whatever its state, deleted by the claim and the nightly sweep), and
+// The notice's body is personal data (the transfer content and the payer's name): it is kept only until the worker claims it (the claim deletes it); one older than ten minutes, whatever its state, goes at the next claim or the nightly sweep (so it can stay longer while the worker is down), and
 // nothing here logs it, the signature, the hook key or the secret: a log line carries a count and a code.
 import { createHash } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';

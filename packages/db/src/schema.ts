@@ -1072,6 +1072,7 @@ export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.ta
 export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
 export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
 export type NotesNoteTable = Refine<G.NotesNoteTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
+export type NotesNoteTemplateTable = Refine<G.NotesNoteTemplateTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesNotebookTable = Refine<G.NotesNotebookTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesLinkTable = Refine<G.NotesLinkTable, { target_type: (typeof NOTE_LINK_TARGET_TYPES)[number] }>;
 export type NotesAttachmentTable = Refine<G.NotesAttachmentTable, { extract_status: Generated<NoteAttachmentExtractStatus> }>;
@@ -1473,6 +1474,7 @@ type Refined = Tables<{
   'crove_notes.attachment': NotesAttachmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
+  'crove_notes.note_template': NotesNoteTemplateTable;
   'crove_notes.notebook': NotesNotebookTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_projects.project': ProjectsProjectTable;

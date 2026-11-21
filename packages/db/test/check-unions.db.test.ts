@@ -367,6 +367,7 @@ const UNIONS = unions({
   'crove_notes.attachment.extract_status': NOTE_ATTACHMENT_EXTRACT_STATUSES,
   'crove_notes.link.target_type': NOTE_LINK_TARGET_TYPES,
   'crove_notes.note.visibility': NOTE_VISIBILITIES,
+  'crove_notes.note_template.visibility': NOTE_VISIBILITIES,
   'crove_notes.notebook.visibility': NOTE_VISIBILITIES,
   'crove_notes.todo.status': TODO_STATUSES,
   'crove_projects.project.status': PROJECT_STATUSES,

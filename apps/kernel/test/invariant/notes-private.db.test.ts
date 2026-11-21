@@ -462,6 +462,94 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
     }
   });
 
+  it('isolates private note templates and private note version snapshots from every non-author context (#3562)', async () => {
+    const privateTpl = randomUUID();
+    const sharedTpl = randomUUID();
+    const privateVer = randomUUID();
+    const sharedVer = randomUUID();
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.note_template (org_id, id, author_user_id, visibility, name, title, body, tags) VALUES
+           ($1, $2, $4, 'private', 'Mẫu bí mật', $5, $5, ARRAY['riêng']),
+           ($1, $3, $4, 'org', 'Mẫu chung công ty', 'Tiêu đề chung', 'Nội dung chung', ARRAY['chung'])`,
+        [orgId, privateTpl, sharedTpl, users.author, SECRET],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.note_version (org_id, id, note_id, author_user_id, revision, title, body, tags) VALUES
+           ($1, $2, $4, $6, 1, $7, $7, ARRAY['riêng']),
+           ($1, $3, $5, $6, 1, 'Bản cũ dùng chung', 'Nội dung cũ', ARRAY['khách'])`,
+        [orgId, privateVer, sharedVer, notes.private, notes.shared, users.author, SECRET],
+      );
+    });
+    try {
+      const authorSeen = await run(author, async (c) => ({
+        templates: (await c.query<{ id: string }>('SELECT id FROM crove_notes.note_template ORDER BY id')).rows.map((r) => r.id),
+        versions: (await c.query<{ id: string }>('SELECT id FROM crove_notes.note_version ORDER BY id')).rows.map((r) => r.id),
+      }));
+      expect(authorSeen.templates).toEqual([privateTpl, sharedTpl].sort());
+      expect(authorSeen.versions).toEqual([privateVer, sharedVer].sort());
+
+      for (const { actor, readsShared } of others) {
+        const seen = await run(actor, async (c) => ({
+          templates: (await c.query<{ id: string }>('SELECT id FROM crove_notes.note_template')).rows.map((r) => r.id),
+          versions: (await c.query<{ id: string }>('SELECT id FROM crove_notes.note_version')).rows.map((r) => r.id),
+          privateTplById: (await c.query('SELECT name, body FROM crove_notes.note_template WHERE id = $1', [privateTpl])).rowCount,
+          privateVerById: (await c.query('SELECT title, body FROM crove_notes.note_version WHERE id = $1', [privateVer])).rowCount,
+        }));
+        expect(seen.privateTplById, `${actor.name} reading private template by id`).toBe(0);
+        expect(seen.privateVerById, `${actor.name} reading private version by id`).toBe(0);
+        expect(seen.templates, `${actor.name}'s templates`).toEqual(readsShared ? [sharedTpl] : []);
+        expect(seen.versions, `${actor.name}'s versions`).toEqual(readsShared ? [sharedVer] : []);
+
+        const updPrivateTpl = await outcome(
+          run(actor, (c) => c.query(`UPDATE crove_notes.note_template SET name = 'giả', visibility = 'org' WHERE id = $1`, [privateTpl])),
+        );
+        if (updPrivateTpl.ok) expect(updPrivateTpl.value.rowCount, `${actor.name} updating private template`).toBe(0);
+        else expect(updPrivateTpl, `${actor.name} updating private template`).toMatchObject({ code: '42501' });
+
+        const delPrivateTpl = await outcome(run(actor, (c) => c.query('DELETE FROM crove_notes.note_template WHERE id = $1', [privateTpl])));
+        if (delPrivateTpl.ok) expect(delPrivateTpl.value.rowCount, `${actor.name} deleting private template`).toBe(0);
+        else expect(delPrivateTpl, `${actor.name} deleting private template`).toMatchObject({ code: '42501' });
+
+        const delPrivateVer = await outcome(run(actor, (c) => c.query('DELETE FROM crove_notes.note_version WHERE id = $1', [privateVer])));
+        if (delPrivateVer.ok) expect(delPrivateVer.value.rowCount, `${actor.name} deleting private version`).toBe(0);
+        else expect(delPrivateVer, `${actor.name} deleting private version`).toMatchObject({ code: '42501' });
+
+        // Snapshots in note_version are immutable for every role (REVOKE UPDATE).
+        expect(
+          await outcome(run(actor, (c) => c.query(`UPDATE crove_notes.note_version SET title = 'đổi' WHERE id = $1`, [sharedVer]))),
+          `${actor.name} updating note_version`,
+        ).toMatchObject({ ok: false, code: '42501' });
+      }
+
+      // Managers cannot flip a shared template to private.
+      for (const actor of managers()) {
+        expect(
+          await outcome(run(actor, (c) => c.query(`UPDATE crove_notes.note_template SET visibility = 'private' WHERE id = $1`, [sharedTpl]))),
+          actor.name,
+        ).toMatchObject({ ok: false, code: '42501' });
+      }
+
+      // private_template_counts() returns counts only for owners, admins, and the system context.
+      const tplCounts = (actor: Actor) => outcome(run(actor, (c) => c.query('SELECT * FROM crove_notes.private_template_counts()')));
+      for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin), system]) {
+        const result = await tplCounts(actor);
+        expect(result, actor.name).toMatchObject({ ok: true });
+        if (!result.ok) continue;
+        expect(result.value.fields.map((f) => f.name), actor.name).toEqual(['org_id', 'author_user_id', 'templates']);
+        expect(result.value.rows, actor.name).toEqual([{ org_id: orgId, author_user_id: users.author, templates: '1' }]);
+      }
+      for (const actor of [author, member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor]) {
+        expect(await tplCounts(actor), actor.name).toMatchObject({ ok: false, code: '42501' });
+      }
+    } finally {
+      await admin(async (c) => {
+        await c.query('DELETE FROM crove_notes.note_version WHERE org_id = $1 AND id = ANY($2)', [orgId, [privateVer, sharedVer]]);
+        await c.query('DELETE FROM crove_notes.note_template WHERE org_id = $1 AND id = ANY($2)', [orgId, [privateTpl, sharedTpl]]);
+      });
+    }
+  });
+
   it('isolates private note attachments across every non-author role, Member Vy, agents and system context, without touching crove_kernel.file (#3561)', async () => {
     const privAtt = randomUUID();
     const sharedAtt = randomUUID();
@@ -841,6 +929,18 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
   // Last: it removes the author from the org.
   it("removes a former member's private notes only once they are no longer a member, and keeps their shared ones", async () => {
     const purge = () => run(system, async (c) => (await c.query<{ n: string }>('SELECT crove_notes.member_items_purge($1::uuid) AS n', [users.author])).rows[0]?.n);
+    // The author's private and shared templates, and a snapshot of each of their notes (#3562).
+    const [privateTpl, sharedTpl] = [randomUUID(), randomUUID()];
+    await admin(async (a) => {
+      await a.query(
+        `INSERT INTO crove_notes.note_template (org_id, id, author_user_id, visibility, name) VALUES ($1, $2, $4, 'private', 'Mẫu riêng'), ($1, $3, $4, 'org', 'Mẫu chung')`,
+        [orgId, privateTpl, sharedTpl, users.author],
+      );
+      await a.query(
+        `INSERT INTO crove_notes.note_version (org_id, note_id, author_user_id, revision, title) VALUES ($1, $2, $4, 1, $5), ($1, $3, $4, 1, 'Bản cũ chung')`,
+        [orgId, notes.private, notes.shared, users.author, SECRET],
+      );
+    });
     expect(await purge()).toBe('0');
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.author]));
     // run() rolls back, so the purge is committed here as the worker would.
@@ -855,11 +955,17 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
     } finally {
       await c.end();
     }
-    expect(purged).toBe('1');
+    // The private note and the private template.
+    expect(purged).toBe('2');
     // A second run finds nothing more to remove.
     expect(await purge()).toBe('0');
     const remaining = await admin((a) => a.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1 ORDER BY id', [orgId]));
     expect(remaining.rows.map((r) => r.id)).toEqual([notes.shared]);
+    // The private note's snapshot went with it; the shared note's snapshot and the shared template stay.
+    const versions = await admin((a) => a.query<{ note_id: string }>('SELECT note_id FROM crove_notes.note_version WHERE org_id = $1', [orgId]));
+    expect(versions.rows.map((r) => r.note_id)).toEqual([notes.shared]);
+    const templates = await admin((a) => a.query<{ id: string }>('SELECT id FROM crove_notes.note_template WHERE org_id = $1', [orgId]));
+    expect(templates.rows.map((r) => r.id)).toEqual([sharedTpl]);
   });
 
   it("lists and purges a former member's private notebooks while keeping their shared notebooks (#3559)", async () => {
