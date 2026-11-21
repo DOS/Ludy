@@ -84,6 +84,10 @@ export {
   type SignCaJobRecordResult,
 } from './ca.ts';
 export {
+  signProfileCommands,
+  signProfileQueries,
+} from './profiles.ts';
+export {
   signTemplateCommands,
   signTemplateQueries,
   type SignTemplateInspectJobData,
