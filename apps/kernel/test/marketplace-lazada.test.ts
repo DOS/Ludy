@@ -84,7 +84,7 @@ describe('listOrders', () => {
   const two = [
     fakeOrder({ id: '1000000000000001', number: '9101000001', updatedAt: '2026-11-09T10:00:00+07:00', createdAt: '2026-11-08T09:00:00+07:00' }, [{ id: '2000000000000001' }, { id: '2000000000000002', paidPrice: '65000.00', itemPrice: '66000.00', sku: null, name: 'Túi vải mẫu' }]),
     // One order whose items are in different states: each keeps its own.
-    fakeOrder({ id: '1000000000000002', number: '9101000002', updatedAt: '2026-11-09T11:00:00+07:00', createdAt: '2026-11-08T10:00:00+07:00' }, [{ id: '2000000000000003', status: 'returned' }, { id: '2000000000000004', status: 'shipped' }]),
+    fakeOrder({ id: '1000000000000002', number: '9101000004', updatedAt: '2026-11-09T11:00:00+07:00', createdAt: '2026-11-08T10:00:00+07:00' }, [{ id: '2000000000000003', status: 'returned' }, { id: '2000000000000004', status: 'shipped' }]),
   ];
 
   it('starts 30 days back on the first read, signs every call, and answers one port line for each item', async () => {
@@ -96,8 +96,8 @@ describe('listOrders', () => {
     expect(first?.params).toMatchObject({ sort_by: 'updated_at', sort_direction: 'ASC', limit: '100', offset: '0', app_key: '123456', sign_method: 'sha256' });
     expect(page.orders.map((o) => [o.orderNo, o.stage, o.lines.map((l) => l.lineKey)])).toEqual([
       ['9101000001', 'completed', ['2000000000000001', '2000000000000002']],
-      ['9101000002', 'returned', ['2000000000000003']],
-      ['9101000002', 'shipped', ['2000000000000004']],
+      ['9101000004', 'returned', ['2000000000000003']],
+      ['9101000004', 'shipped', ['2000000000000004']],
     ]);
     const line = page.orders[0]?.lines[1];
     // One unit each, the item's own price and paid price as decimal strings, an empty SKU as none, no delivery or shipping day invented.
@@ -149,7 +149,7 @@ describe('listOrders', () => {
     const again = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
     expect(fake.calls.filter((c) => c.path === '/orders/get')[1]?.params.update_after).toBe('2026-11-09T10:50:00+07:00');
     // Only the second order is inside the overlap, and the cursor does not move back or forward.
-    expect(again.orders.map((o) => o.orderNo)).toEqual(['9101000002', '9101000002']);
+    expect(again.orders.map((o) => o.orderNo)).toEqual(['9101000004', '9101000004']);
     expect(again.nextCursor).toBe(first.nextCursor);
   });
 
@@ -360,12 +360,12 @@ describe('ids and days a hostile answer could bend', () => {
   it('takes the order day in Vietnam, whatever offset the time is written in', async () => {
     // 2026-11-08 23:30 at +08:00 is 22:30 in Vietnam, still the 8th; 2026-11-09 00:30 at +08:00 is 23:30 on the 8th in Vietnam.
     const orders = [
-      fakeOrder({ id: '1', number: '9108000001', createdAt: '2026-11-09T00:30:00+08:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2' }]),
+      fakeOrder({ id: '1', number: '9108000000', createdAt: '2026-11-09T00:30:00+08:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2' }]),
       fakeOrder({ id: '3', number: '9108000002', createdAt: '2026-11-08T23:30:00+08:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '4' }]),
       fakeOrder({ id: '5', number: '9108000003', createdAt: '2026-11-08T18:00:00-05:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '6' }]),
     ];
     const page = await setup(orders).provider.listOrders(SECRET, 'lazada', null);
-    expect(page.orders.map((o) => [o.orderNo, o.orderedAt])).toEqual([['9108000001', '2026-11-08'], ['9108000002', '2026-11-08'], ['9108000003', '2026-11-09']]);
+    expect(page.orders.map((o) => [o.orderNo, o.orderedAt])).toEqual([['9108000000', '2026-11-08'], ['9108000002', '2026-11-08'], ['9108000003', '2026-11-09']]);
   });
 
   it('keeps an unquoted id past 2^53 as its digits, and refuses the same number as an amount (money is never a number)', async () => {
@@ -374,21 +374,21 @@ describe('ids and days a hostile answer could bend', () => {
       path === '/orders/items/get'
         ? new Response(`{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":${big},"order_id":1,"sku":"A","name":"a","item_price":"1","paid_price":"1","status":"delivered"}]}]}`)
         : undefined;
-    const page = await setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asId }).provider.listOrders(SECRET, 'lazada', null);
+    const page = await setup([fakeOrder({ id: '1', number: '9111000002', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asId }).provider.listOrders(SECRET, 'lazada', null);
     expect(page.orders[0]?.lines[0]?.lineKey).toBe(big);
     for (const field of ['paid_price', 'item_price']) {
       const asAmount = (path: string): Response | undefined =>
         path === '/orders/items/get'
           ? new Response(`{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":2,"order_id":1,"sku":"A","name":"a","item_price":${field === 'item_price' ? big : '"1"'},"paid_price":${field === 'paid_price' ? big : '"1"'},"status":"delivered"}]}]}`)
           : undefined;
-      expect(await kind(() => setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asAmount }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+      expect(await kind(() => setup([fakeOrder({ id: '1', number: '9111000002', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asAmount }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
     }
     // A quoted decimal amount is still taken.
     const quoted = (path: string): Response | undefined =>
       path === '/orders/items/get'
         ? new Response('{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":2,"order_id":1,"sku":"A","name":"a","item_price":"9007199254740993.5","paid_price":"1","status":"delivered"}]}]}')
         : undefined;
-    expect((await setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: quoted }).provider.listOrders(SECRET, 'lazada', null)).orders[0]?.lines[0]?.unitPrice).toBe('9007199254740993.5');
+    expect((await setup([fakeOrder({ id: '1', number: '9111000002', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: quoted }).provider.listOrders(SECRET, 'lazada', null)).orders[0]?.lines[0]?.unitPrice).toBe('9007199254740993.5');
   });
 
   it('keeps an asterisk in a product name (a size, a footnote) and still refuses one in an order number', async () => {
@@ -578,7 +578,7 @@ describe('what the adapter is allowed to reach', () => {
   });
 
   it('has exactly one request site, an explicit GET to the one host through the fetch it is given', () => {
-    const sites = [...code.matchAll(/options\.fetch\(([^;]*)\);/g)].map((m) => m[1] ?? '');
+    const sites = [...code.matchAll(/options\s*\.\s*fetch\s*\(([^;]*)\);/g)].map((m) => m[1] ?? '');
     expect(sites).toHaveLength(1);
     expect(sites[0]).toContain("method: 'GET'");
     expect(sites[0]).toContain('https://${LAZADA_API_HOST}/rest${path}?');
