@@ -1366,9 +1366,22 @@ export const vi = {
     interview: {
       title: 'Lịch phỏng vấn',
       current: 'Đã đặt lịch vào {at} (chỉ ghi tên vị trí trên lịch, không lộ thông tin cá nhân ứng viên).',
+      assignedTo: 'Người phỏng vấn: {name}',
+      formerInterviewer: 'Người phỏng vấn trước đây đã rời tổ chức.',
       none: 'Chưa có lịch phỏng vấn.',
       reschedule: 'Đổi lịch',
       pickSlot: 'Chọn giờ phỏng vấn',
+      cancelAction: 'Hủy lịch phỏng vấn',
+      cancelConfirmText: 'Hủy sự kiện phỏng vấn trên lịch làm việc? Giai đoạn hiện tại của ứng viên vẫn được giữ nguyên.',
+      cancelConfirmButton: 'Xác nhận hủy lịch',
+      cancelKeep: 'Giữ lại lịch',
+      interviewer: 'Người phỏng vấn',
+      defaultSelfInterviewer: 'Lịch của bạn (mặc định)',
+      roles: {
+        owner: 'Chủ sở hữu',
+        admin: 'Quản trị',
+        member: 'Thành viên',
+      },
       duration: 'Thời lượng',
       minutes: '{count} phút',
       defaultHoursNote: 'Đang dùng giờ làm việc mặc định ({tz}); bạn có thể cấu hình giờ riêng trong Cài đặt.',
@@ -13641,6 +13654,7 @@ export const vi = {
       HR_RECRUITING_TRANSITION_REFUSED: 'Không thể chuyển giai đoạn tuyển dụng theo hướng này',
       HR_INTERVIEW_DURATION_INVALID: 'Thời lượng phỏng vấn từ 15 đến 240 phút',
       HR_INTERVIEW_SLOT_TAKEN: 'Khung giờ này đã có lịch bận, hãy chọn giờ khác',
+      HR_INTERVIEWER_INVALID: 'Người phỏng vấn phải là thành viên hoạt động của tổ chức (không phải người chỉ xem)',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Không tính được số dư phép năm với thông số đã chọn',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Số ngày nghỉ không lương đồng bộ sang bảng lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 99,9 ngày)',
       HR_LEAVE_AFTER_END: 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc',
@@ -15482,6 +15496,7 @@ export const vi = {
         },
         candidate: {
           add: 'Thêm ứng viên mới vào quy trình tuyển dụng',
+          cancel_interview: 'Hủy lịch phỏng vấn đã đặt trên lịch của người phỏng vấn (giữ nguyên giai đoạn ứng viên)',
           edit: 'Sửa thông tin hoặc ghi chú của ứng viên',
           erase: 'Xóa vĩnh viễn dữ liệu cá nhân của ứng viên đã nhận việc hoặc đã từ chối',
           get: 'Xem chi tiết hồ sơ một ứng viên',
@@ -15491,6 +15506,9 @@ export const vi = {
           schedule_interview: 'Đặt lịch phỏng vấn trên lịch làm việc cho ứng viên (không ghi tên ứng viên lên lịch)',
         },
         interview_slots: 'Xem các khung giờ trống gợi ý để đặt lịch phỏng vấn',
+        interviewers: {
+          list: 'Xem danh sách thành viên có thể được phân công phỏng vấn',
+        },
         opening: {
           add: 'Tạo vị trí tuyển dụng mới',
           close: 'Đóng hoặc mở lại vị trí tuyển dụng',
