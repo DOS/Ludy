@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config.ts';
 import { channelRefreshers } from '../src/kernel.ts';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { parseLazadaSecret } from '../src/marketplace-lazada.ts';
-import { LAZADA_AUTH_HOST, LAZADA_REFRESH_HORIZON_SECONDS, LAZADA_TOKEN_HOST, LAZADA_TOKEN_HOSTS, LazadaRefresher, createLazadaToken } from '../src/marketplace-lazada-token.ts';
+import { LAZADA_AUTH_HOST, LAZADA_REFRESH_HORIZON_SECONDS, LAZADA_TOKEN_HOSTS, LazadaRefresher, createLazadaToken } from '../src/marketplace-lazada-token.ts';
 import { fakeLazadaToken, type FakeTokenCall } from './fake-lazada-token.ts';
 
 const NOW = Date.parse('2026-11-21T03:00:00Z');
@@ -84,7 +84,7 @@ describe('a refresh that works', () => {
     expect(await refresher.refresh(secretOf())).toHaveProperty('secret');
     expect(fake.calls).toHaveLength(1);
     const call = fake.calls[0]!;
-    expect(call).toMatchObject({ method: 'POST', host: LAZADA_TOKEN_HOST, path: '/auth/token/refresh', form: { refresh_token: 'refresh-token-0' } });
+    expect(call).toMatchObject({ method: 'POST', host: LAZADA_AUTH_HOST, path: '/auth/token/refresh', form: { refresh_token: 'refresh-token-0' } });
     expect(Object.keys(call.form)).toEqual(['refresh_token']);
     expect(Object.keys(call.query).sort()).toEqual(['app_key', 'sign', 'sign_method', 'timestamp']);
     expect(call.query).toMatchObject({ app_key: APP.appKey, sign_method: 'sha256', timestamp: String(NOW) });
@@ -240,13 +240,12 @@ describe('createLazadaToken, the authorization code traded for a pair', () => {
     expect(later).toHaveProperty('secret');
   });
 
-  it('passes a uuid on, and refuses a code, a uuid or an app that is not the right shape with no call', async () => {
-    const withUuid = make();
-    expect(await withUuid.create({ ...input, uuid: 'abc-123_X' })).toHaveProperty('secret');
-    expect(withUuid.fake.calls[0]!.form).toEqual({ code: 'auth-code-1', uuid: 'abc-123_X' });
+  it('sends the code alone (the official page says `uuid` is invalid and must not be used), and refuses a code or an app that is not the right shape with no call', async () => {
+    const one = make();
+    expect(await one.create()).toHaveProperty('secret');
+    expect(one.fake.calls[0]!.form).toEqual({ code: 'auth-code-1' });
     const none = make();
     expect(await none.create({ ...input, code: 'has a space' })).toEqual({ refused: 'BAD_CODE' });
-    expect(await none.create({ ...input, uuid: 'not ok!' })).toEqual({ refused: 'BAD_CODE' });
     expect(await none.create({ ...input, appSecret: '' })).toEqual({ refused: 'BAD_SECRET' });
     expect(none.fake.calls).toHaveLength(0);
   });
@@ -313,8 +312,8 @@ describe('where it is wired and what it may reach', () => {
     expect(channelRefreshers(loadConfig({ ...BASE, MARKETPLACE_PROVIDERS: '' })).marketplace_lazada).toBeUndefined();
   });
 
-  it('reaches only the two token hosts, through the fetch it is given, with one request site and no other network way', () => {
-    expect(LAZADA_TOKEN_HOSTS).toEqual(['api.lazada.com', 'auth.lazada.com']);
+  it('reaches only the one token host, through the fetch it is given, with one request site and no other network way', () => {
+    expect(LAZADA_TOKEN_HOSTS).toEqual(['auth.lazada.com']);
     const source = readFileSync(new URL('../src/marketplace-lazada-token.ts', import.meta.url), 'utf8');
     const code = source.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
     expect([...code.matchAll(/\bfetchImpl\s*\(/g)]).toHaveLength(1);
@@ -323,7 +322,7 @@ describe('where it is wired and what it may reach', () => {
     expect([...code.matchAll(/https:\/\/\S+?\?/g)].map((m) => m[0])).toEqual(['https://${host}/rest${path}?']);
     expect([...code.matchAll(/https?:\/\//g)]).toHaveLength(1);
     expect([...code.matchAll(/\bmethod:\s*'([A-Z]+)'/g)].map((m) => m[1])).toEqual(['POST']);
-    expect([...code.matchAll(/postToken\(\s*[^,]+,\s*(\w+),\s*(\w+),/g)].map((m) => `${m[1]} ${m[2]}`).sort()).toEqual(['LAZADA_AUTH_HOST CREATE_PATH', 'LAZADA_TOKEN_HOST REFRESH_PATH']);
+    expect([...code.matchAll(/postToken\(\s*[^,]+,\s*(\w+),\s*(\w+),/g)].map((m) => `${m[1]} ${m[2]}`).sort()).toEqual(['LAZADA_AUTH_HOST CREATE_PATH', 'LAZADA_AUTH_HOST REFRESH_PATH']);
     expect([...code.matchAll(/const (\w+_PATH) = '([^']+)'/g)].map((m) => [m[1], m[2]])).toEqual([['REFRESH_PATH', '/auth/token/refresh'], ['CREATE_PATH', '/auth/token/create']]);
     // No access token is ever put on these calls.
     expect(code).not.toMatch(/access_token\s*:/);
@@ -333,6 +332,7 @@ describe('where it is wired and what it may reach', () => {
     const bound = hostBoundFetch(LAZADA_TOKEN_HOSTS, async () => json({}));
     await expect(bound('https://api.lazada.vn/rest/auth/token/refresh')).rejects.toBeInstanceOf(Error);
     await expect(bound('http://api.lazada.com/rest/auth/token/refresh')).rejects.toBeInstanceOf(Error);
+    await expect(bound('https://api.lazada.com/rest/auth/token/refresh')).rejects.toBeInstanceOf(Error);
     await expect(bound('https://auth.lazada.com/rest/auth/token/create')).resolves.toBeInstanceOf(Response);
   });
 });
