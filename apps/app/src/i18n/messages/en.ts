@@ -13981,6 +13981,7 @@ export const en = {
       AUDIO_NOT_FOUND: 'This meeting has no audio recording.',
       INVALID_PURPOSE: 'This file cannot be uploaded for the purpose chosen.',
       MEDIA_RETENTION_PASSED: 'The period this meeting was to be kept has ended, so no new audio or video is accepted.',
+      CAPTURE_ALREADY_RUNNING: 'This meeting is already being recorded somewhere else. Use that recording, or stop it before recording again.',
       CONSENT_METHOD_NOT_ALLOWED: 'This organization accepts only a written notice: choose pasting the notice in the call chat, stating it in the invitation or notifying in writing.',
       LIVE_ASSEMBLE_TIMEOUT: 'Joining the pieces took too long and was stopped; nothing was changed. Try again.',
       LIVE_NO_PIECES: 'This meeting has no live pieces to join.',
@@ -16214,6 +16215,9 @@ export const en = {
         replace: "Refresh a member's meetings saved from their calendar (system)",
         set_read_events: 'Turn reading the names and times of meetings in your calendar on or off',
         suggest: 'See the calendar event that overlaps a meeting you recorded',
+      },
+      capture: {
+        heartbeat: 'Tell Ludy a meeting recording is still running, or that it has ended',
       },
       chat: {
         channel_remove: 'Removing a channel for minutes (Slack or Teams)',

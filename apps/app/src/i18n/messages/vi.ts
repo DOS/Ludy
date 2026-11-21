@@ -13969,6 +13969,7 @@ export const vi = {
       TRANSLATION_RESULT_NOT_FOUND: 'Chưa có kết quả dịch cho cuộc họp này.',
       TRANSLATION_RESULT_NOT_READY: 'Vy chưa dịch xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      CAPTURE_ALREADY_RUNNING: 'Cuộc họp này đang được ghi ở một nơi khác. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
       CONSENT_METHOD_NOT_ALLOWED: 'Tổ chức này chỉ nhận thông báo bằng văn bản: hãy chọn dán thông báo vào khung chat, ghi trong lời mời hoặc thông báo bằng văn bản.',
       LIVE_ASSEMBLE_TIMEOUT: 'Ghép các đoạn mất quá lâu nên đã dừng, chưa có gì bị đổi. Hãy thử lại.',
       LIVE_NO_PIECES: 'Cuộc họp này không có đoạn trực tiếp nào để ghép.',
@@ -16213,6 +16214,9 @@ export const vi = {
         replace: 'Cập nhật các cuộc họp đã lưu từ lịch của một thành viên (hệ thống)',
         set_read_events: 'Bật hoặc tắt việc đọc tên và giờ cuộc họp trong lịch của bạn',
         suggest: 'Xem sự kiện lịch trùng giờ với một cuộc họp bạn đã ghi',
+      },
+      capture: {
+        heartbeat: 'Báo cuộc ghi âm cuộc họp vẫn đang chạy, hoặc đã kết thúc',
       },
       chat: {
         channel_remove: 'Xóa một kênh nhận biên bản (Slack hoặc Teams)',
