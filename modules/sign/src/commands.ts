@@ -38,6 +38,7 @@ import {
   zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
+import { signCaCommands } from './ca.ts';
 import { signTemplateCommands } from './templates.ts';
 
 export type { IssuedSigningLink };
@@ -1531,4 +1532,5 @@ export const signCommands = [
   ...signPublicCommands,
   ...signDirectPublicCommands,
   ...signTemplateCommands,
+  ...signCaCommands,
 ];

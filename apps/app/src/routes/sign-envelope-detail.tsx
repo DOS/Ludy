@@ -20,7 +20,7 @@ import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignFile,
   downloadSignPdfBytes,
@@ -31,6 +31,7 @@ import {
   type SignProposedField,
   type SignSignerRecord,
 } from '../lib/sign-api.ts';
+import { canManageSignCa } from './sign-settings.tsx';
 import {
   SIGN_FIELD_TYPES,
   checkSendReadiness,
@@ -200,6 +201,46 @@ export function SignEnvelopeDetailPage() {
     queryKey: ['sign', 'verify', id, envelope?.version ?? 0, envelope?.sealStatus ?? 'none'],
     queryFn: () => signApi.verifyEnvelope(id),
     enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
+  });
+
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const isCompletedAndSealed = envelope?.status === 'completed' && envelope?.sealStatus === 'sealed';
+
+  const caSettingsQuery = useQuery({
+    queryKey: ['sign', 'ca-settings'],
+    queryFn: () => signApi.getCaSettings(),
+    enabled: Boolean(isCompletedAndSealed),
+  });
+
+  const caRequestsQuery = useQuery({
+    queryKey: ['sign', 'ca-requests', id],
+    queryFn: () => signApi.listCaRequests(id),
+    enabled: Boolean(id) && Boolean(isCompletedAndSealed),
+    refetchInterval: (query) => {
+      const hasPending = query.state.data?.items.some(
+        (r) => r.status === 'pending' || (r.status === 'signed' && !r.padesFileId),
+      );
+      return hasPending ? 3000 : false;
+    },
+  });
+
+  const activeCaConnection = useMemo(() => {
+    const conns = caSettingsQuery.data?.connections.filter((c) => c.status === 'active') ?? [];
+    return conns.find((c) => c.provider !== 'sandbox') ?? conns[0] ?? null;
+  }, [caSettingsQuery.data]);
+
+  const latestCaRequest = caRequestsQuery.data?.items[0] ?? null;
+  const canInitiateCa = canManageSignCa(orgQuery.data?.role) && activeCaConnection !== null;
+
+  const initiateCaMutation = useMutation({
+    mutationFn: (caConnectionId: string) =>
+      signApi.initiateCaRequest({ envelopeId: id, caConnectionId }),
+    onSuccess: async () => {
+      toast(t('ca.initiatingToast'));
+      await queryClient.invalidateQueries({ queryKey: ['sign', 'ca-requests', id] });
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
   });
 
   const invalidateAll = async () => {
@@ -1063,6 +1104,101 @@ export function SignEnvelopeDetailPage() {
                     </Button>
                   ) : null}
                 </div>
+
+                {isCompletedAndSealed && (activeCaConnection || latestCaRequest) ? (
+                  <div className="space-y-2 border-t pt-2.5" data-testid="sign-ca-pades-section">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-foreground">{t('ca.envelopeSectionTitle')}</span>
+                      {latestCaRequest ? (
+                        <Badge
+                          variant={
+                            latestCaRequest.status === 'signed' && latestCaRequest.padesFileId
+                              ? 'success'
+                              : latestCaRequest.status === 'pending' ||
+                                  (latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId)
+                                ? 'brand'
+                                : 'destructive'
+                          }
+                          data-testid="sign-ca-request-status"
+                        >
+                          {t(
+                            `ca.requestStatus.${
+                              latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId
+                                ? 'pending'
+                                : latestCaRequest.status
+                            }`,
+                          )}
+                        </Badge>
+                      ) : activeCaConnection ? (
+                        <span className="text-[11px] text-muted-foreground">
+                          {t('ca.envelopeActiveProvider', {
+                            provider: t(`ca.providers.${activeCaConnection.provider}`),
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {latestCaRequest?.challengeCode && latestCaRequest.status === 'pending' ? (
+                      <p className="font-mono text-[11px] text-foreground">
+                        {t('ca.challengeCodeLabel', { challenge: latestCaRequest.challengeCode })}
+                      </p>
+                    ) : null}
+
+                    {latestCaRequest?.padesSha256 ? (
+                      <div className="space-y-1">
+                        <span className="block text-muted-foreground">{t('ca.padesSha256Label')}</span>
+                        <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                          <span className="truncate">{latestCaRequest.padesSha256}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void copyDigest(latestCaRequest.padesSha256!)}
+                          >
+                            {t('evidence.copyDigest')}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {latestCaRequest?.padesFileId ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() =>
+                          void handleDownload(
+                            latestCaRequest.padesFileId,
+                            `${envelope.certificateCode ?? envelope.id}-pades.pdf`,
+                          )
+                        }
+                        data-testid="sign-download-pades-btn"
+                      >
+                        {t('ca.downloadPadesButton')}
+                      </Button>
+                    ) : null}
+
+                    {canInitiateCa &&
+                    activeCaConnection &&
+                    latestCaRequest?.status !== 'pending' &&
+                    latestCaRequest?.status !== 'signed' ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        loading={initiateCaMutation.isPending}
+                        onClick={() => initiateCaMutation.mutate(activeCaConnection.id)}
+                        data-testid="sign-apply-pades-btn"
+                      >
+                        {t('ca.applyPadesButton', {
+                          provider: t(`ca.providers.${activeCaConnection.provider}`),
+                        })}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {eventsQuery.data?.events.length ? (
                   <div className="space-y-1.5 border-t pt-2">

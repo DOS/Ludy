@@ -257,6 +257,10 @@ import {
   SIGN_AI_ANALYSIS_STATUSES,
   SIGN_ACTOR_TYPES,
   SIGN_TEMPLATE_STATUSES,
+  SIGN_CA_PROVIDERS,
+  SIGN_CA_REQUEST_STATUSES,
+  SIGN_CA_RETRY_SAFETIES,
+  SIGN_CA_SUBFILTERS,
   type Database,
 } from '../src/schema.ts';
 
@@ -391,6 +395,10 @@ const UNIONS = unions({
   'crove_sign.template_role.signer_role': SIGN_SIGNER_ROLES,
   'crove_sign.template_role.delivery_mode': SIGN_DELIVERY_MODES,
   'crove_sign.template_field.field_type': SIGN_FIELD_TYPES,
+  'crove_sign.ca_signing_request.provider': SIGN_CA_PROVIDERS,
+  'crove_sign.ca_signing_request.status': SIGN_CA_REQUEST_STATUSES,
+  'crove_sign.ca_signing_request.retry_safety': SIGN_CA_RETRY_SAFETIES,
+  'crove_sign.ca_signing_request.sub_filter': SIGN_CA_SUBFILTERS,
   'crove_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,

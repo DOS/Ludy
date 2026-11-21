@@ -275,7 +275,7 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  // eSign (#3323, #3526): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, and reusable templates; bearer/direct-link token and OTP machinery tables stay out.
+  // eSign (#3323, #3526, #3554): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out.
   'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
   'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
   'sign.field': { from: 'crove_sign.field', omit: [] },
@@ -284,6 +284,7 @@ export const EXPORT_TABLES = {
   'sign.template': { from: 'crove_sign.template', omit: [] },
   'sign.template_role': { from: 'crove_sign.template_role', omit: [] },
   'sign.template_field': { from: 'crove_sign.template_field', omit: [] },
+  'sign.ca_signing_request': { from: 'crove_sign.ca_signing_request', omit: ['idempotency_key'] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;

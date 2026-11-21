@@ -26,6 +26,9 @@ export const SIGN_EVENT_TYPES = [
   'envelope_expired',
   'envelope_sealed',
   'envelope_seal_failed',
+  'ca_requested',
+  'ca_completed',
+  'ca_failed',
 ] as const;
 export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 
