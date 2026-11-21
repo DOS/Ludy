@@ -978,6 +978,7 @@ export const KERNEL_ERROR_CODES = [
   'MARKETPLACE_APP_KEY_MISSING',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',
+  'MARKETPLACE_TOO_MANY_STAGED',
   'MARKETPLACE_BUSY',
   // Marketplace income reports (#2516).
   'MARKETPLACE_INCOME_NOT_STAGED',

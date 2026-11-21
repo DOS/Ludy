@@ -2683,7 +2683,9 @@ export const contract = {
       connect: oc.input(zMarketplaceConnect).output(z.object({ id: zId })),
       // The offline adapter answers the state at once; an adapter that reaches the platform answers `{queued: true}` and the worker records the state (the list shows it). CHANNEL_NOT_ACTIVE (409), MARKETPLACE_DISABLED (404).
       test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTestAnswer),
-      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // With `deleteStaged` the reports of this connection still waiting in the Inbox are rejected first (each is the member's own decision, nothing is posted; their originals follow the retention that
+      // already exists), and `discarded` says how many. MARKETPLACE_TOO_MANY_STAGED (409) when there are more than can be discarded at once: nothing is done then.
+      disconnect: oc.input(z.object({ id: zId, deleteStaged: z.boolean().optional() })).output(z.object({ removed: z.boolean(), discarded: z.number().int().min(0).optional() })),
       // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
       // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
       pollNow: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
