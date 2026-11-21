@@ -78,7 +78,7 @@ describe('what a signed push must also be', () => {
     expect(verifyMarketplacePush('lazada', bare, { authorization: lazadaSign(body), body: enc(body), requestUrl: null }, NOW)).toBe('dropped');
   });
 
-  it('is fresh: older than a day, or ahead of the clock, is dropped (seconds for TikTok and Shopee, milliseconds for Lazada)', () => {
+  it('is fresh: older than two hours, or ahead of the clock, is dropped (seconds for TikTok and Shopee, milliseconds for Lazada)', () => {
     expect(lazada(lazadaPush({ timestamp: NOW - MARKETPLACE_PUSH_MAX_AGE_MS - 1_000 }))).toBe('dropped');
     expect(lazada(lazadaPush({ timestamp: NOW + 11 * 60_000 }))).toBe('dropped');
     expect(lazada(lazadaPush({ timestamp: Math.floor(NOW / 1000) }))).toBe('dropped');

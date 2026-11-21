@@ -1736,8 +1736,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const isSweep = typeof job.data === 'object' && job.data !== null && Object.keys(job.data).length === 1 && (job.data as { sweep?: unknown }).sweep === true;
       if (isSweep) {
         // Pushes of a hook that waited more than ten minutes (a worker that was away) go first, whatever they hold (#4327).
-        const sweptPushes = await sweepMarketplaceHookNotices(deps.workerDb);
-        if (sweptPushes > 0) console.log(`[marketplace-push] swept ${sweptPushes} old push(es)`);
+        // A failure here must not skip the poll sweep below, so it is logged by its class only (never a message: a push is never in a log).
+        try {
+          const sweptPushes = await sweepMarketplaceHookNotices(deps.workerDb);
+          if (sweptPushes > 0) console.log(`[marketplace-push] swept ${sweptPushes} old push(es)`);
+        } catch (error) {
+          console.log(`[marketplace-push] sweep failed (${error instanceof Error ? error.name : 'unknown'})`);
+        }
         let after: { orgId: string; id: string } | null = null;
         for (;;) {
           const page = await marketplacePollDue(deps.workerDb, after);
@@ -3515,37 +3520,42 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // commits (ten in an hour stop it). The claim deletes the pushes as it takes them, and the claim and the sends share one transaction, so a failure leaves them waiting (the sweep deletes any older than ten minutes).
       // Nothing of a push is logged: the line below carries counts.
       const pushProviders = deps.channels?.marketplaceProviders;
-      if (finance && deps.channels?.broker && pushProviders && Object.keys(pushProviders).length > 0) {
-        const broker = deps.channels.broker;
-        const adapters = new Set(Object.keys(pushProviders));
-        for (;;) {
-          const tally = { ok: 0, refused: 0, dropped: 0 };
-          const refusedHooks: string[] = [];
-          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
-            const rows = await claimMarketplaceHookNotices(trx);
-            const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
-            const seen = new Set<string>();
-            return rows.map((row, i) => {
-              const verdict = verdicts[i] ?? 'dropped';
-              tally[verdict]++;
-              if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
-              seen.add(row.marketplaceConnectionId);
-              const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
-              return (boss: JobSender) =>
-                boss.send(QUEUES.marketplacePoll, target, {
-                  singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
-                  singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
-                  retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
-                  retryDelay: 30,
-                  retryBackoff: true,
-                });
+      // A failure of the relay (the database, a broker) must not skip the other relays and sweeps that follow: it is logged by its class only, and the pushes stay waiting (or are swept) for the next round.
+      try {
+        if (finance && deps.channels?.broker && pushProviders && Object.keys(pushProviders).length > 0) {
+          const broker = deps.channels.broker;
+          const adapters = new Set(Object.keys(pushProviders));
+          for (;;) {
+            const tally = { ok: 0, refused: 0, dropped: 0 };
+            const refusedHooks: string[] = [];
+            const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+              const rows = await claimMarketplaceHookNotices(trx);
+              const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+              const seen = new Set<string>();
+              return rows.map((row, i) => {
+                const verdict = verdicts[i] ?? 'dropped';
+                tally[verdict]++;
+                if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
+                seen.add(row.marketplaceConnectionId);
+                const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
+                return (boss: JobSender) =>
+                  boss.send(QUEUES.marketplacePoll, target, {
+                    singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
+                    singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
+                    retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+                    retryDelay: 30,
+                    retryBackoff: true,
+                  });
+              });
             });
-          });
-          // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
-          for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
-          if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
-          if (claimed < MARKETPLACE_HOOK_CLAIM) break;
+            // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
+            for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
+            if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
+            if (claimed < MARKETPLACE_HOOK_CLAIM) break;
+          }
         }
+      } catch (error) {
+        console.log(`[marketplace-push] relay failed (${error instanceof Error ? error.name : 'unknown'})`);
       }
       // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the
       // system context is the worker's alone. Nothing is waiting where the route does not exist (no ClientID).

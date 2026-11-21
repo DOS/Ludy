@@ -23,9 +23,9 @@ export const MARKETPLACE_PUSH_ADAPTERS = ['tiktok_shop', 'shopee', 'lazada'] as 
 export type MarketplacePushAdapter = (typeof MARKETPLACE_PUSH_ADAPTERS)[number];
 export const isMarketplacePushAdapter = (value: string): value is MarketplacePushAdapter => (MARKETPLACE_PUSH_ADAPTERS as readonly string[]).includes(value);
 
-// A push older than this, or further ahead than the slack, is dropped. The platforms retry for hours (Lazada 12 times, Shopee up to three hours), a replay can only cost one poll, and the dedupe key of the API
-// already stops an identical push waiting twice, so the window is wide.
-export const MARKETPLACE_PUSH_MAX_AGE_MS = 24 * 3_600_000;
+// A push older than this, or further ahead than the slack, is dropped. A push is only a hint to poll, so a replay costs at most one poll and the dedupe key of the API stops an identical push waiting twice; the
+// window is two hours so a captured push cannot be replayed for long after it was claimed, and what a dropped push would have told the worker is made up by the periodic poll.
+export const MARKETPLACE_PUSH_MAX_AGE_MS = 2 * 3_600_000;
 export const MARKETPLACE_PUSH_FUTURE_SLACK_MS = 10 * 60_000;
 
 export interface MarketplacePush {
