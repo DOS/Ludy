@@ -140,8 +140,9 @@ export interface MarketplaceProvider {
   readonly capabilities: MarketplaceCapabilities;
   // Only an adapter the seller authorizes on the platform's own page (Lazada): the address of that page for an app key, a return address and a state, and the trade of the code the page returns. The
   // trade runs in the worker, with the seller's own secret; the API only builds the address.
-  // The connect field whose clear value is the app's public id for the consent page (Lazada: `appKey`, TikTok Shop: `serviceId`); the API stores it beside the sealed secret. Absent: `appKey`.
-  readonly authorizePublicField?: string;
+  // The connect field whose clear value is the public id of the consent page (Lazada: `appKey`, TikTok Shop: `serviceId`); the API stores it beside the sealed secret, in the `app_key` column (printable
+  // ASCII, 1 to 100 characters, which both ids fit). A closed value, never a free field name. Absent: `appKey`.
+  readonly authorizePublicField?: 'appKey' | 'serviceId';
   authorizeUrl?(input: { appKey: string; redirectUri: string; state: string }): string;
   authorize?(secret: string, code: string): Promise<MarketplaceAuthorizeResult>;
   testConnection(secret: string): Promise<MarketplaceTestResult>;
