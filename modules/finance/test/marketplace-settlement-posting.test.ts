@@ -304,7 +304,7 @@ describe('the rows of the researched rules (#4303 S2)', () => {
     expect(requireConfirmedMarketplaceMap('tt133', original).regime).toBe('tt133');
   });
   it('keeps every point the research leaves open findable in the row that applies it (an "Uncertain (#2520)" comment), and cites the research file or the first regime', () => {
-    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'otherIncome', 'otherExpense'] as const;
+    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'otherIncome', 'otherExpense'] as const;
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       for (const key of MARKED) expect(map[key].comment, `${regime} ${key}`).toContain('Uncertain (#2520');
