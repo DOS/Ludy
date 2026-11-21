@@ -19,7 +19,8 @@ const refresh = async () => {
   await queryClient.invalidateQueries({ queryKey: orpc.marketplace.vatRates.list.key() });
 };
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+// Today in Vietnam (the server's day), not UTC: before 07:00 local the UTC date is still yesterday.
+const today = (): string => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
 function RowText({ row }: { row: MarketplaceVatRateRow }) {
   const t = useTranslations('marketplaceVatRate');
@@ -45,9 +46,16 @@ function Rows({ legalEntityId, entities, canManage }: { legalEntityId: string; e
     event.preventDefault();
     setTried(true);
     if (draftProblem(rows, draft) !== null) return;
-    save([draftToRow(draft)]);
-    setDraft({ effectiveFrom: '', method: 'deduction', vatPercent: '' });
-    setTried(false);
+    // The form is cleared only once the server accepted the row, so a refusal leaves what was typed.
+    set.mutate(
+      { legalEntityId, rows: [draftToRow(draft)], idempotencyKey: crypto.randomUUID() },
+      {
+        onSuccess: () => {
+          setDraft({ effectiveFrom: '', method: 'deduction', vatPercent: '' });
+          setTried(false);
+        },
+      },
+    );
   };
   return (
     <>
