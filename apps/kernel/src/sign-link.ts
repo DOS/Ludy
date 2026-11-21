@@ -113,6 +113,8 @@ export interface SignResolvedToken {
   signerId: string;
   tokenUsed: boolean;
   tokenExpiresAt: string;
+  inPerson?: boolean;
+  inPersonHostUserId?: string | null;
   envelopeStatus: string;
   signerStatus: string;
   signerRole: string;
@@ -265,6 +267,7 @@ export async function runSignView(
     return rows[0]?.view ?? null;
   });
   if (!view) return { status: 'not_found' };
+  const inPerson = Boolean(view.inPerson || resolved.inPerson);
   if (view.state === 'ready') {
     return {
       status: 'ok',
@@ -272,10 +275,17 @@ export async function runSignView(
         ...view,
         signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
         pageDimensions: normalizeSignPageDimensions(view.pageDimensions),
+        ...(inPerson ? { inPerson: true } : {}),
       },
     };
   }
-  return { status: 'ok', view };
+  return {
+    status: 'ok',
+    view: {
+      ...view,
+      ...(inPerson ? { inPerson: true } : {}),
+    },
+  };
 }
 
 export async function runSignOtpRequest(
@@ -447,6 +457,7 @@ export async function runSignSubmit(
       envelopeStatus: res.envelopeStatus,
       completed: res.completed,
       signedAt: res.signedAt,
+      ...(res.inPerson || resolved.inPerson ? { inPerson: true } : {}),
     },
   };
 }

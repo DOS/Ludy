@@ -57,6 +57,7 @@ const TEMPLATE_DIRECT_LINK_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'token_sha256',
   'enabled',
   'require_email_otp',
+  'listed_on_public_hub',
   'max_uses',
   'uses_count',
   'expires_at',
@@ -75,6 +76,7 @@ interface DirectLinkMutationSqlResult {
   id: string | null;
   enabled: boolean;
   requireEmailOtp: boolean;
+  listedOnPublicHub?: boolean;
   maxUses: number | null;
   usesCount: number;
   expiresAt: string | null;
@@ -91,6 +93,7 @@ function parseDirectLinkJson(raw: unknown): DirectLinkDetail | null {
     id: obj.id,
     enabled: obj.enabled,
     requireEmailOtp: Boolean(obj.requireEmailOtp),
+    listedOnPublicHub: Boolean(obj.listedOnPublicHub),
     maxUses: typeof obj.maxUses === 'number' ? obj.maxUses : null,
     usesCount: typeof obj.usesCount === 'number' ? obj.usesCount : 0,
     expiresAt: typeof obj.expiresAt === 'string' ? obj.expiresAt : null,
@@ -105,6 +108,7 @@ function toDirectLinkSummary(detail: DirectLinkDetail | null): DirectLinkSummary
   return {
     enabled: detail.enabled,
     requireEmailOtp: detail.requireEmailOtp,
+    listedOnPublicHub: Boolean(detail.listedOnPublicHub),
     maxUses: detail.maxUses ?? null,
     usesCount: detail.usesCount ?? 0,
     expiresAt: detail.expiresAt ?? null,
@@ -1297,19 +1301,24 @@ export const templateDirectLinkSet = defineCommand({
     if (!input.enabled) {
       await lockTemplate(ctx, input.templateId);
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set(
+        SELECT crove_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           false,
           ${input.requireEmailOtp ?? false},
-          NULL::text
+          NULL::text,
+          NULL::integer,
+          NULL::timestamptz,
+          false,
+          false
         ) AS res
       `.execute(ctx.trx);
       const res = rows[0]?.res;
-      ctx.audit({ templateId: input.templateId, enabled: false, revokedCount: res?.revokedCount ?? 0 });
+      ctx.audit({ templateId: input.templateId, enabled: false, listedOnPublicHub: false, revokedCount: res?.revokedCount ?? 0 });
       return {
         templateId: input.templateId,
         enabled: false,
         requireEmailOtp: false,
+        listedOnPublicHub: false,
         maxUses: null,
         usesCount: 0,
         expiresAt: null,
@@ -1334,6 +1343,7 @@ export const templateDirectLinkSet = defineCommand({
 
     if (existingState?.enabled) {
       const nextOtp = input.requireEmailOtp ?? existingState.requireEmailOtp;
+      const nextHub = input.listedOnPublicHub ?? Boolean(existingState.listedOnPublicHub);
       const updateLimits = input.maxUses !== undefined || input.expiresAt !== undefined;
       const nextMaxUses = input.maxUses !== undefined ? input.maxUses : (existingState.maxUses ?? null);
       const nextExpiresAt =
@@ -1350,22 +1360,30 @@ export const templateDirectLinkSet = defineCommand({
         );
       }
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set_v2(
+        SELECT crove_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           true,
           ${nextOtp},
           NULL::text,
           ${nextMaxUses}::integer,
           ${nextExpiresAt}::timestamptz,
-          ${updateLimits}::boolean
+          ${updateLimits}::boolean,
+          ${nextHub}::boolean
         ) AS res
       `.execute(ctx.trx);
       const res = rows[0]?.res;
-      ctx.audit({ templateId: input.templateId, enabled: true, requireEmailOtp: nextOtp, minted: false });
+      ctx.audit({
+        templateId: input.templateId,
+        enabled: true,
+        requireEmailOtp: nextOtp,
+        listedOnPublicHub: nextHub,
+        minted: false,
+      });
       return {
         templateId: input.templateId,
         enabled: true,
         requireEmailOtp: nextOtp,
+        listedOnPublicHub: res?.listedOnPublicHub ?? nextHub,
         maxUses: res?.maxUses ?? nextMaxUses,
         usesCount: res?.usesCount ?? existingState.usesCount ?? 0,
         expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
@@ -1378,25 +1396,34 @@ export const templateDirectLinkSet = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const nextOtp = input.requireEmailOtp ?? false;
+    const nextHub = input.listedOnPublicHub ?? false;
     const nextMaxUses = input.maxUses ?? null;
     const nextExpiresAt = parsedExpiresAt ?? null;
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_set_v2(
+      SELECT crove_sign.template_direct_link_set_v3(
         ${input.templateId}::uuid,
         true,
         ${nextOtp},
         ${tokenHash},
         ${nextMaxUses}::integer,
         ${nextExpiresAt}::timestamptz,
-        true
+        true,
+        ${nextHub}::boolean
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
-    ctx.audit({ templateId: input.templateId, enabled: true, requireEmailOtp: nextOtp, minted: true });
+    ctx.audit({
+      templateId: input.templateId,
+      enabled: true,
+      requireEmailOtp: nextOtp,
+      listedOnPublicHub: nextHub,
+      minted: true,
+    });
     return {
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: nextOtp,
+      listedOnPublicHub: res?.listedOnPublicHub ?? nextHub,
       maxUses: res?.maxUses ?? nextMaxUses,
       usesCount: res?.usesCount ?? 0,
       expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
@@ -1442,21 +1469,28 @@ export const templateDirectLinkRotate = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_rotate_v2(
+      SELECT crove_sign.template_direct_link_rotate_v3(
         ${input.templateId}::uuid,
         ${tokenHash},
         ${input.requireEmailOtp ?? null}::boolean,
         ${nextMaxUses}::integer,
         ${nextExpiresAt}::timestamptz,
-        ${updateLimits}::boolean
+        ${updateLimits}::boolean,
+        ${input.listedOnPublicHub ?? null}::boolean
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
-    ctx.audit({ templateId: input.templateId, rotated: true, revokedCount: res?.revokedCount ?? 0 });
+    ctx.audit({
+      templateId: input.templateId,
+      rotated: true,
+      listedOnPublicHub: Boolean(res?.listedOnPublicHub),
+      revokedCount: res?.revokedCount ?? 0,
+    });
     return {
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: Boolean(res?.requireEmailOtp),
+      listedOnPublicHub: Boolean(res?.listedOnPublicHub),
       maxUses: res?.maxUses ?? nextMaxUses,
       usesCount: res?.usesCount ?? 0,
       expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),

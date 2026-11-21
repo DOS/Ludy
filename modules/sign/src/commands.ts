@@ -18,6 +18,7 @@ import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-r
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import { signInPersonCommands } from './in-person.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
@@ -1531,4 +1532,5 @@ export const signCommands = [
   ...signPublicCommands,
   ...signDirectPublicCommands,
   ...signTemplateCommands,
+  ...signInPersonCommands,
 ];

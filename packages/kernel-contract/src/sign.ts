@@ -7,6 +7,10 @@ import { zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
+export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
+export const SIGN_PUBLIC_HUB_ORG_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+export const SIGN_IN_PERSON_MAX_TTL_MINUTES = 120;
+export const SIGN_IN_PERSON_DEFAULT_TTL_MINUTES = 30;
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const SIGN_TEMPLATE_ROLE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const SIGN_OTP_CODE_PATTERN = /^\d{6}$/;
@@ -92,6 +96,7 @@ export type SignPublicView =
       orgName: string;
       title: string;
       maskedEmail: string | null;
+      inPerson?: boolean;
     }
   | {
       state: 'ready';
@@ -106,6 +111,7 @@ export type SignPublicView =
       pageDimensions: SignPageDimension[];
       requireEmailOtp: boolean;
       otpVerified: boolean;
+      inPerson?: boolean;
       fields: SignPublicField[];
     };
 
@@ -128,6 +134,7 @@ export interface SignPublicSubmitResult {
   signerStatus: 'signed';
   envelopeStatus: 'sent' | 'in_progress' | 'completed';
   completed: boolean;
+  inPerson?: boolean;
   signedAt: string;
 }
 
@@ -242,7 +249,88 @@ export type SignDirectOtpRequestInput = z.infer<typeof zSignDirectOtpRequestInpu
 export type SignDirectOtpVerifyInput = z.infer<typeof zSignDirectOtpVerifyInput>;
 export type SignDirectStartInput = z.infer<typeof zSignDirectStartInput>;
 
+// Public self-service template hub contracts (/-/sign/p/$orgSlug, Slice 4d, #3820).
+export const zSignPublicHubOrgSlug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(SIGN_PUBLIC_HUB_ORG_SLUG_PATTERN, 'Invalid organization slug');
+
+export const zSignPublicHubActionInput = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('view'),
+    templateId: zId,
+    otpSessionToken: zSignToken.optional(),
+  }),
+  z.strictObject({
+    action: z.literal('pdf'),
+    templateId: zId,
+    otpSessionToken: zSignToken.optional(),
+  }),
+  z.strictObject({
+    action: z.literal('otp_request'),
+    templateId: zId,
+    email: zDirectEmail,
+  }),
+  z.strictObject({
+    action: z.literal('otp_verify'),
+    templateId: zId,
+    email: zDirectEmail,
+    code: z.string().trim().regex(SIGN_OTP_CODE_PATTERN, 'OTP code must be 6 digits'),
+  }),
+  z.strictObject({
+    action: z.literal('start'),
+    templateId: zId,
+    name: z.string().trim().min(1).max(200),
+    email: zDirectEmail.nullable().optional(),
+    otpSessionToken: zSignToken.optional(),
+  }),
+]);
+
+export interface SignPublicHubItem {
+  templateId: string;
+  title: string;
+  description: string | null;
+  roleLabel: string;
+  signerRole: 'signer' | 'approver';
+  requireEmailOtp: boolean;
+  pageCount: number;
+}
+
+export interface SignPublicHubListResult {
+  orgSlug: string;
+  orgName: string;
+  items: SignPublicHubItem[];
+}
+
+export type SignPublicHubActionInput = z.infer<typeof zSignPublicHubActionInput>;
+
 // Authenticated eSign RPC contracts (Slice 1a/1c: docs/plan/esign.md, #3325).
+export const SIGN_EVENT_TYPES = [
+  'envelope_created',
+  'document_inspected',
+  'document_inspect_failed',
+  'envelope_updated',
+  'signer_added',
+  'signer_removed',
+  'signers_reordered',
+  'fields_set',
+  'envelope_sent',
+  'link_created',
+  'in_person_session_started',
+  'signer_reminded',
+  'signer_viewed',
+  'signer_otp_verified',
+  'signer_signed',
+  'in_person_signed',
+  'signer_declined',
+  'envelope_completed',
+  'envelope_voided',
+  'envelope_expired',
+  'envelope_sealed',
+  'envelope_seal_failed',
+] as const;
+export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 export const SIGN_MAX_PAGES = 200;
 export const SIGN_MAX_SIGNERS = 50;
 export const SIGN_MAX_FIELDS = 500;
@@ -493,6 +581,7 @@ export const zSignEnvelopeEventsResult = z.strictObject({
     z.strictObject({
       id: zId,
       signerId: zId.nullable(),
+      hostUserId: zId.nullable().optional(),
       seq: z.number().int(),
       eventType: z.string(),
       actorType: z.string(),
@@ -650,6 +739,22 @@ export const zSignSignerCreateLinkResult = z.strictObject({
   expiresAt: z.string(),
 });
 
+// Short-lived (<= 2h) single-use in-person host signing session (#3820); never persisted in idempotency replay records.
+export const zSignSignerStartInPersonInput = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  expiresInMinutes: z.number().int().min(5).max(SIGN_IN_PERSON_MAX_TTL_MINUTES).optional(),
+});
+export const zSignSignerStartInPersonResult = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  hostUserId: zId,
+  tokenId: zId,
+  token: z.string(),
+  ceremonyPath: z.string(),
+  expiresAt: z.string(),
+});
+
 export const zSignFieldItemInput = z
   .strictObject({
     signerId: zId,
@@ -740,6 +845,7 @@ export const zSignTemplateStatus = z.enum(SIGN_TEMPLATE_STATUSES);
 export const zSignTemplateDirectLinkSummary = z.strictObject({
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),
@@ -750,6 +856,7 @@ export const zSignTemplateDirectLinkDetail = z.strictObject({
   id: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),
@@ -990,6 +1097,7 @@ export const zSignTemplateDirectLinkSetInput = z.strictObject({
   templateId: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean().optional(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
@@ -997,6 +1105,7 @@ export const zSignTemplateDirectLinkSetInput = z.strictObject({
 export const zSignTemplateDirectLinkRotateInput = z.strictObject({
   templateId: zId,
   requireEmailOtp: z.boolean().optional(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
@@ -1005,6 +1114,7 @@ export const zSignTemplateDirectLinkResult = z.strictObject({
   templateId: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),

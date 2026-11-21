@@ -43,6 +43,7 @@ export {
   signTemplateQueries,
   type SignTemplateInspectJobData,
 } from './templates.ts';
+export { signInPersonCommands, signerStartInPerson } from './in-person.ts';
 export {
   clampAiBox,
   sanitizeSignAiProposals,

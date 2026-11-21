@@ -70,6 +70,7 @@ const PUBLIC: Record<string, string> = {
   '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (#3551): rate limited per IP, token hash, email bucket, and DB hourly cap with opaque 404',
   '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (#3551): validates 6-digit OTP, locks after 5 attempts, and returns short-lived verified claim',
   '/api/sign/direct/start': 'public eSign direct link self-service start (#3551): atomically enforces max_uses + optional OTP, instantiates sent envelope, and returns single-use signing token without storing plaintext tokens',
+  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820): GET lists only active 1-signer templates with listed_on_public_hub = true (opaque 404 when empty/off/unentitled); POST runs view/pdf/otp/start via crove_sign.public_hub_* definers without exposing direct-link tokens',
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',

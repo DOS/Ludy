@@ -1399,6 +1399,31 @@ export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as c
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+export const SIGN_EVENT_TYPES = [
+  'envelope_created',
+  'document_inspected',
+  'document_inspect_failed',
+  'envelope_updated',
+  'signer_added',
+  'signer_removed',
+  'signers_reordered',
+  'fields_set',
+  'envelope_sent',
+  'link_created',
+  'in_person_session_started',
+  'signer_reminded',
+  'signer_viewed',
+  'signer_otp_verified',
+  'signer_signed',
+  'in_person_signed',
+  'signer_declined',
+  'envelope_completed',
+  'envelope_voided',
+  'envelope_expired',
+  'envelope_sealed',
+  'envelope_seal_failed',
+] as const;
+export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
 
