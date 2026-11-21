@@ -216,6 +216,10 @@ export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeCo
 // Days after a member's decision (import or skip) when the original file and the per-order amounts of a marketplace report are deleted (ADR-0045 point 8, #2516). The database
 // (crove_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
 export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
+// Days after a marketplace connection is disconnected when what its poll brought in and no member ever imported (still waiting, skipped, or never read) is destroyed, the original file and the staged read
+// with it (#4284, ADR-0045 point 8; Lazada's terms ask for the platform's data to be destroyed within 14 days of revocation). The database (crove_finance.marketplace_purge_*) accepts 1 to 14 only, so the
+// job can never run past the term, and what a member imported is never touched. Seven days leave the member a week to import what waited, and the nightly run lands well inside the 14.
+export const MARKETPLACE_PURGE_GRACE_DAYS = 7;
 
 // The posting of a stored settlement (#2516, ADR-0045 point 6): ONE general journal voucher per settlement, Dr 131 (the platform) / Cr 511, or the reverse when the refunds and the seller discounts
 // exceed the sales. A person asks for it with the settlement alone (kernel.proposal.request with command `finance.marketplace_settlement.record`); the server builds the entry from the stored

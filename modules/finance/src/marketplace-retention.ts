@@ -4,17 +4,20 @@
 // finance.marketplace_retention.apply, which marks the original deleted and deletes the staged extraction versions that hold the per-order amounts. The decision's own version (the
 // summary: counts, totals, the settlement) and the file row (its sha256, so the same bytes are still recognised) stay. The database checks the kind, the decision and the age again,
 // so a bug in the job can fail a run but never delete a bank statement, an invoice, a report still waiting for a member, or anything before day 90.
+// The same two commands also serve the purge of what a DISCONNECTED connection's poll brought in and no member imported (#4284, `disconnected: true`): after MARKETPLACE_PURGE_GRACE_DAYS the original and every
+// extraction version of such a file go (crove_finance.marketplace_purge_*, worker only), never a report a member imported. One command name, so the per-org app gate treats it as the retention it is.
 // The audit trail carries the file id and counts only: nothing of the file.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MARKETPLACE_ORIGINAL_RETENTION_DAYS, zId } from '@crove/kernel-contract';
+import { MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_GRACE_DAYS, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
 function requireSystem(ctx: CommandContext | QueryContext): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');
 }
 
-const zFile = z.strictObject({ fileId: zId });
+// `disconnected`: the purge of a disconnected connection's never-booked files instead of the 90-day retention of decided reports.
+const zFile = z.strictObject({ fileId: zId, disconnected: z.boolean().optional() });
 
 // The blob key of one due file, and whether another file row names the same key (then the worker leaves the object). Nothing for a file that is not due.
 export const marketplaceRetentionKey = defineQuery({
@@ -24,8 +27,11 @@ export const marketplaceRetentionKey = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ storageKey: string; shared: boolean } | null> => {
     requireSystem(ctx);
-    const { rows } = await sql<{ storage_key: string; shared: boolean }>`
-      SELECT storage_key, shared FROM crove_finance.marketplace_retention_key(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int)`.execute(ctx.trx);
+    const { rows } = input.disconnected
+      ? await sql<{ storage_key: string; shared: boolean }>`
+          SELECT storage_key, shared FROM crove_finance.marketplace_purge_key(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_PURGE_GRACE_DAYS}::int)`.execute(ctx.trx)
+      : await sql<{ storage_key: string; shared: boolean }>`
+          SELECT storage_key, shared FROM crove_finance.marketplace_retention_key(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int)`.execute(ctx.trx);
     const row = rows[0];
     return row ? { storageKey: row.storage_key, shared: row.shared } : null;
   },
@@ -42,10 +48,13 @@ export const marketplaceRetentionApply = defineCommand({
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, input): Promise<{ applied: boolean; versions: number }> => {
     requireSystem(ctx);
-    const { rows } = await sql<{ applied: boolean; versions: number }>`
-      SELECT applied, versions FROM crove_finance.marketplace_retention_apply(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int)`.execute(ctx.trx);
+    const { rows } = input.disconnected
+      ? await sql<{ applied: boolean; versions: number }>`
+          SELECT applied, versions FROM crove_finance.marketplace_purge_apply(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_PURGE_GRACE_DAYS}::int)`.execute(ctx.trx)
+      : await sql<{ applied: boolean; versions: number }>`
+          SELECT applied, versions FROM crove_finance.marketplace_retention_apply(${ctx.orgId}::uuid, ${input.fileId}::uuid, ${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int)`.execute(ctx.trx);
     const out = { applied: rows[0]?.applied === true, versions: rows[0]?.versions ?? 0 };
-    ctx.audit({ fileId: input.fileId, applied: out.applied, versions: out.versions });
+    ctx.audit({ fileId: input.fileId, applied: out.applied, versions: out.versions, ...(input.disconnected ? { disconnected: true } : {}) });
     return out;
   },
 });

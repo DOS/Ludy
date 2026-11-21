@@ -8,10 +8,13 @@
 // the noncurrent version stays until the storage-side fix (#2789), which is why every reader of a file's bytes refuses a marked file. The object goes first, so a crash
 // between the two steps repeats the delete (a delete of a missing object is a no-op) and never leaves a file row marked deleted whose object still exists. Safe to run twice.
 // A failing file is left for the next run and never holds the others behind it. Nothing here logs a filename, an order or an amount: ids and counts.
+//
+// The same pass, with another list, is the PURGE of what a disconnected connection's poll brought in and no member ever imported (#4284, runMarketplacePurge): crove_finance.marketplace_purge_due lists
+// the files whose connection was removed more than MARKETPLACE_PURGE_GRACE_DAYS ago, and the two commands are asked with `disconnected: true` (the database re-checks that nothing a member imported is touched).
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
-import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_GRACE_DAYS } from '@crove/kernel-contract';
 import { opsAlert } from './ops-alert.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'finance.marketplace_retention' };
@@ -28,23 +31,59 @@ export interface MarketplaceRetentionRun {
   failed: number;
 }
 
+interface SweepKind {
+  tag: string;
+  // The files due, as the worker login lists them.
+  list: (workerDb: Db, limit: number) => Promise<Array<{ org_id: string; file_id: string }>>;
+  // What is added to the two commands' input.
+  input: { disconnected?: true };
+  component: string;
+}
+
+const RETENTION: SweepKind = {
+  tag: TAG,
+  component: ACTOR.component,
+  input: {},
+  list: async (workerDb, limit) =>
+    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_retention_due(${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
+};
+
+const PURGE: SweepKind = {
+  tag: '[marketplace-purge]',
+  component: 'finance.marketplace_purge',
+  input: { disconnected: true },
+  list: async (workerDb, limit) =>
+    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_purge_due(${MARKETPLACE_PURGE_GRACE_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
+};
+
+type SweepDeps = { runtime: Runtime; workerDb: Db; store: BlobStore; log?: Log; batch?: number };
+
 /** One pass over the decided marketplace reports whose original is due. */
-export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb: Db; store: BlobStore; log?: Log; batch?: number }): Promise<MarketplaceRetentionRun> {
+export function runMarketplaceRetention(deps: SweepDeps): Promise<MarketplaceRetentionRun> {
+  return sweep(deps, RETENTION);
+}
+
+/** One pass over the never-booked files of connections disconnected longer ago than the grace (#4284). */
+export function runMarketplacePurge(deps: SweepDeps): Promise<MarketplaceRetentionRun> {
+  return sweep(deps, PURGE);
+}
+
+async function sweep(deps: SweepDeps, kind: SweepKind): Promise<MarketplaceRetentionRun> {
   const log = deps.log ?? console;
   const run: MarketplaceRetentionRun = { deleted: 0, objects: 0, versions: 0, failed: 0 };
+  const actor: SystemActor = { type: 'system', component: kind.component };
   // Files that failed in this run: asked for again past them, so a few failing rows never stall the others (the next run tries them again).
   const failedNow = new Set<string>();
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
     const size = deps.batch ?? DUE_BATCH;
     const limit = Math.min(size + failedNow.size, 1000);
-    const { rows: listed } = await sql<{ org_id: string; file_id: string }>`
-      SELECT org_id, file_id FROM crove_finance.marketplace_retention_due(${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int, ${limit}::int)`.execute(deps.workerDb);
+    const listed = await kind.list(deps.workerDb, limit);
     const rows = listed.filter((r) => !failedNow.has(r.file_id));
     let progress = 0;
     for (const row of rows) {
-      const options = { actor: ACTOR, orgId: row.org_id };
+      const options = { actor, orgId: row.org_id };
       try {
-        const key = await deps.runtime.query<{ storageKey: string; shared: boolean } | null>('finance.marketplace_retention.key', { fileId: row.file_id }, options);
+        const key = await deps.runtime.query<{ storageKey: string; shared: boolean } | null>('finance.marketplace_retention.key', { fileId: row.file_id, ...kind.input }, options);
         if (key) {
           // An object another file row also names is left; only this file's original is marked gone. The tag is per version: a same-bytes upload that dedupes onto the object just before this
           // delete is deleted with it (the file row clears its marker and the next run deletes again), and a version written after the delete is untagged until a run tags and deletes it.
@@ -52,7 +91,7 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
             await deps.store.delete(key.storageKey, { retention: 'expire' });
             run.objects += 1;
           }
-          const out = await deps.runtime.execute<{ applied: boolean; versions: number }>('finance.marketplace_retention.apply', { fileId: row.file_id }, options);
+          const out = await deps.runtime.execute<{ applied: boolean; versions: number }>('finance.marketplace_retention.apply', { fileId: row.file_id, ...kind.input }, options);
           if (out.applied) {
             run.deleted += 1;
             run.versions += out.versions;
@@ -66,14 +105,14 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
         run.failed += 1;
         failedNow.add(row.file_id);
         // Ids and the error's name only.
-        log.error(`${TAG} file ${row.file_id.slice(0, 8)} in org ${row.org_id.slice(0, 8)} not removed`, error instanceof Error ? error.name : typeof error);
+        log.error(`${kind.tag} file ${row.file_id.slice(0, 8)} in org ${row.org_id.slice(0, 8)} not removed`, error instanceof Error ? error.name : typeof error);
       }
     }
     // A batch that removed nothing would list the same files again; they are tried on the next run.
     if (progress === 0 || listed.length < limit) break;
   }
-  log.log(`${TAG} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
-  if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
+  log.log(`${kind.tag} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
+  if (run.failed > 0) opsAlert(`${kind.tag} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
   return run;
 }
 

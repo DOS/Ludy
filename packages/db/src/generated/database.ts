@@ -1451,9 +1451,10 @@ export interface FinanceMarketplaceColumnProfileTable {
 export interface FinanceMarketplaceConnectionFileTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
-  marketplace_connection_id: ColumnType<string, string, NotGranted>;
+  marketplace_connection_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  disconnected_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_finance.marketplace_connection */
