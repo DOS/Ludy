@@ -348,7 +348,7 @@ suite('Marketplace push hook (#4316)', () => {
       await clear();
     });
 
-    it('answers a bare 404 and stores nothing for an unknown key, a key of another adapter, a malformed key and an adapter this deployment does not run', async () => {
+    it('answers a 404 and stores nothing for an unknown key, a key of another adapter, a malformed key and an adapter this deployment does not run', async () => {
       await clear();
       expect((await push('shopee', randomBytes(16).toString('base64url'))).status).toBe(404);
       expect((await push('shopee', otherKey)).status).toBe(404);

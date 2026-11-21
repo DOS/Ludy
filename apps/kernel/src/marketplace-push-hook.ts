@@ -22,6 +22,8 @@ export const MARKETPLACE_PUSH_ADDRESS_PER_MINUTE = 1200;
 export const MARKETPLACE_HOOK_KEY_LENGTH = 22;
 
 const HOOK_KEY = new RegExp(`^[A-Za-z0-9_-]{${MARKETPLACE_HOOK_KEY_LENGTH}}$`);
+// A key of the wrong shape cannot be one of ours: the route answers 404 before it reads a body, and nothing is looked up for it.
+export const isMarketplaceHookKey = (key: string): boolean => HOOK_KEY.test(key);
 const hasControlCharacter = (text: string): boolean => [...text].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
 const ADAPTER = /^[a-z][a-z0-9_]{0,31}$/;
 
@@ -61,7 +63,13 @@ export async function acceptMarketplacePush(
   publicUrl: string,
 ): Promise<MarketplacePushOutcome> {
   // A key or an adapter of the wrong shape cannot be one of ours: nothing is looked up for it.
-  if (!ADAPTER.test(adapter) || !HOOK_KEY.test(request.key)) return { status: 404 };
+  if (!ADAPTER.test(adapter) || !isMarketplaceHookKey(request.key)) return { status: 404 };
+  const authorization = request.authorization;
+  // No header, an over long or odd one, an empty body: not a platform's push (the put would refuse it too). Answered as stored and checked BEFORE the lookup, so such a request costs no database work and nothing here tells a
+  // caller which part was wrong.
+  if (typeof authorization !== 'string' || authorization.length < 1 || authorization.length > 256 || hasControlCharacter(authorization) || request.body.length < 1 || request.body.length > MAX_MARKETPLACE_PUSH_BYTES) {
+    return { status: 200 };
+  }
   const hash = marketplaceHookKeyHash(request.key);
   const hook = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ hook_id: string; standing: string }>`SELECT hook_id, standing FROM crove_finance.marketplace_hook_lookup(${adapter}, ${hash})`.execute(db);
@@ -71,11 +79,6 @@ export async function acceptMarketplacePush(
   if (!hook) return { status: 404 };
   // A hook stopped by refused pushes answers like a stored one, so the platform stops retrying; nothing is stored.
   if (hook.standing !== 'ok') return { status: 200 };
-  const authorization = request.authorization;
-  // No header, an over long or odd one, an empty body: not a platform's push (the put would refuse it too). Answered as stored, so nothing here tells a caller which part was wrong.
-  if (typeof authorization !== 'string' || authorization.length < 1 || authorization.length > 256 || hasControlCharacter(authorization) || request.body.length < 1 || request.body.length > MAX_MARKETPLACE_PUSH_BYTES) {
-    return { status: 200 };
-  }
   // Over its budget the hook drops the push and still answers a success: a 429 would count against the platform's success rate.
   if (!budget.take(hook.hookId).allowed) return { status: 200 };
   const requestUrl = adapter === 'shopee' ? marketplaceHookAddress(publicUrl, adapter, request.key) : null;
@@ -86,6 +89,6 @@ export async function acceptMarketplacePush(
       SELECT crove_finance.marketplace_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${dedupe}, ${authorization}, ${body}, ${requestUrl}::text) AS put`.execute(db);
     return rows[0]?.put ?? 'gone';
   });
-  // 'accepted', 'duplicate' and 'busy' (twenty waiting for the hook, or the machine's backlog full) are all an empty success; 'gone' (stopped, its key rotated since the lookup, its connection closed) is a retired key.
+  // 'accepted', 'duplicate' and 'busy' (twenty waiting for the hook, or the machine's backlog full) are all an empty success; 'gone' (stopped, its key rotated since the lookup, its connection closed) is a retired key. A hook stopped in the moment between the lookup and the put is answered 404 as well (the put cannot tell a stop from a rotation): the window is a few statements wide and a push is only a hint.
   return put === 'gone' ? { status: 404 } : { status: 200 };
 }

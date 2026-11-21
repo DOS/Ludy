@@ -167,7 +167,7 @@ import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
-import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush } from './marketplace-push-hook.ts';
+import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush, isMarketplaceHookKey } from './marketplace-push-hook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import type { AmisCallbackKey } from '@ludy/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
@@ -1084,9 +1084,14 @@ export function createHttpApp(deps: HttpDeps) {
     app.post(
       '/api/marketplace/:adapter/webhook/:hookKey',
       async (c, next) => {
-        if (!marketplacePush.adapters.includes(c.req.param('adapter'))) return c.json({ code: 'NOT_FOUND' }, 404);
-        // Over the address limit the push is dropped with an empty success: the periodic poll makes up what it would have said.
-        if (!pushAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))).allowed) return c.body(null, 200);
+        // An adapter this deployment does not run, or a key of the wrong shape, is a 404 before any body is read.
+        if (!marketplacePush.adapters.includes(c.req.param('adapter')) || !isMarketplaceHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        // Over the address limit the push is dropped with an empty success: the periodic poll makes up what it would have said. The proxy warning is the one the other public routes give: behind a proxy that is not counted in
+        // TRUSTED_PROXY_HOPS every platform shares one bucket, and this is where that shows.
+        if (!pushAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))).allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          return c.body(null, 200);
+        }
         await next();
       },
       bodyLimit({ maxSize: MAX_MARKETPLACE_PUSH_BYTES, onError: (c) => c.body(null, 200) }),

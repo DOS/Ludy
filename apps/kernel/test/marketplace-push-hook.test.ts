@@ -3,7 +3,7 @@
 // `orgless` answers what the two definers would (the lookup, then the put). The route and the stored row are in marketplace-hook.db.test.ts, which needs a PostgreSQL.
 import type { Runtime } from '@ludy/kernel-runtime';
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_HOOK_KEY_LENGTH, acceptMarketplacePush, marketplaceHookAddress, marketplaceHookKeyHash, marketplacePushDedupeKey } from '../src/marketplace-push-hook.ts';
+import { MARKETPLACE_HOOK_KEY_LENGTH, acceptMarketplacePush, isMarketplaceHookKey, marketplaceHookAddress, marketplaceHookKeyHash, marketplacePushDedupeKey } from '../src/marketplace-push-hook.ts';
 
 const KEY = 'AbCdEfGhIjKlMnOpQrStUv';
 const BODY = new TextEncoder().encode('{"shop_id":"1"}');
@@ -24,6 +24,8 @@ const budgetOf = (allowed: boolean) => {
 describe('marketplace push, the address and the dedupe key', () => {
   it('builds the address from the configured public URL, the adapter and the key, and nothing else', () => {
     expect(KEY).toHaveLength(MARKETPLACE_HOOK_KEY_LENGTH);
+    expect(isMarketplaceHookKey(KEY)).toBe(true);
+    expect(['', 'short', `${KEY}!`, `${KEY}A`, KEY.slice(1)].some(isMarketplaceHookKey)).toBe(false);
     expect(marketplaceHookAddress(PUBLIC, 'shopee', KEY)).toBe(`https://api.example.test/api/marketplace/shopee/webhook/${KEY}`);
     // Trailing slashes of the configured value do not double up; a path in it is kept.
     expect(marketplaceHookAddress(`${PUBLIC}//`, 'tiktok_shop', KEY)).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${KEY}`);
@@ -60,14 +62,17 @@ describe('acceptMarketplacePush', () => {
     expect(calls()).toBe(1);
   });
 
-  it('answers an empty 200 without a put for a stopped hook, a missing, odd or over long header, an empty body and a body over the cap', async () => {
+  it('answers an empty 200 without a put for a stopped hook', async () => {
     const stopped = runtimeOf({ ...hook, standing: 'stopped' });
     expect(await acceptMarketplacePush(stopped.runtime, 'shopee', request(), budgetOf(true), PUBLIC)).toEqual({ status: 200 });
     expect(stopped.calls()).toBe(1);
+  });
+
+  it('answers an empty 200 with no database work for a missing, odd or over long header, an empty body and a body over the cap', async () => {
     for (const over of [{ authorization: undefined }, { authorization: '' }, { authorization: 'x'.repeat(257) }, { authorization: 'a\nb' }, { body: new Uint8Array(0) }, { body: new Uint8Array(16 * 1024 + 1) }]) {
       const { runtime, calls } = runtimeOf(hook);
       expect(await acceptMarketplacePush(runtime, 'shopee', request(over), budgetOf(true), PUBLIC)).toEqual({ status: 200 });
-      expect(calls()).toBe(1);
+      expect(calls()).toBe(0);
     }
   });
 
