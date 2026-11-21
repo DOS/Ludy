@@ -351,5 +351,18 @@ describe('the capture of a call', () => {
     api.create.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('boom'), { code: 'INTERNAL' })));
     await startRecording(input(memoryStore()));
     expect(getRecorderSnapshot().error).toBe('Error: boom');
+    // Unreadable capture refusal details fall back to errorMessage rather than formatting raw placeholders.
+    api.create.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('fallback'), { code: 'CAPTURE_ALREADY_RUNNING', status: 409 })));
+    await startRecording(input(memoryStore()));
+    expect(getRecorderSnapshot().error).toBe('Error: fallback');
+  });
+
+  it('does not reuse a cached failed-start meeting across different calendar events', async () => {
+    const broken = { ...memoryStore(), put: () => Promise.reject(new Error('full')) };
+    await startRecording({ ...input(broken), prefill: { agendaId: '0195f2b0-0000-7000-8000-000000000001' } });
+    expect(getRecorderSnapshot().phase).toBe('idle');
+    await startRecording({ ...input(memoryStore()), prefill: { agendaId: '0195f2b0-0000-7000-8000-000000000002' } });
+    expect(api.create).toHaveBeenCalledTimes(2);
+    expect(api.create.mock.calls[1]?.[0]).toMatchObject({ capture: { agendaId: '0195f2b0-0000-7000-8000-000000000002' } });
   });
 });

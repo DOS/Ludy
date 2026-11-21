@@ -1481,6 +1481,7 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'NO_AUDIO_TRACK',
   'MEDIA_EXTRACT_TIMEOUT',
   'HR_CONTRACT_INVALID',
+  'CAPTURE_ALREADY_RUNNING',
 ]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {

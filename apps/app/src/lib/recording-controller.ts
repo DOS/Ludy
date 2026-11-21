@@ -263,7 +263,7 @@ export async function startRecording(input: StartInput): Promise<void> {
       }),
     createMeeting: async () => {
       // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-      const key = JSON.stringify([scope, title, input.language, input.visibility, input.summaryTemplate, input.consentMethod, withVideo, input.liveNotes]);
+      const key = JSON.stringify([scope, title, input.language, input.visibility, input.summaryTemplate, input.consentMethod, withVideo, input.liveNotes, input.prefill.agendaId ?? null]);
       if (createdFor !== key) {
         createdMeetingId = null;
         linkedMeetingId = null;
