@@ -12,8 +12,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
+import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { downloadSignFile, signApi, uploadSignPdf, type SignEnvelopeSummary } from '../lib/sign-api.ts';
 import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
 import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
@@ -95,10 +97,20 @@ export function SignEnvelopesPage() {
 
   const [tab, setTab] = useState<EnvelopeFilterTab>('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [drafterOpen, setDrafterOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const defaultPartyAName = meQuery.data?.orgs.find((o) => o.slug === slug)?.name ?? '';
 
   const envelopesQuery = useQuery({
     queryKey: ['sign', 'envelopes', slug, tab],
@@ -254,9 +266,34 @@ export function SignEnvelopesPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button type="button" onClick={() => setCreateOpen(true)} data-testid="sign-new-envelope-btn">
-            {t('createButton')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDiffOpen(true)}
+              data-testid="sign-open-version-diff-btn"
+            >
+              {t('diff.openButton')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDrafterOpen(true)}
+              data-testid="sign-open-drafter-btn"
+            >
+              {t('drafter.openButton')}
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11"
+              onClick={() => setCreateOpen(true)}
+              data-testid="sign-new-envelope-btn"
+            >
+              {t('createButton')}
+            </Button>
+          </div>
         }
       />
 
@@ -421,6 +458,40 @@ export function SignEnvelopesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {diffOpen ? (
+        <VersionDiffDialog
+          open={diffOpen}
+          onOpenChange={setDiffOpen}
+          existingEnvelopes={items}
+          onEnvelopeCreated={async (envelopeId) => {
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+        />
+      ) : null}
+
+      {drafterOpen ? (
+        <ContractDrafterDialog
+          open={drafterOpen}
+          onOpenChange={setDrafterOpen}
+          defaultPartyAName={defaultPartyAName}
+          onEnvelopeCreated={async (envelopeId) => {
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+          onTemplateCreated={async () => {
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'templates'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/templates', params: { slug } });
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

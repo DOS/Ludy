@@ -19,6 +19,12 @@ import {
   type SignClauseSummaryResult,
   type SignFieldProposeResult,
 } from '@crove/agent';
+import type {
+  SignDiffCompareInput,
+  SignDiffCompareResult,
+  SignDrafterProposeInput,
+  SignDrafterProposeResult,
+} from '@crove/kernel-contract';
 import {
   DomainError,
   type Actor,
@@ -26,18 +32,24 @@ import {
   type SystemActor,
   type UserActor,
 } from '@crove/kernel-runtime';
-import type {
-  SignAiAnalysisRecord,
-  SignAiExtractedPage,
-  SignAiProposedField,
-  SignAiRiskClause,
-  SignAiSource,
+import { Decimal, money } from '@crove/l10n-vn';
+import {
+  computeSignVersionDiff,
+  type SignAiAnalysisRecord,
+  type SignAiExtractedPage,
+  type SignAiProposedField,
+  type SignAiRiskClause,
+  type SignAiSource,
+  type SignDiffSourceResult,
 } from '@crove/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface SignAi {
-  reader: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
+  reader:
+    | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
+        Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses'>>)
+    | null;
   budget: DraftBudget;
 }
 
@@ -342,6 +354,226 @@ export async function proposeEnvelopeAnalysis(params: ProposeEnvelopeAnalysisPar
     console.error('[sign-ai] analysis failed', error instanceof Error ? error.name : typeof error);
     await recordFailure(error instanceof Error ? error.name : 'AI_ANALYSIS_FAILED');
     return failedOutcome(await safeExisting());
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface CompareSignPdfVersionsParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'query'>;
+  orgId: string;
+  actor: UserActor;
+  input: SignDiffCompareInput;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+}
+
+export async function compareSignPdfVersions(params: CompareSignPdfVersionsParams): Promise<SignDiffCompareResult> {
+  const { ai, runtime, orgId, actor, input } = params;
+  const source = await runtime.query<SignDiffSourceResult>(
+    'sign.diff.source',
+    {
+      ...(input.fileIdV1 ? { fileIdV1: input.fileIdV1 } : {}),
+      ...(input.fileIdV2 ? { fileIdV2: input.fileIdV2 } : {}),
+    },
+    { actor, orgId },
+  );
+
+  // Deterministic diff runs unconditionally so contract comparison works 100% identically when AI is off or over budget.
+  const diff = computeSignVersionDiff(input.pagesV1, input.pagesV2);
+
+  if (!input.includeAi || !ai.reader?.summarizeVersionDiff || source.aiStopped) {
+    return { diff, ai: 'off', summaryText: null, riskDeltas: [] };
+  }
+
+  const hasText =
+    input.pagesV1.some((p) => p.text.trim().length > 0) || input.pagesV2.some((p) => p.text.trim().length > 0);
+  if (!hasText) {
+    return { diff, ai: 'no_text', summaryText: null, riskDeltas: [] };
+  }
+  if (diff.stats.identical) {
+    return { diff, ai: 'no_changes', summaryText: null, riskDeltas: [] };
+  }
+
+  const ticket = ai.budget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return { diff, ai: 'busy', summaryText: null, riskDeltas: [] };
+  }
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<SignDiffSourceResult>('sign.diff.source', {}, { actor, orgId });
+    return latest.aiStopped;
+  };
+
+  const baseMeter =
+    params.meter === 'runtime'
+      ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+      : params.meter;
+  const guardedMeter: AiMeter = {
+    admit: async (call) => {
+      if (await isAiStopped()) throw new SignAiStoppedError();
+      return baseMeter.admit(call);
+    },
+    record: (call, usage) => baseMeter.record(call, usage),
+  };
+
+  try {
+    const changedHunks = diff.hunks
+      .filter((h): h is typeof h & { kind: 'added' | 'removed' | 'modified' } => h.kind !== 'unchanged')
+      .map((h) => ({
+        index: h.index,
+        kind: h.kind,
+        pageV1: h.pageV1,
+        pageV2: h.pageV2,
+        beforeText: h.beforeText,
+        afterText: h.afterText,
+      }));
+
+    const summarize = ai.reader.summarizeVersionDiff.bind(ai.reader);
+    const aiRes = await withAiScope({ orgId, meter: guardedMeter }, () =>
+      summarize({
+        ...(input.titleV1 ? { titleV1: input.titleV1 } : {}),
+        ...(input.titleV2 ? { titleV2: input.titleV2 } : {}),
+        pageCountV1: Math.max(1, diff.pageCountV1),
+        pageCountV2: Math.max(1, diff.pageCountV2),
+        pagesV1: input.pagesV1,
+        pagesV2: input.pagesV2,
+        changedHunks,
+      }),
+    );
+
+    if (await isAiStopped()) {
+      return { diff, ai: 'off', summaryText: null, riskDeltas: [] };
+    }
+    if (aiRes.kind === 'none') {
+      return {
+        diff,
+        ai: aiRes.code === 'REFUSED' ? 'failed' : 'used',
+        summaryText: null,
+        riskDeltas: [],
+      };
+    }
+
+    return {
+      diff,
+      ai: 'used',
+      summaryText: aiRes.summaryText,
+      riskDeltas: aiRes.riskDeltas,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError) {
+      return { diff, ai: 'off', summaryText: null, riskDeltas: [] };
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return { diff, ai: 'budget', summaryText: null, riskDeltas: [] };
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    console.error('[sign-ai] version diff summary failed', error instanceof Error ? error.name : typeof error);
+    return { diff, ai: 'failed', summaryText: null, riskDeltas: [] };
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface ProposeSignContractDraftParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'query'>;
+  orgId: string;
+  actor: UserActor;
+  input: SignDrafterProposeInput;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+}
+
+export async function proposeSignContractDraftClauses(
+  params: ProposeSignContractDraftParams,
+): Promise<SignDrafterProposeResult> {
+  const { ai, runtime, orgId, actor, input } = params;
+  const source = await runtime.query<{ aiStopped: boolean }>('sign.drafter.ai_source', {}, { actor, orgId });
+
+  const normalizedValue = input.variables.contractValue
+    ? money(input.variables.contractValue).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed()
+    : null;
+
+  if (!ai.reader?.proposeContractClauses || source.aiStopped) {
+    return { ai: 'off', summaryNote: null, proposedClauses: [] };
+  }
+
+  const ticket = ai.budget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return { ai: 'busy', summaryNote: null, proposedClauses: [] };
+  }
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<{ aiStopped: boolean }>('sign.drafter.ai_source', {}, { actor, orgId });
+    return latest.aiStopped;
+  };
+
+  const baseMeter =
+    params.meter === 'runtime'
+      ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+      : params.meter;
+  const guardedMeter: AiMeter = {
+    admit: async (call) => {
+      if (await isAiStopped()) throw new SignAiStoppedError();
+      return baseMeter.admit(call);
+    },
+    record: (call, usage) => baseMeter.record(call, usage),
+  };
+
+  try {
+    const propose = ai.reader.proposeContractClauses.bind(ai.reader);
+    const aiRes = await withAiScope({ orgId, meter: guardedMeter }, () =>
+      propose({
+        templateKind: input.variables.templateKind,
+        partyAName: input.variables.partyA.name,
+        partyBName: input.variables.partyB.name,
+        scopeSummary: input.variables.scopeSummary,
+        contractValue: normalizedValue,
+        currency: input.variables.currency,
+        effectiveDate: input.variables.effectiveDate,
+        expiryDate: input.variables.expiryDate ?? null,
+        instructions: input.instructions,
+      }),
+    );
+
+    if (await isAiStopped()) {
+      return { ai: 'off', summaryNote: null, proposedClauses: [] };
+    }
+    if (aiRes.kind === 'none') {
+      return {
+        ai: aiRes.code === 'REFUSED' ? 'failed' : 'used',
+        summaryNote: null,
+        proposedClauses: [],
+      };
+    }
+
+    return {
+      ai: 'used',
+      summaryNote: aiRes.summaryNote,
+      proposedClauses: aiRes.proposedClauses,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError) {
+      return { ai: 'off', summaryNote: null, proposedClauses: [] };
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return { ai: 'budget', summaryNote: null, proposedClauses: [] };
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    console.error('[sign-ai] contract draft proposal failed', error instanceof Error ? error.name : typeof error);
+    return { ai: 'failed', summaryNote: null, proposedClauses: [] };
   } finally {
     ticket.release();
   }

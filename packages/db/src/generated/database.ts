@@ -3794,6 +3794,8 @@ export interface SignEnvelopeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
   direct_link_id: string | null;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_sign.field */
@@ -3930,6 +3932,8 @@ export interface SignTemplateTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_social.account_snapshot */
