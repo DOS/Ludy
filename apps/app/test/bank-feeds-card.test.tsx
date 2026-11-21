@@ -289,7 +289,19 @@ describe('BankFeedsCard Tingee webhook block (#4204)', () => {
     expect(html.match(new RegExp(`<button[^>]*min-h-11[^>]*>${en.bankFeeds.hook.rotate}<`))).not.toBeNull();
   });
 
+  it('always draws the status regions, empty until a copy or an address, so a screen reader announces them', () => {
+    const html = card('owner', { connections: tingee(), hook: fresh });
+    const statuses = html.match(/<p[^>]*role="status"[^>]*><\/p>/g) ?? [];
+    expect(statuses.length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain(en.bankFeeds.hook.copied);
+    expect(html).not.toContain(en.bankFeeds.hook.replacedExisting);
+  });
+
   it('has the words in both languages', () => {
+    for (const key of ['replacedExisting', 'rotateFailed'] as const) {
+      expect(en.bankFeeds.hook[key].length).toBeGreaterThan(10);
+      expect(viMessages.bankFeeds.hook[key].length).toBeGreaterThan(10);
+    }
     const html = card('owner', { locale: 'vi', connections: tingee(), hook: { ...fresh, stopped: true } });
     expect(html).toContain(viMessages.bankFeeds.hook.title);
     expect(html).toContain(viMessages.bankFeeds.hook.stopped);

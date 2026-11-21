@@ -5767,6 +5767,8 @@ export const vi = {
       close: 'Tôi đã dán xong, ẩn địa chỉ',
       warnRotate: 'Đổi địa chỉ sẽ làm địa chỉ cũ ngừng hoạt động ngay. Tingee vẫn gửi đến địa chỉ cũ cho đến khi bạn dán địa chỉ mới vào cổng của họ, và các thông báo đó sẽ mất trong thời gian đó.',
       confirmRotate: 'Đúng, đổi địa chỉ ngay',
+      replacedExisting: 'Địa chỉ này đã thay một địa chỉ có sẵn; địa chỉ cũ không còn hoạt động. Hãy dán địa chỉ mới này vào cổng Tingee của bạn.',
+      rotateFailed: 'Địa chỉ cũ có thể đã ngừng hoạt động. Hãy xem trạng thái ở trên, hoặc đổi địa chỉ mới lần nữa.',
       cancel: 'Giữ địa chỉ hiện tại',
     },
     feedFromLabel: 'Nguồn tự động lấy giao dịch từ ngày (không bắt buộc)',

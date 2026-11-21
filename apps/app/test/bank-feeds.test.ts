@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BankFeedAccountView } from '@crove/kernel-contract';
 import type { ChartAccount } from '../src/lib/accounts.ts';
-import { bankAccountChoices, bankFeedOffered, feedAccountRows, feedFromMin, hookAddress, latestSync, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
+import { bankAccountChoices, bankFeedOffered, feedAccountRows, feedFromMin, hookAddress, hookReduce, hookViewStart, latestSync, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
 
 const chart = (code: string, rootCode: string, active = true): ChartAccount => ({ code, name: '', parentCode: null, rootCode, active, custom: false });
 const mapped = (externalAccountId: string, connectionId = 'c1'): BankFeedAccountView => ({
@@ -104,5 +104,23 @@ describe('hookAddress and latestSync (#4204)', () => {
   it('takes the most recent sync, or null when nothing pulled yet', () => {
     expect(latestSync([mapped('a'), mapped('b')])).toBeNull();
     expect(latestSync([{ ...mapped('a'), lastSyncedAt: '2026-11-01T00:00:00.000Z' }, mapped('b'), { ...mapped('c'), lastSyncedAt: '2026-11-03T00:00:00.000Z' }])).toBe('2026-11-03T00:00:00.000Z');
+  });
+});
+
+describe('hookReduce (#4204)', () => {
+  it('opens and closes the replace confirmation without touching the address', () => {
+    const asked = hookReduce(hookViewStart, { type: 'ask' });
+    expect(asked.confirming).toBe(true);
+    expect(hookReduce(asked, { type: 'cancel' })).toEqual(hookViewStart);
+  });
+  it('shows the made address once, closes the confirmation and notes a replaced key when created is false', () => {
+    const asked = hookReduce(hookViewStart, { type: 'ask' });
+    expect(hookReduce(asked, { type: 'made', address: 'https://x/a', created: true })).toEqual({ address: 'https://x/a', replaced: false, confirming: false });
+    expect(hookReduce(asked, { type: 'made', address: 'https://x/b', created: false })).toEqual({ address: 'https://x/b', replaced: true, confirming: false });
+  });
+  it('drops the address and the note when hidden or when another rotation starts', () => {
+    const shown = hookReduce(hookViewStart, { type: 'made', address: 'https://x/b', created: false });
+    expect(hookReduce(shown, { type: 'hide' })).toEqual(hookViewStart);
+    expect(hookReduce(shown, { type: 'start' })).toEqual(hookViewStart);
   });
 });

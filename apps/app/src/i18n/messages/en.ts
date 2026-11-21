@@ -5770,6 +5770,8 @@ export const en = {
       close: 'I have pasted it, hide the address',
       warnRotate: 'Replacing the address stops the old one at once. Tingee keeps sending to the old address until you paste the new one in its portal, and those notices are lost until then.',
       confirmRotate: 'Yes, replace the address now',
+      replacedExisting: 'This replaced an address that already existed; the old one no longer works. Paste this new address in your Tingee portal.',
+      rotateFailed: 'The address may already have stopped working. Check the status above, or replace the address again.',
       cancel: 'Keep the current address',
     },
     feedFromLabel: 'Feed supplies lines from (optional)',

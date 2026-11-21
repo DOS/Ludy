@@ -59,3 +59,28 @@ export const hookAddress = (origin: string, provider: string, key: string): stri
 // The most recent sync among a connection's mapped accounts (ISO strings compare in time order), or null when none has pulled yet.
 export const latestSync = (mapped: readonly BankFeedAccountView[]): string | null =>
   mapped.reduce<string | null>((latest, m) => (m.lastSyncedAt && (latest === null || m.lastSyncedAt > latest) ? m.lastSyncedAt : latest), null);
+
+// What the webhook block shows of a rotation (#4204): the one-time address while it is on screen, whether the answer said it replaced a
+// key that already existed (`created: false`, e.g. another admin made one meanwhile), and whether the replace confirmation is open.
+export interface HookView {
+  address: string | null;
+  replaced: boolean;
+  confirming: boolean;
+}
+export type HookAction = { type: 'ask' } | { type: 'cancel' } | { type: 'start' } | { type: 'hide' } | { type: 'made'; address: string; created: boolean };
+export const hookViewStart: HookView = { address: null, replaced: false, confirming: false };
+export function hookReduce(view: HookView, action: HookAction): HookView {
+  switch (action.type) {
+    case 'ask':
+      return { ...view, confirming: true };
+    case 'cancel':
+      return { ...view, confirming: false };
+    // A new rotation drops whatever address was on screen: the old key is dead the moment the new one is made.
+    case 'start':
+      return { address: null, replaced: false, confirming: view.confirming };
+    case 'hide':
+      return hookViewStart;
+    case 'made':
+      return { address: action.address, replaced: !action.created, confirming: false };
+  }
+}
