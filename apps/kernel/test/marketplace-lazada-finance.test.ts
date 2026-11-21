@@ -9,8 +9,8 @@ import { MarketplaceProviderError } from '@crove/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_FEE_BUCKET, LAZADA_FEE_TYPES } from '../src/marketplace-lazada-fees.ts';
 import { LAZADA_FINANCE_MAX_DAYS, LAZADA_FINANCE_PAGE, lazadaFinance } from '../src/marketplace-lazada-finance.ts';
-import { LAZADA_HOSTS } from '../src/marketplace-lazada.ts';
-import { fakeLazada, type FakeStatement, type FakeTransaction } from './fake-lazada.ts';
+import { LAZADA_HOSTS, lazadaCaller, lazadaMarketplace } from '../src/marketplace-lazada.ts';
+import { fakeLazada, fakeOrder, type FakeStatement, type FakeTransaction } from './fake-lazada.ts';
 
 const KEY = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
 const SECRET = JSON.stringify(KEY);
@@ -128,7 +128,7 @@ describe('what refuses the page', () => {
   });
 
   it('a date that is not "17 May 2016", an order number that is not digits, a VAT field that is not an amount', async () => {
-    for (const date of ['2026-11-05', '31 Feb 2026', '5 Nov', '5 Foo 2026', '']) expect(await refused([line({ feeType: 13, amount: '1000', date })])).toBe('not_recognized');
+    for (const date of ['2026-11-05', '31 Feb 2026', '5 Nov', '5 Foo 2026', '5 Novice 2026', '5 November 2026', '']) expect(await refused([line({ feeType: 13, amount: '1000', date })])).toBe('not_recognized');
     for (const orderNo of ['AB1', '12 34', '12,34']) expect(await refused([line({ orderNo, feeType: 13, amount: '1000' })])).toBe('not_recognized');
     expect(await refused([line({ feeType: 13, amount: '1000', vat: '10%' })])).toBe('not_recognized');
   });
@@ -217,18 +217,31 @@ describe('the window and the pages', () => {
     expect(fake.calls.filter((c) => c.path === '/finance/transaction/details/get')).toHaveLength(10);
   });
 
-  it('spaces its calls like the orders adapter does: every call after the first waits its turn', async () => {
+  it('spaces its calls: every call after the first waits its turn', async () => {
     const { finance, fake, waits } = setup({ transactions: ORDER_LINES });
     await finance.income(SECRET, WINDOW);
     expect(fake.calls).toHaveLength(2);
     expect(waits).toHaveLength(1);
     expect(waits[0]).toBeGreaterThan(0);
   });
+
+  it('shares one turn-taking with the orders adapter when both are given the same caller: an orders call and a finance call of one app are spaced', async () => {
+    const fake = fakeLazada({ ...KEY, orders: [fakeOrder({ id: '5000001', number: '5000001' })], statements: [statement()], transactions: ORDER_LINES });
+    const waits: number[] = [];
+    const options = { fetch: hostBoundFetch(LAZADA_HOSTS, fake.fetch), now: () => new Date(NOW), sleep: async (ms: number) => void waits.push(ms) };
+    const caller = lazadaCaller(options);
+    const orders = lazadaMarketplace(options, caller);
+    const finance = lazadaFinance(options, caller);
+    await Promise.all([orders.listOrders(SECRET, 'lazada', null), finance.statements(SECRET, '2026-11-01')]);
+    expect(fake.calls.length).toBeGreaterThanOrEqual(2);
+    // The first call goes at once; each later one waited, even though the two adapters were asked at the same moment.
+    expect(waits).toHaveLength(fake.calls.length - 1);
+  });
 });
 
 describe('what the answer carries and what the reader keeps', () => {
   it('drops free text, SKUs, a provider name and a buyer\'s details at the edge', async () => {
-    const { finance } = setup({ transactions: ORDER_LINES });
+    const { finance } = setup({ statements: [statement({ extra: { account_holder: 'VN-0001-secret' } })], transactions: ORDER_LINES });
     const text = JSON.stringify(await finance.income(SECRET, WINDOW));
     for (const planted of ['Nguyễn', '0912345678', 'giao giờ', 'ref-planted', 'Giao hàng thử', 'Item Price Credit', 'VN-0001-secret']) expect(text).not.toContain(planted);
   });

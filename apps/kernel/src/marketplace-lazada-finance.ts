@@ -101,8 +101,8 @@ export interface LazadaWindow {
 const MONTHS: Readonly<Record<string, number>> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 // A transaction date as the official sample writes it, "17 May 2016", as YYYY-MM-DD; null when it is anything else.
 function dayOf(value: unknown): string | null {
-  const m = typeof value === 'string' ? /^(\d{1,2}) ([A-Za-z]{3,9}) (\d{4})$/.exec(value.trim()) : null;
-  const month = m ? MONTHS[(m[2] as string).slice(0, 3).toLowerCase()] : undefined;
+  const m = typeof value === 'string' ? /^(\d{1,2}) ([A-Za-z]{3}) (\d{4})$/.exec(value.trim()) : null;
+  const month = m ? MONTHS[(m[2] as string).toLowerCase()] : undefined;
   if (!m || month === undefined) return null;
   const day = `${m[3]}-${String(month).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
   return isoDay(day) ? day : null;
@@ -150,7 +150,7 @@ export function lazadaFinance(options: LazadaOptions, caller = lazadaCaller(opti
       for (const raw of data) out.push(transactionOf(raw));
       if (data.length < LAZADA_FINANCE_PAGE) return out;
     }
-    // A window with more lines than the pages read is not cut: the caller reads a shorter one.
+    // A window with more lines than the pages read is not cut: the caller reads a shorter one (a window of exactly ten full pages is refused too: nothing says whether an eleventh would be empty).
     throw notRecognized();
   }
 

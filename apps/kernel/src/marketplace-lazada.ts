@@ -229,9 +229,10 @@ export function lazadaCaller(options: LazadaOptions): (credential: LazadaCredent
   return call;
 }
 
-export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
+// `caller` is the one signed GET; pass the same instance to the finance reader so one app's calls are spaced across both.
+export function lazadaMarketplace(options: LazadaOptions, caller: ReturnType<typeof lazadaCaller> = lazadaCaller(options)): MarketplaceProvider {
   const now = options.now ?? (() => new Date());
-  const call = lazadaCaller(options);
+  const call = caller;
 
   // The orders of one window page, each as only the fields the adapter reads. A malformed one refuses the page.
   interface RawOrder {
