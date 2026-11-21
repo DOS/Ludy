@@ -85,7 +85,15 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@crove/mod-meetings';
-import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import {
+  setSignCaBrokerAvailable,
+  setSignLiveCaEnabled,
+  signAiCommands,
+  signAiQueries,
+  signCommands,
+  signManifest,
+  signQueries,
+} from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
 import { misaTransport } from './einvoice-transport.ts';
@@ -271,6 +279,8 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   // A platform's video-only recording can be imported only where crove-media can take its audio out (C2a, #3306): MEDIA_URL.
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
   setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);
+  setSignLiveCaEnabled(config.SIGN_LIVE_CA_ENABLED === 'true');
+  setSignCaBrokerAvailable(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
