@@ -3651,6 +3651,16 @@ export function createRpcHandler(
           }),
         ),
       },
+      // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated rows. Every role reads; the command checks owner or admin itself (R1, audited).
+      vatRates: {
+        list: os.marketplace.vatRates.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_vat_rate.list', input, { actor, orgId }))),
+        set: os.marketplace.vatRates.set.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.marketplace_vat_rate.set', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+      },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),

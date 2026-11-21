@@ -12,6 +12,7 @@ export * from './legal-entity.ts';
 export * from './roles.ts';
 export * from './cash-voucher.ts';
 export * from './household.ts';
+export * from './marketplace-vat-rate.ts';
 export * from './journal-voucher.ts';
 export * from './personal-data.ts';
 export * from './portal-list.ts';
