@@ -18,6 +18,7 @@ import { zChannelConnect } from '@crove/kernel';
 import {
   zId,
   zMarketplaceAuthorizeBegin,
+  zMarketplaceAuthorizeComplete,
   zMarketplaceAuthorizeFinish,
   zMarketplaceAuthorizeLookup,
   zMarketplaceAuthorizeRecord,
@@ -430,7 +431,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
 // What the worker needs to finish an authorization: the sealed code and the binding of the sealed secret, or why it must not.
 export type MarketplaceAuthorizeTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_pending' | 'unknown_adapter' }
-  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string };
+  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string; channelVersion: string };
 
 export const marketplaceConnectionAuthorizeTarget = defineQuery({
   name: 'finance.marketplace_connection.authorize_target',
@@ -440,7 +441,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'ch.status', 'ch.updated_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -458,6 +459,8 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
       codeEnvelope: row.authorize_code_envelope,
       codeDigest: digestOf(row.authorize_code_envelope),
       codeAccount: marketplaceAuthorizeCodeAccount(row.id),
+      // The channel connection's version at this read: what kernel.channel.refresh compares, so a credential replaced meanwhile is never overwritten.
+      channelVersion: new Date(row.updated_at).toISOString(),
     };
   },
 });
@@ -465,7 +468,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
 export const marketplaceConnectionAuthorizeRecord = defineCommand({
   name: 'finance.marketplace_connection.authorize_record',
   input: zMarketplaceAuthorizeRecord,
-  // An outcome and a date on a row, and the code gone. What the exchange gave (the tokens) was sealed into the channel connection by the worker before this runs.
+  // A refusal or a failure and the code gone (a good exchange is authorize_complete's, which also seals the new credential in the same transaction).
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -487,15 +490,58 @@ export const marketplaceConnectionAuthorizeRecord = defineCommand({
         authorize_state: input.outcome,
         authorize_code_key_id: null,
         authorize_code_envelope: null,
-        // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
-        ...(input.outcome === 'authorized'
-          ? { reauthorize_by: input.reauthorizeBy ?? null, last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null }
-          : {}),
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .execute();
     ctx.audit({ outcome: input.outcome });
+    return { recorded: true };
+  },
+});
+
+export const marketplaceConnectionAuthorizeComplete = defineCommand({
+  name: 'finance.marketplace_connection.authorize_complete',
+  input: zMarketplaceAuthorizeComplete,
+  // It replaces the connection's sealed credential with the one the exchange produced (the tokens are inside the envelope, sealed by the worker) and marks the authorization done: no money, no order.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ recorded: boolean }> => {
+    const found = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection')
+      .select(['channel_connection_id', 'authorize_state', 'authorize_code_envelope'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    // Only the pending authorization of the code the worker read.
+    if (!found || found.authorize_state !== 'pending' || !found.authorize_code_envelope || digestOf(found.authorize_code_envelope) !== input.codeDigest) return { recorded: false };
+    // The credential is replaced only if the connection is as the worker read it (a reconnect or a refresh since then moved its version); in the same transaction as the mark below, so the two never part.
+    const replaced = await ctx.run<{ refreshed: boolean }>('kernel.channel.refresh', {
+      connectionId: found.channel_connection_id,
+      ifVersion: input.ifVersion,
+      expiresAt: input.expiresAt,
+      credential: input.credential,
+    });
+    if (!replaced.refreshed) return { recorded: false };
+    await ctx.trx
+      .updateTable('crove_finance.marketplace_connection')
+      .set({
+        authorize_state: 'authorized',
+        authorize_code_key_id: null,
+        authorize_code_envelope: null,
+        reauthorize_by: input.reauthorizeBy,
+        // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
+        last_poll_state: null,
+        last_polled_at: null,
+        last_test_state: null,
+        last_tested_at: null,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .execute();
+    ctx.audit({ outcome: 'authorized' });
     return { recorded: true };
   },
 });
@@ -579,5 +625,6 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionAuthorizeBegin,
   marketplaceConnectionAuthorizeFinish,
   marketplaceConnectionAuthorizeRecord,
+  marketplaceConnectionAuthorizeComplete,
 ];
 export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget];

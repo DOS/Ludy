@@ -8,7 +8,7 @@ import { MARKETPLACE_CSV_MAX_ROWS, MarketplaceProviderError, type MarketplaceOrd
 import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_HOSTS, lazadaMarketplace } from '../src/marketplace-lazada.ts';
-import { MARKETPLACE_MAX_PAGES_PER_RUN, marketplaceJobKind, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob } from '../src/marketplace-poll-job.ts';
+import { MARKETPLACE_MAX_PAGES_PER_RUN, marketplaceJobKind, runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob } from '../src/marketplace-poll-job.ts';
 import { fakeLazada, fakeOrder } from './fake-lazada.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -379,5 +379,146 @@ describe('every page asks again whether the credential may still be used (#4238)
     expect(asked).toBe(1);
     expect(outcome).toEqual({ state: 'credentials', orders: 1, staged: true });
     expect(executed.filter((e) => e.name === 'finance.marketplace_connection.record_poll').map((e) => e.input.state)).toEqual(['ok', 'credentials']);
+  });
+});
+
+describe('the worker finishes a seller\'s authorization (#4238)', () => {
+  const TARGET = { action: 'authorize', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', codeKeyId: 'code-key', codeEnvelope: Buffer.from('code').toString('base64'), codeDigest: 'd'.repeat(64), codeAccount: `${CONNECTION}:authorize_code`, channelVersion: '2026-11-21T08:00:00.123Z' };
+  const granted = { granted: { secret: '{"new":"secret"}', accessExpiresAt: new Date('2026-12-21T08:00:00Z'), refreshExpiresAt: new Date('2027-05-20T08:00:00Z') } };
+  const setupAuthorize = (opts: { target?: Record<string, unknown>; authorize?: (secret: string, code: string) => Promise<unknown>; open?: (keyId: string) => string; complete?: () => Promise<unknown>; credentialError?: Error } = {}) => {
+    const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const asked: Array<{ secret: string; code: string }> = [];
+    const runtime = {
+      query: async (name: string) => {
+        if (name === 'kernel.channel.credential') {
+          if (opts.credentialError) throw opts.credentialError;
+          return { provider: 'marketplace_lazada', externalAccountId: 'ent:lazada', keyId: 'cred-key', envelope: Buffer.from('cred').toString('base64') };
+        }
+        return { ...TARGET, ...opts.target };
+      },
+      execute: async (name: string, input: Record<string, unknown>) => {
+        executed.push({ name, input });
+        if (name === 'finance.marketplace_connection.authorize_complete') return opts.complete ? opts.complete() : { recorded: true };
+        return {};
+      },
+    } as unknown as Runtime;
+    const broker = {
+      open: (sealed: { keyId: string }) => (opts.open ? opts.open(sealed.keyId) : sealed.keyId === 'code-key' ? 'AUTH-CODE' : '{"appKey":"1","appSecret":"s"}'),
+      seal: (value: string) => ({ keyId: 'next-key', envelope: Buffer.from(`sealed:${value}`) }),
+    } as unknown as CredentialBroker;
+    const provider = {
+      id: 'lazada',
+      hosts: ['api.lazada.vn'],
+      connectFields: [],
+      capabilities: { platforms: {} },
+      authorize: async (secret: string, code: string) => {
+        asked.push({ secret, code });
+        return opts.authorize ? opts.authorize(secret, code) : granted;
+      },
+      testConnection: async () => 'works',
+      listOrders: async () => goodPage(),
+      orderFinance: async () => null,
+      listStock: async () => [],
+    } as unknown as MarketplaceProvider;
+    const run = () => runMarketplaceAuthorize({ runtime, broker, store: {} as BlobStore, providers: { lazada: provider } }, { orgId: ORG, connectionId: CONNECTION, kind: 'authorize' });
+    return { run, executed, asked };
+  };
+
+  it('trades the code once with the seller\'s secret and stores the new credential and the outcome in one command', async () => {
+    const a = setupAuthorize();
+    expect(await a.run()).toEqual({ state: 'authorized' });
+    expect(a.asked).toEqual([{ secret: '{"appKey":"1","appSecret":"s"}', code: 'AUTH-CODE' }]);
+    expect(a.executed).toHaveLength(1);
+    expect(a.executed[0]).toMatchObject({
+      name: 'finance.marketplace_connection.authorize_complete',
+      input: { id: CONNECTION, codeDigest: TARGET.codeDigest, ifVersion: TARGET.channelVersion, expiresAt: '2026-12-21T08:00:00.000Z', reauthorizeBy: '2027-05-20T08:00:00.000Z', credential: { keyId: 'next-key' } },
+    });
+    // The tokens are only inside the sealed envelope, never in the command's other fields.
+    expect(JSON.stringify({ ...a.executed[0]?.input, credential: undefined })).not.toContain('new');
+  });
+
+  it('records a refused code and a failed trade (and a trade that throws) as such, clearing the code, and never asks twice', async () => {
+    const refused = setupAuthorize({ authorize: async () => ({ refused: 'IllegalCode' }) });
+    expect(await refused.run()).toEqual({ state: 'refused' });
+    expect(refused.executed).toEqual([{ name: 'finance.marketplace_connection.authorize_record', input: { id: CONNECTION, codeDigest: TARGET.codeDigest, outcome: 'refused' } }]);
+    const failed = setupAuthorize({ authorize: async () => ({ failed: 'NETWORK' }) });
+    expect(await failed.run()).toEqual({ state: 'failed' });
+    expect(failed.asked).toHaveLength(1);
+    const thrown = setupAuthorize({
+      authorize: async () => {
+        throw new Error('POST https://auth.example?code=SECRET-CODE failed');
+      },
+    });
+    expect(await thrown.run()).toEqual({ state: 'failed' });
+    expect(JSON.stringify(thrown.executed)).not.toContain('SECRET-CODE');
+  });
+
+  it('asks nothing of the platform when a sealed value does not open under its own binding', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const a = setupAuthorize({
+        open: () => {
+          throw new Error('bad binding');
+        },
+      });
+      expect(await a.run()).toEqual({ state: 'failed' });
+      expect(a.asked).toHaveLength(0);
+      expect(a.executed.map((e) => e.name)).toEqual(['finance.marketplace_connection.authorize_record']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says `superseded` when the connection or the code changed since the read, and records a failed outcome when the command refuses', async () => {
+    const superseded = setupAuthorize({ complete: async () => ({ recorded: false }) });
+    expect(await superseded.run()).toEqual({ state: 'superseded' });
+    const { DomainError } = await import('@crove/kernel-runtime');
+    const refused = setupAuthorize({
+      complete: async () => {
+        throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'x');
+      },
+    });
+    expect(await refused.run()).toEqual({ state: 'failed' });
+    expect(refused.executed.map((e) => e.name)).toEqual(['finance.marketplace_connection.authorize_complete', 'finance.marketplace_connection.authorize_record']);
+  });
+
+  it('tries the store again after a passing database error (the tokens exist only here), and gives up after three', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const a = setupAuthorize({
+        complete: async () => {
+          calls += 1;
+          if (calls < 3) throw new Error('connection reset');
+          return { recorded: true };
+        },
+      });
+      const done = a.run();
+      await vi.runAllTimersAsync();
+      expect(await done).toEqual({ state: 'authorized' });
+      expect(calls).toBe(3);
+      const b = setupAuthorize({
+        complete: async () => {
+          throw new Error('connection reset');
+        },
+      });
+      const failing = b.run();
+      const settled = failing.then(() => 'resolved', (error: Error) => error.message);
+      await vi.runAllTimersAsync();
+      expect(await settled).toBe('connection reset');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves a connection that has nothing pending, is gone or whose adapter is off alone', async () => {
+    for (const reason of ['not_found', 'not_active', 'not_pending', 'unknown_adapter']) {
+      const a = setupAuthorize({ target: { action: 'none', reason } });
+      expect(await a.run()).toEqual({ state: 'skipped', reason });
+      expect(a.executed).toEqual([]);
+    }
+    const off = setupAuthorize({ target: { adapter: 'other' } });
+    expect(await off.run()).toEqual({ state: 'skipped', reason: 'provider_off' });
+    expect(zMarketplaceJob.safeParse({ orgId: ORG, connectionId: CONNECTION, kind: 'authorize' }).success).toBe(true);
   });
 });

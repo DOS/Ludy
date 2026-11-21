@@ -46,7 +46,7 @@ export function IntegrationsSection({ role, orgSlug }: { role: Role; orgSlug: st
       <div className="mt-4 grid gap-6 lg:grid-cols-2">
         {bank && <BankFeedsCard key={`bank-feeds:${orgSlug}`} role={role} offers={{ sandbox: Boolean(getConfig().bankFeeds?.sandbox), tingee: Boolean(getConfig().bankFeeds?.tingee) }} />}
         {einvoice && <EInvoiceConnectionsCard key={`einvoice-connections:${orgSlug}`} role={role} />}
-        {marketplace && <MarketplaceConnectionsCard key={`marketplace-connections:${orgSlug}`} role={role} />}
+        {marketplace && <MarketplaceConnectionsCard key={`marketplace-connections:${orgSlug}`} role={role} orgSlug={orgSlug} />}
         {misaAmis && <MisaAmisConnectionsCard key={`misa-amis-connections:${orgSlug}`} role={role} />}
       </div>
     </section>

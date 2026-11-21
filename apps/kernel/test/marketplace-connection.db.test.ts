@@ -665,14 +665,33 @@ suite('marketplace connections (#2519)', () => {
     expect(await row()).toMatchObject({ authorize_state: 'pending', authorize_code_key_id: codeSealed.keyId });
     await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_test_state = 'api_not_enabled', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
     const reauthorizeBy = new Date(Date.now() + 150 * 86_400_000).toISOString();
-    expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, codeDigest: target.codeDigest, outcome: 'authorized', reauthorizeBy }, { actor: SYSTEM, orgId })).toEqual({ recorded: true });
+    // A good exchange is ONE command: the new sealed secret replaces the credential and the authorization is marked done in the same transaction, and only when the connection is as the worker read it.
+    const granted = vault.seal(JSON.stringify({ appKey: '123456', appSecret: 'helloworld', accessToken: 'NEW-ACCESS', refreshToken: 'NEW-REFRESH' }), binding);
+    const complete = (extra: Record<string, unknown> = {}) =>
+      worker.execute<{ recorded: boolean }>(
+        'finance.marketplace_connection.authorize_complete',
+        { id, codeDigest: target.codeDigest, ifVersion: (target as unknown as { channelVersion: string }).channelVersion, expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), reauthorizeBy, credential: { keyId: granted.keyId, envelope: granted.envelope.toString('base64') }, ...extra },
+        { actor: SYSTEM, orgId },
+      );
+    const credentialNow = async () => {
+      const stored = await worker.query<{ keyId: string; envelope: string }>('kernel.channel.credential', { connectionId: String((await rows<{ c: string }>('SELECT channel_connection_id AS c FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.c) }, { actor: SYSTEM, orgId });
+      return vault.open({ keyId: stored.keyId, envelope: Buffer.from(stored.envelope, 'base64') }, binding);
+    };
+    // Not the code the worker read, or a connection touched since: nothing is replaced and the authorization stays pending.
+    expect(await complete({ codeDigest: '1'.repeat(64) })).toEqual({ recorded: false });
+    expect(await complete({ ifVersion: new Date(Date.now() - 86_400_000).toISOString() })).toEqual({ recorded: false });
+    expect(JSON.parse(await credentialNow())).toEqual({ appKey: '123456', appSecret: 'helloworld' });
+    expect(await row()).toMatchObject({ authorize_state: 'pending', authorize_code_key_id: codeSealed.keyId });
+    expect(await complete()).toEqual({ recorded: true });
+    expect(JSON.parse(await credentialNow())).toMatchObject({ accessToken: 'NEW-ACCESS', refreshToken: 'NEW-REFRESH' });
+    expect(await complete()).toEqual({ recorded: false });
     expect(await row()).toMatchObject({ authorize_state: 'authorized', authorize_code_key_id: null, authorize_code_envelope: null });
     expect(Math.floor(new Date(String((await row()).reauthorize_by)).getTime() / 1000)).toBe(Math.floor(Date.parse(reauthorizeBy) / 1000));
     expect(await rows('SELECT last_poll_state, last_test_state FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ last_poll_state: null, last_test_state: null }]);
     expect(await worker.execute('finance.marketplace_connection.authorize_record', { id, codeDigest: target.codeDigest, outcome: 'failed' }, { actor: SYSTEM, orgId })).toEqual({ recorded: false });
     expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_pending' });
     // A person cannot call the worker's commands.
-    await expect(rt.execute('finance.marketplace_connection.authorize_record', { id, codeDigest: target.codeDigest, outcome: 'authorized' }, { ...as(owner), idempotencyKey: randomUUID() })).rejects.toBeDefined();
+    await expect(rt.execute('finance.marketplace_connection.authorize_record', { id, codeDigest: target.codeDigest, outcome: 'failed' }, { ...as(owner), idempotencyKey: randomUUID() })).rejects.toBeDefined();
     // A state belongs to its own connection only: with two connections each pending, finishing one touches the other not at all, and a state cannot be moved to the other by anything the caller sends.
     const entityB = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh cấp quyền B', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     const sealedB = vault.seal(JSON.stringify({ appKey: '777777', appSecret: 'otherSecret' }), { orgId, provider: 'marketplace_lazada', externalAccountId: `${entityB}:lazada` });

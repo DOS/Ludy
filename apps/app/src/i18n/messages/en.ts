@@ -5652,6 +5652,23 @@ export const en = {
     connect: 'Connect',
     test: 'Test connection',
     pollNow: 'Pull orders now',
+    authorize: 'Authorize',
+    authorizeAgain: 'Authorize again',
+    reauthorizeBy: 'authorize again before {when}',
+    authorizeStates: {
+      pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds.',
+      authorized: 'Authorized',
+      refused: 'The marketplace refused the authorization code (wrong, already used or expired). Press Authorize again.',
+      failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.',
+    },
+    oauth: {
+      title: 'Authorize a marketplace connection',
+      finishing: 'Receiving the authorization from the marketplace...',
+      received: 'Authorization received. It is being completed; the result shows on the marketplace card.',
+      cancelled: 'You did not authorize the app on the marketplace. You can press Authorize again at any time.',
+      lost: 'This authorization was not found (already used, expired or opened in another browser). Start again from the marketplace card.',
+      back: 'Back to connections',
+    },
     testQueued: 'The test was requested. The result will show here in a few seconds.',
     testNoResult: 'No test result yet. Try again in a few minutes; if there is still none, tell the system administrator.',
     pollQueued: 'Orders were requested. New ones will wait for you to confirm them in the Inbox.',
@@ -5680,7 +5697,7 @@ export const en = {
     },
     testStatesLazada: {
       wrong_credentials: 'Lazada refused the key, the secret or the access token. Check the App Key and App Secret, then connect again.',
-      api_not_enabled: 'The app is not authorized on Lazada yet, so no orders can be read. The authorize step comes in a later build.',
+      api_not_enabled: 'The app is not authorized on Lazada yet, so no orders can be read. Press Authorize and sign in to the seller account on Lazada.',
     },
     pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {
@@ -15109,6 +15126,7 @@ export const en = {
       },
       marketplace_connection: {
         authorize_begin: 'Start authorizing a marketplace connection',
+        authorize_complete: 'Complete an authorization and store the marketplace connection\'s new login',
         authorize_finish: 'Finish authorizing a marketplace connection',
         authorize_lookup: 'See the marketplace connection of an authorization',
         authorize_record: 'Record the result of authorizing a marketplace connection',

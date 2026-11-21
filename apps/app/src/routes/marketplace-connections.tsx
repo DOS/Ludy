@@ -16,7 +16,8 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, testStateKey } from '../lib/marketplace-connections.ts';
+import { rememberOAuthAttempt } from '../lib/oauth.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -27,9 +28,11 @@ const refresh = async () => {
 const TEST_WATCH_MS = 3000;
 const TEST_WATCH_TIMES = 10;
 
+const AUTHORIZE_STATE_KEYS = { pending: 'authorizeStates.pending', authorized: 'authorizeStates.authorized', refused: 'authorizeStates.refused', failed: 'authorizeStates.failed' } as const;
+
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
 
-function ConnectionItem({ connection, adapters, entities, canManage }: { connection: MarketplaceConnection; adapters: readonly MarketplaceAdapterInfo[]; entities: readonly LegalEntity[]; canManage: boolean }) {
+function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: { connection: MarketplaceConnection; adapters: readonly MarketplaceAdapterInfo[]; entities: readonly LegalEntity[]; canManage: boolean; orgSlug: string }) {
   const t = useTranslations('marketplaceConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
@@ -69,6 +72,17 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
   }, [testedAtStart]);
   const pull = useMutation(orpc.marketplace.connections.pollNow.mutationOptions({ onSuccess: refresh }));
   const disconnect = useMutation(orpc.marketplace.connections.disconnect.mutationOptions({ onSuccess: refresh }));
+  // Authorize: the API answers the address of the platform's consent page with a state in it; the org is remembered under that state (the page the platform returns to has no org in its address), then the
+  // browser goes there. Nothing is stored of the code: the return page hands it to the API.
+  const authorize = useMutation(
+    orpc.marketplace.connections.authorizeStart.mutationOptions({
+      onSuccess: ({ authorizeUrl }) => {
+        const state = new URL(authorizeUrl).searchParams.get('state');
+        if (state) rememberOAuthAttempt(state, orgSlug);
+        window.location.assign(authorizeUrl);
+      },
+    }),
+  );
   const entity = entities.length > 1 ? entities.find((e) => e.id === connection.legalEntityId) : undefined;
   const live = connection.status === 'active';
   return (
@@ -91,6 +105,11 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
           {live && (
             <Button loading={test.isPending} size="sm" variant="outline" onClick={() => test.mutate({ id: connection.id })}>
               {t('test')}
+            </Button>
+          )}
+          {canAuthorize(connection, adapters) && (
+            <Button loading={authorize.isPending} size="sm" variant="outline" onClick={() => authorize.mutate({ id: connection.id })}>
+              {t(connection.authorizeState === 'authorized' ? 'authorizeAgain' : 'authorize')}
             </Button>
           )}
           {canPollNow(connection, adapters) && (
@@ -130,7 +149,9 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
           {t('pollQueued')}
         </p>
       )}
+      {connection.authorizeState && <p className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
+      {authorize.error && <ErrorText>{errorMessage(authorize.error)}</ErrorText>}
       {pull.error && <ErrorText>{errorMessage(pull.error)}</ErrorText>}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
     </li>
@@ -228,7 +249,7 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
   );
 }
 
-export function MarketplaceConnectionsCard({ role }: { role: Role }) {
+export function MarketplaceConnectionsCard({ role, orgSlug }: { role: Role; orgSlug: string }) {
   const t = useTranslations('marketplaceConnections');
   const headingId = useId();
   const canManage = role === 'owner' || role === 'admin';
@@ -272,7 +293,7 @@ export function MarketplaceConnectionsCard({ role }: { role: Role }) {
           ) : (
             <ul className="mt-3 divide-y">
               {list.map((c) => (
-                <ConnectionItem key={c.id} connection={c} adapters={adapters} entities={entities.data ?? []} canManage={canManage} />
+                <ConnectionItem key={c.id} connection={c} adapters={adapters} entities={entities.data ?? []} canManage={canManage} orgSlug={orgSlug} />
               ))}
             </ul>
           )}
