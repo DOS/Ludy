@@ -113,7 +113,9 @@ function dayOf(value: unknown): string | null {
   return isoDay(day) ? day : null;
 }
 
-const toMoney = (value: Decimal): string => {
+// `Decimal` of @crove/l10n-vn is the configured constructor (a value); its instances are typed through it.
+type Dec = InstanceType<typeof Decimal>;
+const toMoney = (value: Dec): string => {
   const text = value.toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
   if (text.abs().gte(new Decimal(10).pow(16))) throw notRecognized();
   return text.toFixed();
@@ -207,7 +209,7 @@ function aggregate(lines: readonly Transaction[]): LazadaIncomeLine[] {
   for (const group of groups.values()) {
     const first = group[0] as Transaction;
     const bucket = { sales: ZERO, refund: ZERO, commission: ZERO, paymentFee: ZERO };
-    const byFee = new Map<number, Decimal>();
+    const byFee = new Map<number, Dec>();
     let net = ZERO;
     let vat = ZERO;
     let wht = ZERO;
