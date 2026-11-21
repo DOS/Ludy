@@ -18,6 +18,7 @@ import {
   buildSalesInvoiceAcceptanceSearch,
   formatSalesInvoicePrefillDescription,
   parseSalesInvoiceHandoffSearch,
+  sanitizeAcceptancePdfUserText,
   toAcceptancePdfAsciiText,
 } from '../src/lib/project-acceptance-pdf.ts';
 import { planDetectedTagsForSigners } from '../src/lib/sign-fields.ts';
@@ -217,15 +218,24 @@ describe('project-acceptance-pdf & ADR-0050 search helpers', () => {
   it('generates a valid PDF 1.4 A4 document with {{signature, r1}}, {{date, r1}}, and {{signature, r2}} tags', () => {
     expect(toAcceptancePdfAsciiText('Công ty Đạt Phát - 50.000.000₫')).toBe('Cong ty Dat Phat - 50.000.000VND');
     expect(buildProjectAcceptanceFilename('2026-11-19', PROJECT_ID)).toBe('bien-ban-nghiem-thu-2026-11-19-01900000.pdf');
+    expect(sanitizeAcceptancePdfUserText('{\u0300{signature, r1}\u0300}')).toBe('{ {signature, r1} }');
+    expect(sanitizeAcceptancePdfUserText('{{{text, r1, required: Gia phat}}}')).toBe('{ { {text, r1, required: Gia phat} } }');
+    expect(sanitizeAcceptancePdfUserText('\u4E2D\u6587', '{{{fallback}}}')).not.toContain('{{');
+    expect(sanitizeAcceptancePdfUserText('', '{{{fallback}}}')).toBe('{ { {fallback} } }');
 
     const bytes = buildProjectAcceptancePdfBytes({
-      projectName: SAMPLE_PROJECT.name,
+      projectName: `${SAMPLE_PROJECT.name} {\u0300{signature, r1}\u0300}`,
       providerName: 'Công ty TNHH Giải Pháp Số Ludy',
       recipientName: 'Nguyễn Minh Anh',
       recipientEmail: 'minhanh@example.com',
       acceptanceDate: '2026-11-19',
-      deliverables: [...COMPLETED_TASKS.map((t) => t.title), 'Mục có thẻ giả {{signature, r9}}'],
-      note: 'Bảo hành kỹ thuật 06 tháng kể từ ngày ký nghiệm thu. {{text, r1}}',
+      deliverables: [
+        ...COMPLETED_TASKS.map((t) => t.title),
+        'Mục có thẻ giả {{signature, r9}}',
+        'Thẻ dấu kết hợp {\u0300{signature, r1}\u0300}',
+        'Thẻ nhiều ngoặc {{{text, r1, required: Gia phat}}}',
+      ],
+      note: 'Bảo hành kỹ thuật 06 tháng kể từ ngày ký nghiệm thu. {{text, r1}} {{{checkbox, r1}}}',
     });
     const text = new TextDecoder().decode(bytes);
     expect(text.startsWith('%PDF-1.4\n')).toBe(true);
@@ -237,6 +247,12 @@ describe('project-acceptance-pdf & ADR-0050 search helpers', () => {
     expect(text).not.toContain('{{text, r1}}');
     expect(text).toContain('({{date, r1}}) Tj');
     expect(text).toContain('({{signature, r2}}) Tj');
+    const withoutTemplateTags = text
+      .replace('({{signature, r1}}) Tj', '')
+      .replace('({{date, r1}}) Tj', '')
+      .replace('({{signature, r2}}) Tj', '');
+    expect(withoutTemplateTags).not.toContain('{{');
+    expect(withoutTemplateTags).not.toContain('}}');
     expect(text).toContain('xref\n');
     expect(text.endsWith('%%EOF\n')).toBe(true);
 

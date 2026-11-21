@@ -117,21 +117,32 @@ export function toAcceptancePdfAsciiText(input: string): string {
     .trim();
 }
 
+function neutralizePdfTagBraces(value: string): string {
+  return value.replace(/\{{2,}|\}{2,}/g, (run) => run.split('').join(' '));
+}
+
 export function sanitizeAcceptancePdfUserText(raw: string, fallback = ''): string {
-  const deTagged = raw.replace(/\{\{/g, '{ {').replace(/\}\}/g, '} }');
-  const ascii = toAcceptancePdfAsciiText(deTagged);
-  if (ascii) return ascii;
-  const trimmed = stripUnsafeSearchChars(deTagged);
-  if (!trimmed) return fallback;
-  const codePointFallback = Array.from(trimmed)
-    .slice(0, 32)
-    .map((ch) => {
-      const cp = ch.codePointAt(0) ?? 0;
-      return cp >= 0x20 && cp <= 0x7e ? ch : `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
-    })
-    .join(' ')
+  const ascii = neutralizePdfTagBraces(toAcceptancePdfAsciiText(raw))
+    .replace(/\s+/g, ' ')
     .trim();
-  return codePointFallback || fallback;
+  if (ascii) return ascii;
+  const trimmed = stripUnsafeSearchChars(raw);
+  const safeFallback = neutralizePdfTagBraces(toAcceptancePdfAsciiText(fallback))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!trimmed) return safeFallback;
+  const codePointFallback = neutralizePdfTagBraces(
+    Array.from(trimmed)
+      .slice(0, 32)
+      .map((ch) => {
+        const cp = ch.codePointAt(0) ?? 0;
+        return cp >= 0x20 && cp <= 0x7e ? ch : `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
+      })
+      .join(' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+  return codePointFallback || safeFallback;
 }
 
 function escapePdfLiteral(ascii: string): string {
@@ -139,7 +150,9 @@ function escapePdfLiteral(ascii: string): string {
 }
 
 function wrapTextLines(raw: string, maxChars: number): string[] {
-  const clean = toAcceptancePdfAsciiText(raw);
+  const clean = neutralizePdfTagBraces(toAcceptancePdfAsciiText(raw))
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!clean) return [''];
   if (clean.length <= maxChars) return [clean];
   const words = clean.split(' ');
