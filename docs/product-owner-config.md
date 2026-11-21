@@ -305,9 +305,7 @@ line):
 - the database context guards and the migration runner (`packages/db`; not
   the generated types in `packages/db/src/generated/`);
 - authentication and the HTTP edge: `auth*.ts`, `sessions*.ts`, `http.ts`,
-  any `auth/` directory, `approval.ts`, `identity.ts`, and
-  `packages/kernel-contract/src/engage-proposals.ts` (the table of Engage
-  proposal kinds that the approval policy reads);
+  any `auth/` directory, `approval.ts`, `identity.ts`;
 - kernel SQL: a migration that creates or replaces a function in
   `crove_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
   roles or grants on `crove_kernel` objects, or changes another line's
