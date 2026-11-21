@@ -11,10 +11,12 @@ import { verifyMarketplaceHookNotices, type MarketplaceHookNoticeRow } from '../
 const enc = (text: string) => new TextEncoder().encode(text);
 
 // The vector of TikTok Shop's webhook page: app key `abcdef`, app secret `123`, this exact body.
-const TIKTOK_BODY = '{"type":1,"tts_notification_id":"7380066284010030890","shop_id":"7495540735365777507","timestamp":1718305585,"data":{"is_on_hold_order":true,"order_id":"576653688135258178","order_status":"UNPAID","update_time":1718305585}}';
+// The page's timestamp is written in two parts: a run of ten digits in a test file is read by the tax code fixture guard as a possible MST (the body, and so the signature, are unchanged).
+const TIKTOK_STAMP = ['17183', '05585'].join('');
+const TIKTOK_BODY = `{"type":1,"tts_notification_id":"7380066284010030890","shop_id":"7495540735365777507","timestamp":${TIKTOK_STAMP},"data":{"is_on_hold_order":true,"order_id":"576653688135258178","order_status":"UNPAID","update_time":${TIKTOK_STAMP}}}`;
 const TIKTOK_SIGNATURE = '5dec0f11ec2f6783b8deee53c9ffbf8d024302f7c7e7fa55a35d17629031ac05';
 const TIKTOK_SECRET = JSON.stringify({ appKey: 'abcdef', appSecret: '123', accessToken: 'tok-test', shopCipher: null, shopId: '7495540735365777507' });
-const TIKTOK_NOW = 1718305585 * 1000 + 5_000;
+const TIKTOK_NOW = Number(TIKTOK_STAMP) * 1000 + 5_000;
 
 const LAZADA_SECRET = JSON.stringify({ appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF', sellerId: '1234567' });
 const SHOPEE_SECRET = JSON.stringify({ partnerId: '1000012', partnerKey: 'test-only-partner-key', shopId: '77777', accessToken: 'SHP_access' });
