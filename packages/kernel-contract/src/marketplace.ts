@@ -253,13 +253,25 @@ export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
 export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
 
 // The posting of a platform's payout (#2516, ADR-0045 point 6, plan 8.4 "The payout"): ONE general journal voucher per settlement: Dr 112 for the money received, Dr 331 for the platform's fees,
-// Dr 3331 and Dr 3335 for the tax the platform withheld (as the settlement credited it), Cr 131 (the platform) for what the settlement posted there. A person asks for it with the settlement and the bank line of the platform's transfer
+// Dr 3331 and Dr 3335 for the tax the platform withheld (as the settlement credited it), Cr 131 (the platform) for what the settlement posted there; lines of the settlement a person classified add Cr 711 / Cr 632
+// or Dr 1388 (`adjustments`, #4303 S4, below). A person asks for it with the settlement and the bank line of the platform's transfer
 // (kernel.proposal.request with command `finance.marketplace_payout.record`); every amount comes from the stored settlement's lines, the bank line only has to be money in, equal to the net the
 // settlement paid, and free. The server builds the entry again when the proposal is approved. Nothing is requested or posted until the accountant has confirmed the account map (#2520), and a
 // payout whose settlement is not posted yet is refused: MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED (409). Other codes: MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_PAYOUT_NOT_POSTABLE (422),
 // MARKETPLACE_PAYOUT_BANK_LINE (409 or 422), MARKETPLACE_PAYOUT_POSTED (409), MARKETPLACE_PAYOUT_MISMATCH (422), PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
 export const MARKETPLACE_PAYOUT_COMMAND = 'finance.marketplace_payout.record';
-export const zMarketplacePayoutRequest = z.strictObject({ settlementId: zId, bankLineId: zId });
+// What a person says a settlement line's unexplained money is (#4303 S4, research rules 2, 3 and 4). The report gives only the residual `other` (net less what the named columns explain) and one withheld-tax figure,
+// no reason a reader can trust, so a person classifies each such line and the server never guesses: an unclassified line is refused as before. Each adjustment names a stored line of the settlement and its
+// amount (checked equal to the line's, no slack); the kind is a closed set. `carrier_compensation` also carries the cost of the lost goods the person states (whole dong, never computed): 632 is credited with
+// the smaller of it and the compensation, 711 with the rest. `incentive` (other > 0): Cr 711. `withheld_in_error` (tax withheld from a seller that is no household): Dr 1388 under the platform's party.
+export const MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX = 100;
+export const zMarketplacePayoutAdjustment = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('incentive'), lineId: zId, amount: zJournalAmount }),
+  z.strictObject({ kind: z.literal('carrier_compensation'), lineId: zId, amount: zJournalAmount, costAmount: zJournalAmount }),
+  z.strictObject({ kind: z.literal('withheld_in_error'), lineId: zId, amount: zJournalAmount }),
+]);
+export type MarketplacePayoutAdjustment = z.infer<typeof zMarketplacePayoutAdjustment>;
+export const zMarketplacePayoutRequest = z.strictObject({ settlementId: zId, bankLineId: zId, adjustments: z.array(zMarketplacePayoutAdjustment).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX).optional() });
 export type MarketplacePayoutRequest = z.infer<typeof zMarketplacePayoutRequest>;
 // The proposal (kind finance.journal_voucher, shown as one) with the settlement it pays, the bank line, the platform and the period, and the split in whole dong: the money received, the fees and
 // the withheld tax, so a person sees what the platform kept. The platform's party on the 131 and 331 lines is the one the settlement's posting created.
@@ -272,6 +284,8 @@ export const zMarketplacePayoutProposal = zJournalVoucherProposal.extend({
   received: zJournalAmount,
   fees: zJournalAmount,
   taxWithheld: zJournalAmount,
+  // The classification the entry was built with (#4303 S4); the approver's rebuild uses the same one. Ids, kinds and amounts only. A proposal stored before S4 has none.
+  adjustments: z.array(zMarketplacePayoutAdjustment).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX).default([]),
 });
 export type MarketplacePayoutProposal = z.infer<typeof zMarketplacePayoutProposal>;
 
