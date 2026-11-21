@@ -100,7 +100,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_connection_file',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -1676,7 +1675,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4239 (step 1 of 3 of #2840 point 3, #4238): the link between a marketplace connection and a staged file its poll ingested, written by the system context in the same transaction as the ingest, one row per file
   // (unique per org and file), so the orders waiting for a connection are counted from the link and not from a file name. Org-level, no legal entity. Tenant roles read and insert (the poll's command); nothing updates
-  // or deletes a row, and a purge or the file's deletion removes it. Its table lands in step 2, so PENDING_TABLES holds it until then. Each row takes a connection and a file of its own.
+  // or deletes a row, and a purge or the file's deletion removes it. Its table landed in #4250 (step 2), which removed it from PENDING_TABLES. Each row takes a connection and a file of its own.
   'crove_finance.marketplace_connection_file': {
     make: (o) => {
       const provider = `marketplace_s${marketplaceSeq++}`;

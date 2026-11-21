@@ -62,6 +62,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_marketplace_column_profile.sql',
       // #4203 (Tingee webhook): the purge restatement that adds crove_finance.bank_feed_hook and bank_feed_webhook_notice restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_bank_feed_hook.sql',
+      'crove_kernel_org_purge_marketplace_connection_file.sql',
     ]);
   });
 });

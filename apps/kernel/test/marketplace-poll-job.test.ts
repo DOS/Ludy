@@ -21,14 +21,15 @@ const goodPage = (): MarketplaceOrderPage => ({
   nextCursor: 'sandbox:1',
 });
 
-function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' | 'tiktok_shop' = 'shopee', duplicate = false) {
+function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' | 'tiktok_shop' = 'shopee', duplicate = false, ingestFails = false) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const puts: string[] = [];
   const runtime = {
     query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null }),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
-      return name === 'kernel.file.ingest' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate } : {};
+      if (ingestFails && name === 'finance.marketplace_connection.ingest_page') throw new Error('the page could not be filed');
+      return name === 'finance.marketplace_connection.ingest_page' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate } : {};
     },
   } as unknown as Runtime;
   const store = {
@@ -41,7 +42,7 @@ function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee'
   const deps = { runtime, broker: {} as CredentialBroker, store, providers: { sandbox: provider } };
   const run = (maxPages?: number) => runMarketplacePoll(deps, { orgId: ORG, connectionId: CONNECTION }, maxPages);
   const polls = () => executed.filter((e) => e.name === 'finance.marketplace_connection.record_poll').map((e) => e.input);
-  const ingests = () => executed.filter((e) => e.name === 'kernel.file.ingest');
+  const ingests = () => executed.filter((e) => e.name === 'finance.marketplace_connection.ingest_page');
   return { run, polls, ingests, puts };
 }
 
@@ -55,6 +56,19 @@ describe('the page is checked before anything of it is used (#2840 point 2)', ()
     expect(ingests()).toHaveLength(0);
     expect(puts).toHaveLength(0);
   };
+
+  it('files a page through the link command with the connection and no entity or source of its own, and keeps the cursor when the command fails (#4250)', async () => {
+    const { run, ingests } = setup(async () => goodPage());
+    await run();
+    const input = ingests()[0]?.input ?? {};
+    expect(input).toMatchObject({ marketplaceConnectionId: CONNECTION, contentType: 'text/csv' });
+    expect(Object.keys(input)).not.toContain('legalEntityId');
+    expect(Object.keys(input)).not.toContain('source');
+    const failing = setup(async () => goodPage(), 'shopee', false, true);
+    await expect(failing.run()).rejects.toThrow();
+    // The cursor moves only after the page was filed: nothing is recorded when the command throws.
+    expect(failing.polls()).toEqual([]);
+  });
 
   it('takes a good page and stages it once', async () => {
     const { run, polls, ingests } = setup(async () => goodPage());
@@ -391,7 +405,7 @@ describe('every page asks again whether the credential may still be used (#4238)
       },
       execute: async (name: string, input: Record<string, unknown>) => {
         executed.push({ name, input });
-        return name === 'kernel.file.ingest' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
+        return name === 'finance.marketplace_connection.ingest_page' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
       },
     } as unknown as Runtime;
     const store = { put: async (_k: string, bytes: Uint8Array) => `content:${sha256Hex(bytes)}` } as unknown as BlobStore;
