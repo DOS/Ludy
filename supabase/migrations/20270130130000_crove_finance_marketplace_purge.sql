@@ -121,11 +121,10 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
         AND x.status = 'done'
         AND NOT (x.method = 'unsupported' AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income'))
     )
-    -- Booked: the latest version is a marketplace read a member imported.
+    -- Booked: ANY version of the file is a marketplace read a member imported (not only the newest: a later version never un-books it).
     AND NOT EXISTS (
       SELECT 1 FROM crove_kernel.extraction x
       WHERE x.org_id = f.org_id AND x.file_id = f.id
-        AND x.version = (SELECT pg_catalog.max(e.version) FROM crove_kernel.extraction e WHERE e.org_id = f.org_id AND e.file_id = f.id)
         AND x.method = 'unsupported' AND x.status = 'done'
         AND (x.result ->> 'kind') IN ('marketplace_orders', 'marketplace_income')
         AND (x.result -> 'summary' ->> 'state') = 'imported'
@@ -142,10 +141,15 @@ DECLARE
   v_found boolean;
 BEGIN
   FOR r IN
+    -- The columns are paired through confkey: the referencing column that points at the file's org_id and the one that points at its id, whatever order the constraint lists them in.
     SELECT c.conrelid::pg_catalog.regclass::text AS rel, oa.attname::text AS org_col, fa.attname::text AS file_col
     FROM pg_catalog.pg_constraint c
-    JOIN pg_catalog.pg_attribute oa ON oa.attrelid = c.conrelid AND oa.attnum = c.conkey[1]
-    JOIN pg_catalog.pg_attribute fa ON fa.attrelid = c.conrelid AND fa.attnum = c.conkey[2]
+    CROSS JOIN LATERAL pg_catalog.unnest(c.conkey, c.confkey) AS o(ckey, fkey)
+    CROSS JOIN LATERAL pg_catalog.unnest(c.conkey, c.confkey) AS f(ckey, fkey)
+    JOIN pg_catalog.pg_attribute po ON po.attrelid = c.confrelid AND po.attnum = o.fkey AND po.attname = 'org_id'
+    JOIN pg_catalog.pg_attribute pf ON pf.attrelid = c.confrelid AND pf.attnum = f.fkey AND pf.attname = 'id'
+    JOIN pg_catalog.pg_attribute oa ON oa.attrelid = c.conrelid AND oa.attnum = o.ckey
+    JOIN pg_catalog.pg_attribute fa ON fa.attrelid = c.conrelid AND fa.attnum = f.ckey
     WHERE c.contype = 'f' AND c.confrelid = 'crove_kernel.file'::pg_catalog.regclass
       AND c.confdeltype IN ('a', 'r') AND pg_catalog.array_length(c.conkey, 1) = 2
   LOOP
@@ -167,7 +171,7 @@ BEGIN
   IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')) OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_days IS NULL OR p_days < 1 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 1 OR p_expired_days > 90 THEN
+  IF p_days IS NULL OR p_days < 7 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 30 OR p_expired_days > 90 THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_DAYS' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
@@ -191,7 +195,7 @@ BEGIN
      OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_days IS NULL OR p_days < 1 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 1 OR p_expired_days > 90 THEN
+  IF p_days IS NULL OR p_days < 7 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 30 OR p_expired_days > 90 THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_DAYS' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
@@ -218,7 +222,7 @@ BEGIN
      OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_days IS NULL OR p_days < 1 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 1 OR p_expired_days > 90 THEN
+  IF p_days IS NULL OR p_days < 7 OR p_days > 14 OR p_expired_days IS NULL OR p_expired_days < 30 OR p_expired_days > 90 THEN
     RAISE EXCEPTION 'MARKETPLACE_PURGE_DAYS' USING ERRCODE = '22023';
   END IF;
   PERFORM 1 FROM crove_kernel.file f WHERE f.org_id = p_org_id AND f.id = p_file_id FOR UPDATE OF f;

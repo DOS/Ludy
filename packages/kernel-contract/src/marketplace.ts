@@ -218,11 +218,11 @@ export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeCo
 export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
 // Days after a marketplace connection is gone (disconnected, or its channel revoked) when what its poll brought in and no member ever imported (still waiting, skipped, or never read) is destroyed, the
 // original file and every read of it with it (#4284, ADR-0045 point 8; Lazada's terms ask for the platform's data to be destroyed within 14 days of revocation). The database
-// (crove_finance.marketplace_purge_*) accepts 1 to 14 only, so the job can never run past the term, and what a member imported is never touched. Seven days leave the member a week to import what
+// (crove_finance.marketplace_purge_*) accepts 7 to 14 only, so the job can never run past the term nor purge early, and what a member imported is never touched. Seven days leave the member a week to import what
 // waited, and the nightly run lands well inside the 14.
 export const MARKETPLACE_PURGE_GRACE_DAYS = 7;
 // Days a channel may stay `expired` (a refused token refresh: the seller's revocation on the platform looks the same) with no new authorization before it counts as revoked and the grace above starts.
-// `expired` alone never starts the clock: the seller may simply authorize again. The database accepts 1 to 90.
+// `expired` alone never starts the clock: the seller may simply authorize again. The database accepts 30 to 90.
 export const MARKETPLACE_PURGE_EXPIRED_DAYS = 30;
 
 // The posting of a stored settlement (#2516, ADR-0045 point 6): ONE general journal voucher per settlement, Dr 131 (the platform) / Cr 511, or the reverse when the refunds and the seller discounts

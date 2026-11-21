@@ -275,6 +275,8 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const id = await connection(o, 'shopee');
     const live = await connection(o, 'tiktok_shop');
     const imported = await polled(o, id, ['staged', 'imported']);
+    // Imported, then a later version of the file: any imported version books it, not only the newest.
+    const importedEarlier = await polled(o, id, ['imported', 'staged']);
     const held = await polled(o, id, ['staged']);
     const invoiced = await polled(o, id, ['staged']);
     const otherKind = await polled(o, id, ['staged'], { kind: 'bank_statement' });
@@ -286,7 +288,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
       [o.orgId, randomUUID(), invoiced],
     );
     await disconnect(o, id);
-    const protectedFiles = [imported, held, invoiced, otherKind, notCsv];
+    const protectedFiles = [imported, importedEarlier, held, invoiced, otherKind, notCsv];
     for (const f of protectedFiles) await age(o, f, 400);
     const keys = await Promise.all([...protectedFiles, stillThere].map(async (f) => (await fileRow(f))?.storage_key));
     expect(await run()).toMatchObject({ failed: 0, deleted: 0 });
@@ -367,26 +369,32 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect(await link(file)).toEqual([{ marketplace_connection_id: second, disconnected_at: null }]);
   });
 
-  it('leaves a file another table still points at: nothing of it is deleted, and it goes once the reference is gone', async () => {
+  it('leaves a file another table still points at, whatever order its foreign key lists the columns in: nothing of it is deleted, and it goes once the reference is gone', async () => {
     const o = await org();
     const id = await connection(o, 'shopee');
     const used = await polled(o, id, ['staged']);
+    const usedReversed = await polled(o, id, ['staged']);
     const free = await polled(o, id, ['staged']);
-    // A table that restricts the deletion of the file it names (a signing envelope or a post's media does the same).
+    // Tables that restrict the deletion of the file they name (a signing envelope or a post's media does the same); the second lists the key columns the other way round.
     await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES crove_kernel.file (org_id, id))');
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe_reversed (file_id uuid NOT NULL, org_id uuid NOT NULL, FOREIGN KEY (file_id, org_id) REFERENCES crove_kernel.file (id, org_id))');
     await rows('INSERT INTO public.purge_probe (org_id, file_id) VALUES ($1, $2)', [o.orgId, used]);
+    await rows('INSERT INTO public.purge_probe_reversed (file_id, org_id) VALUES ($1, $2)', [usedReversed, o.orgId]);
     await disconnect(o, id);
-    await age(o, used, GRACE + 1);
-    await age(o, free, GRACE + 1);
-    const usedKey = (await fileRow(used))?.storage_key as string;
+    for (const f of [used, usedReversed, free]) await age(o, f, GRACE + 1);
+    const keys = await Promise.all([used, usedReversed].map(async (f) => (await fileRow(f))?.storage_key as string));
     expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
     expect(await fileRow(free)).toBeUndefined();
-    expect(await fileRow(used)).toBeDefined();
-    expect(store.has(usedKey)).toBe(true);
-    expect(await worker.query('finance.marketplace_retention.key', { fileId: used, disconnected: true }, system(o))).toBeNull();
+    for (const [i, f] of [used, usedReversed].entries()) {
+      expect(await fileRow(f)).toBeDefined();
+      expect(store.has(keys[i] as string)).toBe(true);
+      expect(await worker.query('finance.marketplace_retention.key', { fileId: f, disconnected: true }, system(o))).toBeNull();
+    }
     await rows('DELETE FROM public.purge_probe WHERE file_id = $1', [used]);
-    expect(await run()).toMatchObject({ failed: 0, deleted: 1 });
+    await rows('DELETE FROM public.purge_probe_reversed WHERE file_id = $1', [usedReversed]);
+    expect(await run()).toMatchObject({ failed: 0, deleted: 2 });
     expect(await fileRow(used)).toBeUndefined();
+    expect(await fileRow(usedReversed)).toBeUndefined();
   });
 
   it('reads the key of a due file as not shared, nothing for a file that is not due, and stays inside its own org', async () => {
@@ -425,7 +433,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect(await versions(file)).toEqual([]);
   });
 
-  it('is the worker\'s alone: no other login, and no context that is not the worker as the system in its own org, reaches the functions; the grace is 1 to 14 days and the expiry 1 to 90; the rule itself can be called by no role', async () => {
+  it('is the worker\'s alone: no other login, and no context that is not the worker as the system in its own org, reaches the functions; the grace is 7 to 14 days and the expiry 30 to 90; the rule itself can be called by no role', async () => {
     const o = await org();
     const id = await connection(o, 'shopee');
     const file = await polled(o, id, ['staged']);
@@ -434,8 +442,8 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     // The list is the worker login without a context.
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [GRACE, EXPIRED])).rejects.toBeDefined();
     expect((await workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 1000)', [GRACE, EXPIRED])).rows.some((r) => r.file_id === file)).toBe(true);
-    for (const days of [0, 15, -1]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [days, EXPIRED])).rejects.toMatchObject({ code: '22023' });
-    for (const expired of [0, 91]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [GRACE, expired])).rejects.toMatchObject({ code: '22023' });
+    for (const days of [0, 1, 6, 15, -1]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [days, EXPIRED])).rejects.toMatchObject({ code: '22023' });
+    for (const expired of [0, 1, 29, 91]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [GRACE, expired])).rejects.toMatchObject({ code: '22023' });
     // key, apply and adopt need the system context of the file's own org: a bare worker login has none, and the application login is not the worker.
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_key($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
