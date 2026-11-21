@@ -163,12 +163,13 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     ).rejects.toMatchObject({ code: '22023' });
   });
 
-  it('stays fast on long hostile and ReDoS-shaped inputs', async () => {
+  it('stays fast and O(N) on long hostile, ReDoS-shaped, and ~100 KB multi-match/benign inputs', async () => {
     const hostile = [
       'a@'.repeat(2000),
       ('a@b' + '.'.repeat(50)).repeat(200),
       '1 '.repeat(4000),
       '0'.repeat(8000),
+      '1 '.repeat(5000) + '1px',
       'a.b.'.repeat(1500) + '@x',
       '('.repeat(1500) + '0912345678' + ')'.repeat(1500),
       '+'.repeat(1500) + '0912345678',
@@ -180,6 +181,60 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
       await detect(input);
     }
     expect(performance.now() - started).toBeLessThan(2000);
+
+    const emails100k = 'a@example.com, '.repeat(6700);
+    const prices100k = '100.000.000, '.repeat(7700);
+    const phones100k = '0912345678, '.repeat(8400);
+    const invoice99k = 'Ngày 21-11-2026 thanh toán 100.000.000 đ cho đơn hàng này.\n'.repeat(1500);
+
+    const tEmails = performance.now();
+    const detectedEmails = await detect(emails100k);
+    const emailsMs = performance.now() - tEmails;
+    expect(detectedEmails).toHaveLength(6700);
+    expect(emailsMs).toBeLessThan(2500);
+
+    const tPrices = performance.now();
+    expect(await detect(prices100k)).toEqual([]);
+    const pricesMs = performance.now() - tPrices;
+    expect(pricesMs).toBeLessThan(2500);
+
+    const tPhones = performance.now();
+    const detectedPhones = await detect(phones100k);
+    const phonesMs = performance.now() - tPhones;
+    expect(detectedPhones).toHaveLength(8400);
+    expect(phonesMs).toBeLessThan(2500);
+
+    const tInvoice = performance.now();
+    expect(await detect(invoice99k)).toEqual([]);
+    const invoiceMs = performance.now() - tInvoice;
+    expect(invoiceMs).toBeLessThan(2500);
+
+    const tRedactAscii = performance.now();
+    const redactedEmails = await redactSpans(
+      emails100k,
+      detectedEmails.map((r) => r.start_pos),
+      detectedEmails.map((r) => r.kind),
+      detectedEmails.map(() => MARK_BY_KIND.email),
+    );
+    const redactAsciiMs = performance.now() - tRedactAscii;
+    expect(redactedEmails).toBe('[đã ẩn: email], '.repeat(6700));
+    expect(redactAsciiMs).toBeLessThan(2500);
+
+    const vnMultiLine = 'Nguyễn Văn Ánh 📞 0912 345 678 😀.\r\n';
+    const vn91k = vnMultiLine.repeat(2100);
+    const vnDetected = await detect(vn91k);
+    expect(vnDetected).toHaveLength(2100);
+
+    const tRedactVn = performance.now();
+    const redactedVn = await redactSpans(
+      vn91k,
+      vnDetected.map((r) => r.start_pos),
+      vnDetected.map((r) => r.kind),
+      vnDetected.map(() => MARK_BY_KIND.phone),
+    );
+    const redactVnMs = performance.now() - tRedactVn;
+    expect(redactedVn).toBe('Nguyễn Văn Ánh 📞 [đã ẩn: số điện thoại] 😀.\r\n'.repeat(2100));
+    expect(redactVnMs).toBeLessThan(2500);
   });
 
   it('is immutable, parallel-safe SECURITY INVOKER with pinned search_path, narrow crove_tenant grant, and zero hardening violations', async () => {

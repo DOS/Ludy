@@ -64,6 +64,11 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     expected: [{ kind: 'email', matchText: '0912345678@congty.example' }],
   },
   {
+    name: 'preceding digit group separated by a space does not swallow numeric-local email',
+    text: 'Mã 1234 5678@x.example đã gửi.',
+    expected: [{ kind: 'email', matchText: '5678@x.example' }],
+  },
+  {
     name: 'email with punycode label on reserved example TLD',
     text: 'Liên hệ admin@xn--ng-jia.example để kiểm tra.',
     expected: [{ kind: 'email', matchText: 'admin@xn--ng-jia.example' }],
