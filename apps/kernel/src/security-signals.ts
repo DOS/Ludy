@@ -10,7 +10,7 @@
 // repeat interval. Messages hold ids and counts only: no email, name or token. The schema-change alerts also name the
 // database role, the command and the first changed object, never the statement text.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import { postMessage, type WebhookTarget } from './alert.ts';
 
 export const SECURITY_SWEEP_MS = 5 * 60_000;

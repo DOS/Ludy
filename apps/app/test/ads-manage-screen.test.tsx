@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdsCampaignDraftView, AdsLaunchView, AdsManageChangeView, AdsManageObjectView, AdsManageStateView, AdsManageSuggestion } from '@crove/kernel-contract';
+import type { AdsCampaignDraftView, AdsLaunchView, AdsManageChangeView, AdsManageObjectView, AdsManageStateView, AdsManageSuggestion } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 type Props = Record<string, unknown>;
@@ -46,8 +46,8 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 // Every button is recorded as it renders (its test id and its click), and every dialog (what it asks and what it does on its confirm).
-vi.mock('@crove/ui/components/button', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/ui/components/button')>();
+vi.mock('@ludy/ui/components/button', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/ui/components/button')>();
   const { createElement } = await import('react');
   return {
     ...real,

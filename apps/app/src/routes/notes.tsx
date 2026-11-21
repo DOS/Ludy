@@ -18,12 +18,12 @@ import {
   type NoteListView,
   type NoteSummary,
   type NotebookSummary,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-attachments.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';

@@ -14,8 +14,8 @@ import {
   type ExportPart,
   type ExportRecord,
   type ExportTable,
-} from '@crove/kernel';
-import { exportKey, sha256Hex, type Actor, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import { exportKey, sha256Hex, type Actor, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { exportAad, type ExportSealer } from './export-seal.ts';
 
 const SYSTEM: Actor = { type: 'system', component: 'org-export' };

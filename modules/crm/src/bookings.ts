@@ -26,10 +26,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { BOOKING_DEAL_LIST_MAX, GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingDealLink, zBookingDealUnlink, zBookingListQuery, zBookingMove, zDealBookingsQuery, zId, zonedDate, zoneOffsetMs, type BookingDealChanged, type BookingItem, type DealBookings, type Interval, type WorkingHours } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { busyOf, createMailMessage, workingHoursOf } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { BOOKING_DEAL_LIST_MAX, GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingDealLink, zBookingDealUnlink, zBookingListQuery, zBookingMove, zDealBookingsQuery, zId, zonedDate, zoneOffsetMs, type BookingDealChanged, type BookingItem, type DealBookings, type Interval, type WorkingHours } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { busyOf, createMailMessage, workingHoursOf } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { openDealsFor, suggestDeals } from './booking-deals.ts';
 
 const DAY_MS = 86_400_000;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPABILITIES, IMAGE_RULES, PROVIDERS } from '@crove/mod-social/contract';
+import { CAPABILITIES, IMAGE_RULES, PROVIDERS } from '@ludy/mod-social/contract';
 import { CROP_MAX_SIDE } from '../src/lib/social-crop.ts';
 import { FIX_LOW_QUALITY, FIX_MIN_SIDE, FIX_QUALITY, FIX_TYPE, firstFit, fixName, fixSteps, imageFix, isAnimated, refusals, replaceInChannels, replaceInEditable, replaceMedia, takesFixType, type FixStep } from '../src/lib/social-image-fix.ts';
 

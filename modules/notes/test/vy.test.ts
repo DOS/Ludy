@@ -7,7 +7,7 @@ import {
   zNoteSummarizeInput,
   zTodoAcceptSuggestions,
   zTodoSummary,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 
 const NOTE_ID = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
 const RUN_ID = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5c';

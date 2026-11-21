@@ -2,7 +2,7 @@
 // What the committed-spend line says for the server's figures (#3297): no cap at all, the account's line with the org's only when it adds something, and a room
 // below zero shown as the amount over the cap. Only the sign of a decimal string is read on the client; no amount is computed here.
 import { describe, expect, it } from 'vitest';
-import type { AdsCommitted } from '@crove/kernel-contract';
+import type { AdsCommitted } from '@ludy/kernel-contract';
 import { committedView, isBelowZero } from '../src/lib/ads-committed.ts';
 
 const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });

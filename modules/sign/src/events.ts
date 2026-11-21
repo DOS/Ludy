@@ -2,7 +2,7 @@
 // Hash-chained signing audit ledger for crove_sign.signing_event (#3323, ADR-0013). Every mutation on an envelope or
 // signer appends an event whose SHA-256 hash commits deterministically to the canonical event record and prev_event_hash.
 import { createHash } from 'node:crypto';
-import type { Database, SignActorType } from '@crove/db';
+import type { Database, SignActorType } from '@ludy/db';
 import type { Kysely } from 'kysely';
 
 export const SIGN_EVENT_TYPES = [

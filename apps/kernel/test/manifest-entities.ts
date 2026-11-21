@@ -2,7 +2,7 @@
 // entityProblems() is pure: manifest-entities.test.ts feeds it the commands' audit targets and planted mismatches;
 // manifest.db.test.ts adds the catalog: the columns of every table, the tables carrying the append-only trigger, and the
 // numbering calls of every trigger function. Each problem is one line naming what to change.
-import type { ModuleManifest } from '@crove/kernel-contract';
+import type { ModuleManifest } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';

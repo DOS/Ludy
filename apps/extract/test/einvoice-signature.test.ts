@@ -3,8 +3,8 @@
 // test trust store, except where a test checks the national roots shipped in apps/extract/trust.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { checkInvoice, SIGNATURE_REASONS as L10N_REASONS, SIGNATURE_STATUSES as L10N_STATUSES } from '@crove/l10n-vn';
-import { SIGNATURE_REASONS, SIGNATURE_STATUSES, zExtractedInvoice } from '@crove/extract-contract';
+import { checkInvoice, SIGNATURE_REASONS as L10N_REASONS, SIGNATURE_STATUSES as L10N_STATUSES } from '@ludy/l10n-vn';
+import { SIGNATURE_REASONS, SIGNATURE_STATUSES, zExtractedInvoice } from '@ludy/extract-contract';
 import { parseEInvoiceXml } from '../src/einvoice-xml.ts';
 import { chainTo, xmlDateTime } from '../src/einvoice-signature.ts';
 import { issue, signInvoice, testPki, TEST_SELLER_TAX_CODE } from './einvoice-signing-fixture.ts';
@@ -250,7 +250,7 @@ describe('e-invoice signature verification', () => {
     expect(xmlDateTime('15/09/2026')).toBeNull();
   });
 
-  it('keeps the status and reason lists of the contract and @crove/l10n-vn the same', () => {
+  it('keeps the status and reason lists of the contract and @ludy/l10n-vn the same', () => {
     expect([...SIGNATURE_STATUSES]).toEqual([...L10N_STATUSES]);
     expect([...SIGNATURE_REASONS]).toEqual([...L10N_REASONS]);
   });

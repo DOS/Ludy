@@ -10,10 +10,10 @@
 // with a link or a figure the line and the item do not hold, a message with a figure, link or address it was not given), the answer names the state (`ai`) and gives no suggestion; the
 // reorder draft then holds the fixed template, so the screen works as it does with AI off. A suggestion is kept for a while by its content, so reopening the screen does not pay for
 // the same answer twice. A failure is named, never quoted: neither the lines, the names nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@crove/agent';
-import type { MarketplaceSuggested, StockAiState, StockReorderDraft, StockSuggested } from '@crove/kernel-contract';
-import { sha256Hex } from '@crove/kernel-runtime';
-import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import type { MarketplaceSuggested, StockAiState, StockReorderDraft, StockSuggested } from '@ludy/kernel-contract';
+import { sha256Hex } from '@ludy/kernel-runtime';
+import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@ludy/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface StockAi {

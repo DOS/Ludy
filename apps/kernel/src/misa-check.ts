@@ -19,9 +19,9 @@ import {
   type CashVoucher,
   type PurchaseVoucher,
   type SalesVoucher,
-} from '@crove/mod-finance';
-import { accountParents, type MisaCheck, type MisaCheckAsk, type MisaGoodsCode } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/mod-finance';
+import { accountParents, type MisaCheck, type MisaCheckAsk, type MisaGoodsCode } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 export type MisaCheckQuery = <T>(name: string, input: unknown) => Promise<T>;
 

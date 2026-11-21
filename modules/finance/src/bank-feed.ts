@@ -18,9 +18,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedPullOutcome, zBankFeedHookSet, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordOutcome, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedHookCreated, type BankFeedHookStatus, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedPullOutcome, zBankFeedHookSet, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordOutcome, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedHookCreated, type BankFeedHookStatus, type BankFeedListedAccount, type BankImportResult } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
 import { bankAccount, feedCutover, ingestFeedLines } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

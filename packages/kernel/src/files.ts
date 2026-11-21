@@ -2,8 +2,8 @@
 // kernel.file.archive.record (the entries of a ZIP, #314).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ACCEPTED_ARCHIVE_TYPES, zId } from '@crove/kernel-contract';
-import { DomainError, GENERATION_PATTERN, contentGeneration, fileKey, type CommandContext } from '@crove/kernel-runtime';
+import { ACCEPTED_ARCHIVE_TYPES, zId } from '@ludy/kernel-contract';
+import { DomainError, GENERATION_PATTERN, contentGeneration, fileKey, type CommandContext } from '@ludy/kernel-runtime';
 
 // A file reference is the triple (storageKey, generation, sha256) of plan §7.6 (ADR-0013): generation is what the
 // store's put returned for the bytes it wrote.

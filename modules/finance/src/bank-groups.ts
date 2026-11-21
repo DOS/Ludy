@@ -12,10 +12,10 @@
 //   an edit of a posting.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankLookWhy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankLookWhy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { BANK_SUGGESTIONS_MAX, bankLineStates, bankLineView, findBankLines, lineMatchFor, readParties } from './bank-match.ts';
 import { classifyLine, invoiceKey, sharedInvoices, type Classified } from './domain/bank-groups.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';

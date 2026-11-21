@@ -5,7 +5,7 @@
 // CRM module, so it is checked through that module's query (a deployment without CRM cannot link one) and has no foreign key: modules name no other module's schema.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   zMeetingLinkAdd,
   zMeetingLinkRemove,
@@ -20,8 +20,8 @@ import {
   type MeetingOfTarget,
   type MeetingStatus,
   type MeetingVisibility,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { openMeeting } from './transcript.ts';
 

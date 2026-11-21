@@ -10,8 +10,8 @@
 // is upper-case words and a reason is a short code (the adapter made it), checked again here against what the database stores, and the screen renders both as text. A read that
 // failed leaves the last known state (a failed row of the ledger says so) and never errors the launch. The same answer twice writes nothing to the objects.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { stateReadKeyPrefix } from './launch-ledger.ts';
 import { requireSystem } from './launch-run.ts';
 

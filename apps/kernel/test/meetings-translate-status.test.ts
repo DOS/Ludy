@@ -2,7 +2,7 @@
 // The price check behind the transcript translation's cost estimate (E2, #3185): a price per million tokens is a decimal string compared as a decimal, so a tiny price still counts as set,
 // a zero or a malformed one does not, and the estimate's cost is a decimal string and never a JS number. A stand-in for the runtime answers the module's status.
 import { describe, expect, it } from 'vitest';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 import { transcriptTranslationStatusOf } from '../src/member-vy-ports.ts';
 
 const ID = '0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a10';

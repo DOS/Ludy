@@ -3,7 +3,7 @@
 // PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the second
 // argument of columns() classifies it. The title, body, tags (and a to-do's details and checklist) and their folded search words are a member's free text,
 // which may name people, so pii: audit rows keep a marker for them (auditValue), never the text.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const notesManifest = defineModule({
   id: 'notes',
@@ -62,6 +62,6 @@ export const notesManifest = defineModule({
     { type: 'notes.todo', table: 'todo', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo_list', table: 'todo_list', legalEntityScoped: false, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.notes,
 });

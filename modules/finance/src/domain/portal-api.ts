@@ -3,8 +3,8 @@
 // is parsed with numbers kept as their text, checked with loose shapes, and turned into the list the manual Excel import
 // reads (ExtractedPortalList), so checkPortalList and finance.portal_list.record treat both the same way.
 import { z } from 'zod';
-import { EXTRACT_LIMITS, zExtractedPortalList, type ExtractedPortalList, type PortalListSkipReason } from '@crove/extract-contract';
-import { parseTaxCode } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, zExtractedPortalList, type ExtractedPortalList, type PortalListSkipReason } from '@ludy/extract-contract';
+import { parseTaxCode } from '@ludy/l10n-vn';
 
 // What the person reads for PORTAL_LIST_TOO_LARGE, whichever cap stopped the list (#1938): the portal client's (rows,
 // pages or bytes of one answer, apps/kernel/src/tax-portal.ts) on the list step, the evidence file's size, or this

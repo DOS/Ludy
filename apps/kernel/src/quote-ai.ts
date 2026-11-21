@@ -9,9 +9,9 @@
 // When the org's switch is off nothing of the customer reaches the model and the answer says so (`words_off`). When the model is off, the AI budget is spent, the member's calls are too frequent, the
 // call fails or its answer is refused, the answer names the state (`ai`) and gives nothing to apply, so the editor works as it does with AI off. A failure is named, never quoted: neither the customer's
 // words nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader, type QuoteSuggestRequest } from '@crove/agent';
-import type { QuoteSuggested } from '@crove/kernel-contract';
-import type { QuoteSuggestSource } from '@crove/mod-crm';
+import { AiBudgetExhaustedError, type InboxReader, type QuoteSuggestRequest } from '@ludy/agent';
+import type { QuoteSuggested } from '@ludy/kernel-contract';
+import type { QuoteSuggestSource } from '@ludy/mod-crm';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface QuoteAi {

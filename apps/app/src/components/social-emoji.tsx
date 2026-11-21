@@ -2,7 +2,7 @@
 // the cursor. The character counters see them as the platform counts them, since they read the text itself.
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { insertText } from '../lib/social-draft.ts';
 
 export const EMOJI = [

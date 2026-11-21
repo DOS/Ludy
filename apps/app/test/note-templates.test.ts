@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { NOTE_BODY_MAX, NOTE_TEMPLATE_NAME_MAX, NOTE_TITLE_MAX, type NotesExport } from '@crove/kernel-contract';
+import { NOTE_BODY_MAX, NOTE_TEMPLATE_NAME_MAX, NOTE_TITLE_MAX, type NotesExport } from '@ludy/kernel-contract';
 import { computeLineDiff, computeNoteVersionDiff, starterNoteTemplates } from '../src/lib/note-templates.ts';
 import { notesMarkdown, type NotesExportWords } from '../src/lib/notes-export.ts';
 

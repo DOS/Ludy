@@ -2,12 +2,12 @@
 // Filter and sort bar for Tasks and Project boards (scope 'kernel.task', issue #2610).
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { SavedViewSort } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@crove/ui/components/popover';
+import type { SavedViewSort } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@ludy/ui/components/popover';
 import { TASK_STATUSES } from '../lib/agents.ts';
 import {
   EMPTY_TASK_FILTER,

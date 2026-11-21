@@ -5,9 +5,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { cutAt, startFromPost, type PostStart } from '../lib/ads-campaigns.ts';
 import { Empty, ErrorText, RowsSkeleton } from './ui.tsx';

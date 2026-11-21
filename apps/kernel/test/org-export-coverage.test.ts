@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The reading behind the coverage check of offboarding.db.test.ts (#3201), without a database: which tables the export reads, and the messages on planted catalogs.
 import { describe, expect, it } from 'vitest';
-import { EXPORT_TABLES } from '@crove/kernel';
+import { EXPORT_TABLES } from '@ludy/kernel';
 import { COVERED_SCHEMAS, exportCoverageProblems, exportedTables, omitProblems } from './org-export-coverage.ts';
 
 describe('the tables the owner export contains (#3201)', () => {

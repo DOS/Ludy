@@ -22,7 +22,7 @@ import {
   type ExtractClient,
   type ExtractFailure,
   type ExtractedPortalList,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   MAX_IMPORT_BYTES,
   MAX_PORTAL_LISTS_PER_PERIOD,
@@ -35,10 +35,10 @@ import {
   type PortalListDirection,
   type PortalListView,
   type PortalReconciliation,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { isCalendarDate, parseTaxCode, toMoney, money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { isCalendarDate, parseTaxCode, toMoney, money } from '@ludy/l10n-vn';
 import { portalStatus } from './domain/portal-status.ts';
 import { PORTAL_SYNC_CONTENT_TYPE, readSyncedList } from './domain/portal-api.ts';
 import { reconcilePortalList, type CroveInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';

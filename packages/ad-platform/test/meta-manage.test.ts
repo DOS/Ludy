@@ -4,7 +4,7 @@
 // from Meta's documentation, so these prove the shape of the code, not Meta's behaviour.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { AdPlatformError, managerOf, type ActivateTarget, type AdActivator } from '../src/index.ts';
 import { MetaAdManager } from '../src/meta-manage.ts';
 

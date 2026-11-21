@@ -5,7 +5,7 @@
 // another's view private, which would hide it from them). At most SAVED_VIEW_LIMIT per member and scope, counted under a
 // lock; the table's restrictive policies hold the same rules in the database, and a view goes with the membership.
 //
-// A view stores a Filter AST (@crove/kernel-contract saved-view.ts), never SQL. Saving checks it against the scope
+// A view stores a Filter AST (@ludy/kernel-contract saved-view.ts), never SQL. Saving checks it against the scope
 // registry: an unknown scope, field or operator, a value of the wrong kind or a repeated condition is a 422. Applying a
 // view is the list's own query with the AST turned into a condition (saved-view-filter.ts), so a view only narrows what
 // the member's row-level security lets them read. No agent writes or reads one.
@@ -28,9 +28,9 @@ import {
   type FilterAst,
   type SavedView,
   type SavedViewSort,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most views one list answers: the viewer's own and the shared ones of the scope.

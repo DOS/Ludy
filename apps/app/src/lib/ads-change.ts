@@ -3,7 +3,7 @@
 // approval" list and the Inbox card of an ads proposal word the same change the same way, from the structured change the server
 // read from the proposal's payload (ads.write.state, ads.proposal.change), never from the Vietnamese title the proposal was
 // written with. The amounts are decimal strings and go through the money formatter, never a number.
-import type { AdsChange } from '@crove/kernel-contract';
+import type { AdsChange } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { toUnits } from './decimal.ts';
 

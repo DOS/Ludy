@@ -6,9 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { upsertIdentity } from '@crove/kernel';
-import { isVietnamHoliday, zonedDate, zonedInstant, type Deal, type EventType, type PipelineStage, type Quote } from '@crove/kernel-contract';
-import type { PostView } from '@crove/mod-social';
+import { upsertIdentity } from '@ludy/kernel';
+import { isVietnamHoliday, zonedDate, zonedInstant, type Deal, type EventType, type PipelineStage, type Quote } from '@ludy/kernel-contract';
+import type { PostView } from '@ludy/mod-social';
 import { bookingRequest } from '../src/booking-page.ts';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 

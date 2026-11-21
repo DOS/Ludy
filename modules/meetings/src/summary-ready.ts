@@ -16,9 +16,9 @@
 //
 // Push is not part of this slice: the browser push of the app belongs to Social (its own subscription table and sender), so a Meetings notice has no push path yet (follow-up).
 import { sql } from 'kysely';
-import { createMailMessage, notifyMembers, outboxEvent, uploaderEntity } from '@crove/kernel';
-import { SUMMARY_READY_EVENT, SUMMARY_READY_KIND, SUMMARY_READY_MAIL_SOURCE, SUMMARY_READY_MAIL_TEMPLATE, zSummaryReadyDispatch, zSummaryReadyEvent, zSummaryReadyMail, zSummaryReadyRef } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { createMailMessage, notifyMembers, outboxEvent, uploaderEntity } from '@ludy/kernel';
+import { SUMMARY_READY_EVENT, SUMMARY_READY_KIND, SUMMARY_READY_MAIL_SOURCE, SUMMARY_READY_MAIL_TEMPLATE, zSummaryReadyDispatch, zSummaryReadyEvent, zSummaryReadyMail, zSummaryReadyRef } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // The mail's subject, one line, fixed: no title.

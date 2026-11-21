@@ -6,7 +6,7 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { AdPlatformError, MetaAdWriter, META_WRITE_PROVIDER } from '../src/index.ts';
 
 const NOW = new Date('2026-11-03T08:00:00Z');

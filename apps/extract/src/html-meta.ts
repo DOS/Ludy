@@ -3,7 +3,7 @@
 // <article> with the most text, else the <main> with the most, else the body, without menus, headers, footers, forms or
 // embeds. Plain scanning: no DOM, no scripts, no styles, no external resources. The text is decoded from the page's
 // charset, entities are resolved, whitespace collapsed and every field capped.
-import { EXTRACT_LIMITS, type ExtractedPage } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, type ExtractedPage } from '@ludy/extract-contract';
 
 export class HtmlMetaError extends Error {}
 

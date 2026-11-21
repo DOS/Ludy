@@ -5,10 +5,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { MORNING_DEFAULT_MINUTE, MORNING_KIND, type MorningState } from '@crove/kernel-contract';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
+import { MORNING_DEFAULT_MINUTE, MORNING_KIND, type MorningState } from '@ludy/kernel-contract';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';

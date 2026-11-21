@@ -24,14 +24,14 @@ import {
   type QuoteSuggested,
   type QuoteSummary,
   type SignEnvelopeBySourceItem,
-} from '@crove/kernel-contract';
-import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@crove/ui/components/dropdown-menu';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { computeLineTotals, sumLineTotals } from '@ludy/l10n-vn';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@ludy/ui/components/dropdown-menu';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput, hasInvalidDate } from './date-input.tsx';
 import { DealOrders, QuoteDecisionPanel, canDecideQuote, type QuoteDecisionMode } from './deal-orders.tsx';
@@ -47,7 +47,7 @@ import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 const refreshQuotes = refreshQuoteQueries;
 
-// The rates a line may carry (the set of @crove/l10n-vn's line rule); the server checks them again.
+// The rates a line may carry (the set of @ludy/l10n-vn's line rule); the server checks them again.
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
 
 interface LineDraft {

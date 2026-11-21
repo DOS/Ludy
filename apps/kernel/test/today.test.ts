@@ -3,9 +3,9 @@
 // and merges, orders and checks what they answer. That each line's read scopes to the member is that line's own test;
 // here the reads are stubs.
 import { describe, expect, it } from 'vitest';
-import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { zTodayList } from '@crove/kernel-contract';
-import { TODAY_READS, todayQuery } from '@crove/kernel';
+import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
+import { zTodayList } from '@ludy/kernel-contract';
+import { TODAY_READS, todayQuery } from '@ludy/kernel';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',

@@ -23,10 +23,10 @@ import {
   type MarketplaceColumnsCheckQueued,
   type MarketplaceColumnsFile,
   type MarketplaceColumnsStatus,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 // The spreadsheets a report arrives as (an .xlsx may be stored as a ZIP), as the report readers take them.

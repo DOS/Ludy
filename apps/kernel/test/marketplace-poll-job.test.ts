@@ -3,9 +3,9 @@
 // a malformed amount or a masked-looking value ends as the state `not_recognized` with the cursor where it was and nothing written; the rows of a page are counted before any is built, so a few lines with
 // huge quantities end as `too_large`; a provider's own text never reaches the log. The real database path is in marketplace-connection.db.test.ts.
 import { describe, expect, it, vi } from 'vitest';
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { MARKETPLACE_CSV_MAX_ROWS, MarketplaceProviderError, type MarketplaceOrderPage, type MarketplaceProvider } from '@crove/mod-finance';
-import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { MARKETPLACE_CSV_MAX_ROWS, MarketplaceProviderError, type MarketplaceOrderPage, type MarketplaceProvider } from '@ludy/mod-finance';
+import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_HOSTS, lazadaMarketplace } from '../src/marketplace-lazada.ts';
 import { MARKETPLACE_MAX_PAGES_PER_RUN, marketplaceJobKind, runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob } from '../src/marketplace-poll-job.ts';
@@ -326,7 +326,7 @@ describe('the job payload is closed, and a test only records its state (#4238)',
     });
     expect(await thrown.run()).toEqual({ state: 'unreachable' });
     expect(JSON.stringify(thrown.executed)).not.toContain('SECRET-TOKEN');
-    const { DomainError } = await import('@crove/kernel-runtime');
+    const { DomainError } = await import('@ludy/kernel-runtime');
     const left = testSetup({
       credential: async () => {
         throw new DomainError('CHANNEL_OWNER_LEFT', 409, 'x');
@@ -390,7 +390,7 @@ describe('a connection whose polls fail backs off (#4238)', () => {
 
 describe('every page asks again whether the credential may still be used (#4238)', () => {
   it('ends the run, recording `credentials`, when the connection stops being usable between two pages', async () => {
-    const { DomainError } = await import('@crove/kernel-runtime');
+    const { DomainError } = await import('@ludy/kernel-runtime');
     let opens = 0;
     let asked = 0;
     const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
@@ -527,7 +527,7 @@ describe('the worker finishes a seller\'s authorization (#4238)', () => {
   it('says `superseded` when the connection or the code changed since the read, and records a failed outcome when the command refuses', async () => {
     const superseded = setupAuthorize({ complete: async () => ({ recorded: false }) });
     expect(await superseded.run()).toEqual({ state: 'superseded' });
-    const { DomainError } = await import('@crove/kernel-runtime');
+    const { DomainError } = await import('@ludy/kernel-runtime');
     const refused = setupAuthorize({
       complete: async () => {
         throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'x');

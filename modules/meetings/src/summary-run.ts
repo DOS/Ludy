@@ -3,8 +3,8 @@
 // of a draft. The copy of a finished result into the draft, which does, is in summary.ts. A feature that must not cut off a paid transcription asks the kernel
 // (kernel.member_vy.run.live) instead of reading the private rows itself.
 import { sql } from 'kysely';
-import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 

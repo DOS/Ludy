@@ -18,10 +18,10 @@
 // org hid does not wait. The instant is the time Ludy stored the message (`received_at`), never the sender's own clock: a mail whose Date header is years old, or one dated in the
 // future, cannot make a thread look older than it is or hide it. Known limit: a person's "resolved" is not an answer, so a customer who writes again to a thread that was resolved
 // without any reply in the inbox (answered by phone) makes it `new` again and the wait counts from the earlier message that was already handled.
-import { zConversationUnansweredSignals, zConversationUnansweredSignalsInput, type ConversationUnansweredSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { zConversationUnansweredSignals, zConversationUnansweredSignalsInput, type ConversationUnansweredSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 

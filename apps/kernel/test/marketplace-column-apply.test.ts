@@ -4,9 +4,9 @@
 // not, a mapping the check refuses on this file reads nothing, and a sandbox that fails leaves the file as it was. The lookup itself and the staging are CI's database test.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMIT_RETRIES, type ExtractClient } from '@crove/extract-contract';
-import type { Runtime } from '@crove/kernel-runtime';
-import { readWithSavedColumns, type SavedMapping } from '@crove/mod-finance';
+import { EXTRACT_LIMIT_RETRIES, type ExtractClient } from '@ludy/extract-contract';
+import type { Runtime } from '@ludy/kernel-runtime';
+import { readWithSavedColumns, type SavedMapping } from '@ludy/mod-finance';
 import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { inProcessExtract } from './extract-service.ts';
 

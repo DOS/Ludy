@@ -2,7 +2,7 @@
 // The mail of a customer's overdue invoices (#2488, template finance.payment_reminder): finance.payment_reminder.send stored the facts and
 // the words a person approved as the mail's merge data; the worker renders them here. The Reply-To is the org's inbound address when the
 // deployment receives mail, so the customer's answer reaches the Inbox like any other mail.
-import { PAYMENT_REMINDER_TEMPLATE, renderPaymentReminderMail } from '@crove/mod-finance';
+import { PAYMENT_REMINDER_TEMPLATE, renderPaymentReminderMail } from '@ludy/mod-finance';
 import type { MailTemplate } from './mail-queue.ts';
 
 export { PAYMENT_REMINDER_TEMPLATE };

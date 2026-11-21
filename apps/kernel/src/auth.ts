@@ -3,9 +3,9 @@
 // local; the session status check runs later, in the request transaction (Runtime + SessionStatusSource), and R3
 // commands confirm the token live with Supabase Auth when the session check does not read Auth (jwt).
 import { createRemoteJWKSet, decodeJwt, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import type { Db } from '@crove/db';
-import { resolveIdentity } from '@crove/kernel';
-import { DomainError, toDomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { resolveIdentity } from '@ludy/kernel';
+import { DomainError, toDomainError, type Aal, type UserActor } from '@ludy/kernel-runtime';
 import type { Config } from './config.ts';
 import { createAccountEmailAccess, createEmailAccess } from './auth-access.ts';
 import { createLiveCheck, type LiveCheck } from './sessions.ts';

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The kernel's AiMeter (#2382): what @crove/agent's metered() asks before a model call and tells after it, answered by
+// The kernel's AiMeter (#2382): what @ludy/agent's metered() asks before a model call and tells after it, answered by
 // the database (packages/kernel/src/ai-budget.ts). Two authorities, since the API cannot enter the system context: the
 // worker's calls run as the system (an extraction), the API's as the member who asked (a draft, a rewrite, a booking
 // suggestion). Both write the same rows, ids and counts only: the tokens the provider reported and the estimated cost.
@@ -7,9 +7,9 @@
 // A refused check throws AiBudgetExhaustedError; the caller turns it into "Vy đã hết ngân sách tháng này" (the API) or
 // keeps the work for later (the worker). A failure to ask the database is the caller's to handle too: the call is not
 // made, since an unmetered call is worse than a retried one.
-import { AiBudgetExhaustedError, aiCost, type AiCall, type AiMeter, type AiUsage } from '@crove/agent';
-import type { AiBudgetCheck } from '@crove/kernel';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import { AiBudgetExhaustedError, aiCost, type AiCall, type AiMeter, type AiUsage } from '@ludy/agent';
+import type { AiBudgetCheck } from '@ludy/kernel';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 
 export interface AiPrice {
   inputPerMTok: string;

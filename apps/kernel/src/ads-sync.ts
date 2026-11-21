@@ -9,12 +9,12 @@
 // kernel.channel.credential refuses once the member who connected the account may no longer use it, or the connection is
 // no longer active: the sync then marks the connection expired, so the hourly sweep skips it and an owner or admin connects
 // it again, rather than failing every hour. The platform's own answer to a refused token does the same.
-import { AdPlatformError, type AdDailyRow, type AdPlatform } from '@crove/ad-platform';
-import { settleBefore, syncWindow, todayIn } from '@crove/mod-ads';
+import { AdPlatformError, type AdDailyRow, type AdPlatform } from '@ludy/ad-platform';
+import { settleBefore, syncWindow, todayIn } from '@ludy/mod-ads';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { ADS_MAX_ROWS_PER_RUN, ADS_SYNC_RUN_DAYS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { ADS_MAX_ROWS_PER_RUN, ADS_SYNC_RUN_DAYS } from '@ludy/kernel-contract';
 
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 // Days one record command covers at most: a month or so of a large account stays well under its row limit.

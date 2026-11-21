@@ -1,7 +1,7 @@
 // Asking for a journal entry reversal from the journal screen, and showing reversal proposals (#165). The server
 // checks every rule again (kernel.proposal.request, finance.journal.prepare_reversal, then the approval); these
 // helpers only keep the screens from offering what the server will refuse and explain its refusals.
-import { isCalendarDate } from '@crove/kernel-contract';
+import { isCalendarDate } from '@ludy/kernel-contract';
 import type { Locale } from '../i18n/locale.ts';
 import type { Translate } from '../i18n/runtime.ts';
 import { describeError } from './errors.ts';

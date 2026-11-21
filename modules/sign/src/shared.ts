@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Shared validation, coordinate normalization, file lookup, and envelope send helpers for @crove/mod-sign.
+// Shared validation, coordinate normalization, file lookup, and envelope send helpers for @ludy/mod-sign.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
+import type { MemberRole } from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
 import {
   SIGN_MAX_DETECTED_TAGS,
   SIGN_MAX_PAGES,
@@ -17,8 +17,8 @@ import {
   type SignDetectedTag,
   type SignSharedKeyTerm,
   type SignSharedSummary,
-} from '@crove/kernel-contract';
-import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { isHrPrivilegedRole } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';

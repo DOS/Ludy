@@ -27,10 +27,10 @@ import {
   type MeetingPlatformErrorCode,
   type MeetingPlatformProvider,
   type TranscriptSegmentInput,
-} from '@crove/kernel-contract';
-import type { MeetingPlatformAdapter, MeetingPlatformDownload, MeetingPlatformTranscript } from '@crove/channel';
-import { MeetingPlatformError } from '@crove/channel';
-import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MeetingPlatformAdapter, MeetingPlatformDownload, MeetingPlatformTranscript } from '@ludy/channel';
+import { MeetingPlatformError } from '@ludy/channel';
+import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@ludy/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
 import { extractAudioFromVideo, type MediaAudioExtractor } from './meetings-extract.ts';
 import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './meetings-measure.ts';

@@ -1,6 +1,6 @@
 // The VAT working screen's period picker (issue #316).
 import { describe, expect, it } from 'vitest';
-import { VAT_PERIOD_PATTERN } from '@crove/kernel-contract';
+import { VAT_PERIOD_PATTERN } from '@ludy/kernel-contract';
 import { canMarkFiled, canMarkPayment, carriedOutOf, deductAmount, deductParams, defaultPeriod, periodKey, roundDong, switchKind, vatResultOf, wholeDong, yearOptions } from '../src/lib/vat.ts';
 
 describe('VAT period picker', () => {

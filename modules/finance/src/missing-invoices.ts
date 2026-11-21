@@ -14,10 +14,10 @@
 // worker). The client company is the org itself: Crove keeps one org per company the firm keeps books for.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zVatPeriod } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { zId, zVatPeriod } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { reconcilePeriod } from './portal-list.ts';
 import { defaultLegalEntityId, resolveLegalEntity } from './legal-entity.ts';
 import { vatPeriod } from './domain/vat-return.ts';

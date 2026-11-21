@@ -11,8 +11,8 @@
 // task points at the post (its source ref), whose page answers 404 to a member who may not see it, and the post
 // page's review panel shows the findings themselves to those who may (social.post.pre_review, channel-scoped).
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, type AgentProgram, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, type AgentProgram, type CommandContext } from '@ludy/kernel-runtime';
 
 export const CONTENT_MANAGER_TEMPLATE = 'social.content_manager';
 // Tasks one run reviews at most; the rest wait for the next run.

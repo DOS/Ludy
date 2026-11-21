@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { CommandContext } from '@crove/kernel-runtime';
+import type { CommandContext } from '@ludy/kernel-runtime';
 import { acquireAdvisoryXactLock, advisoryLockKey } from '../src/advisory-lock.ts';
 
 describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {

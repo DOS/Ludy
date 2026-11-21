@@ -6,7 +6,7 @@
 // connection's secret opens nothing of the other's. The kernel never opens either secret on the API side; the writer is called
 // by a job or a command that was handed the opened one.
 import { createHash, randomBytes } from 'node:crypto';
-import type { ConnectedAccount } from '@crove/channel';
+import type { ConnectedAccount } from '@ludy/channel';
 import { AdPlatformError, SANDBOX_CURRENCIES, type SandboxCurrency } from './index.ts';
 import {
   AD_WRITER_OBJECTIVES,

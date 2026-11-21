@@ -2,9 +2,9 @@
 // The pause the revoke sweep makes before it revokes (W2-4a), without a database: how long one try may spend, and what happens when the pause fails on the obligation's
 // last try. The commands are stand-ins that answer as the real ones do; the database side of the same flow is in ads.db.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AdRevoker } from '@crove/ad-platform';
-import type { Runtime } from '@crove/kernel-runtime';
-import type { PauseBegin } from '@crove/mod-ads';
+import type { AdRevoker } from '@ludy/ad-platform';
+import type { Runtime } from '@ludy/kernel-runtime';
+import type { PauseBegin } from '@ludy/mod-ads';
 import { PAUSE_BUDGET_MS, pausedFirst, type AdsRevokeDeps } from '../src/ads-revoke.ts';
 
 const ORG = '0198a3b4-0000-7000-8000-000000000001';

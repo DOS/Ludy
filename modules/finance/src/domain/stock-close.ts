@@ -6,7 +6,7 @@
 // - The entry credits each stock account (156 or a sub-account of it) with what left its items and debits 632 with the same in total. What came back (a return, a reversed sale)
 //   is negative cost: the sides swap for that account, and 632 takes what is left over, so the entry always balances.
 // - A month cannot close while any item is below zero at its end (a sale entered before the purchase): the items are named so a person can enter the purchase or count.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { monthFigures, type CostMove, type MonthFigures, type OpeningBalance } from './stock-cost.ts';
 
 // The advisory lock every writer of a move of an entity takes shared and a close takes alone, so a close reads every move that committed before it and none is written meanwhile.

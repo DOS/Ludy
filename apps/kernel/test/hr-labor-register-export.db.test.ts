@@ -13,13 +13,13 @@ import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrDeclarationDocument, HrDepartmentWritten, HrLaborCheckResult, HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { PAYROLL_RULES } from '@crove/l10n-vn';
-import { LABOR_REGISTER_ERASED_PLACEHOLDER, hrCommands, hrQueries, type HrLaborCheckSnapshot } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { HrDeclarationDocument, HrDepartmentWritten, HrLaborCheckResult, HrRunSheet, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { PAYROLL_RULES } from '@ludy/l10n-vn';
+import { LABOR_REGISTER_ERASED_PLACEHOLDER, hrCommands, hrQueries, type HrLaborCheckSnapshot } from '@ludy/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { loadConfig } from '../src/config.ts';
@@ -64,8 +64,8 @@ function zipEntry(zip: Uint8Array, name: string): string | null {
   return null;
 }
 
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
 const setRuleStatus = (status: 'confirmed' | 'commentary') => {

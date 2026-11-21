@@ -3,10 +3,10 @@
 // statement that nothing has happened yet. It reads the proposal's stored payload (kernel.inbox.get, `engage`) and renders every value as text, never as markup. Approve and Reject are the page's own buttons.
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Card } from '@crove/ui/components/card';
+import { Badge } from '@ludy/ui/components/badge';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
-import type { EngageProposalView } from '@crove/kernel-contract';
+import type { EngageProposalView } from '@ludy/kernel-contract';
 
 // The screen where the thing the AI asked about can be seen, when there is one.
 function screenOf(kind: string, fields: readonly { key: string; value: string }[]): { to: 'social' | 'ads' | 'bookings'; postId?: string; label: 'engageOpenPost' | 'engageOpenAds' | 'engageOpenBookings' } | null {

@@ -15,10 +15,10 @@
 // - amounts are not here at all: the draft's own check computes them from the quantities and prices a person saves.
 // When the model is off, the AI budget is spent, the member's calls are too frequent, the call fails or its answer is refused, the answer names the state (`ai`) and gives nothing to fill in,
 // so the form works as it does with AI off. A failure is named, never quoted: neither the text nor the model's answer is logged.
-import { AiBudgetExhaustedError, EINVOICE_DRAFT_TEXT_MAX, type EInvoiceDraftRequest, type InboxReader } from '@crove/agent';
-import type { EInvoiceSuggestInput, EInvoiceSuggested } from '@crove/kernel-contract';
-import { parseTaxCode, salesVatRatesOn } from '@crove/l10n-vn';
-import type { EInvoiceSuggestParty, EInvoiceSuggestSource, RateCount } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, EINVOICE_DRAFT_TEXT_MAX, type EInvoiceDraftRequest, type InboxReader } from '@ludy/agent';
+import type { EInvoiceSuggestInput, EInvoiceSuggested } from '@ludy/kernel-contract';
+import { parseTaxCode, salesVatRatesOn } from '@ludy/l10n-vn';
+import type { EInvoiceSuggestParty, EInvoiceSuggestSource, RateCount } from '@ludy/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface EInvoiceAi {

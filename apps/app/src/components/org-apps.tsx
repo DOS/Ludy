@@ -7,10 +7,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { APP_IDS, isKnownModule, modulesOfApp, type AppId } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import { APP_IDS, isKnownModule, modulesOfApp, type AppId } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';

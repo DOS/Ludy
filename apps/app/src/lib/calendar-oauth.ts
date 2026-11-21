@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Small facts about the calendar providers the screens need (Meetings B3, #3167): which OAuth dialog a stored connection belongs to, and whether an answer that came back through the
 // address bar means the member's Microsoft tenant needs its administrator to allow the app first.
-import type { CalendarOAuthProvider } from '@crove/kernel-contract';
+import type { CalendarOAuthProvider } from '@ludy/kernel-contract';
 
 // The OAuth provider id of the connect dialog for a stored connection's provider.
 export function oauthProviderOf(provider: string): CalendarOAuthProvider | null {

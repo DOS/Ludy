@@ -19,9 +19,9 @@ import {
   zSignTemplateUpdateInput,
   type zSignTemplateDirectLinkDetail,
   type zSignTemplateDirectLinkSummary,
-} from '@crove/kernel-contract';
-import { tableWrite } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { tableWrite } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';

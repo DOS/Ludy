@@ -3,7 +3,7 @@
 // (the procedure and its input with the idempotency key); the checks of a typed budget and end date; and the words for the state of a change, why one did not go through and the
 // refusals of the server, in both languages.
 import { describe, expect, it, vi } from 'vitest';
-import type { AdsManageChangeView, AdsManageObjectView, AdsManageStateView, AdsManageSuggestion } from '@crove/kernel-contract';
+import type { AdsManageChangeView, AdsManageObjectView, AdsManageStateView, AdsManageSuggestion } from '@ludy/kernel-contract';
 import { catalog, translatorFor } from '../src/i18n/runtime.ts';
 import {
   budgetInput,

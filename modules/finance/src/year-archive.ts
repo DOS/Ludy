@@ -11,9 +11,9 @@
 // The package's parts are content-addressed blobs under archive/<org_id>/<year>/ (never listed, never deleted by Crove).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zArchiveYear, type YearArchive, type YearArchives } from '@crove/kernel-contract';
-import { DomainError, archiveKey, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zArchiveYear, type YearArchive, type YearArchives } from '@ludy/kernel-contract';
+import { DomainError, archiveKey, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 // A request the worker has not recorded within this long is shown as failed and may be asked again.

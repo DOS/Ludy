@@ -2,7 +2,7 @@
 // The seller's authorization of a Lazada connection (#2524, S2b = #4238): the address of Lazada's own consent page and the trade of the code it returns for the token pair. It adds the two optional
 // methods of the port to the Lazada provider; the API calls only `authorizeUrl` (no secret involved), the worker calls `authorize` with the sealed secret and the code. The token API itself is
 // worker 3's module (marketplace-lazada-token.ts); this file holds no call of its own. The state a person's browser carries is made and checked by the finance commands, never here.
-import type { MarketplaceAuthorizeResult, MarketplaceProvider } from '@crove/mod-finance';
+import type { MarketplaceAuthorizeResult, MarketplaceProvider } from '@ludy/mod-finance';
 import { pickAllowed, type Fetch } from './marketplace-adapter-kit.ts';
 import { createLazadaToken, LAZADA_AUTH_HOST } from './marketplace-lazada-token.ts';
 

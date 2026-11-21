@@ -2,7 +2,7 @@
 // The biên bản page of a meeting (Meetings A4, #3162): what the page says, worked out in code from the meeting row and the PUBLISHED result. Nothing here comes from the model
 // except the text of the sections, the conclusions and the action titles the recorder read and shared; the date, the attendees, the owners and the due dates come from the meeting
 // (its start, its readers, the attendee code matched, the date code parsed), and the layout is the component's.
-import { textToSections, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@crove/kernel-contract';
+import { textToSections, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@ludy/kernel-contract';
 
 // A day and a time as Vietnamese offices write them, in Vietnam time whatever the browser's zone is.
 export interface VnMoment {

@@ -17,7 +17,7 @@ import {
   uploadAfterLive,
   type ChunkStore,
   type RecordingMeta,
-} from '@crove/meeting-recorder';
+} from '@ludy/meeting-recorder';
 import { capturePlan } from './capture-plan.ts';
 import { createClient, LudyError, type Client } from './api.ts';
 import { consentBlocker, type ConsentMethod } from './consent.ts';

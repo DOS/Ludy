@@ -2,7 +2,7 @@
 // replace each target's through `social.queue.set`. Before the copy the confirmation says, per target, how many of its
 // queued posts that set places again; this runs the set's own placement (placeQueued, retime) over the target's posts
 // as the post list answers them, so the count is the one the server reaches unless the queue changes meanwhile.
-import { placeQueued, retime, type QueueSpec } from '@crove/mod-social/contract';
+import { placeQueued, retime, type QueueSpec } from '@ludy/mod-social/contract';
 
 // The module's MOVABLE and SLOT_FREED (variants.ts): variants a queue edit may move, and those whose slot is free again.
 const MOVABLE: ReadonlySet<string> = new Set(['draft', 'in_review', 'changes_requested', 'rejected', 'approved', 'scheduled', 'paused']);

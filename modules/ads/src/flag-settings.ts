@@ -4,9 +4,9 @@
 // admins read and set them; a threshold the org never set is `null` and the default of flags.ts applies, so a safer default reaches every org
 // that left it. Changing a threshold only changes which flags the rules raise: it moves no money and changes no campaign (R1, internal).
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAdsFlagSetting, type AdsFlagSettings } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAdsFlagSetting, type AdsFlagSettings } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { DEFAULT_FLAG_THRESHOLDS, type FlagSetting } from './flags.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

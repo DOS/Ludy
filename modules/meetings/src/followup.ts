@@ -11,7 +11,7 @@
 // published again since. The audit names counts and ids, never an address or a word.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   FOLLOWUP_CLOSING_MAX,
   FOLLOWUP_GREETING_MAX,
@@ -35,9 +35,9 @@ import {
   type FollowupSent,
   type FollowupTextProblem,
   type FollowupWords,
-} from '@crove/kernel-contract';
-import { createMailMessage, mailAddressHash } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { createMailMessage, mailAddressHash } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { lockFollowup } from './followup-erase.ts';
 import { recorderMeeting } from './results.ts';
 import { vnDay } from './retention.ts';

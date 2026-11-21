@@ -5,10 +5,10 @@
 // *Gộp lại* reverses it: back to the text as it was when nothing was changed since, else the parts joined again.
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { cn } from '@crove/ui/lib/utils';
-import { THREAD_PARTS_MAX, THREAD_SPLIT_PROVIDERS, firstCommentOf, isProvider, joinThread, splitThread, threadPartsOf, type ThreadSplit } from '@crove/mod-social/contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { cn } from '@ludy/ui/lib/utils';
+import { THREAD_PARTS_MAX, THREAD_SPLIT_PROVIDERS, firstCommentOf, isProvider, joinThread, splitThread, threadPartsOf, type ThreadSplit } from '@ludy/mod-social/contract';
 
 // The part of a channel's edit the split changes.
 export interface SplitValue {

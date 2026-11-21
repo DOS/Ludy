@@ -3,9 +3,9 @@
 // new file, so the original stays untouched and nothing is drawn on the server. Owners and admins edit; everyone reads.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { SOCIAL_WATERMARK_CORNERS, type MemberRole, type SocialWatermarkCorner } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { SOCIAL_WATERMARK_CORNERS, type MemberRole, type SocialWatermarkCorner } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];

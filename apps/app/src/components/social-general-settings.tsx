@@ -6,7 +6,7 @@
 // The cards stay mounted while folded, so a half-typed setting is kept.
 import { useId, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 
 // The width at which the page has two columns (Tailwind's lg).
 const WIDE = '(min-width: 1024px)';

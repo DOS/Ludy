@@ -5,12 +5,12 @@
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MeetingLink } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import type { MeetingLink } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect } from '@ludy/ui/components/native-select';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ErrorText } from './ui.tsx';

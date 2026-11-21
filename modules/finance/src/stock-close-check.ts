@@ -3,9 +3,9 @@
 // reversal entry takes back what the entry it reverses posted, so it counts against the same balance. The answer is a warning for the screen and never blocks finance.stock.prepare_close
 // or finance.stock.close_empty. No model, nothing written.
 import { sql } from 'kysely';
-import { zStockCloseRequest, type StockCloseCheck } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
+import { zStockCloseRequest, type StockCloseCheck } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { balanceOf, closeCheckApplies, WAITING_SHORTAGE_ACCOUNT } from './domain/stock-close-check.ts';
 import { monthEnd } from './domain/stock-close.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

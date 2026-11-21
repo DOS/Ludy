@@ -21,8 +21,8 @@ import {
   zMeetingHooksSwitch,
   zMeetingHookTargetRef,
   type MeetingHookField,
-  type MeetingHookView, type MeetingHookDeliveryRow, type MeetingHookTargetRow } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+  type MeetingHookView, type MeetingHookDeliveryRow, type MeetingHookTargetRow } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 import { ROLES } from './transcript.ts';
 
 type Trx = CommandContext['trx'];

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The monthly pay run of the HR module (issue #2531, docs/plan/payroll.md sections 6.2 and 6.3, ADR-0046): a run is one month of one legal entity, with a line per person. A line holds
-// the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @crove/l10n-vn produced from them, stored as facts. A draft run
+// the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @ludy/l10n-vn produced from them, stored as facts. A draft run
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
 import { zAccountCode, zCashVoucherProposal, zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
@@ -262,7 +262,7 @@ export const zHrLineView = z.object({
   refusal: z.string().nullable(),
   inputs: z.record(z.string(), z.unknown()),
   figures: zHrRunFigures.nullable(),
-  // The calculator's breakdown (PayrollBreakdown of @crove/l10n-vn), null for an adjustment and a refused line.
+  // The calculator's breakdown (PayrollBreakdown of @ludy/l10n-vn), null for an adjustment and a refused line.
   breakdown: z.record(z.string(), z.unknown()).nullable(),
   checks: z.array(zHrCheck),
   flags: z.array(z.enum(HR_LINE_FLAGS)),
@@ -397,7 +397,7 @@ export const HR_BANK_FILE_MAX_PEOPLE = 500;
 export const zHrBankFileQuery = z
   .strictObject({
     runId: zId,
-    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
+    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @ludy/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
     // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
     bankName: z.string().trim().min(1).max(60),
     columns: z

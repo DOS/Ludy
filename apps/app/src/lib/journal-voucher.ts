@@ -1,7 +1,7 @@
 // The general journal voucher form (NVK, #888): what the SPA checks before it asks, so the user sees a mistake on the
 // form. The kernel checks every rule again (finance.journal_voucher.prepare, then finance.journal_voucher.record when
 // approved) and decides.
-import { JOURNAL_VOUCHER_MAX_LINES, needsParty } from '@crove/kernel-contract';
+import { JOURNAL_VOUCHER_MAX_LINES, needsParty } from '@ludy/kernel-contract';
 import { normalizeAmount } from './vouchers.ts';
 
 export interface JournalFormLine {

@@ -17,9 +17,9 @@
 // were already past theirs when this shipped tell nobody.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { postTypeOf } from '@crove/channel';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { postTypeOf } from '@ludy/channel';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { OUTPERFORM_AFTER_HOURS, OUTPERFORM_HISTORY, OUTPERFORM_RETRY_HOURS, outperformance, ratioLabel } from './domain/outperform.ts';
 import type { Trx } from './variants.ts';
 

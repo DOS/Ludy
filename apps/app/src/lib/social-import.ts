@@ -6,7 +6,7 @@
 // texts), first_comment and labels, read with the content plan export's cell rules (domain/plan-csv.ts in the Social
 // module), so an exported plan comes back as it went out. The files and URLs are looked up on the server
 // (social.media.resolve, social.media.fetchUrls) and their problems join the row's (withMedia).
-import { IMPORT_MEDIA_MAX, altsOf, isMediaUrl, labelNamesOf, mediaRefsOf } from '@crove/mod-social/contract';
+import { IMPORT_MEDIA_MAX, altsOf, isMediaUrl, labelNamesOf, mediaRefsOf } from '@ludy/mod-social/contract';
 import { headerKey } from './bank-statement.ts';
 import type { SheetRows } from './xlsx.ts';
 

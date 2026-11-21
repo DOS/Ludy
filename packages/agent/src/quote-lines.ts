@@ -15,7 +15,7 @@
 // - more lines than the editor takes, an empty line, a line with no description.
 // Totals are not here: the editor and the server compute them by code from what a person saves. A call that fails, is refused by the AI budget or by these checks gives no proposal: the editor
 // works as it does with AI off.
-import { money, normalizeVatRate } from '@crove/l10n-vn';
+import { money, normalizeVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { figuresOfText } from './einvoice-draft.ts';
 import { hasAddress } from './reminder.ts';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_WATERMARK_CORNERS as STORED } from '@crove/db';
-import { SOCIAL_WATERMARK_CORNERS as SENT } from '@crove/kernel-contract';
+import { SOCIAL_WATERMARK_CORNERS as STORED } from '@ludy/db';
+import { SOCIAL_WATERMARK_CORNERS as SENT } from '@ludy/kernel-contract';
 
 describe('watermark corners (#834)', () => {
   // check-unions compares the database's CHECK with the db copy; the API's copy must say the same.

@@ -7,7 +7,7 @@ import {
   zProjectCreateFromTemplateInput,
   zProjectTaskRecurrence,
   zProjectTemplateCreateInput,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   addLocalDays,
   daysBetweenLocalDates,

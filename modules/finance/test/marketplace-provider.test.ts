@@ -2,7 +2,7 @@
 // How a page of orders is written as the platform's own report (#2519): cell escaping, the units of a Lazada line adding up to the line, refusing a fractional quantity, and a file of its own
 // for each connection.
 import { describe, expect, it } from 'vitest';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import {
   MARKETPLACE_CSV_MAX_ROWS,
   MARKETPLACE_PLATFORM_LIMITS,

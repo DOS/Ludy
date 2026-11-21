@@ -3,8 +3,8 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, AiMeterMissingError, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, NoteAiModelError } from '@crove/agent/member-vy';
+import { AiBudgetExhaustedError, AiMeterMissingError, withAiScope, type AiConfig, type AiMeter } from '@ludy/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, NoteAiModelError } from '@ludy/agent/member-vy';
 import { summaryModelPort } from '../src/member-vy-ports.ts';
 
 const WHO = { orgId: 'org-1', memberUserId: 'user-1' };

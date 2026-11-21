@@ -9,11 +9,11 @@
 // - finance.stock_item.list / finance.stock_move.list: every member reads. On hand is the sum of an item's moves, computed here, never a column.
 // Quantities are decimal strings (numeric(20,6) in the database) and sums go through decimal.js; audit facts carry ids and counts, never a name.
 import { sql } from 'kysely';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { z } from 'zod';
-import { zId, zStockAliasTeach, zStockItemInput, zStockMoveReturn, type StockItem, type StockMove } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { zId, zStockAliasTeach, zStockItemInput, zStockMoveReturn, type StockItem, type StockMove } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';
 import { isSaleOut, normalizeAlias, oppositeQuantity, plainQuantity, returnableQuantity, sameUnit } from './domain/stock.ts';

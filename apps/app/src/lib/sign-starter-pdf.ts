@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Offline client-side A4 PDF 1.4 fallback and base64 decoder for Ludy eSign starter contracts (#3822).
-// Validates decimal amounts strictly through decimal.js (`money()` from @crove/l10n-vn), neutralizes `{{` / `}}`
+// Validates decimal amounts strictly through decimal.js (`money()` from @ludy/l10n-vn), neutralizes `{{` / `}}`
 // in all user and AI text fields, and embeds genuine `{{signature, r1}}`, `{{date, r1}}`, `{{signature, r2}}`,
 // `{{date, r2}}` tags in the two-column signature block only.
 import type {
   SignContractCurrency,
   SignContractDraftVariables,
   SignStarterTemplateKind,
-} from '@crove/kernel-contract';
-import { Decimal, money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { Decimal, money } from '@ludy/l10n-vn';
 
 const FORMAT_CONTROL_RE = /\p{Cf}+/gu;
 

@@ -4,7 +4,7 @@
 // saved view (a contact, created within N days, several stages) stays in `rest`, shown as a chip the person can remove, so
 // opening a view and saving it again never drops a condition the bar cannot draw. No browser or API imports, so it is
 // unit tested.
-import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@crove/kernel-contract';
+import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@ludy/kernel-contract';
 import { normalizeAmount } from './vouchers.ts';
 
 export type DealStatusFilter = '' | 'open' | 'won' | 'lost';

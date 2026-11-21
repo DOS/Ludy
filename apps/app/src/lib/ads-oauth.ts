@@ -4,7 +4,7 @@
 // the attempt, this browser remembers which org it was for, and Meta's own sign-in dialog runs in this tab and comes back to the
 // callback screen (routes/social-oauth.tsx), which finishes the attempt.
 import { useMutation } from '@tanstack/react-query';
-import type { OAUTH_AD_PROVIDERS } from '@crove/kernel-contract';
+import type { OAUTH_AD_PROVIDERS } from '@ludy/kernel-contract';
 import { client } from './api.ts';
 import { rememberOAuthAttempt } from './oauth.ts';
 

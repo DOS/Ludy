@@ -2,7 +2,7 @@
 // Vietnamese sentence they were written with; the SPA words the code in the reader's language. A check written before
 // #677 has no code, and a code this SPA does not know (or one missing a parameter) keeps its stored sentence.
 // test/invoice-checks.test.ts checks that every code of INVOICE_CHECK_CODES is worded here.
-import { INVOICE_CHECK_CODES, type Check, type InvoiceCheckCode } from '@crove/kernel-contract';
+import { INVOICE_CHECK_CODES, type Check, type InvoiceCheckCode } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 
 export function isInvoiceCheckCode(code: string | undefined): code is InvoiceCheckCode {

@@ -2,11 +2,11 @@
 // Offline client-side Web Crypto SHA-256 PDF verifier (/o/$slug/sign/verify): zero file bytes ever leave the browser (#3325).
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { publicSignApi } from '../lib/sign-api.ts';
 import { copyTextToClipboard, hashFileSha256 } from '../lib/sign-hash.ts';
 import { toast } from '../lib/toast.ts';

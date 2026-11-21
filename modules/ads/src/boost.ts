@@ -12,7 +12,7 @@
 // arrive in the command's input, copied by the app, and only the post's id is kept (an opaque reference).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   zAdsBoostDraft,
   zAdsBoostStatesInput,
@@ -21,8 +21,8 @@ import {
   type AdsBoostState,
   type AdsBoostStateView,
   type AdsLaunchState,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { boostPlan, type BoostRefusal } from './boost-plan.ts';
 import { accountOf, pendingProposal, rows, saveCampaignDraft, type DraftRow } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';

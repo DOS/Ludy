@@ -3,7 +3,7 @@
 // not fit (an amount of more than 18 digits) is left out instead of being sent wrong. The database side (each rule fires once, who is woken) is in mcp-wake-engage.db.test.ts.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import { LINE_WAKE_EVENTS, wakeBody } from '../src/mcp-wake-body.ts';
 import { adsItems, conversationItems, crmItems, wakeAmount, wakeKey } from '../src/mcp-wake-engage.ts';
 

@@ -6,8 +6,8 @@
 // Only wrapped data keys move: no sealed value is read or changed, and the database never sees a data key. The pass reads only rows under a key id its vault opens, so rows under a lost
 // key never crowd the others out of a page; they stay in the database and are reported with their count (the key was lost, or CREDENTIAL_KEY_PREVIOUS removed too early). A row under
 // an openable key that still does not unwrap (damaged bytes) is counted as failed and left as it is, never dropped. Key ids and counts are all that is logged.
-import type { Db } from '@crove/db';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 // The vault is the runtime's own (Runtime.subjectKeyReseal): the worker's runtime is built like the API's, so the pass wraps under the key the API opens, never under one taken from another source.
 export interface SubjectKeyResealDeps {

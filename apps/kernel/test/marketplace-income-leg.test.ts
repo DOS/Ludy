@@ -2,9 +2,9 @@
 // The income leg of a marketplace poll (#4302): the two-part cursor, the one-closed-payment-day rule per platform, the leg's file and ingest in the worker, and a Shopee provider read end to end
 // against the made-up Shopee. A stub runtime stands for the database (the real path of a staged file is marketplace-connection.db.test.ts and finance-marketplace-income.db.test.ts).
 import { describe, expect, it, vi } from 'vitest';
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { MarketplaceProviderError, parseMarketplaceIncomePage, type MarketplaceIncomeLine, type MarketplaceProvider } from '@crove/mod-finance';
-import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { MarketplaceProviderError, parseMarketplaceIncomePage, type MarketplaceIncomeLine, type MarketplaceProvider } from '@ludy/mod-finance';
+import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { INCOME_FIRST_DAYS, INCOME_MIN_SLICE_SECONDS, INCOME_PENDING_WAIT_DAYS, joinPollCursor, readHalved, readIncomeDay, splitPollCursor, withLazadaIncome, withShopeeIncome, withTiktokIncome } from '../src/marketplace-income-leg.ts';
 import { MARKETPLACE_MAX_PAGES_PER_RUN, runMarketplacePoll } from '../src/marketplace-poll-job.ts';

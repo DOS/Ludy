@@ -12,9 +12,9 @@
 // or drops it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { approvalCovers, effectiveContent, type BaseContent } from './domain/approval.ts';
 import { shortOfPolicy } from './policy.ts';
 import { PUBLISH_LIMITS, SENT_TO_APP, SHARED_LIMIT_PROVIDERS, STATUS_PUBLISHES, isProvider, limitWait, WORDPRESS_DRAFT, WORDPRESS_PENDING } from './domain/channels.ts';

@@ -18,10 +18,10 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk, type MisaAmisProduct } from '@crove/kernel-contract';
-import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@crove/db';
-import { AMIS_SAVE_BATCH_MAX } from '@crove/misa-amis';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk, type MisaAmisProduct } from '@ludy/kernel-contract';
+import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@ludy/db';
+import { AMIS_SAVE_BATCH_MAX } from '@ludy/misa-amis';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { AMIS_PLACEHOLDER_BRANCH, amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
 import type { MisaAmisMatchResults } from './misa-amis-match.ts';
 import { checkIsFresh } from './misa-amis-matching.ts';

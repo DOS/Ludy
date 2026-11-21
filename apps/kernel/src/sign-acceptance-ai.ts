@@ -11,10 +11,10 @@ import {
   withAiScope,
   type AiMeter,
   type InboxReader,
-} from '@crove/agent';
-import type { SignAcceptanceDraftResult, SignAcceptanceDraftStatus } from '@crove/kernel-contract';
-import { DomainError, type Actor, type Runtime } from '@crove/kernel-runtime';
-import type { SignAcceptanceAiStatus, SignAcceptanceSource } from '@crove/mod-sign';
+} from '@ludy/agent';
+import type { SignAcceptanceDraftResult, SignAcceptanceDraftStatus } from '@ludy/kernel-contract';
+import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
+import type { SignAcceptanceAiStatus, SignAcceptanceSource } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, type MeterOptions } from './ai-meter.ts';
 

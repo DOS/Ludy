@@ -4,7 +4,7 @@
 // wedged the relay for every org); a keeping event is never dropped; every command a keeping event reaches declares runsWhenOff; and the publish sweep queues
 // nothing for an org whose Social is off.
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { DROPPABLE_EVENTS, KEEPING_EVENT_COMMANDS, relayStep, sweepSocialPublishing } from '../src/worker.ts';

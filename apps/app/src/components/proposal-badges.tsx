@@ -2,8 +2,8 @@
 // The badges on a proposal's row in the Inbox lists (DESIGN.md §4.4): its kind, what its checks found, who asked for it,
 // and, once a reversal voided its posting, that it is no longer in the books (#2054).
 import { useTranslations } from 'use-intl';
-import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
+import { JOURNAL_VOUCHER_KIND } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
 import { isAdsProposalKind, isEngageKind, showMatched } from '../lib/review.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';

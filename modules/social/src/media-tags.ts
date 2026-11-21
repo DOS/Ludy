@@ -4,9 +4,9 @@
 // a file has each tag once whatever its case, and at most MAX_TAGS_PER_FILE.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { MAX_TAGS_PER_FILE, mediaTagProblem, normalizeMediaTag, normalizeMediaTags } from './domain/media-tags.ts';
 import { LIBRARY_MEDIA_TYPES } from './library.ts';
 

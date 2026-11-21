@@ -10,8 +10,8 @@
 // page's main region, unless the action already moved it elsewhere.
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { cn } from '@crove/ui/lib/utils';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { cn } from '@ludy/ui/lib/utils';
 import { currentToasts, dismissToast, isToastShortcut, pauseToast, resumeToast, runToastAction, subscribeToasts, TOAST_SHORTCUT } from '../lib/toast.ts';
 
 export function Toaster() {

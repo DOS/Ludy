@@ -1,8 +1,8 @@
 // Inbound address rotation limits (#113), unit part: configuration and error mapping. The database part is in
 // test/invariant/inbound-rotate-limit.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INBOUND_ROTATE_LIMITS, buildKernelCommands, inboundRotateCommand } from '@crove/kernel';
-import { toDomainError } from '@crove/kernel-runtime';
+import { DEFAULT_INBOUND_ROTATE_LIMITS, buildKernelCommands, inboundRotateCommand } from '@ludy/kernel';
+import { toDomainError } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { toORPCError } from '../src/rpc.ts';
 

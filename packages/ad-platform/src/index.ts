@@ -5,7 +5,7 @@
 // Read-only by design: the interface has no capability that creates or changes anything on the platform, and an
 // adapter for a platform that also offers writes implements none of them. Each adapter declares the hosts its fetch is
 // bound to (the offline sandbox reaches none); a real adapter builds its fetch with `allowlistedFetch` of
-// @crove/channel, which this package does not copy.
+// @ludy/channel, which this package does not copy.
 import { createHash, randomBytes } from 'node:crypto';
 
 import { GoogleAdsPlatform } from './google.ts';

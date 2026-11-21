@@ -12,12 +12,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Fragment, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ReportAudiences } from '../components/social-audience.tsx';
 import { ReportPerformance } from '../components/social-performance.tsx';
 import { GoalList } from '../components/social-goals.tsx';
-import { engagementRate, engagementRateOfBases, rateBasesOf, type RateBases } from '@crove/mod-social/contract';
+import { engagementRate, engagementRateOfBases, rateBasesOf, type RateBases } from '@ludy/mod-social/contract';
 import { ChangeChip, EngagementRateCard, EngagementRateCell } from '../components/social-growth.tsx';
 import { useRatePhrase } from '../components/social-engagement-rate.tsx';
 import { OutsideChip } from '../components/social-external-posts.tsx';

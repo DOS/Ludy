@@ -24,7 +24,7 @@
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
 // a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too (a courtesy, not a
 // boundary: Supabase Auth lets the user write `user_metadata`, so only the provider's email confirmation is one).
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 
 const LOCAL_PART = /^[a-z0-9][a-z0-9._%+-]{0,63}$/;
 const DOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;

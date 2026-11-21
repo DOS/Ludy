@@ -4,9 +4,9 @@
 // caller's own transaction so per-org 'projects' enablement, project access, and le_scope task RLS all apply unchanged.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zId, type ProjectBoard, type ProjectDetail, type ProjectStatus } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId, type ProjectBoard, type ProjectDetail, type ProjectStatus } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 

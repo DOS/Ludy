@@ -7,7 +7,7 @@
 // No server-initiated message, no GET stream, no session id: a request is answered in its own response. A tool is a descriptor over one existing
 // query of the kernel; this file knows nothing of the database.
 import { z } from 'zod';
-import type { McpWriteScopeId } from '@crove/kernel-contract';
+import type { McpWriteScopeId } from '@ludy/kernel-contract';
 
 export const MODERN_VERSION = '2026-07-28';
 // Newest first. A client that asks for another version of `initialize` is answered with the newest legacy one, as the specification has it.

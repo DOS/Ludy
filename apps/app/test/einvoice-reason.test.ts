@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The correction panel's handling of the coworker's reason answer (#3690): the select is filled only with a code it holds, and the button turns off once the model is off or the budget is spent.
 import { describe, expect, it } from 'vitest';
-import type { EInvoiceReasonSuggested } from '@crove/kernel-contract';
+import type { EInvoiceReasonSuggested } from '@ludy/kernel-contract';
 import { reasonButtonOff, reasonFill } from '../src/lib/einvoice-reason.ts';
 
 const HELD = [{ code: 'T-1' }, { code: 'T-2' }];

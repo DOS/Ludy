@@ -3,7 +3,7 @@
 // file, which then takes the original's place in the post. The original stays in the library.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { ErrorText, Spinner } from './ui.tsx';
 import { sizeLabel, type MediaItem } from './social-media.tsx';
 import { fetchFile, errorMessage, queryClient, uploadFiles } from '../lib/api.ts';

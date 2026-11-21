@@ -6,9 +6,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId } from 'react';
 import { useTranslations } from 'use-intl';
-import type { AdAccountView } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { AdAccountView } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { committedView, type CommittedRow } from '../lib/ads-committed.ts';
 import { orpc } from '../lib/api.ts';

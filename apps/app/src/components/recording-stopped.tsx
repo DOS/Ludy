@@ -2,7 +2,7 @@
 // The visible "Ghi âm đã dừng lúc 12:44" on a meeting whose recording ended without the recorder's click (Meetings A1, #3159):
 // when it stopped (the start plus what was recorded) and why, in plain words. Nothing is shown for a recording the recorder stopped.
 import { useTranslations } from 'use-intl';
-import type { MeetingDetail } from '@crove/kernel-contract';
+import type { MeetingDetail } from '@ludy/kernel-contract';
 import { useFormat } from '../i18n/provider.tsx';
 
 export function RecordingStoppedNote({ meeting }: { meeting: Pick<MeetingDetail, 'recordingStopReason' | 'endedAt'> }) {
