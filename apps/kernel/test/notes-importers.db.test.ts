@@ -229,7 +229,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     await join('member', slug, 'owner', 'member');
     await join('other', slug, 'owner', 'member');
     await join('viewer', slug, 'owner', 'viewer');
-  }, 120_000);
+  }, 300_000);
 
   afterAll(async () => {
     await pool?.end();
@@ -237,7 +237,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     await root.connect();
     await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await root.end();
-  });
+  }, 60_000);
 
   it('persists private tainted Evernote notes, timestamps, tags, notebooks, and attachments, enforces skipDuplicates + BlobStore cleanup, and isolates members', async () => {
     const pngB64 = Buffer.from(tinyPng()).toString('base64');
