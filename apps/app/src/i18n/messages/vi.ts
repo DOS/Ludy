@@ -15143,6 +15143,7 @@ export const vi = {
         record_test: 'Ghi kết quả kiểm tra kết nối sàn',
         request_poll: 'Yêu cầu lấy đơn từ sàn ngay',
         request_test: 'Yêu cầu kiểm tra kết nối sàn',
+        staged: 'Xem các báo cáo đơn của kết nối sàn còn chờ nhập',
         target: 'Kiểm tra pháp nhân của kết nối sàn',
         unlink: 'Ngắt kết nối sàn thương mại điện tử',
       },

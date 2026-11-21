@@ -15144,6 +15144,7 @@ export const en = {
         record_test: 'Record the result of a marketplace connection test',
         request_poll: 'Ask for a marketplace\'s orders now',
         request_test: 'Ask for a marketplace connection to be tested',
+        staged: 'See the order reports of a marketplace connection still waiting to be imported',
         target: 'Check the legal entity of a marketplace connection',
         unlink: 'Remove a marketplace connection',
       },
