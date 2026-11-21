@@ -51,10 +51,11 @@ export function marketplacePushSignature(adapter: MarketplacePushAdapter, materi
   return mac.update(body).digest('hex');
 }
 
-// Equal length first (timingSafeEqual throws on unequal lengths), then constant time. A header that is not 64 hex digits can never be a signature.
+// Equal length first (timingSafeEqual throws on unequal lengths), then constant time. A header that is not 64 hex digits can never be a signature. The letter case of the digits holds no secret and a platform may send
+// either (Lazada signs its API requests in upper case), so the header is lowercased first: a genuine push is never counted as refused for its case.
 function sameSignature(expected: string, given: string): boolean {
-  if (!/^[0-9a-f]{64}$/.test(given)) return false;
-  return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(given, 'utf8'));
+  if (!/^[0-9a-fA-F]{64}$/.test(given)) return false;
+  return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(given.toLowerCase(), 'utf8'));
 }
 
 // The shop or seller of a connection, from its own sealed secret (never from the push). TikTok: `shopId`; Shopee: `shopId`; Lazada: `sellerId` (written beside the tokens by the authorization, #4285).

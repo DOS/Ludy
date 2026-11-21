@@ -39,7 +39,8 @@ describe('the signatures', () => {
     expect(check(TIKTOK_SECRET, TIKTOK_SIGNATURE, `${TIKTOK_BODY} `)).toBe('refused');
     expect(check(TIKTOK_SECRET, TIKTOK_SIGNATURE.slice(0, 63))).toBe('refused');
     expect(check(TIKTOK_SECRET, `${TIKTOK_SIGNATURE}0`)).toBe('refused');
-    expect(check(TIKTOK_SECRET, TIKTOK_SIGNATURE.toUpperCase())).toBe('refused');
+    // The letter case of the hex is not part of the secret: upper case is the same signature.
+    expect(check(TIKTOK_SECRET, TIKTOK_SIGNATURE.toUpperCase())).toBe('ok');
     expect(check(TIKTOK_SECRET, '')).toBe('refused');
     expect(check(TIKTOK_SECRET, `Bearer ${TIKTOK_SIGNATURE}`)).toBe('refused');
     // The signature does not depend on whitespace changes a JSON round trip would make: re-serialised JSON is a different body.

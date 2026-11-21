@@ -3541,6 +3541,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
             });
           });
+          // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
           for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
           if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
           if (claimed < MARKETPLACE_HOOK_CLAIM) break;
