@@ -1624,6 +1624,10 @@ export const en = {
     eraseConfirm: 'Erase this record',
     severance: {
       toggle: 'Severance calculator',
+      modeLabel: 'Select allowance type',
+      tabArt46: 'Severance allowance (Art. 46)',
+      tabArt47: 'Job-loss allowance (Art. 47)',
+      switchToJobLoss: 'Switch to Job-Loss Allowance calculator (Art. 47)',
       title: 'Statutory severance calculator (Labor Code 2019 Art. 46 & Decree 145/2020 Art. 8)',
       readOnlyNote: 'Read-only calculation worksheet. Ludy posts no accounting entry, creates no voucher, and initiates no transfer; a person decides and approves any payout separately.',
       reasonLabel: 'Termination reason',
@@ -1669,6 +1673,32 @@ export const en = {
       sixMonthWageItem: 'Month {index}',
       rulesTitle: 'Rule references',
       ruleStatus: { confirmed: 'confirmed', commentary: 'pending accountant review' },
+    },
+    jobLoss: {
+      title: 'Statutory job-loss allowance calculator (Labor Code 2019 Art. 47 & Decree 145/2020 Art. 8)',
+      reasonLabel: 'Job-loss reason',
+      reasons: {
+        organizational_restructuring: 'Structural, technological, or organizational restructuring (Art. 42)',
+        economic_reasons: 'Economic reasons (Art. 42)',
+        merger_division_transfer: 'Division, merger, consolidation, or transfer of ownership/use of assets (Art. 43)',
+        other_non_art42_art43: 'Other reason outside Arts. 42/43 (not eligible for job-loss allowance)',
+      },
+      ineligibleReasons: {
+        worked_under_12_months: 'Worked fewer than 12 months, so statutory job-loss allowance does not apply.',
+        not_job_loss_reason: 'Termination reason is outside Arts. 42/43, so statutory job-loss allowance does not apply.',
+      },
+      amount: 'Statutory job-loss allowance',
+      floorBadge: '2-month minimum floor applied (Art. 47)',
+      aboveFloorBadge: 'Calculated at 1 month wage per qualifying year (at or above 2-month floor)',
+      lyTitle: 'Ly calculation summary (read-only)',
+      lySummaryIneligible: 'Statutory job-loss allowance under Art. 47 does not apply. {excessNote}',
+      lySummaryFloorApplied:
+        'Excluded {excludedMonths} BHTN-insured or prior settled months ({qualifyingMonths} qualifying months, rounded to {qualifyingYears} yr). The 1-month/year formula falls below 2 months of average wage, so the Art. 47 2-month minimum floor of {amount} applies. {excessNote}',
+      lySummaryStandard:
+        'Excluded {excludedMonths} BHTN-insured or prior settled months ({qualifyingMonths} qualifying months, rounded to {qualifyingYears} yr). Statutory allowance at 1 month/year is {amount} (meets or exceeds the 2-month floor). {excessNote}',
+      lyExcessWarn: 'Warning: planned payout exceeds the statutory PIT-exempt cap by {excess}.',
+      lyNoExcess: 'Planned payout stays within the statutory PIT-exempt cap (pending accountant confirmation #2535).',
+      lyNoPayout: 'No planned payout exceeds the tax-exempt limit.',
     },
     leave: {
       toggle: 'Annual leave',
@@ -15499,6 +15529,7 @@ export const en = {
           },
           erase: 'Erase the record of an employee who left, after the retention period',
           get: 'Open one employee, with the identity number and the account number',
+          job_loss: 'Calculate statutory job-loss allowance for an employee (read-only)',
           list: 'List the employees and their base wage',
           severance: 'Calculate statutory severance allowance for an employee (read-only)',
         },

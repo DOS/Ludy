@@ -308,6 +308,8 @@ import {
   zHrFinalizationSet,
   zHrEmployeeEnd,
   zHrEmployeeErased,
+  zHrEmployeeJobLossAsk,
+  zHrEmployeeJobLossResult,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -1121,6 +1123,7 @@ export const contract = {
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
         severance: oc.input(zHrEmployeeSeveranceAsk).output(zHrEmployeeSeveranceResult),
+        job_loss: oc.input(zHrEmployeeJobLossAsk).output(zHrEmployeeJobLossResult),
       },
       // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
       bankTemplates: {

@@ -54,6 +54,22 @@ const RULE_SEVERANCE_PIT_EXEMPTION: LaborRuleRef = {
   cite: 'Payroll plan section 5 row 13 (commentary; pending accountant confirmation #2535): statutory severance is PIT-exempt; excess above statutory level is treated as taxable until confirmed',
 };
 
+const RULE_JOB_LOSS_LABOR_CODE: LaborRuleRef = {
+  id: 'job_loss.labor_code_art47@2021-01-01',
+  planRow: 17,
+  status: 'commentary',
+  confidence: 'primary',
+  cite: "Labor Code 2019 Arts. 42, 43, 47 (plan row 17, primary text; pending accountant review #2535): 1 month wage per qualifying year for >= 12 months worked, minimum 2 months' wage floor",
+};
+
+const RULE_JOB_LOSS_DECREE_145: LaborRuleRef = {
+  id: 'job_loss.decree145_art8@2021-02-01',
+  planRow: 17,
+  status: 'commentary',
+  confidence: 'commentary',
+  cite: 'Decree 145/2020/ND-CP Art. 8 (plan row 17, commentary; pending accountant confirmation #2535): qualifying months exclude unemployment-insured and settled months, rounded to 0.5 or 1 year',
+};
+
 const RULE_THIRTEENTH_MONTH: LaborRuleRef = {
   id: 'thirteenth_month.proration@2026-01-01',
   planRow: 3,
@@ -1095,8 +1111,22 @@ export function roundSeveranceQualifyingYears(qualifyingMonths: number): string 
   return String(wholeYears + 1);
 }
 
-/** Computes statutory severance allowance (trợ cấp thôi việc) under Labor Code 2019 Art. 46 and Decree 145 Art. 8. */
-export function calculateSeveranceAllowance(input: SeveranceAllowanceInput): SeveranceAllowanceResult {
+interface PreparedTerminationAllowanceBase {
+  totalWorkedMonths: number;
+  rawQualifyingMonths: number;
+  averageWageDecimal: DecimalValue;
+  averageWage: Money;
+  paidDecimal: DecimalValue | null;
+  formattedPaid: Money | null;
+}
+
+function prepareTerminationAllowanceBase(input: {
+  totalWorkedMonths: number;
+  unemploymentInsuredMonths?: number;
+  priorSettledMonths?: number;
+  sixMonthWages: readonly Money[];
+  paidAmount?: Money;
+}): PreparedTerminationAllowanceBase {
   const totalWorkedMonths = requireNonNegativeInteger('totalWorkedMonths', input.totalWorkedMonths);
   const unemploymentInsuredMonths = requireNonNegativeInteger('unemploymentInsuredMonths', input.unemploymentInsuredMonths ?? 0);
   const priorSettledMonths = requireNonNegativeInteger('priorSettledMonths', input.priorSettledMonths ?? 0);
@@ -1114,56 +1144,166 @@ export function calculateSeveranceAllowance(input: SeveranceAllowanceInput): Sev
 
   const paidDecimal = input.paidAmount !== undefined ? parseNonNegativeMoney('paidAmount', input.paidAmount) : null;
   const formattedPaid = paidDecimal === null ? null : toMoney(paidDecimal);
+  const rawQualifyingMonths = Math.max(0, totalWorkedMonths - unemploymentInsuredMonths - priorSettledMonths);
 
+  return {
+    totalWorkedMonths,
+    rawQualifyingMonths,
+    averageWageDecimal,
+    averageWage,
+    paidDecimal,
+    formattedPaid,
+  };
+}
+
+function splitAllowancePit(
+  statutoryDecimal: DecimalValue,
+  paidDecimal: DecimalValue | null,
+): { pitExemptAmount: Money; taxableExcess: Money } {
+  const effectivePaid = paidDecimal ?? statutoryDecimal;
+  const exemptDecimal = Decimal.min(effectivePaid, statutoryDecimal);
+  const excessDecimal = Decimal.max(money(0), effectivePaid.minus(statutoryDecimal));
+  return {
+    pitExemptAmount: exemptDecimal.isZero() ? '0' : toMoney(exemptDecimal),
+    taxableExcess: excessDecimal.isZero() ? '0' : toMoney(excessDecimal),
+  };
+}
+
+/** Computes statutory severance allowance (trợ cấp thôi việc) under Labor Code 2019 Art. 46 and Decree 145 Art. 8. */
+export function calculateSeveranceAllowance(input: SeveranceAllowanceInput): SeveranceAllowanceResult {
+  const base = prepareTerminationAllowanceBase(input);
   const terminationReason = input.terminationReason ?? 'contract_expired';
   if (!(SEVERANCE_TERMINATION_REASONS as readonly string[]).includes(terminationReason)) {
     throw new Error(`Unknown terminationReason: ${terminationReason}`);
   }
 
-  const rawQualifyingMonths = Math.max(0, totalWorkedMonths - unemploymentInsuredMonths - priorSettledMonths);
   const rulesUsed: readonly LaborRuleRef[] = [RULE_SEVERANCE_LABOR_CODE, RULE_SEVERANCE_DECREE_145, RULE_SEVERANCE_PIT_EXEMPTION];
 
   let ineligibleReason: SeveranceIneligibleReason | null = null;
   if (INELIGIBLE_TERMINATION_REASONS.has(terminationReason)) {
     ineligibleReason = terminationReason as SeveranceIneligibleReason;
-  } else if (totalWorkedMonths < 12) {
+  } else if (base.totalWorkedMonths < 12) {
     ineligibleReason = 'worked_under_12_months';
   }
 
   if (ineligibleReason !== null) {
-    const effectivePaid = paidDecimal ?? money(0);
     return {
       eligible: false,
       reason: ineligibleReason,
-      qualifyingMonths: rawQualifyingMonths,
+      qualifyingMonths: base.rawQualifyingMonths,
       qualifyingYears: '0',
-      averageWage,
+      averageWage: base.averageWage,
       amount: '0',
-      paidAmount: formattedPaid,
-      pitExemptAmount: '0',
-      taxableExcess: effectivePaid.isZero() ? '0' : toMoney(effectivePaid),
+      paidAmount: base.formattedPaid,
+      ...splitAllowancePit(money(0), base.paidDecimal),
       rulesUsed,
     };
   }
 
-  const qualifyingYears = roundSeveranceQualifyingYears(rawQualifyingMonths);
-  const statutoryDecimal = money('0.5').times(qualifyingYears).times(averageWageDecimal).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  const qualifyingYears = roundSeveranceQualifyingYears(base.rawQualifyingMonths);
+  const statutoryDecimal = money('0.5').times(qualifyingYears).times(base.averageWageDecimal).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
   const amount = formatWholeDong(statutoryDecimal);
-
-  const effectivePaid = paidDecimal ?? statutoryDecimal;
-  const exemptDecimal = Decimal.min(effectivePaid, statutoryDecimal);
-  const excessDecimal = Decimal.max(money(0), effectivePaid.minus(statutoryDecimal));
 
   return {
     eligible: true,
     reason: null,
-    qualifyingMonths: rawQualifyingMonths,
+    qualifyingMonths: base.rawQualifyingMonths,
     qualifyingYears,
-    averageWage,
+    averageWage: base.averageWage,
     amount,
-    paidAmount: formattedPaid,
-    pitExemptAmount: exemptDecimal.isZero() ? '0' : toMoney(exemptDecimal),
-    taxableExcess: excessDecimal.isZero() ? '0' : toMoney(excessDecimal),
+    paidAmount: base.formattedPaid,
+    ...splitAllowancePit(statutoryDecimal, base.paidDecimal),
+    rulesUsed,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 2b. Statutory job-loss allowance (Labor Code 2019 Arts. 42, 43, 47 & Decree 145/2020/ND-CP Art. 8; plan row 17)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const JOB_LOSS_TERMINATION_REASONS = [
+  'organizational_restructuring',
+  'economic_reasons',
+  'merger_division_transfer',
+  'other_non_art42_art43',
+] as const;
+export type JobLossTerminationReason = (typeof JOB_LOSS_TERMINATION_REASONS)[number];
+
+export type JobLossIneligibleReason = 'worked_under_12_months' | 'not_job_loss_reason';
+
+export interface JobLossAllowanceInput {
+  totalWorkedMonths: number;
+  unemploymentInsuredMonths?: number;
+  priorSettledMonths?: number;
+  /** Contractual salaries over the 6 consecutive months preceding termination. */
+  sixMonthWages: readonly Money[];
+  /** Optional actual amount paid by the employer, for PIT-exempt / taxable excess split. */
+  paidAmount?: Money;
+  terminationReason?: JobLossTerminationReason;
+}
+
+export interface JobLossAllowanceResult {
+  eligible: boolean;
+  reason: JobLossIneligibleReason | null;
+  qualifyingMonths: number;
+  qualifyingYears: string;
+  averageWage: Money;
+  amount: Money;
+  minimumFloorApplied: boolean;
+  paidAmount: Money | null;
+  pitExemptAmount: Money;
+  taxableExcess: Money;
+  rulesUsed: readonly LaborRuleRef[];
+}
+
+/** Computes statutory job-loss allowance (trợ cấp mất việc làm) under Labor Code 2019 Arts. 42, 43, 47 and Decree 145 Art. 8. */
+export function calculateJobLossAllowance(input: JobLossAllowanceInput): JobLossAllowanceResult {
+  const base = prepareTerminationAllowanceBase(input);
+  const terminationReason = input.terminationReason ?? 'organizational_restructuring';
+  if (!(JOB_LOSS_TERMINATION_REASONS as readonly string[]).includes(terminationReason)) {
+    throw new Error(`Unknown terminationReason: ${terminationReason}`);
+  }
+
+  const rulesUsed: readonly LaborRuleRef[] = [RULE_JOB_LOSS_LABOR_CODE, RULE_JOB_LOSS_DECREE_145, RULE_SEVERANCE_PIT_EXEMPTION];
+
+  let ineligibleReason: JobLossIneligibleReason | null = null;
+  if (terminationReason === 'other_non_art42_art43') {
+    ineligibleReason = 'not_job_loss_reason';
+  } else if (base.totalWorkedMonths < 12) {
+    ineligibleReason = 'worked_under_12_months';
+  }
+
+  if (ineligibleReason !== null) {
+    return {
+      eligible: false,
+      reason: ineligibleReason,
+      qualifyingMonths: base.rawQualifyingMonths,
+      qualifyingYears: '0',
+      averageWage: base.averageWage,
+      amount: '0',
+      minimumFloorApplied: false,
+      paidAmount: base.formattedPaid,
+      ...splitAllowancePit(money(0), base.paidDecimal),
+      rulesUsed,
+    };
+  }
+
+  const qualifyingYears = roundSeveranceQualifyingYears(base.rawQualifyingMonths);
+  const rawAmount = formatWholeDong(money(qualifyingYears).times(base.averageWageDecimal));
+  const twoMonthFloor = formatWholeDong(base.averageWageDecimal.times(2));
+  const minimumFloorApplied = money(rawAmount).lessThan(twoMonthFloor);
+  const amount = minimumFloorApplied ? twoMonthFloor : rawAmount;
+
+  return {
+    eligible: true,
+    reason: null,
+    qualifyingMonths: base.rawQualifyingMonths,
+    qualifyingYears,
+    averageWage: base.averageWage,
+    amount,
+    minimumFloorApplied,
+    paidAmount: base.formattedPaid,
+    ...splitAllowancePit(money(amount), base.paidDecimal),
     rulesUsed,
   };
 }

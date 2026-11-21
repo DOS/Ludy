@@ -1123,6 +1123,7 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
           severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
+          job_loss: os.hr.payroll.employees.job_loss.handler(hrQuery('hr.payroll.employee.job_loss')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
