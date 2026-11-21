@@ -151,7 +151,7 @@ describe('the income lines', () => {
     const order = fakeFinanceOrder();
     const penalty = { id: '1636700041413500001', type: 'PLATFORM_PENALTY', adjustment_id: '7238804564097517001', adjustment_amount: '-50000', settlement_amount: '-50000' };
     const strange = { id: '1636700041413500002', type: 'SOMETHING_NEW', adjustment_id: '7238804564097517002', adjustment_order_id: String(order.order_id), adjustment_amount: '700' };
-    const reserve = { id: '1636700041413500003', type: 'RESERVE', settlement_amount: '-300' };
+    const reserve = { id: '1636700041413500003', type: 'RESERVE', reserve_amount: '-300', settlement_amount: '999' };
     const income = await withStatement([order, penalty, strange, reserve]).finance.income(SECRET, WINDOW);
     expect(income.lines).toHaveLength(1);
     expect(income.lines[0]!.net).toBe('82000');
@@ -195,7 +195,7 @@ describe('the income lines', () => {
     const income = await finance.income(SECRET, WINDOW);
     expect(income.lines).toHaveLength(250);
     expect(fake.calls.filter((c) => c.path.includes('/statement_transactions'))).toHaveLength(3);
-    const tooMany = Array.from({ length: 1001 }, () => fakeFinanceOrder());
+    const tooMany = Array.from({ length: 3001 }, () => fakeFinanceOrder());
     expect(await kindOf(() => withStatement(tooMany).finance.income(SECRET, WINDOW))).toBe('not_recognized');
   });
 });
@@ -217,7 +217,7 @@ describe('the currency and the money', () => {
       fakePayment({ create_time: PAID_TIME, amount: undefined }),
       fakePayment({ create_time: PAID_TIME, amount: { value: 1000000, currency: 'VND' } }),
     ]) {
-      expect(await kindOf(() => income({ payments: [payment], statements: [] }))).toBe('not_recognized');
+      expect(await kindOf(() => setup({ payments: [payment], statements: [] }).finance.payments(SECRET, WINDOW))).toBe('not_recognized');
     }
   });
 
@@ -243,9 +243,9 @@ describe('the currency and the money', () => {
     for (const s of amounts) expect(await kindOf(() => income({ statements: [s], statementTransactions: {} }))).toBe('not_recognized');
   });
 
-  it('refuses an unknown status, a PAID statement without a payment time, a duplicate id and a page with no list', async () => {
+  it('refuses an unknown status, a duplicate id and a page with no list', async () => {
     const t = { statement_time: STATEMENT_TIME, payment_time: PAID_TIME };
-    for (const s of [fakeStatement({ ...t, payment_status: 'DONE' }), fakeStatement({ ...t, payment_time: 0 }), fakeStatement({ ...t, id: 'abc' }), fakeStatement({ ...t, statement_time: 'yesterday' })]) {
+    for (const s of [fakeStatement({ ...t, payment_status: 'DONE' }), fakeStatement({ ...t, id: 'abc' }), fakeStatement({ ...t, statement_time: 'yesterday' })]) {
       expect(await kindOf(() => income({ statements: [s], statementTransactions: {} }))).toBe('not_recognized');
     }
     const a = fakeStatement(t);
@@ -253,8 +253,8 @@ describe('the currency and the money', () => {
     const tx = fakeFinanceOrder();
     expect(await kindOf(() => withStatement([tx, tx]).finance.income(SECRET, WINDOW))).toBe('not_recognized');
     const p = fakePayment({ create_time: PAID_TIME });
-    expect(await kindOf(() => income({ payments: [p, p], statements: [] }))).toBe('not_recognized');
-    expect(await kindOf(() => income({ payments: [fakePayment({ create_time: PAID_TIME, status: 'DONE' })], statements: [] }))).toBe('not_recognized');
+    expect(await kindOf(() => setup({ payments: [p, p], statements: [] }).finance.payments(SECRET, WINDOW))).toBe('not_recognized');
+    expect(await kindOf(() => setup({ payments: [fakePayment({ create_time: PAID_TIME, status: 'DONE' })], statements: [] }).finance.payments(SECRET, WINDOW))).toBe('not_recognized');
     const counts = setup({ intercept: (_h, path) => (path === '/finance/202309/statements' ? json({ code: 0, data: { total_count: 3, next_page_token: '' } }) : undefined) });
     expect(await kindOf(() => counts.finance.income(SECRET, WINDOW))).toBe('not_recognized');
     const wrongStatement = (() => {
@@ -269,6 +269,55 @@ describe('the currency and the money', () => {
     expect(await kindOf(() => income({ statements }))).toBe('not_recognized');
     const empty = await setup().finance.income(SECRET, WINDOW);
     expect(empty).toMatchObject({ currency: 'VND', statements: [], payments: [], lines: [], adjustments: [], pendingStatements: 0 });
+  });
+});
+
+describe('what the official pages leave open', () => {
+  it('returns the lines when the payments API cannot be read (it is unavailable to SEA markets), with payments null, and keeps the strict read strict', async () => {
+    const order = fakeFinanceOrder();
+    const { finance } = withStatement([order], { intercept: (_h, path) => (path === '/finance/202605/payments' ? json({ code: 36009009, message: 'This API is currently unavailable to SEA markets.' }, 404) : undefined) });
+    const income = await finance.income(SECRET, WINDOW);
+    expect(income.payments).toBeNull();
+    expect(income.lines).toHaveLength(1);
+    expect(income.lines[0]!.net).toBe('82000');
+    expect(await kindOf(() => finance.payments(SECRET, WINDOW))).toBe('unreachable');
+    // A refused token is still a failed income: the statements said so first.
+    const wrong = setup({ intercept: (_h, path) => (path === '/finance/202309/statements' ? json({ code: 105002, message: 'expired' }, 401) : undefined) });
+    expect(await kindOf(() => wrong.finance.income(SECRET, WINDOW))).toBe('credentials');
+  });
+
+  it('reads a reserve from `reserve_amount`, and refuses a reserve that has none', async () => {
+    const reserve = { id: '1636700041413500009', type: 'RESERVE', reserve_amount: '100' };
+    const income = await withStatement([reserve]).finance.income(SECRET, WINDOW);
+    expect(income.adjustments).toEqual([{ id: '1636700041413500009', type: 'RESERVE', orderNo: null, paidAt: '2026-11-19', amount: '100', known: true }]);
+    expect(await kindOf(() => withStatement([{ id: '1636700041413500010', type: 'RESERVE', settlement_amount: '5' }]).finance.income(SECRET, WINDOW))).toBe('not_recognized');
+  });
+
+  it('refuses a list whose own count is not the number of records read, on each of the three lists', async () => {
+    const s = fakeStatement({ statement_time: STATEMENT_TIME, payment_time: PAID_TIME });
+    const lie = (path: string, key: string, records: unknown[], extra: Record<string, unknown> = {}) => (_h: string, p: string) => (p.endsWith(path) ? json({ code: 0, data: { [key]: records, total_count: records.length + 1, next_page_token: '', ...extra } }) : undefined);
+    const statements = setup({ intercept: lie('/finance/202309/statements', 'statements', [s]) });
+    expect(await kindOf(() => statements.finance.statements(SECRET, WINDOW))).toBe('not_recognized');
+    const transactions = withStatement([fakeFinanceOrder()], { intercept: lie('/statement_transactions', 'transactions', [fakeFinanceOrder()], { currency: 'VND' }) });
+    expect(await kindOf(() => transactions.finance.income(SECRET, WINDOW))).toBe('not_recognized');
+    const payments = setup({ intercept: lie('/finance/202605/payments', 'payments', [fakePayment({ create_time: PAID_TIME })]) });
+    expect(await kindOf(() => payments.finance.payments(SECRET, WINDOW))).toBe('not_recognized');
+  });
+
+  it('dates a PAID statement with no payment time by the day it was generated, and a PAID payment with no finish time has no paid day', async () => {
+    const order = fakeFinanceOrder();
+    const { finance } = withStatement([order], { payments: [fakePayment({ create_time: PAID_TIME, paid_time: 0 })] }, { payment_time: 0 });
+    const income = await finance.income(SECRET, WINDOW);
+    expect(income.statements[0]!.paidDay).toBe('2026-11-19');
+    expect(income.lines[0]!.paidAt).toBe('2026-11-19');
+    expect(income.payments?.[0]).toMatchObject({ status: 'PAID', paidDay: null });
+  });
+
+  it('ignores a null amount inside a breakdown, as it ignores an empty string', async () => {
+    const order = fakeFinanceOrder({ fee_tax_breakdown: { fee: { platform_commission_amount: '-9000', transaction_fee_amount: '-3000', referral_fee_amount: null, vn_fix_infrastructure_fee: '' }, tax: {} } });
+    const line = (await withStatement([order]).finance.income(SECRET, WINDOW)).lines[0]!;
+    expect(line.commission).toBe('9000');
+    expect(identityHolds(line)).toBe(true);
   });
 });
 

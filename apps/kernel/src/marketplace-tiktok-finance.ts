@@ -6,6 +6,12 @@
 //
 // READ ONLY, three paths, all GET (a test reads this source to keep it so), through T1's signed caller, so one app and shop is paced across the orders poll and this reader.
 //
+// THE WINDOW selects statements by the day they were GENERATED (statement_time, 00:00 UTC for the day before), while a line is keyed by its PAYOUT day: a statement generated before the window and paid inside it is not
+// returned, and a line's `paidAt` can fall after the window's end. A later step reads overlapping windows and dedupes by (order, payout day).
+//
+// PAYMENTS (202605) are for reconciliation only and the official page says the API is "currently unavailable to SEA markets" (Vietnam is one): `income()` reads them best-effort and returns `payments: null` when the
+// read fails, so the lines never depend on them (the payout day of a line is the statement's own `payment_time`). `payments()` is the strict read for a market where it works (the live check, #2522, says which).
+//
 // THE MONEY. Every amount is a decimal STRING (at most four decimals; sums go through decimal.js, never a JS number); a number, an exponent, a thousands separator or a currency sign refuses the page. TikTok states a
 // currency on a statement, on the page of a statement's transactions and on a payment: each must be VND, and a payment that was exchanged (another currency, or a rate other than 1) refuses the page. A line whose
 // amounts are not what the identity needs is never forced: `net` is the order's own `settlement_amount` and `other` is whatever the named buckets do not explain, so the identity of the income path holds exactly:
@@ -35,7 +41,7 @@ const PAYMENT_PAGE = 50;
 // A window is at most this many days, so at most this many statements (one is generated a day).
 export const TIKTOK_FINANCE_MAX_DAYS = 31;
 const MAX_STATEMENT_PAGES = 3;
-const MAX_TRANSACTION_PAGES = 10;
+const MAX_TRANSACTION_PAGES = 30;
 const MAX_PAYMENT_PAGES = 3;
 const MAX_STATEMENTS = 100;
 const MAX_FIELDS = 200;
@@ -112,6 +118,8 @@ function requiredMoney(value: unknown): string {
   if (text === null) throw notRecognized();
   return text;
 }
+// The list's own count, when it states one (a whole number), to compare with what was read.
+const totalOf = (data: Record<string, unknown>): number | null => (typeof data.total_count === 'number' && Number.isSafeInteger(data.total_count) && data.total_count >= 0 ? data.total_count : null);
 const nextToken = (data: Record<string, unknown>): string | null => {
   const token = data.next_page_token;
   if (token === undefined || token === null || token === '') return null;
@@ -127,7 +135,7 @@ export interface TiktokStatement {
   payout: string;
   status: string;
   paymentId: string | null;
-  // The day the payout was paid (Vietnam), only for a PAID statement.
+  // The day the payout was paid (Vietnam), only for a PAID statement (the day it was generated when TikTok gives no payment time).
   paidDay: string | null;
 }
 
@@ -180,7 +188,8 @@ export interface TiktokIncomeLine {
 export interface TiktokIncome {
   currency: typeof TIKTOK_CURRENCY;
   statements: TiktokStatement[];
-  payments: TiktokPayment[];
+  // The payouts of the window, or null when the payments API could not be read (it is unavailable to SEA markets, which Vietnam is): the lines do not depend on it.
+  payments: TiktokPayment[] | null;
   lines: TiktokIncomeLine[];
   adjustments: TiktokAdjustment[];
   // The statements read that were not PAID yet, left out (a count only).
@@ -215,14 +224,20 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
   };
   const get = (credential: TiktokCredential, path: string, query: Record<string, string>) => caller(credential, { method: 'GET', path, query: { ...query, shop_cipher: shopOf(credential) } }, ID_KEYS);
 
-  // One list read by page token, at most `maxPages`; a window with more than the pages read is refused, never cut.
-  async function readPages<T>(maxPages: number, fetchPage: (token: string | null) => Promise<{ records: T[]; next: string | null }>): Promise<T[]> {
+  // One list read by page token, at most `maxPages`; a window with more than the pages read is refused, never cut, and a list whose own `total_count` is not the number of records read (a short page, a dropped
+  // record) is refused too.
+  async function readPages<T>(maxPages: number, fetchPage: (token: string | null) => Promise<{ records: T[]; next: string | null; total: number | null }>): Promise<T[]> {
     const out: T[] = [];
     let token: string | null = null;
+    let total: number | null = null;
     for (let page = 0; page < maxPages; page += 1) {
       const got = await fetchPage(token);
       out.push(...got.records);
-      if (got.next === null) return out;
+      total = got.total ?? total;
+      if (got.next === null) {
+        if (total !== null && total !== out.length) throw notRecognized();
+        return out;
+      }
       token = got.next;
     }
     throw notRecognized();
@@ -244,10 +259,10 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
       if (list === undefined) {
         // A reply that counts statements but carries no list cannot be an empty page.
         if (Number(data.total_count) > 0) throw notRecognized();
-        return { records: [] as TiktokStatement[], next: null };
+        return { records: [] as TiktokStatement[], next: null, total: 0 };
       }
       if (!Array.isArray(list) || list.length > TIKTOK_FINANCE_PAGE) throw notRecognized();
-      return { records: list.map(statementOf), next: nextToken(data) };
+      return { records: list.map(statementOf), next: nextToken(data), total: totalOf(data) };
     });
     const seen = new Set<string>();
     for (const s of all) {
@@ -274,10 +289,10 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
       const list = data.payments;
       if (list === undefined) {
         if (Number(data.total_count) > 0) throw notRecognized();
-        return { records: [] as TiktokPayment[], next: null };
+        return { records: [] as TiktokPayment[], next: null, total: 0 };
       }
       if (!Array.isArray(list) || list.length > PAYMENT_PAGE) throw notRecognized();
-      return { records: list.map(paymentOf), next: nextToken(data) };
+      return { records: list.map(paymentOf), next: nextToken(data), total: totalOf(data) };
     });
     const seen = new Set<string>();
     for (const p of all) {
@@ -303,10 +318,10 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
       const list = data.transactions;
       if (list === undefined) {
         if (Number(data.total_count) > 0) throw notRecognized();
-        return { records: [] as Transaction[], next: null };
+        return { records: [] as Transaction[], next: null, total: 0 };
       }
       if (!Array.isArray(list) || list.length > TIKTOK_FINANCE_PAGE) throw notRecognized();
-      return { records: list.map((raw) => transactionOf(raw, statement)), next: nextToken(data) };
+      return { records: list.map((raw) => transactionOf(raw, statement)), next: nextToken(data), total: totalOf(data) };
     });
     const seen = new Set<string>();
     for (const t of all) {
@@ -327,7 +342,11 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
       const paid = statements.filter((s) => s.status === 'PAID');
       const transactions: Transaction[] = [];
       for (const statement of paid) transactions.push(...(await readTransactions(credential, statement)));
-      const payments = await readPayments(credential, window);
+      // Best-effort: the official page says the payments API is unavailable to SEA markets, and no line depends on it. A failed read is `null`, never a failed income.
+      const payments = await readPayments(credential, window).catch((error: unknown) => {
+        if (error instanceof MarketplaceProviderError) return null;
+        throw error;
+      });
       const orders = transactions.filter((t): t is OrderTransaction => t.kind === 'order');
       const adjustments = transactions.filter((t): t is AdjustmentTransaction => t.kind === 'adjustment');
       return {
@@ -354,8 +373,8 @@ function statementOf(raw: unknown): TiktokStatement {
   for (const key of ['revenue_amount', 'fee_amount', 'adjustment_amount', 'net_sales_amount', 'shipping_cost_amount'] as const) optionalMoney(s[key]);
   const paymentId = s.payment_id === undefined || s.payment_id === null || s.payment_id === '' ? null : marketplaceDigits(s.payment_id, 40);
   if (paymentId === null && s.payment_id !== undefined && s.payment_id !== null && s.payment_id !== '') throw notRecognized();
-  // A PAID statement says when it was paid; any other may carry 0 or nothing.
-  const paidDay = status === 'PAID' ? vietnamDay(secondsOf(s.payment_time)) : null;
+  // A PAID statement says when it was paid; when TikTok gives no payment time (0 or none) the day it was generated stands in. Any other status carries no day.
+  const paidDay = status === 'PAID' ? vietnamDay(s.payment_time === undefined || s.payment_time === null || s.payment_time === 0 ? secondsOf(s.statement_time) : secondsOf(s.payment_time)) : null;
   return { id, day, payout, status, paymentId, paidDay };
 }
 
@@ -377,7 +396,8 @@ function paymentOf(raw: unknown): TiktokPayment {
   // An exchange rate other than 1 is a payout in another currency than the amounts claim.
   if (p.exchange_rate !== undefined && p.exchange_rate !== '' && !(typeof p.exchange_rate === 'string' && /^\d{1,3}(\.\d{1,6})?$/.test(p.exchange_rate) && new Decimal(p.exchange_rate).eq(1))) throw notRecognized();
   const createdDay = vietnamDay(secondsOf(p.create_time));
-  const paidDay = status === 'PAID' ? vietnamDay(secondsOf(p.paid_time)) : null;
+  // The page returns 0 when no finish time is available: no day then, never a refusal.
+  const paidDay = status === 'PAID' && p.paid_time !== undefined && p.paid_time !== null && p.paid_time !== 0 ? vietnamDay(secondsOf(p.paid_time)) : null;
   return { id, status, createdDay, paidDay, amount };
 }
 
@@ -410,7 +430,7 @@ function breakdownOf(value: unknown): Map<string, string> {
   if (entries.length > MAX_FIELDS) throw notRecognized();
   for (const [field, amount] of entries) {
     if (!/^[a-z0-9_]{1,80}$/.test(field)) throw notRecognized();
-    if (amount === '') continue;
+    if (amount === '' || amount === null) continue;
     const text = marketplaceMoney(amount);
     if (text === null) throw notRecognized();
     out.set(field, text);
@@ -419,7 +439,7 @@ function breakdownOf(value: unknown): Map<string, string> {
 }
 
 function transactionOf(raw: unknown, statement: TiktokStatement): Transaction {
-  const t = pickAllowed(raw, ['id', 'type', 'order_id', 'adjustment_id', 'adjustment_order_id', 'adjustment_amount', 'settlement_amount', 'revenue_breakdown', 'shipping_cost_amount', 'fee_tax_breakdown'] as const);
+  const t = pickAllowed(raw, ['id', 'type', 'order_id', 'adjustment_id', 'adjustment_order_id', 'adjustment_amount', 'reserve_amount', 'settlement_amount', 'revenue_breakdown', 'shipping_cost_amount', 'fee_tax_breakdown'] as const);
   const id = marketplaceDigits(t?.id, 40);
   const type = typeof t?.type === 'string' ? cleanLabel(t.type, 80) : '';
   if (!t || id === null || type === '' || statement.paidDay === null) throw notRecognized();
@@ -437,11 +457,11 @@ function transactionOf(raw: unknown, statement: TiktokStatement): Transaction {
       breakdown: { revenue: breakdownOf(t.revenue_breakdown), fee: breakdownOf(isRecord(feeTax) ? feeTax.fee : undefined), tax: breakdownOf(isRecord(feeTax) ? feeTax.tax : undefined), shipping: optionalMoney(t.shipping_cost_amount) },
     };
   }
-  // A reserve or an adjustment: never a line of an order. Its amount is the adjustment's (or, for a reserve, the settlement's).
+  // A reserve or an adjustment: never a line of an order. Its amount is the adjustment's (or, for a reserve, `reserve_amount`: positive is released, negative withheld).
   const adjustmentId = marketplaceDigits(t.adjustment_id ?? t.id, 40);
   const related = t.adjustment_order_id === undefined || t.adjustment_order_id === null || t.adjustment_order_id === '' ? null : marketplaceDigits(t.adjustment_order_id, 40);
   if (adjustmentId === null || (related === null && t.adjustment_order_id !== undefined && t.adjustment_order_id !== null && t.adjustment_order_id !== '')) throw notRecognized();
-  const amount = type === 'RESERVE' ? requiredMoney(t.settlement_amount) : requiredMoney(t.adjustment_amount);
+  const amount = type === 'RESERVE' ? requiredMoney(t.reserve_amount) : requiredMoney(t.adjustment_amount);
   return { kind: 'adjustment', id, adjustmentId, type, orderNo: related, paidAt: statement.paidDay, amount, known: type === 'RESERVE' || ADJUSTMENT_TYPES.has(type) };
 }
 
