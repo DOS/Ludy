@@ -1614,7 +1614,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function contextTokenKeyBytes(value: string): Buffer {
   const trimmed = value.trim();
   const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed) ? Buffer.from(trimmed, 'base64') : Buffer.alloc(0);
-  if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  if (bytes.length < 32 || bytes.length > 64) throw new Error('LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   return bytes;
 }
 

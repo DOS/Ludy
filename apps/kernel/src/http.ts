@@ -665,13 +665,13 @@ function readOrgHeader(c: Context): string | null {
   return primary ?? legacy;
 }
 
-function readInviteHeader(c: Context): string | undefined {
+function readInviteHeader(c: Context): { ok: true; value: string | undefined } | { ok: false } {
   const primary = normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER));
   const legacy = normalizeHeaderValue(c.req.header(LEGACY_INVITE_TOKEN_HEADER));
   if (primary !== null && legacy !== null && primary !== legacy) {
-    return undefined;
+    return { ok: false };
   }
-  return (primary ?? legacy) ?? undefined;
+  return { ok: true, value: (primary ?? legacy) ?? undefined };
 }
 
 function readRecipientHeader(c: Context): string | null {
@@ -988,7 +988,9 @@ export function createHttpApp(deps: HttpDeps) {
       }
       if (gate.kind === 'check') {
         // The invite token the web app sends with a sign-up from an accept link (#563); the header is never forwarded.
-        const token = signupInviteToken(readInviteHeader(c));
+        const inviteHeader = readInviteHeader(c);
+        if (!inviteHeader.ok) return signupRefused();
+        const token = signupInviteToken(inviteHeader.value);
         // Each lookup of whether the address holds an invite takes a refusal slot of the client's IPv4 address or IPv6
         // /48 and of the deployment, given back when the sign-up is admitted (#564 item 1).
         // The refusal cap counts per client address too, so warn about a reverse proxy without TRUSTED_PROXY_HOPS

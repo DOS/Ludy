@@ -154,7 +154,7 @@ async function main() {
   const org = await rpc(token, 'org/create', { name: 'Công ty Pilot Stack', idempotencyKey: crypto.randomUUID() });
   const form = new FormData();
   form.append('file', new Blob([INVOICE], { type: 'application/xml' }), 'einvoice-basic.xml');
-  const upload = await fetch(`${BASE_URL}/api/files`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': org.slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) });
+  const upload = await fetch(`${BASE_URL}/api/files`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': org.slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) });
   const uploaded = await upload.json();
   assert(upload.ok && uploaded.files?.[0]?.fileId, `upload accepted (HTTP ${upload.status})`);
   const id = uploaded.files[0].fileId;

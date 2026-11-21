@@ -1444,6 +1444,36 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
       expect(seen).toHaveLength(1);
       expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
       expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
+
+      const allowlistApp = createHttpApp({
+        config: loadConfig({ ...base, AUTH_UPSTREAM_URL: `http://127.0.0.1:${port}`, AUTH_SIGNUP_POLICY: 'allowlist', AUTH_SIGNUP_ALLOWED_DOMAINS: 'allowed.test' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+        emailLimiter: {
+          reserve: async () => ({ allowed: true, reservation: 'slot' }),
+          release: async () => {},
+        },
+        signupRefusalLimiter: {
+          reserve: async () => ({ allowed: true, release: async () => {} }),
+        },
+        signupInviteChecks: {
+          held: async () => false,
+          matches: async (_email, token) => token === validToken,
+        },
+      });
+      seen.length = 0;
+      const allowlistConflict = await allowlistApp.request('/auth/v1/signup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ludy-invite': validToken, 'x-crove-invite': otherToken },
+        body: JSON.stringify({ email: 'newcomer@allowed.test', password: 'correct-horse-battery-staple' }),
+      });
+      expect(allowlistConflict.status).toBe(403);
+      expect(seen).toHaveLength(0);
     } finally {
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
     }

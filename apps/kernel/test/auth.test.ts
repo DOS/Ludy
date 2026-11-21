@@ -3,8 +3,10 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type QueryResult } from 'kysely';
 import { hasFreshMfa, toDomainError } from '@ludy/kernel-runtime';
-import { createTokenVerifier, mfaTimestamp } from '../src/auth.ts';
+import type { Db } from '@ludy/db';
+import { canonicalIdentityIssuer, createAuthenticator, createTokenVerifier, mfaTimestamp } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createLiveCheck, createSessionStatusSource, createSupabaseLiveCheck, createSupabaseSessionRevoker } from '../src/sessions.ts';
 import { runSignOut } from '../src/worker.ts';
@@ -415,5 +417,70 @@ describe('bundled vs custom AUTH_ISSUER dual acceptance', () => {
     await expect(verifier(await mintWithIssuer(customIssuer))).resolves.toMatchObject({ issuer: customIssuer, subject: SUBJECT });
     await expect(verifier(await mintWithIssuer('ludy-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
     await expect(verifier(await mintWithIssuer('crove-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+  });
+
+  const fakeResolveDb = (userId: string) => {
+    const seenIssuers: string[] = [];
+    const connection: DatabaseConnection = {
+      executeQuery: async <R>(query: CompiledQuery) => {
+        seenIssuers.push(String(query.parameters[0]));
+        return { rows: [{ id: userId }] } as QueryResult<R>;
+      },
+      streamQuery: () => {
+        throw new Error('not used');
+      },
+    };
+    const db = new Kysely({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => ({
+          init: async () => {},
+          acquireConnection: async () => connection,
+          beginTransaction: async () => {},
+          commitTransaction: async () => {},
+          rollbackTransaction: async () => {},
+          releaseConnection: async () => {},
+          destroy: async () => {},
+        }),
+        createIntrospector: (k) => new PostgresIntrospector(k),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    }) as unknown as Db;
+    return { db, seenIssuers };
+  };
+
+  it('canonicalizes bundled issuer spelling in canonicalIdentityIssuer and createAuthenticator without splitting user_account or cache', async () => {
+    expect(canonicalIdentityIssuer('crove-auth', 'ludy-auth')).toBe('crove-auth');
+    expect(canonicalIdentityIssuer('crove-auth', 'crove-auth')).toBe('crove-auth');
+    expect(canonicalIdentityIssuer('ludy-auth', 'crove-auth')).toBe('ludy-auth');
+    expect(canonicalIdentityIssuer('ludy-auth', 'ludy-auth')).toBe('ludy-auth');
+    expect(canonicalIdentityIssuer('https://idp.test/auth/v1', 'https://idp.test/auth/v1')).toBe('https://idp.test/auth/v1');
+    expect(canonicalIdentityIssuer('https://idp.test/auth/v1', 'crove-auth')).toBe('crove-auth');
+
+    const userId = '00000000-0000-4000-8000-000000000123';
+    for (const configured of ['crove-auth', 'ludy-auth']) {
+      const { db, seenIssuers } = fakeResolveDb(userId);
+      const cfg = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: configured });
+      const authenticate = createAuthenticator(cfg, db, undefined, null);
+      const other = configured === 'crove-auth' ? 'ludy-auth' : 'crove-auth';
+
+      const first = await authenticate(`Bearer ${await mintWithIssuer(other)}`);
+      expect(first.userId).toBe(userId);
+      expect(seenIssuers).toEqual([configured]);
+
+      // A second token with the configured bundled spelling hits the same cache entry for the same subject.
+      const second = await authenticate(`Bearer ${await mintWithIssuer(configured)}`);
+      expect(second.userId).toBe(userId);
+      expect(seenIssuers).toEqual([configured]);
+    }
+
+    const customIssuer = 'https://auth.example.test/auth/v1';
+    const { db, seenIssuers } = fakeResolveDb(userId);
+    const customCfg = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: customIssuer });
+    const authenticateCustom = createAuthenticator(customCfg, db, undefined, null);
+    expect((await authenticateCustom(`Bearer ${await mintWithIssuer(customIssuer)}`)).userId).toBe(userId);
+    expect(seenIssuers).toEqual([customIssuer]);
+    await expect(authenticateCustom(`Bearer ${await mintWithIssuer('crove-auth')}`)).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+    await expect(authenticateCustom(`Bearer ${await mintWithIssuer('ludy-auth')}`)).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
   });
 });

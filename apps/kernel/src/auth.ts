@@ -137,6 +137,13 @@ function acceptedIssuers(configured: string): string | string[] {
   return BUNDLED_AUTH_ISSUERS.includes(configured) ? [...BUNDLED_AUTH_ISSUERS] : configured;
 }
 
+// Canonicalizes bundled issuers so ludy-auth and crove-auth tokens map to one user_account row.
+export function canonicalIdentityIssuer(configured: string, verifiedIssuer: string): string {
+  return BUNDLED_AUTH_ISSUERS.includes(configured) && BUNDLED_AUTH_ISSUERS.includes(verifiedIssuer)
+    ? configured
+    : verifiedIssuer;
+}
+
 // Signature, algorithm family, issuer, audience and expiry, then the claims Crove relies on. Every failure is 401:
 // OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
@@ -233,13 +240,14 @@ export function createAuthenticator(
       tokenExp: verified.expiresAt,
       ...(confirmLive ? { confirmLive } : {}),
     };
-    const key = `${verified.issuer}|${verified.subject}`;
+    const issuer = canonicalIdentityIssuer(config.AUTH_ISSUER, verified.issuer);
+    const key = `${issuer}|${verified.subject}`;
     const hit = cache.get(key);
     if (hit && hit.expires > Date.now() && hit.user.email === verified.email) return { ...hit.user, ...perToken };
     // Checked first: a revoked, signed-out or disabled session never updates the account's email or name.
     const userId = await withDomainErrors(() =>
       resolveIdentity(db, {
-        issuer: verified.issuer,
+        issuer,
         subject: verified.subject,
         email: verified.email,
         name: verified.name,

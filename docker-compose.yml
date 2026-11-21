@@ -33,7 +33,8 @@ services:
       LUDY_REPORTER_DB_PASSWORD: ${LUDY_REPORTER_DB_PASSWORD:-${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}}
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-local-auth-password}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
+      # Keep bundled issuer default crove-auth until #3970/#3972 migrates user_account.issuer.
+      AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
       DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
       # The context token key (#1822): migrate installs it in the database; the same value goes to crove below.
@@ -58,7 +59,7 @@ services:
       # 15 minutes, defense in depth (ADR-0028); revocation does not rely on it.
       GOTRUE_JWT_EXP: '900'
       GOTRUE_JWT_AUD: authenticated
-      GOTRUE_JWT_ISSUER: ${AUTH_ISSUER:-ludy-auth}
+      GOTRUE_JWT_ISSUER: ${AUTH_ISSUER:-crove-auth}
       GOTRUE_PASSWORD_MIN_LENGTH: '8'
       # The kernel proxy sets X-Real-IP from the client socket, so rate limits are per client.
       GOTRUE_RATE_LIMIT_HEADER: X-Real-IP
@@ -105,7 +106,8 @@ services:
     command: ['auth-grants']
     environment:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
+      # Keep bundled issuer default crove-auth until #3970/#3972 migrates user_account.issuer.
+      AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
       DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
     depends_on:
@@ -125,7 +127,8 @@ services:
       # your own instead (docs/self-host/README.md, "Your own identity provider"): AUTH_ISSUER and AUTH_JWKS_URL name it,
       # PUBLIC_AUTH_URL and PUBLIC_AUTH_ANON_KEY are where and how the app signs in, AUTH_SESSION_CHECK=jwt, AUTH_UPSTREAM_URL set
       # to empty (no bundled proxy), and AUTH_ALLOWED_EMAILS says who may use this deployment.
-      AUTH_ISSUER: ${AUTH_ISSUER:-ludy-auth}
+      # Bundled default stays crove-auth until #3970/#3972 migrates user_account.issuer.
+      AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
       # Empty: db with the bundled Supabase Auth (AUTH_UPSTREAM_URL), jwt without it; the kernel derives it.
       AUTH_SESSION_CHECK: ${AUTH_SESSION_CHECK:-}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
