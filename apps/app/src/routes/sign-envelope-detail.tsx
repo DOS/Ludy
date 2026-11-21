@@ -20,7 +20,7 @@ import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignFile,
   downloadSignPdfBytes,
@@ -76,6 +76,17 @@ function triggerDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export function canManageEnvelopeLinksAndVoid(input: {
+  role: string | null | undefined;
+  userId: string | null | undefined;
+  createdBy: string | null | undefined;
+}): boolean {
+  if (!input.role) return false;
+  if (input.role === 'owner' || input.role === 'admin') return true;
+  if (input.role === 'member' && input.userId && input.createdBy === input.userId) return true;
+  return false;
+}
+
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],
   signers: readonly SignSignerRecord[],
@@ -129,6 +140,12 @@ export function SignEnvelopeDetailPage() {
   });
 
   const envelope = detailQuery.data?.envelope ?? null;
+  const me = useQuery(orpc.me.get.queryOptions());
+  const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const canManageLinksAndVoid = me.data
+    ? canManageEnvelopeLinksAndVoid({ role: roleHere, userId: me.data.userId, createdBy: envelope?.createdBy })
+    : false;
+  const canRemind = me.data ? Boolean(roleHere && roleHere !== 'viewer') : false;
   const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
   const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
   const isDraft = envelope?.status === 'draft';
@@ -613,7 +630,7 @@ export function SignEnvelopeDetailPage() {
                 </Button>
               </>
             ) : null}
-            {envelope.status === 'sent' || envelope.status === 'in_progress' ? (
+            {canManageLinksAndVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
               <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
                 {t('actions.void')}
               </Button>
@@ -685,8 +702,8 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            onCopyZaloLink={handleCopyZaloLink}
-            onRemindSigner={handleRemindSigner}
+            {...(canManageLinksAndVoid ? { onCopyZaloLink: handleCopyZaloLink } : {})}
+            {...(canRemind ? { onRemindSigner: handleRemindSigner } : {})}
           />
 
           {isDraft ? (

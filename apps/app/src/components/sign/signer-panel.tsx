@@ -237,7 +237,7 @@ export function SignerPanel({
                     </div>
                   ) : null}
 
-                  {canLinkOrRemind ? (
+                  {canLinkOrRemind && (onCopyZaloLink || (onRemindSigner && signer.deliveryMode === 'email' && signer.email)) ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       {onCopyZaloLink ? (
                         <Button
