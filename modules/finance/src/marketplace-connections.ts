@@ -21,6 +21,7 @@ import { zChannelConnect } from '@crove/kernel';
 import {
   zId,
   zMarketplaceAuthorizeBegin,
+  zMarketplaceAuthorizeComplete,
   zMarketplaceAuthorizeFinish,
   zMarketplaceAuthorizeLookup,
   zMarketplaceAuthorizeRecord,
@@ -134,6 +135,7 @@ export const marketplaceConnectionConnect = defineCommand({
             authorize_by: null,
             authorize_code_key_id: null,
             authorize_code_envelope: null,
+            authorize_pending_at: null,
             reauthorize_by: null,
           })
           .where('org_id', '=', ctx.orgId)
@@ -361,6 +363,9 @@ export const marketplaceConnectionRecordPoll = defineCommand({
 // error carries the state, the code or a token.
 export const MARKETPLACE_AUTHORIZE_REQUESTED = 'finance.marketplace_authorize_requested';
 export const MARKETPLACE_AUTHORIZE_TTL_MS = 10 * 60_000;
+// How long a stored code may wait for the worker: past it the authorization counts as failed (the worker may have died) and the seller authorizes again.
+export const MARKETPLACE_AUTHORIZE_PENDING_MS = 15 * 60_000;
+const pendingExpired = (pendingAt: Date | string | null, now: number): boolean => pendingAt === null || now - new Date(pendingAt).getTime() > MARKETPLACE_AUTHORIZE_PENDING_MS;
 // The binding a sealed one-time code is sealed under: its own, never the credential's, so an envelope of the credential cannot pass for a code and the reverse.
 export const marketplaceAuthorizeCodeAccount = (connectionId: string): string => `${connectionId}:authorize_code`;
 const digestOf = (envelope: string): string => sha256Hex(new TextEncoder().encode(envelope));
@@ -461,6 +466,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
         authorize_code_key_id: input.codeKeyId,
         authorize_code_envelope: input.codeEnvelope,
         authorize_state: 'pending',
+        authorize_pending_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -474,7 +480,9 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
 // What the worker needs to finish an authorization: the sealed code and the binding of the sealed secret, or why it must not.
 export type MarketplaceAuthorizeTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_pending' | 'unknown_adapter' }
-  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string };
+  // The code waited past the window: it is not traded, but the worker records it as failed (with the digest) so the sealed code is cleared.
+  | { action: 'expired'; id: string; codeDigest: string }
+  | { action: 'authorize'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; codeKeyId: string; codeEnvelope: string; codeDigest: string; codeAccount: string; channelVersion: string };
 
 export const marketplaceConnectionAuthorizeTarget = defineQuery({
   name: 'finance.marketplace_connection.authorize_target',
@@ -484,7 +492,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'c.authorize_pending_at', 'ch.status', 'ch.updated_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -493,6 +501,8 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter || !MARKETPLACE_AUTHORIZED_ADAPTERS.includes(adapter)) return { action: 'none', reason: 'unknown_adapter' };
     if (row.authorize_state !== 'pending' || !row.authorize_code_key_id || !row.authorize_code_envelope) return { action: 'none', reason: 'not_pending' };
+    // A code that waited past the window is not traded (the worker may have died, and the code is old): the list shows it as failed and the seller authorizes again.
+    if (pendingExpired(row.authorize_pending_at, Date.now())) return { action: 'expired', id: row.id, codeDigest: digestOf(row.authorize_code_envelope) };
     return {
       action: 'authorize',
       id: row.id,
@@ -502,6 +512,8 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
       codeEnvelope: row.authorize_code_envelope,
       codeDigest: digestOf(row.authorize_code_envelope),
       codeAccount: marketplaceAuthorizeCodeAccount(row.id),
+      // The channel connection's version at this read: what kernel.channel.refresh compares, so a credential replaced meanwhile is never overwritten.
+      channelVersion: new Date(row.updated_at).toISOString(),
     };
   },
 });
@@ -509,7 +521,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
 export const marketplaceConnectionAuthorizeRecord = defineCommand({
   name: 'finance.marketplace_connection.authorize_record',
   input: zMarketplaceAuthorizeRecord,
-  // An outcome and a date on a row, and the code gone. What the exchange gave (the tokens) was sealed into the channel connection by the worker before this runs.
+  // A refusal or a failure and the code gone (a good exchange is authorize_complete's, which also seals the new credential in the same transaction).
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -531,15 +543,73 @@ export const marketplaceConnectionAuthorizeRecord = defineCommand({
         authorize_state: input.outcome,
         authorize_code_key_id: null,
         authorize_code_envelope: null,
-        // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
-        ...(input.outcome === 'authorized'
-          ? { reauthorize_by: input.reauthorizeBy ?? null, last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null }
-          : {}),
+        authorize_pending_at: null,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .execute();
     ctx.audit({ outcome: input.outcome });
+    return { recorded: true };
+  },
+});
+
+export const marketplaceConnectionAuthorizeComplete = defineCommand({
+  name: 'finance.marketplace_connection.authorize_complete',
+  input: zMarketplaceAuthorizeComplete,
+  // It replaces the connection's sealed credential with the one the exchange produced (the tokens are inside the envelope, sealed by the worker) and marks the authorization done: no money, no order.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ recorded: boolean }> => {
+    const found = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection')
+      .select(['channel_connection_id', 'authorize_state', 'authorize_code_envelope', 'authorize_pending_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    // Only the pending authorization of the code the worker read.
+    if (!found || found.authorize_state !== 'pending' || !found.authorize_code_envelope || digestOf(found.authorize_code_envelope) !== input.codeDigest) return { recorded: false };
+    // The code this command is for is spent (the platform has traded it): whatever stops the new credential being stored, the sealed code must not stay behind, so the authorization is marked failed and the code
+    // cleared in this same transaction, and the seller authorizes again.
+    const fail = async (): Promise<{ recorded: boolean }> => {
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_connection')
+        .set({ authorize_state: 'failed', authorize_code_key_id: null, authorize_code_envelope: null, authorize_pending_at: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.id)
+        .execute();
+      ctx.audit({ outcome: 'failed' });
+      return { recorded: false };
+    };
+    if (pendingExpired(found.authorize_pending_at, ctx.now.getTime())) return fail();
+    // The credential is replaced only if the connection is as the worker read it (a reconnect or a refresh since then moved its version); in the same transaction as the mark below, so the two never part.
+    const replaced = await ctx.run<{ refreshed: boolean }>('kernel.channel.refresh', {
+      connectionId: found.channel_connection_id,
+      ifVersion: input.ifVersion,
+      expiresAt: input.expiresAt,
+      credential: input.credential,
+    });
+    if (!replaced.refreshed) return fail();
+    await ctx.trx
+      .updateTable('crove_finance.marketplace_connection')
+      .set({
+        authorize_state: 'authorized',
+        authorize_code_key_id: null,
+        authorize_code_envelope: null,
+        authorize_pending_at: null,
+        reauthorize_by: input.reauthorizeBy,
+        // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
+        last_poll_state: null,
+        last_polled_at: null,
+        last_test_state: null,
+        last_tested_at: null,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .execute();
+    ctx.audit({ outcome: 'authorized' });
     return { recorded: true };
   },
 });
@@ -563,6 +633,7 @@ export const marketplaceConnectionList = defineQuery({
         'c.last_polled_at',
         'c.last_poll_state',
         'c.authorize_state',
+        'c.authorize_pending_at',
         'c.reauthorize_by',
         'ch.display_name',
         'ch.status',
@@ -600,7 +671,8 @@ export const marketplaceConnectionList = defineQuery({
       lastPolledAt: iso(r.last_polled_at),
       lastPollState: r.last_poll_state,
       ordersWaiting: waiting.get(r.id) ?? 0,
-      authorizeState: r.authorize_state,
+      // A code that waited for the worker past the window is shown as failed: nothing else would ever clear it.
+      authorizeState: r.authorize_state === 'pending' && pendingExpired(r.authorize_pending_at, Date.now()) ? ('failed' as const) : r.authorize_state,
       reauthorizeBy: iso(r.reauthorize_by),
     }));
   },
@@ -625,5 +697,6 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionAuthorizeBegin,
   marketplaceConnectionAuthorizeFinish,
   marketplaceConnectionAuthorizeRecord,
+  marketplaceConnectionAuthorizeComplete,
 ];
 export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget];

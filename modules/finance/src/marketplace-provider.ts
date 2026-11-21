@@ -123,6 +123,13 @@ export interface MarketplaceStockLevel {
   quantity: string;
 }
 
+// What trading a seller's one-time authorization code gives: the new sealed secret of the connection (the seller's keys with the tokens) and the dates, or why not. `refused`: the platform says the code is
+// bad, used or expired (the seller authorizes again); `failed`: anything else. A short word each, never the platform's text.
+export type MarketplaceAuthorizeResult =
+  | { granted: { secret: string; accessExpiresAt: Date; refreshExpiresAt: Date | null } }
+  | { refused: string }
+  | { failed: string };
+
 export interface MarketplaceProvider {
   readonly id: MarketplaceAdapterId;
   // The hosts this adapter's calls are bound to (through guardedRequest).
@@ -131,6 +138,10 @@ export interface MarketplaceProvider {
   // the opaque secret of a call; the offline provider needs none.
   readonly connectFields: readonly string[];
   readonly capabilities: MarketplaceCapabilities;
+  // Only an adapter the seller authorizes on the platform's own page (Lazada): the address of that page for an app key, a return address and a state, and the trade of the code the page returns. The
+  // trade runs in the worker, with the seller's own secret; the API only builds the address.
+  authorizeUrl?(input: { appKey: string; redirectUri: string; state: string }): string;
+  authorize?(secret: string, code: string): Promise<MarketplaceAuthorizeResult>;
   testConnection(secret: string): Promise<MarketplaceTestResult>;
   // The orders changed since the cursor (null: from the start of the platform's window), at most one page.
   listOrders(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceOrderPage>;

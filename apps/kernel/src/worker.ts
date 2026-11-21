@@ -75,7 +75,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
-import { marketplaceJobKind, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { marketplaceJobKind, runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMarketplaceColumns, type MarketplaceColumnsJob } from './marketplace-columns-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
@@ -1670,6 +1670,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.log(`[marketplace] test ${parsed.data.connectionId.slice(0, 8)}: ${tested.state}`);
         return;
       }
+      // The finish of a seller's authorization: the code is traded for the token pair, which replaces the connection's credential (one command); no page, no file.
+      if (marketplaceJobKind(parsed.data) === 'authorize') {
+        const authorized = await runMarketplaceAuthorize(marketplaceDeps, parsed.data);
+        console.log(`[marketplace] authorize ${parsed.data.connectionId.slice(0, 8)}: ${authorized.state}`);
+        return;
+      }
       const done = await runMarketplacePoll(marketplaceDeps, parsed.data);
       console.log(`[marketplace] ${parsed.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
     });
@@ -2987,6 +2993,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `test:${connectionId}`),
                   // The queue is a standard one, so the key alone dedupes nothing: a send under the same key within this many seconds is dropped (the command also refuses a test within a minute of the last).
                   singletonSeconds: 60,
+                  retryLimit: 0,
+                });
+              }
+              // A seller authorized a marketplace connection on the platform's page and the callback stored the sealed one-time code (#4238): the same queue, kind `authorize`, no retry (the code is single use) and no
+              // time throttle (a second authorization is a second code that must not be dropped). Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_authorize_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId, kind: 'authorize' } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `authorize:${connectionId}`),
                   retryLimit: 0,
                 });
               }

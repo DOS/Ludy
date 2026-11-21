@@ -42,6 +42,12 @@ export const adapterIdOf = (connection: Pick<MarketplaceConnection, 'provider'>)
 export const canPollNow = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
   connection.status === 'active' && adapters.some((a) => a.id === adapterIdOf(connection) && a.offline);
 
+// Whether the screen offers "Authorize": the connection is live and its adapter is authorized on the platform's own page (Lazada). The adapter list does not say so, so the one adapter that has the step is named here;
+// the server refuses the start for any other (MARKETPLACE_AUTHORIZE_UNSUPPORTED).
+export const AUTHORIZED_ADAPTERS: readonly string[] = ['lazada'];
+export const canAuthorize = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
+  connection.status === 'active' && AUTHORIZED_ADAPTERS.includes(adapterIdOf(connection)) && adapters.some((a) => a.id === adapterIdOf(connection) && !a.offline);
+
 // The platforms a connect can name: those an adapter serves.
 export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo[]): MarketplacePlatformInfo[] => platforms.filter((p) => p.adapter);
 

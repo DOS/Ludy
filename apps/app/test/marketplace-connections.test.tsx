@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LegalEntity, MarketplaceConnection, MarketplaceProviders } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown, pollStateKey, testStateKey } from '../src/lib/marketplace-connections.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown, pollStateKey, testStateKey } from '../src/lib/marketplace-connections.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -87,7 +87,7 @@ function card(role: Role, seed: Seed = {}): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <MarketplaceConnectionsCard role={role} />
+        <MarketplaceConnectionsCard role={role} orgSlug="acme" />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -228,6 +228,30 @@ describe('MarketplaceConnectionsCard', () => {
     expect(form).toMatch(/type="password"[^>]*aria-label="App Secret"|aria-label="App Secret"[^>]*type="password"/);
     // Vietnamese words exist for both.
     expect(card('owner', { providers: lazada, connections: [], locale: 'vi' })).toContain('Mã bí mật ứng dụng (App Secret)');
+  });
+
+  it('offers Authorize on a live Lazada connection to an owner or admin, says where the authorization stands and until when, and offers it to no one else (#4238)', () => {
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
+    const fresh = card('owner', { providers: lazada, connections: [mine({})] });
+    expect(fresh).toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(fresh).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    const done = card('admin', { providers: lazada, connections: [mine({ authorizeState: 'authorized', reauthorizeBy: '2027-05-20T08:00:00.000Z' })] });
+    expect(done).toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    expect(done).toContain(en.marketplaceConnections.authorizeStates.authorized);
+    expect(done).toContain('authorize again before');
+    for (const state of ['pending', 'refused', 'failed'] as const) {
+      expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: state })] })).toContain(esc(en.marketplaceConnections.authorizeStates[state]));
+    }
+    // Members and viewers read it; no button. A dead connection and the sandbox have none.
+    for (const role of ['member', 'viewer'] as const) expect(card(role, { providers: lazada, connections: [mine({ authorizeState: 'pending' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(card('owner', { providers: lazada, connections: [mine({ status: 'expired' })] })).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(card('owner')).not.toContain(`>${en.marketplaceConnections.authorize}<`);
+    expect(canAuthorize(mine({}), lazada.adapters)).toBe(true);
+    expect(canAuthorize(mine({}), [])).toBe(false);
+    expect(canAuthorize(connection(), offered.adapters)).toBe(false);
+    // Vietnamese words exist.
+    expect(card('owner', { providers: lazada, connections: [mine({ authorizeState: 'refused' })], locale: 'vi' })).toContain('Cấp quyền lại');
   });
 
   it('is in Vietnamese with the same keys', () => {

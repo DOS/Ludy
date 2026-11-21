@@ -103,4 +103,20 @@ export type MarketplaceAuthorizeBegun = z.infer<typeof zMarketplaceAuthorizeBegu
 export const zMarketplaceAuthorizeLookup = z.strictObject({ stateHash: zMarketplaceStateHash });
 export const zMarketplaceAuthorizeFinish = z.strictObject({ stateHash: zMarketplaceStateHash, codeKeyId: z.string().min(1).max(64), codeEnvelope: z.string().min(1).max(8000) });
 // `codeDigest` names the code the outcome is for (the SHA-256 of its sealed envelope, as authorize_target gave it): an outcome for a code that was replaced meanwhile is not recorded.
-export const zMarketplaceAuthorizeRecord = z.strictObject({ id: zId, codeDigest: z.string().regex(/^[0-9a-f]{64}$/), outcome: z.enum(['authorized', 'refused', 'failed']), reauthorizeBy: z.iso.datetime({ offset: true }).nullable().optional() });
+export const zMarketplaceAuthorizeRecord = z.strictObject({ id: zId, codeDigest: z.string().regex(/^[0-9a-f]{64}$/), outcome: z.enum(['refused', 'failed']) });
+// A good exchange is recorded together with the new credential, in one command (one transaction): the worker's sealed secret replaces the connection's credential only if the connection was not touched since
+// the worker read it (`ifVersion`, the channel connection's own version), and the same transaction marks the authorization done. `expiresAt` is the access token's end (the refresh sweep reads it).
+export const zMarketplaceAuthorizeComplete = z.strictObject({
+  id: zId,
+  codeDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  ifVersion: z.iso.datetime({ offset: true }),
+  expiresAt: z.iso.datetime({ offset: true }),
+  reauthorizeBy: z.iso.datetime({ offset: true }).nullable(),
+  credential: z.strictObject({ keyId: z.string().min(1).max(64), envelope: z.string().min(1).max(8000) }),
+});
+
+// The seller's browser, on its way out and back (#4238): the address of the platform's consent page, and what the platform returns the seller to the app with (the state it was given and the one-time code).
+export const zMarketplaceAuthorizeStarted = z.object({ authorizeUrl: z.url(), expiresAt: z.iso.datetime({ offset: true }) });
+export type MarketplaceAuthorizeStarted = z.infer<typeof zMarketplaceAuthorizeStarted>;
+export const zMarketplaceAuthorizeReturn = z.strictObject({ state: z.string().min(16).max(200), code: z.string().min(1).max(400) });
+export type MarketplaceAuthorizeReturn = z.infer<typeof zMarketplaceAuthorizeReturn>;

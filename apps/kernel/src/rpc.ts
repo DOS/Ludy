@@ -3550,6 +3550,37 @@ export function createRpcHandler(
             return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
           }),
         ),
+        // The seller's authorization on the platform's own page (#4238). The API makes the state (random; only its hash is stored, with the member and the connection) and builds the address from the App Key kept in
+        // the clear; it opens no credential. The return is checked by the finance command (single use, this member, this org, 10 minutes) and the code is sealed here and traded by the worker alone.
+        authorizeStart: os.marketplace.connections.authorizeStart.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            if (!provider.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // Without the public address the return address would be a relative one that the platform refuses.
+            if (!channels?.publicUrl) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const attempt = newOAuthAttempt(false);
+            const begun = await runtime.execute<{ appKey: string; expiresAt: string }>('finance.marketplace_connection.authorize_begin', { id: row.id, stateHash: attempt.stateHash }, { actor, orgId });
+            const redirectUri = `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/marketplace/oauth/${row.provider.slice('marketplace_'.length)}/callback`;
+            return { authorizeUrl: provider.authorizeUrl({ appKey: begun.appKey, redirectUri, state: attempt.state }), expiresAt: begun.expiresAt };
+          }),
+        ),
+        authorizeFinish: os.marketplace.connections.authorizeFinish.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp quyền được cho kết nối sàn');
+            if (!channels) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            const stateHash = oauthStateHash(input.state);
+            const found = await runtime.query<{ id: string; provider: string; externalAccountId: string }>('finance.marketplace_connection.authorize_lookup', { stateHash }, { actor, orgId });
+            if (!marketplaceProviderOf(found.provider.slice('marketplace_'.length))?.authorizeUrl) throw new DomainError('MARKETPLACE_AUTHORIZE_UNSUPPORTED', 422, 'Kết nối này không cần cấp quyền trên sàn');
+            // The code is sealed under a binding of its own and never opened here; the worker opens it.
+            const sealed = channels.broker.seal(input.code, { orgId, provider: found.provider, externalAccountId: found.externalAccountId });
+            return runtime.execute<{ id: string }>('finance.marketplace_connection.authorize_finish', { stateHash, codeKeyId: sealed.keyId, codeEnvelope: sealed.envelope.toString('base64') }, { actor, orgId });
+          }),
+        ),
         pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới lấy đơn từ sàn được');
