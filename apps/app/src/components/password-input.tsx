@@ -4,8 +4,8 @@
 // is at least 44px high under the phone breakpoint. Hidden again whenever the screen is left (the state lives here, nothing is stored).
 import { useState, type ComponentProps } from 'react';
 import { useTranslations } from 'use-intl';
-import { Input } from '@crove/ui/components/input';
-import { cn } from '@crove/ui/lib/utils';
+import { Input } from '@ludy/ui/components/input';
+import { cn } from '@ludy/ui/lib/utils';
 
 export function PasswordInput({ id, className, ...props }: Omit<ComponentProps<typeof Input>, 'type'> & { id?: string | undefined }) {
   const t = useTranslations('common');

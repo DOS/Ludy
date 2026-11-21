@@ -14,9 +14,9 @@
 // first publish (#1001), so it never lands minutes after it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialRecurrence } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId, zSocialRecurrence } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { localDate, nextOccurrence, parseRecurrence, type Recurrence } from './domain/recurrence.ts';
 import { SWEEP_PAGE, SWEEP_PAGES, repostCopy } from './evergreen.ts';
 import { publishingHeld } from './publish-hold.ts';

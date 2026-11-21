@@ -4,8 +4,8 @@
 // Escape or the close button closes it and focus returns to the card or the row that opened it. A stray click on the dimmed page does not close it: a form or a quote may be half typed.
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { Deal, PartyChoice } from '@crove/kernel-contract';
-import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@crove/ui/components/sheet';
+import type { Deal, PartyChoice } from '@ludy/kernel-contract';
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { DealBookings } from './booking-deal.tsx';
 import { DealForm, type Member } from './deal-form.tsx';
 import { DealQuotes } from './deal-quotes.tsx';

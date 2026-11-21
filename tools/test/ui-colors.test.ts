@@ -94,7 +94,7 @@ describe('design-token lint (ui-colors)', () => {
       'bg-zinc-500',
       'gold',
     ]);
-    const ok = "@import '@crove/ui/globals.css';\n/* red */\nhtml, body, #root { height: 100%; }\na:hover { color: currentColor; background: transparent; outline: none; }";
+    const ok = "@import '@ludy/ui/globals.css';\n/* red */\nhtml, body, #root { height: 100%; }\na:hover { color: currentColor; background: transparent; outline: none; }";
     expect(matches(ok, true)).toEqual([]);
   });
 

@@ -2,7 +2,7 @@
 // Notes N8 (#1677, ADR-0037, ADR-0049): status check and explicit human acceptance commands for AI summary and suggested to-dos.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   DEFAULT_TIME_ZONE,
   NOTE_BODY_MAX,
@@ -15,8 +15,8 @@ import {
   type NoteVyStatus,
   type NoteWritten,
   type TodoAcceptSuggestionsResult,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
 import { TODO_SUMMARY_COLUMNS, detailsOf, due, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
 

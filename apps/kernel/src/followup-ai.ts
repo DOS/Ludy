@@ -8,8 +8,8 @@
 // meetings.followup.send, which checks every text the same way whatever its origin and rebuilds the facts from the published result. When the model is off, the AI budget is
 // spent or a kill switch is on, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words, and the dialog keeps
 // the fixed words. A failure is named, never quoted: neither the org's name, the hint nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@crove/agent';
-import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_LEAD_MAX, followupClean, followupWordsProblem, type FollowupWording } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_LEAD_MAX, followupClean, followupWordsProblem, type FollowupWording } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface FollowupAi {

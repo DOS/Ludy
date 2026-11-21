@@ -3,8 +3,8 @@
 // percentage of revenue). While a row behind the figures is `commentary` the file says so on top and labels the figures; once confirmed there is no label. A part with no line holds the VAT total back.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { HouseholdS2b, HouseholdYearToDate } from '@crove/kernel-contract';
-import { HOUSEHOLD_PROVISIONAL_LABEL } from '@crove/kernel-contract';
+import type { HouseholdS2b, HouseholdYearToDate } from '@ludy/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL } from '@ludy/kernel-contract';
 import { buildS2bWorkbook } from '../src/household-export.ts';
 
 const E1 = '00000000-0000-4000-8000-000000000001';

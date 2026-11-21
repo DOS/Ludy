@@ -4,8 +4,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { TitleAnswer } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import type { TitleAnswer } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 

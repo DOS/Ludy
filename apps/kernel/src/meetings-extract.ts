@@ -4,8 +4,8 @@
 // the caller then seals only that Opus as the recording, so the video is never stored. Whatever the sandbox says is untrusted: the client
 // validates it with a strict schema, and only a duration in range is accepted.
 import { randomBytes } from 'node:crypto';
-import { createMediaExtractClient, MEDIA_LIMITS, MEDIA_TIMING, MediaClientError, type MediaExtractClient } from '@crove/media-contract/extract';
-import { DomainError, type BlobMediaBinding, type BlobStore } from '@crove/kernel-runtime';
+import { createMediaExtractClient, MEDIA_LIMITS, MEDIA_TIMING, MediaClientError, type MediaExtractClient } from '@ludy/media-contract/extract';
+import { DomainError, type BlobMediaBinding, type BlobStore } from '@ludy/kernel-runtime';
 import { decryptedWindows, failed, MEDIA_PROBE_FAILED, tooLong, unavailable } from './meetings-measure.ts';
 import { sealMedia } from './media-seal.ts';
 

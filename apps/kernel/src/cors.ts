@@ -7,7 +7,7 @@
 // cookies: the answer never sets Access-Control-Allow-Credentials, and the browser sends no cookie on these requests.
 // With the list empty (the default, and every same-origin deployment) the middleware does nothing.
 import type { MiddlewareHandler } from 'hono';
-import { ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_HEADER } from '@ludy/kernel-contract';
 import { INVITE_TOKEN_HEADER } from './auth-signup-policy.ts';
 
 export const CORS_MAX_ORIGINS = 10;

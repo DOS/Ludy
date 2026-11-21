@@ -14,9 +14,9 @@ import {
   OVERDUE_RECEIVABLE_MIN_DAYS,
   SIGNAL_PARTIAL_VIEW_CODE,
   SUPPLIER_BANK_CHANGE_DAYS,
-  WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
-import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SIGNAL_ITEMS_MAX, SUPPLIER_BANK_CHANGED_READ, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from '@crove/kernel';
+  WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@ludy/kernel-contract';
+import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SIGNAL_ITEMS_MAX, SUPPLIER_BANK_CHANGED_READ, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from '@ludy/kernel';
 
 // 00:30 on 2026-11-20 in Vietnam, still 2026-11-19 in UTC: the days are counted on the Vietnam calendar.
 const NOW = new Date('2026-11-19T17:30:00Z');

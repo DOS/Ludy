@@ -1,7 +1,7 @@
 // Social domain layer (issue #231): channel rules, lifecycles, approval hash, publish decisions.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import * as channel from '@crove/channel';
+import * as channel from '@ludy/channel';
 import {
   approvalCovers,
   approvalsInRound,

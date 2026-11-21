@@ -4,8 +4,8 @@
 // payload, marked tainted, and a person approves it in Ludy. The approval then runs this command as the approver, which runs the original command in the same transaction: the reply
 // window, the platform's limits, the kill switch and the app gate are the original's, judged at the approval on what stands then, and a refusal leaves the proposal pending.
 // The payload is the original's own strict input (N6 of the #3858 review): a key it does not declare is refused before a proposal is made, and the card shows exactly what will be sent.
-import { zApprovedCall } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zApprovedCall } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { conversationHide, conversationReply, conversationReplyPrivately } from './conversations.ts';
 
 // Only an approved proposal reaches the handler (the runtime's proposal state gate); the approver is a person, never an agent or a grant.

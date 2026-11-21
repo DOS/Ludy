@@ -5,7 +5,7 @@
 import { connect, type AddressInfo, type Socket } from 'node:net';
 import { serve } from '@hono/node-server';
 import { afterEach, describe, expect, it } from 'vitest';
-import { zExtractResponse, type ExtractResponse } from '@crove/extract-contract';
+import { zExtractResponse, type ExtractResponse } from '@ludy/extract-contract';
 import { createExtractApp, type ExtractAppOptions, type Runner } from '../src/server.ts';
 
 const FIXTURE = new TextEncoder().encode('<HDon/>');

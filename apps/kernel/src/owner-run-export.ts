@@ -7,7 +7,7 @@
 // A client that goes away (the request's signal aborts, or the body is cancelled) settles the waiting sink, which stops the query and its
 // transaction; so does a client that stops taking batches for MAX_WAIT_MS. The slot is let go only once the query itself has settled, so the
 // slots bound the database connections the exports hold, not only the responses.
-import { DomainError, type QuerySink } from '@crove/kernel-runtime';
+import { DomainError, type QuerySink } from '@ludy/kernel-runtime';
 
 const encoder = new TextEncoder();
 

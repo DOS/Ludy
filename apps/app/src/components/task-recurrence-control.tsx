@@ -7,14 +7,14 @@ import {
   type ProjectTaskRecurrence,
   type ProjectTaskRecurrenceCadence,
   type ProjectTaskRecurrenceView,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';

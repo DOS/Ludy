@@ -2,7 +2,7 @@
 // The pure half of the column screen (#4036): a suggestion can only fill assignable columns and each field once, the mapping to check needs a platform and one column, a verdict belongs to the
 // mapping it was made for, and a selection round-trips to assignments in column order.
 import { describe, expect, it } from 'vitest';
-import type { MarketplaceColumnSheet } from '@crove/kernel-contract';
+import type { MarketplaceColumnSheet } from '@ludy/kernel-contract';
 import { assignableIndexes, checkIsStuck, assignmentsFrom, fieldsChosenTwice, mappingFrom, sameMappings, selectionFrom, verdictIsCurrent } from '../src/lib/marketplace-columns.ts';
 
 const sheet: MarketplaceColumnSheet = {

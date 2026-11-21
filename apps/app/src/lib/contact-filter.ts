@@ -3,7 +3,7 @@
 // the conditions it has a control for (search, kind, has an email, a phone, a tax code); any other condition of a saved
 // view (created within N days, has an open deal) stays in `rest`, shown as a chip the person can remove, so opening a view
 // and saving it again never drops a condition the bar cannot draw. No browser or API imports, so it is unit tested.
-import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@crove/kernel-contract';
+import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@ludy/kernel-contract';
 
 export type Tri = '' | 'yes' | 'no';
 export type ContactKind = '' | 'organization' | 'person';

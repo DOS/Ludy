@@ -3,8 +3,8 @@
 // series and the operator's floors, its summary and its exit codes. The report itself is worm.test.ts (from memory)
 // and restore-report.db.test.ts (on PostgreSQL).
 import { describe, expect, it, vi } from 'vitest';
-import type { Db } from '@crove/db';
-import { DomainError } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError } from '@ludy/kernel-runtime';
 import type { RestoreReport } from '../src/worm.ts';
 
 const report = vi.hoisted(() => ({ current: null as RestoreReport | null, acknowledged: [] as RestoreReport[] }));

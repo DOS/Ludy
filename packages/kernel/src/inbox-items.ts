@@ -15,9 +15,9 @@
 // INBOX_ITEM_DISMISSED_KEEP_DAYS ago, and any raised INBOX_ITEM_KEEP_DAYS ago (kernel.inbox.prune).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 import { offAppsOf, proposalOfApp } from './org-apps.ts';
 

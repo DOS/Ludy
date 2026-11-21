@@ -28,7 +28,7 @@
 //   context-token-key  print a new context token key (#1822): CROVE_CONTEXT_TOKEN_KEY, for migrate and the kernel
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
 import { randomBytes } from 'node:crypto';
-import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
+import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@ludy/db/migrate';
 import { liveAuthUrl, loadConfig, type Config } from './config.ts';
 import { installJsonLogs, parseLogFormat } from './log.ts';
 import { createKernel, defaultAdapters, type ServerRole } from './kernel.ts';

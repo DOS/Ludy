@@ -2,7 +2,7 @@
 // entities scoped to a legal entity, and every command's audit target declared. The catalog side (legal_entity_id, the
 // append-only trigger, the numbering series) runs in manifest.db.test.ts; here entityProblems() gets planted catalogs.
 import { describe, expect, it } from 'vitest';
-import { columns, defineModule, type EntityDeclaration } from '@crove/kernel-contract';
+import { columns, defineModule, type EntityDeclaration } from '@ludy/kernel-contract';
 import { commandTargetTypes, entityProblems, numberingCalls, type CatalogFacts } from './manifest-entities.ts';
 import { MODULE_MANIFESTS, type Manifests } from './manifest-permissions.ts';
 

@@ -5,8 +5,8 @@
 // nothing and is a new draft each time: it edits no draft, a person's or its own (the database's draft guard lets only a person take an AI field out of the list). Audited with the ids, the amounts and the
 // state, never the creative text.
 import { z } from 'zod';
-import { zAdsCampaignPlanDraft, zId, type AdsCampaignDraftView } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
+import { zAdsCampaignPlanDraft, zId, type AdsCampaignDraftView } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
 import { saveCampaignDraft } from './campaign-draft.ts';
 
 export const zMcpAdsDraftSave = z.strictObject({ adAccountId: zId, plan: zAdsCampaignPlanDraft });

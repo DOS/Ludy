@@ -10,7 +10,7 @@ import {
   type PdfSealField,
   type PdfSealOtpStatus,
   type PdfSealResult,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   EncryptedPDFError,
   LineCapStyle,

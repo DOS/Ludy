@@ -2,8 +2,8 @@
 // The title of a meeting (#3947): the recorder's Vy suggests up to three candidates from the transcript (the start and the status here, the same guards as the chapters' run: a switch, the recorder, a
 // transcript, not while it is being transcribed) and the recorder's own click sets one (the rename). Nothing about a suggestion is stored: the candidates go back to the recorder's browser and the run's result
 // row holds counts only (apps/kernel member-vy-ports.ts). The rename is an ordinary command of the recorder, whatever the title came from: a pick or a title typed by hand.
-import { MEETING_TITLE_MAX, cleanTemplateText, zMeetingRename, zMeetingRenamed, zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { MEETING_TITLE_MAX, cleanTemplateText, zMeetingRename, zMeetingRenamed, zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { isSummaryEnabled } from './summary-run.ts';

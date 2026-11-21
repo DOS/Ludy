@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A CRM deal or booking written as a sentence for the finance coworker's text box on a sales invoice draft (#2721). The person sees the sentence in the box and may edit it before asking, so
 // what the coworker reads is what is on screen, and its figures are checked against that text as for any typed text. No browser or API imports, so it is unit tested.
-import type { BookingItem } from '@crove/kernel-contract';
+import type { BookingItem } from '@ludy/kernel-contract';
 
 const NOTE_MAX = 200;
 const oneLine = (value: string, max: number): string => value.replace(/\s+/g, ' ').trim().slice(0, max);

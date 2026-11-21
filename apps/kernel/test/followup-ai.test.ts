@@ -3,8 +3,8 @@
 // the hint and nothing else, every state of `ai` is an answer with no words (the dialog keeps the fixed words), and a text the model's own checks accept is still held to
 // the send command's checks. The two checkers (packages/agent and the contract's) agree on a shared corpus: nothing the agent accepts is refused at the send.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, checkFollowupWords, type FollowupWordsRequest, type FollowupWordsResult } from '@crove/agent';
-import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_LEAD_MAX, followupClean, followupWordsProblem } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, checkFollowupWords, type FollowupWordsRequest, type FollowupWordsResult } from '@ludy/agent';
+import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_LEAD_MAX, followupClean, followupWordsProblem } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { wordFollowup, type FollowupAi } from '../src/followup-ai.ts';
 

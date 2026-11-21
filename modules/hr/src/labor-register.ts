@@ -6,9 +6,9 @@
 // `count`), deterministic ordering, erased-staff masking (`[Đã xóa theo yêu cầu]`), `HR_DECLARATION_MAX_PEOPLE` cap
 // enforcement, and a draft banner referencing plan row 17 while `!PLAN_ROWS_CONFIRMED.has(17)`.
 
-import { HR_DECLARATION_MAX_PEOPLE, HR_ERASED_NAME } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
-import { isLaborContractKind, isValidCalendarDate, money, type LaborContractKind } from '@crove/l10n-vn';
+import { HR_DECLARATION_MAX_PEOPLE, HR_ERASED_NAME } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
+import { isLaborContractKind, isValidCalendarDate, money, type LaborContractKind } from '@ludy/l10n-vn';
 import {
   DECLARATION_CONTRACT_LABELS,
   DECLARATION_NOT_SENT,

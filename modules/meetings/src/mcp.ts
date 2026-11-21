@@ -15,9 +15,9 @@
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
-import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SEARCH_FIELDS, MCP_SEARCH_MEETINGS_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SEARCH_FIELDS, MCP_SEARCH_MEETINGS_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { foldQuery, matchLine, snippetAround } from './mcp-search.ts';
 import { vnDay } from './retention.ts';
 

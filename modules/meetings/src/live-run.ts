@@ -29,8 +29,8 @@ import {
   zLiveStopped,
   type LiveNotesInput,
   type LiveStatus,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { assembleFacts, assembleState } from './live-assemble.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { vnDay } from './retention.ts';

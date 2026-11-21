@@ -8,8 +8,8 @@ import {
   type MeetingResults,
   type NoteFromMeetingSummaryInput,
   type NoteWritten,
-} from '@crove/kernel-contract';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 
 const MEETINGS_OFF = () => new DomainError('NOTES_MEETING_UNAVAILABLE', 400, 'Tính năng Biên bản cuộc họp đang tắt');
 

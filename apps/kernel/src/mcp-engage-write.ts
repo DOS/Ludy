@@ -14,11 +14,11 @@
 // Nothing above R1 is here: a reply, a hide, sending or deciding a quote, a booking change, launching, boosting or pausing ads are R2 or R3 and become proposals a person approves in Ludy (E4).
 // `kernel.conversation.follow_up` has no tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow.
 import { z } from 'zod';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
-import { mcpConversationAssign, mcpConversationLinkContact, mcpConversationNote, mcpConversationReopen, mcpConversationResolve, mcpPartyCreate } from '@crove/kernel';
-import type { McpWriteScopeId } from '@crove/kernel-contract';
-import { mcpAdsCampaignDraftSave } from '@crove/mod-ads';
-import { mcpDealCreate, mcpDealMove, mcpNextStepDone, mcpNextStepSnooze, mcpQuoteRevise, mcpQuoteSave } from '@crove/mod-crm';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { mcpConversationAssign, mcpConversationLinkContact, mcpConversationNote, mcpConversationReopen, mcpConversationResolve, mcpPartyCreate } from '@ludy/kernel';
+import type { McpWriteScopeId } from '@ludy/kernel-contract';
+import { mcpAdsCampaignDraftSave } from '@ludy/mod-ads';
+import { mcpDealCreate, mcpDealMove, mcpNextStepDone, mcpNextStepSnooze, mcpQuoteRevise, mcpQuoteSave } from '@ludy/mod-crm';
 import type { McpWriteBudget } from './mcp-write-limit.ts';
 import type { ToolDescriptor } from './mcp-protocol.ts';
 

@@ -6,10 +6,10 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useDeferredValue, useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { Customer, CustomerCursor } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { Customer, CustomerCursor } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { EditParty, MergeParty, PartyDuplicates } from '../components/party-edit.tsx';

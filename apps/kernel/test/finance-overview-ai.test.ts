@@ -2,8 +2,8 @@
 // The finance coworker's sentence on the Kế toán overview on the API side (#2631) with a stand-in for the reader: every state of `ai` is an answer with no
 // text (the screen then shows the figures alone), never an error, and an answer is kept by its figures so a second ask costs no call.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type OverviewFacts, type OverviewSentenceResult } from '@crove/agent';
-import type { FinanceOverview, OverviewFigure } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type OverviewFacts, type OverviewSentenceResult } from '@ludy/agent';
+import type { FinanceOverview, OverviewFigure } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { OVERVIEW_KEEP_MS, explainOverview, overviewAi, overviewFacts, type OverviewAi } from '../src/finance-overview-ai.ts';
 

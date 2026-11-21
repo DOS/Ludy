@@ -1,7 +1,7 @@
 // The staging sweep of the daily retention job (issue #223): an hour's cutoff, calls until nothing is left within a
 // budget, an ALERT when objects remain, and a failure that never stops the rest of the job.
 import { describe, expect, it } from 'vitest';
-import type { BlobStore, StagingSweep } from '@crove/kernel-runtime';
+import type { BlobStore, StagingSweep } from '@ludy/kernel-runtime';
 import { STAGING_MAX_AGE_MS, STAGING_SWEEP_LIMIT, sweepStaging } from '../src/retention.ts';
 
 const base: BlobStore = {

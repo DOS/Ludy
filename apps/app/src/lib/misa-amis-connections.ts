@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pure rules of the MISA AMIS card (#3875): when it draws, and which entities can still be connected. The server enforces every rule; the screen offers only what can succeed.
-import type { LegalEntity, MisaAmisConnection } from '@crove/kernel-contract';
+import type { LegalEntity, MisaAmisConnection } from '@ludy/kernel-contract';
 
 /** The card draws when the deployment offers the connector, or when the org already has a connection (so it can still be seen and disconnected). */
 export function misaAmisCardShown(offered: boolean | undefined, connections: readonly MisaAmisConnection[] | undefined): boolean {

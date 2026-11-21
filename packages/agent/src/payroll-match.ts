@@ -4,7 +4,7 @@
 // the description itself). No name of a person, bank, account holder or counterparty, no account number and no document text is in the prompt, so there is nothing in it to follow. Its answer is
 // tainted and checked after the call: a line that writes a number the facts do not hold (a digit, an amount with its unit, a number scaled or said in words), a link, or that is empty, too long or
 // more than one sentence, or that names another kind of payment than the one given (the words for wages, insurance, the union fee or tax), is no line, and the screen shows the reason code alone. Nothing is cut or repaired. A person still asks for the payment and approves it.
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 import { statedFiguresProblem } from './overview.ts';
 
 export const PAYROLL_MATCH_SENTENCE_MAX = 240;

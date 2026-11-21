@@ -22,8 +22,8 @@
 // refused, and `unitemised` is what the named fields do not explain (a person sees it, never a silent gap). `refund` and `taxWithheld` stay 0. **The Vietnam withholding fields `withholding_vat_tax`, `withholding_pit_tax`
 // and `withholding_cit_tax` (and `tax_registration_code`) ARE in the escrow answer**: they are CARRIED as fields of their own and never booked here, as TikTok's tax fields are. Adjustments of an order (`order_adjustment`) and
 // the buyer's side (`buyer_*`, the user name, payment info) are never read: every record is read through an allow-list.
-import { Decimal } from '@crove/l10n-vn';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { Decimal } from '@ludy/l10n-vn';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 import { isoDay, marketplaceIdentifier, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { ShopeeNumber, parseShopeeSourceAnswer, parseShopeeSecret, shopeeCaller, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
 

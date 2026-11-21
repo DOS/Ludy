@@ -2,7 +2,7 @@
 // time in the post's zone across a daylight-saving change, zero gives undated drafts, and each post is sent on its own,
 // a refusal never stopping the others.
 import { describe, expect, it } from 'vitest';
-import { localTime } from '@crove/mod-social/contract';
+import { localTime } from '@ludy/mod-social/contract';
 import { duplicateSummary, duplicateTime, runDuplicate, sourceTime, validDuplicate, type BulkPost, type BulkVariant, type DuplicateRepeat } from '../src/lib/social-bulk.ts';
 
 const v = (id: string, status: string, effectiveAt: string | null): BulkVariant => ({ id, connectionId: `c-${id}`, status, revision: 1, contentHash: `sha256:${'a'.repeat(64)}`, effectiveAt, queueSlotAt: null });

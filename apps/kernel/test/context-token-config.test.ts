@@ -2,8 +2,8 @@
 // migration runner's reading of it. The database side is apps/kernel/test/invariant/context-token.db.test.ts.
 import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { contextTokenKeyBytes as runnerKeyBytes } from '@crove/db/migrate';
-import { CONTEXT_TOKEN_TTL_S, contextTokenKeyBytes, mintContextToken } from '@crove/kernel-runtime';
+import { contextTokenKeyBytes as runnerKeyBytes } from '@ludy/db/migrate';
+import { CONTEXT_TOKEN_TTL_S, contextTokenKeyBytes, mintContextToken } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 
 const base = {

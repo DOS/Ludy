@@ -15,7 +15,7 @@ import {
   plaintextLengthFromCiphertextLength,
   sha256Hex,
   type BlobMediaBinding,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { onepiece, sealMedia, streamPieces } from '../src/media-seal.ts';
 
 const orgId = randomUUID();

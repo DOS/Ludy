@@ -13,8 +13,8 @@
 // not parked, so Meta stops sending it and the queue holds messages only.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { ConversationNoticeError, WHATSAPP_SIGNATURE_HEADER, metaSignatureOk, parseWhatsAppNotices, type InboundConversationEvent } from '@crove/channel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { ConversationNoticeError, WHATSAPP_SIGNATURE_HEADER, metaSignatureOk, parseWhatsAppNotices, type InboundConversationEvent } from '@ludy/channel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { FacebookReplayCache, verifyFacebookWebhookChallenge, type FacebookWebhookChallengeOutcome } from './facebook-webhook.ts';
 
 export const WHATSAPP_WEBHOOK_PATH = '/api/channels/whatsapp/webhook';

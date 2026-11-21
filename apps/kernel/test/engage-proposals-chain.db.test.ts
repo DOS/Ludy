@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The chain grant -> proposal -> approver -> action of an Engage twin, and the authority it runs under (epic #3857, E4, issue #3863; Platform PO conditions of 2026-11-19): the catalog holds exactly the 14 twins
+// The chain grant -> proposal -> approver -> action of an Engage twin, and the authority it runs under (epic #3857, E4, issue #3863; Platform PO conditions of 2026-11-19): the catalog holds exactly the 15 twins
 // with their scope and kind; a grant's call runs nothing of the twin; the nested original's audit row names the approver as its actor and the proposal as its cause, never the grant; and a person who may not approve
 // (a member, a viewer, an owner demoted after the ask) is refused and nothing runs. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS, type ConversationEvent } from '@crove/kernel-contract';
-import { upsertIdentity } from '@crove/kernel';
+import { ENGAGE_PROPOSALS, type ConversationEvent } from '@ludy/kernel-contract';
+import { upsertIdentity } from '@ludy/kernel';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
 const suite = ADMIN ? describe : describe.skip;
@@ -72,7 +72,7 @@ suite('the chain of an Engage twin (#3863)', () => {
     expect((await audit('kernel.conversation.reply', made.proposalId))[0]?.detail).toMatchObject({ under_proposal: made.proposalId });
     // And the approval itself is the person's, with the policy it ran under.
     const approval = await audit('kernel.proposal.approve');
-    expect(approval.at(-1)?.detail).toMatchObject({ policy_version: 18, aal: 'aal2' });
+    expect(approval.at(-1)?.detail).toMatchObject({ policy_version: 19, aal: 'aal2' });
   });
 
   it('refuses an approval by a person who may not approve (a member, a viewer, an owner demoted after the ask): nothing runs and the proposal stays pending', async () => {

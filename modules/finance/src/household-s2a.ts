@@ -12,11 +12,11 @@
 // - The Decree 174 VAT cut is not applied to all revenue (#3710): the profile's answer decides (yes applies it, no applies none, not answered computes without it and shows the VAT if eligible). `vatCut`
 //   carries the cut by line; `vat` stays the VAT before the cut. A profile whose answer changes inside the period is refused (HOUSEHOLD_VAT_CUT_CHANGED), like a change of trades.
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import type { HouseholdS2a, HouseholdS2aRow } from '@crove/kernel-contract';
-import { HOUSEHOLD_TRADES, zHouseholdS2a, zHouseholdS2aGet, type HouseholdTrade } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import type { HouseholdS2a, HouseholdS2aRow } from '@ludy/kernel-contract';
+import { HOUSEHOLD_TRADES, zHouseholdS2a, zHouseholdS2aGet, type HouseholdTrade } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';

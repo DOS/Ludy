@@ -3,15 +3,15 @@
 // (plan §4.7 "Derived risk"). The sources are parsed and followed by job-egress.ts; planted sources show each check
 // failing.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { CHANNEL_PROVIDERS } from '@crove/channel';
-import { KERNEL_NOTIFYING_EVENTS, kernelCommands } from '@crove/kernel';
-import { deriveRisk, type CommandDef } from '@crove/kernel-runtime';
-import { adsCommands } from '@crove/mod-ads';
-import { crmCommands } from '@crove/mod-crm';
-import { meetingsCommands } from '@crove/mod-meetings';
-import { signCommands } from '@crove/mod-sign';
-import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@crove/mod-finance';
-import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@crove/mod-social';
+import { CHANNEL_PROVIDERS } from '@ludy/channel';
+import { KERNEL_NOTIFYING_EVENTS, kernelCommands } from '@ludy/kernel';
+import { deriveRisk, type CommandDef } from '@ludy/kernel-runtime';
+import { adsCommands } from '@ludy/mod-ads';
+import { crmCommands } from '@ludy/mod-crm';
+import { meetingsCommands } from '@ludy/mod-meetings';
+import { signCommands } from '@ludy/mod-sign';
+import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@ludy/mod-finance';
+import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@ludy/mod-social';
 import { MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, TENANT_HOSTED_PROVIDERS, queueEgress, socialPublishQueue, type JobEgress } from '../../src/jobs-schema.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
 import { numberReseedCommand } from '../../src/restore-report.ts';
@@ -258,8 +258,8 @@ describe('job egress (#1653)', () => {
   it('fails a planted queue without a declaration, an egress beyond or short of the declaration, and a bare fetch', () => {
     const planted = new Sources({
       'apps/kernel/src/planted-worker.ts': `
-        import { guardedFetch } from '@crove/kernel-runtime';
-        import { XRefresher, sendTelegramText } from '@crove/channel';
+        import { guardedFetch } from '@ludy/kernel-runtime';
+        import { XRefresher, sendTelegramText } from '@ludy/channel';
         import { request } from 'node:https';
         import { QUEUES } from './jobs-schema.ts';
         import { runLinkPreviewJob } from './link-preview.ts';
@@ -343,7 +343,7 @@ describe('job egress (#1653)', () => {
     expect(reaching).toEqual([]);
     // A planted module file that checks a Telegram chat, or calls fetch through globalThis.
     const planted = new Sources({
-      'modules/planted/src/a.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@crove/channel';\nexport const a = () => checkTelegramChat(CHANNEL_PROVIDERS);",
+      'modules/planted/src/a.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@ludy/channel';\nexport const a = () => checkTelegramChat(CHANNEL_PROVIDERS);",
       'modules/planted/src/b.ts': "export const b = () => globalThis.fetch('https://example.test/');",
       'modules/planted/src/c.ts': "export const c = () => window['fetch']('https://example.test/');",
       'modules/planted/src/d.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@ludy/channel';\nimport { guardedFetch } from '@ludy/kernel-runtime';\nimport { chatModel } from '@ludy/agent';\nexport const d = () => [checkTelegramChat(CHANNEL_PROVIDERS), guardedFetch, chatModel];",

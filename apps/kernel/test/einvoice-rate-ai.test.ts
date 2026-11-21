@@ -2,8 +2,8 @@
 // The accounting coworker's explanation of a correction's VAT rate, on the API side (#3709): the code's proposal always comes back untouched, the model is asked once with the facts, a text is kept, and
 // every state with no text (no model, a spent budget, too many calls, a failed or refused call) is named, never quoted, so the screen works with AI off.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type EInvoiceRateFacts, type EInvoiceRateResult } from '@crove/agent';
-import type { EInvoiceCorrectionRate } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type EInvoiceRateFacts, type EInvoiceRateResult } from '@ludy/agent';
+import type { EInvoiceCorrectionRate } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { EINVOICE_RATE_KEEP_MS, EINVOICE_RATE_REFUSED_KEEP_MS, einvoiceRateAi, einvoiceRateFacts, explainCorrectionRate } from '../src/einvoice-rate-ai.ts';
 

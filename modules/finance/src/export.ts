@@ -13,7 +13,7 @@
 // There is no CSV export. CSV has no cell types, so one must prefix trigger characters with
 // `csvSafeText` (OWASP "CSV Injection") and use `moneyCell` (or the same rules).
 import ExcelJS from 'exceljs';
-import { Decimal, money, toMoney } from '@crove/l10n-vn';
+import { Decimal, money, toMoney } from '@ludy/l10n-vn';
 import type { JournalEntryView } from './queries.ts';
 import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 

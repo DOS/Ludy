@@ -24,9 +24,9 @@
 // page by page, each in its own system context through kernel.inbox.prune.
 import { sql } from 'kysely';
 import type { JobWithMetadata } from 'pg-boss';
-import type { Db } from '@crove/db';
-import { inboxPruneCutoffs } from '@crove/kernel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { inboxPruneCutoffs } from '@ludy/kernel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { keyOrg } from './job-keys.ts';
 import { opsAlert } from './ops-alert.ts';
 

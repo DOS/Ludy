@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { RECORDING_STOP_REASONS } from '@crove/kernel-contract';
+import { RECORDING_STOP_REASONS } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';

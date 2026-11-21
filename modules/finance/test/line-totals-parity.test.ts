@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A quote and the e-invoice draft made from it add up the same (#2693, docs/plan/crm-quotes.md 4.4): computeDraft and the shared line-totals rule of
-// @crove/l10n-vn give the same amount, VAT and totals on a table of cases (rounding half up at .5, exempt VAT, a rate written without the sign).
-import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
+// @ludy/l10n-vn give the same amount, VAT and totals on a table of cases (rounding half up at .5, exempt VAT, a rate written without the sign).
+import { computeLineTotals, sumLineTotals } from '@ludy/l10n-vn';
 import { describe, expect, it } from 'vitest';
 import { computeDraft } from '../src/domain/einvoice-draft.ts';
 

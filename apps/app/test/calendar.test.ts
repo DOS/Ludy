@@ -1,7 +1,7 @@
 // The working hours card's helpers (issue #1313): the form's seven days to the saved hours and back, and days off as
 // events on the member's wall clock.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_WORKING_HOURS } from '@crove/kernel-contract';
+import { DEFAULT_WORKING_HOURS } from '@ludy/kernel-contract';
 import { dayOffRange, daysOf, datesOf, hoursOf, minuteOf, timeOf } from '../src/lib/calendar.ts';
 
 describe('working hours form', () => {

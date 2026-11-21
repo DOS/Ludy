@@ -9,8 +9,8 @@
 // - a line refunded at least as much as it sold needs no delivery day: it is the refund in the month of the settlement's last day, sale and refund together;
 // - the tax the platform withheld on a line goes with the piece that holds the line's sale (the month of its delivery, or the refund month for a line refunded at least as much as it sold);
 // - a month whose net is zero has no entry and is not listed, unless tax was withheld on its lines (then it is listed and posts only that tax); a month with a negative net runs the entry the other way (the platform owing less).
-import { money, sum, toMoney } from '@crove/l10n-vn';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import type { SettlementPostingLine } from './marketplace-settlement-posting.ts';
 import { reversedSource } from './source-entry.ts';

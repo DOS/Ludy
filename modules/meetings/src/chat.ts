@@ -12,7 +12,7 @@
 // sealed address of its channel (only while the channel stands), meetings.chat.queued notes a hand-over, meetings.chat.record records an outcome and DELETES the message, meetings.chat.reseal reseals an
 // address after a credential key rotation. The log (crove_meetings.chat_post) holds ids, a state, the status, a code, an attempt count and hashes, never the text. No model is involved.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   CHAT_CHANNELS_MAX,
   CHAT_POSTS_PER_MEETING_PER_DAY,
@@ -46,8 +46,8 @@ import {
   type ChatPosted,
   type ChatStatus,
   type ChatTarget,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { meetingFacts, publishedFacts } from './followup.ts';
 import { recorderMeeting } from './results.ts';
 import { openMeeting, userOf } from './transcript.ts';

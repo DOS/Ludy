@@ -4,8 +4,8 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@crove/kernel-contract';
-import { money as decimal, toMoney } from '@crove/l10n-vn';
+import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@ludy/kernel-contract';
+import { money as decimal, toMoney } from '@ludy/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
 const dateLabel = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;

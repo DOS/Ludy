@@ -16,9 +16,9 @@
 // tried again the next day; the queue's suppressions and bounces apply like for any mail.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zTodayMailSet, type TodayMailSetting } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zTodayMailSet, type TodayMailSetting } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { upstreamAuth } from './invites.ts';
 import { offAppsOf } from './org-apps.ts';
 import { createMailMessage } from './mail.ts';

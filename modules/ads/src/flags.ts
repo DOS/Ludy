@@ -4,7 +4,7 @@
 // same figures always give the same flags, so a later note of Vy's (#2220) can cite them. Money is a decimal string and every sum, product
 // and median goes through decimal.js (AGENTS.md "Money"); amounts of different currencies are never added or compared.
 import { Decimal } from 'decimal.js';
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals, todayIn } from './domain.ts';
 
 // The thresholds, with the defaults an org gets until it sets its own. `paceMinDays`: days of the month that must be over (today not

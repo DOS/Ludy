@@ -2,7 +2,7 @@
 // What the Inbox card of an AI coworker's Engage proposal reads of the stored payload (E4 #3863): the fields as plain text, bounded, with the characters that reorder or hide text dropped; nothing for a
 // proposal that is not an Engage twin's.
 import { describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
+import { ENGAGE_PROPOSALS } from '@ludy/kernel-contract';
 import { engageViewOf } from '../src/engage-view.ts';
 
 const REPLY = ENGAGE_PROPOSALS.find((p) => p.command === 'kernel.conversation.reply_approved');

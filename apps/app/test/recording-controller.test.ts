@@ -3,8 +3,8 @@
 // bar's Stop ends and uploads it, leaving or closing the tab asks first (beforeunload), and it stops by itself at the longest
 // meeting length. The browser's MediaRecorder, microphone and the device store are fakes; the controller's logic is real.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_MEETING_SECONDS } from '@crove/kernel-contract';
-import type { ChunkStore, RecordingMeta } from '@crove/meeting-recorder';
+import { MAX_MEETING_SECONDS } from '@ludy/kernel-contract';
+import type { ChunkStore, RecordingMeta } from '@ludy/meeting-recorder';
 
 const api = vi.hoisted(() => ({
   create: vi.fn(async (..._args: unknown[]) => ({ meetingId: 'm1' })),

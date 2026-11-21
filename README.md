@@ -355,7 +355,7 @@ Fixtures live in `packages/agent/test/fixtures/extraction` (`<id>.txt` document 
 
 ## About the name
 
-Ludy was called Crove until October 2026. The code keeps that name as its code name `crove`: the `@crove/*` packages, the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images (`crove`, `crove-extract`) and the `[Crove]` prefix of logs and alerts. Renaming them would break every existing deployment's database, settings and scripts for no change users can see. The repository is still `DOS/Ludy` for now.
+Ludy was called Crove until October 2026. Workspace packages use `@ludy/*`; remaining internal identifiers (the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images `crove`, `crove-extract`, and log/alert prefixes) are migrating to `ludy` in [#1682](https://github.com/DOS/Ludy/issues/1682). The repository is `DOS/Ludy`.
 
 ## License
 

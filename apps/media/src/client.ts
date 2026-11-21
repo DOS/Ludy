@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client for calling the crove-media HTTP service.
 // Used by worker tasks (AI Meeting Notes M4, #2578) and test harnesses. The kernel's upload and transcription paths use the narrow
-// client of @crove/media-contract (measure.ts) instead and ship none of the normalize, split or repackage calls (#2985).
+// client of @ludy/media-contract (measure.ts) instead and ship none of the normalize, split or repackage calls (#2985).
 import {
   MEDIA_LIMITS,
   zMediaErrorResponse,
@@ -13,8 +13,8 @@ import {
   type MediaProbeResult,
   type MediaProcessResult,
   type MediaSplitResult,
-} from '@crove/media-contract/types';
-import { createTransport, MediaClientError } from '@crove/media-contract/transport';
+} from '@ludy/media-contract/types';
+import { createTransport, MediaClientError } from '@ludy/media-contract/transport';
 
 export { MediaClientError };
 

@@ -6,11 +6,11 @@
 // before asking. Facts only: the supplier's name, the invoice's number, day and amount; never a bank, a number or a holder. Nothing is decided here: the request, its checks and its approval are the
 // finance.supplier_payment.record proposal's, unchanged.
 import { sql } from 'kysely';
-import { SUPPLIER_BANK_CHANGE_DAYS, SUPPLIER_PAYABLE_MAX, SUPPLIER_PAYMENT_COMMAND, zSupplierPayableList, type SupplierPayableList } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { SUPPLIER_BANK_CHANGE_DAYS, SUPPLIER_PAYABLE_MAX, SUPPLIER_PAYMENT_COMMAND, zSupplierPayableList, type SupplierPayableList } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { z } from 'zod';
-import { defineQuery } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { defineQuery } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 

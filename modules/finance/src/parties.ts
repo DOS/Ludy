@@ -10,10 +10,10 @@
 // receivable, whatever they pass. Its customers are the parties with a sale or a 131 line in that entity's books.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { CUSTOMER_PAGE_SIZE, zCustomerCursor, zId, type CustomerPage } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
-import { RECEIVABLE_ACCOUNT } from '@crove/l10n-vn';
+import { CUSTOMER_PAGE_SIZE, zCustomerCursor, zId, type CustomerPage } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
+import { RECEIVABLE_ACCOUNT } from '@ludy/l10n-vn';
 import { canonical, parseDecimal } from './domain/money.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

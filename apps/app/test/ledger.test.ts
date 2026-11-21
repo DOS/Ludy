@@ -1,6 +1,6 @@
 // The ledger reports screen's period picker and balance display (issue #321).
 import { describe, expect, it } from 'vitest';
-import { LEDGER_PERIOD_PATTERN } from '@crove/kernel-contract';
+import { LEDGER_PERIOD_PATTERN } from '@ludy/kernel-contract';
 import { b02Comparison, balanceSide, columnAmount, defaultLedgerPeriod, ledgerPeriodKey, switchLedgerKind } from '../src/lib/ledger.ts';
 
 describe('ledger period picker', () => {

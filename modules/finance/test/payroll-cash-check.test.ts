@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The cash flag of a pay run's net pay (#2532): a count of people at the 5 million limit, never a name or a figure.
 import { describe, expect, it } from 'vitest';
-import { zCheck } from '@crove/kernel-contract';
+import { zCheck } from '@ludy/kernel-contract';
 import { payrollCashCheck, payrollLiabilityCheck } from '../src/domain/anomaly.ts';
 
 describe('payrollCashCheck', () => {

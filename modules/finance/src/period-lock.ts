@@ -10,9 +10,9 @@
 // balances into a locked month all say why. The same guard keeps the opening entry first (#366): an entry dated on or
 // before it answers BEFORE_OPENING_BALANCE (openingEntryError below).
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { VIETNAM_TIME_ZONE, zLegalEntityChoice, zPeriodLockInput, zPeriodUnlockInput, type PeriodLockState } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { VIETNAM_TIME_ZONE, zLegalEntityChoice, zPeriodLockInput, zPeriodUnlockInput, type PeriodLockState } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { legalEntityError, resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -22,7 +22,7 @@ const LOCKERS: readonly MemberRole[] = ['owner', 'admin'];
 // this clock, never the kernel process's: lock_period() refuses a month that has not ended by pg_catalog.now(), and a
 // late posting date may not be after this day (record.ts). now() is the transaction's start, one clock for every
 // kernel process (theirs may drift apart), and the same one the lock and the posting guard run under, so the two
-// rules cannot disagree around midnight. The SPA's hints use @crove/kernel-contract vietnamToday; the kernel decides.
+// rules cannot disagree around midnight. The SPA's hints use @ludy/kernel-contract vietnamToday; the kernel decides.
 export async function databaseToday(trx: QueryContext['trx']): Promise<string> {
   const { rows } = await sql<{ today: string }>`
     SELECT pg_catalog.to_char(pg_catalog.now() AT TIME ZONE ${VIETNAM_TIME_ZONE}::text, 'YYYY-MM-DD') AS today`.execute(trx);

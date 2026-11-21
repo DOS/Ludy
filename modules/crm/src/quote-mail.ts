@@ -4,7 +4,7 @@
 // pattern), so the queue and its retention never hold a secret; the link opens only the one quote and expires with it.
 // The words are Vietnamese (the quote itself is; a second language is a translation of these strings, not a rebuild).
 import { z } from 'zod';
-import { QUOTE_PAGE_PATH, QUOTE_TOKEN_PATTERN } from '@crove/kernel-contract';
+import { QUOTE_PAGE_PATH, QUOTE_TOKEN_PATTERN } from '@ludy/kernel-contract';
 
 export const QUOTE_MAIL_TEMPLATE = 'crm.quote';
 export const QUOTE_MAIL_SOURCE = 'crm.quote.send';

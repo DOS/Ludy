@@ -25,8 +25,8 @@
 // accepts (the job does not call it while another live connection of the same person needs the grant). A token Meta refuses with error 190 and subcode 458
 // (the person removed the app) has nothing left to revoke: `already_invalid`. Any other refusal of the token (463, 467, 460, 102, a 190 with no subcode) leaves
 // the grant possibly standing, so it is a `token_expired` error and never reported as revoked.
-import type { Fetch } from '@crove/channel';
-import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
+import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@ludy/channel';
 import { AdPlatformError } from './index.ts';
 import { ACT_ID, graphHostOnly, metaAdsError } from './meta.ts';
 import { META_BUDGET_CURRENCIES, metaMinorUnits } from './meta-currency.ts';

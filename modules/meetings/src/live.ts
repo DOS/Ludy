@@ -15,9 +15,9 @@ import {
   zMeetingLiveChunk,
   zMeetingLiveChunkRecorded,
   type MeetingLiveChunkRecorded,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, fileKey, type CommandContext } from '@crove/kernel-runtime';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, fileKey, type CommandContext } from '@ludy/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
 import { vnDay } from './retention.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

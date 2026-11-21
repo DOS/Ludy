@@ -4,8 +4,8 @@
 // text dropped at the edge, and a source scan that keeps the reader to two GET paths. No call to Lazada: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Decimal } from '@crove/l10n-vn';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { Decimal } from '@ludy/l10n-vn';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_FEE_BUCKET, LAZADA_FEE_TYPES } from '../src/marketplace-lazada-fees.ts';
 import { LAZADA_FINANCE_MAX_DAYS, LAZADA_FINANCE_PAGE, lazadaFinance } from '../src/marketplace-lazada-finance.ts';
@@ -322,7 +322,7 @@ describe('the source', () => {
   });
 
   it('does money through decimal.js and never a JS number', () => {
-    expect(code).toContain("from '@crove/l10n-vn'");
+    expect(code).toContain("from '@ludy/l10n-vn'");
     expect(code).not.toMatch(/parseFloat/);
   });
 });

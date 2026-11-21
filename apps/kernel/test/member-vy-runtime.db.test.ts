@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, createPool } from "@crove/db";
-import { migrate, setRolePasswords } from "@crove/db/migrate";
-import { createOrg, kernelCommands, upsertIdentity } from "@crove/kernel";
+import { createDb, createPool } from "@ludy/db";
+import { migrate, setRolePasswords } from "@ludy/db/migrate";
+import { createOrg, kernelCommands, upsertIdentity } from "@ludy/kernel";
 import {
   Runtime,
   defineCommand,
@@ -18,7 +18,7 @@ import {
   memberVyRuntime,
   type CommandDef,
   type QueryDef,
-} from "@crove/kernel-runtime";
+} from "@ludy/kernel-runtime";
 import { TEST_MANIFESTS } from "./invariant/fixtures/manifests.ts";
 import { contextToken } from "./invariant/fixtures/context-token.ts";
 

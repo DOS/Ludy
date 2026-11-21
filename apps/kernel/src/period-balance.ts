@@ -6,7 +6,7 @@
 // means a delta was lost, added or changed outside the posting path, or a ledger row was; the job reports references
 // only (org, account, month, entry and what differs), never amounts.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 
 // 03:40 in Vietnam, after the retention run (02:30) and the WORM verifier (03:10).
 export const PERIOD_BALANCE_VERIFY_CRON = '40 3 * * *';

@@ -26,8 +26,8 @@
 // the VAT working declares it: in its own period the item is flagged declaredInLaterPeriod (with the posting date on
 // the Crove side), and in the period it was posted in it is reported as declared_late, so both periods agree with the
 // VAT working instead of one of them silently disagreeing.
-import { PORTAL_INVOICE_STATUSES, RECONCILE_DIFFERENCES, RECONCILE_OUTCOMES, type PortalInvoiceStatus, type ReconcileDifference, type ReconcileOutcome } from '@crove/kernel-contract';
-import { approxEqual, normalizeNumber, normalizeSeries, type Money } from '@crove/l10n-vn';
+import { PORTAL_INVOICE_STATUSES, RECONCILE_DIFFERENCES, RECONCILE_OUTCOMES, type PortalInvoiceStatus, type ReconcileDifference, type ReconcileOutcome } from '@ludy/kernel-contract';
+import { approxEqual, normalizeNumber, normalizeSeries, type Money } from '@ludy/l10n-vn';
 
 export { PORTAL_INVOICE_STATUSES, RECONCILE_DIFFERENCES, RECONCILE_OUTCOMES, type PortalInvoiceStatus, type ReconcileDifference, type ReconcileOutcome };
 

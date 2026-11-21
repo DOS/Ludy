@@ -3,8 +3,8 @@
 // that list (apps/app/test/invoice-checks.test.ts).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { INVOICE_CHECK_CODES, zCheck } from '@crove/kernel-contract';
-import { checkInvoice, classificationCheck, enterpriseCheckDigit, SIGNATURE_REASONS, type InvoiceCheck, type ParsedInvoice } from '@crove/l10n-vn';
+import { INVOICE_CHECK_CODES, zCheck } from '@ludy/kernel-contract';
+import { checkInvoice, classificationCheck, enterpriseCheckDigit, SIGNATURE_REASONS, type InvoiceCheck, type ParsedInvoice } from '@ludy/l10n-vn';
 import { relatedCheck } from '../src/extract.ts';
 import { enteredRateCheck } from '../src/record.ts';
 import { anomalyChecks, payrollCashCheck, payrollLiabilityCheck } from '../src/domain/anomaly.ts';

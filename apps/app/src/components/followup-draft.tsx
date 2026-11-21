@@ -6,9 +6,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { FollowupDrafted, NextStep } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Textarea } from '@crove/ui/components/textarea';
+import type { FollowupDrafted, NextStep } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { REPLY_INSERT_EVENT, refreshQuoteQueries, type ReplyInsert } from './quote-send.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';

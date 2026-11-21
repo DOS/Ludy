@@ -1,6 +1,6 @@
 // The tax portal reconciliation screen's helpers (issue #465).
 import { describe, expect, it } from 'vitest';
-import { RECONCILE_OUTCOMES, type PortalReconciliation } from '@crove/kernel-contract';
+import { RECONCILE_OUTCOMES, type PortalReconciliation } from '@ludy/kernel-contract';
 import { SECTIONS, canImportPortalList, invoiceLabel, itemsByOutcome, outcomeTotal, pickProblem, pollWhilePending, type ReconcileItem } from '../src/lib/portal-list.ts';
 
 const item = (outcome: ReconcileItem['outcome']): ReconcileItem => ({ outcome, portal: null, crove: null, differences: [], withoutTaxCode: false, outsidePeriod: false, duplicateRows: 0, duplicateInCrove: false, declaredInLaterPeriod: false });

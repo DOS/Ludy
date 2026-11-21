@@ -10,7 +10,7 @@
 //
 // Deterministic: the same lines for the same connection give the same bytes (the intake dedupes a file by its hash per org); a text cell goes through marketplaceCellText, so no cell can be read as
 // a formula by a spreadsheet.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { z } from 'zod';
 import { marketplaceCellText, marketplaceCsvCell, type MarketplaceIncomeLine, type MarketplaceIncomePage, type MarketplacePlatformKey } from './marketplace-provider.ts';
 

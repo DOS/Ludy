@@ -5,8 +5,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MisaAmisNameProposal } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import type { MisaAmisNameProposal } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';
 

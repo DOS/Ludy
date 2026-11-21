@@ -10,12 +10,12 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tans
 import { useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useLocale, useMessages, useTranslations } from 'use-intl';
-import { AUDIT_OUTCOMES, AUDIT_PAGE_SIZE, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { AUDIT_OUTCOMES, AUDIT_PAGE_SIZE, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AuditDetail } from '../components/audit-detail.tsx';
 import { AuditTargetPicker } from '../components/audit-target-picker.tsx';
 import { DateInput } from '../components/date-input.tsx';

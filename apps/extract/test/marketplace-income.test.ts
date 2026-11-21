@@ -3,8 +3,8 @@
 // allow-listed fields only, a file that is none answered as such, and the same file through the parser and the sandboxed process. The files are made in code, with made-up buyers: no real
 // seller's income report exists yet (#2521), and every mapping says so.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_KINDS, EXTRACT_LIMITS, MARKETPLACE_INCOME_FIELDS, MARKETPLACE_INCOME_PLATFORMS, MARKETPLACE_INCOME_SKIP_REASONS, zExtractResponse } from '@crove/extract-contract';
-import { INCOME_FIELDS, INCOME_PLATFORMS, INCOME_SKIP_REASONS } from '@crove/l10n-vn';
+import { EXTRACT_KINDS, EXTRACT_LIMITS, MARKETPLACE_INCOME_FIELDS, MARKETPLACE_INCOME_PLATFORMS, MARKETPLACE_INCOME_SKIP_REASONS, zExtractResponse } from '@ludy/extract-contract';
+import { INCOME_FIELDS, INCOME_PLATFORMS, INCOME_SKIP_REASONS } from '@ludy/l10n-vn';
 import { readMarketplaceIncome } from '../src/marketplace-income.ts';
 import { parse } from '../src/parse.ts';
 import { runSandboxed } from '../src/sandbox.ts';

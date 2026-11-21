@@ -5,8 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { chapterTitleProblem } from '@crove/kernel-contract';
-import { cleanChapterTitle } from '@crove/agent/member-vy';
+import { chapterTitleProblem } from '@ludy/kernel-contract';
+import { cleanChapterTitle } from '@ludy/agent/member-vy';
 
 const read = (name: string) => readFileSync(fileURLToPath(new URL(`../../../supabase/migrations/${name}`, import.meta.url)), 'utf8');
 const CLASS = /'(\[\\u0001-[^']*\])'/;

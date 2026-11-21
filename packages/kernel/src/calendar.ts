@@ -3,7 +3,7 @@
 // changes only their own calendar here; the crm booking command (#1318) writes bookings on a host's calendar as the
 // system, and reads the host's hours and busy time through workingHoursOf() and busyOf().
 //
-// Holidays and the slot rules are pure functions in @crove/kernel-contract (calendar.ts).
+// Holidays and the slot rules are pure functions in @ludy/kernel-contract (calendar.ts).
 import {
   CALENDAR_RANGE_MAX_DAYS,
   DEFAULT_WORKING_HOURS,
@@ -17,10 +17,10 @@ import {
   type Interval,
   type MyCalendar,
   type WorkingHours,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { calendarConnectionCommands, calendarConnectionQueries } from './calendar-connections.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

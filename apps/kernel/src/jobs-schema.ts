@@ -7,7 +7,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { getConstructionPlans, getMigrationPlans } from 'pg-boss';
-import { CHANNEL_PROVIDERS } from '@crove/channel';
+import { CHANNEL_PROVIDERS } from '@ludy/channel';
 
 export const JOB_SCHEMA = 'crove_jobs';
 
@@ -158,8 +158,8 @@ export const MAIL_QUEUES: readonly string[] = ['kernel-mail-send', 'kernel-mail-
 //   own data, and no tenant can point them elsewhere.
 // - 'provider:<x>': a service outside the deployment through its adapter, which keeps to that service's own hosts: the
 //   AI endpoint of packages/agent ('provider:ai', where document content leaves the deployment), the channel adapters
-//   of @crove/channel, the mail provider, the chat platforms of team alerts.
-// - 'tenant_url': a URL a tenant or a browser supplied, only through the egress guard of @crove/kernel-runtime
+//   of @ludy/channel, the mail provider, the chat platforms of team alerts.
+// - 'tenant_url': a URL a tenant or a browser supplied, only through the egress guard of @ludy/kernel-runtime
 //   (guardedFetch, guardedRequest, egressFetch).
 // A queue that reaches several lists each. apps/kernel/test/invariant/job-egress.test.ts checks each declaration against what
 // the queue's worker handler reaches, and that a command whose events feed a queue with egress declares an external
@@ -234,20 +234,20 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The bank feed adapters: the offline sandbox (channels.bankFeeds) reaches nothing, a real adapter (channels.bankFeedHosted, Tingee #2045) the hosts it declares, each through its own host-bound
   // fetch. What a sync pulls goes through the ordinary bank line path (finance.bank_feed.record_pull), which a person matches and approves.
   [QUEUES.bankFeedSync]: ['provider:bank_feed'],
-  // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
+  // The e-invoice provider adapters (channels.einvoiceProviders, @ludy/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
   // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.einvoiceIssue]: ['provider:einvoice'],
   // The marketplace provider adapters (channels.marketplaceProviders, modules/finance marketplace-provider.ts): the offline sandbox reaches nothing, a real adapter the hosts it declares, each
   // through guardedRequest. What they list goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.marketplacePoll]: ['provider:marketplace'],
-  // The MISA AMIS client (channels.misaAmis, @crove/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
+  // The MISA AMIS client (channels.misaAmis, @ludy/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
   // company's information; a later slice's push job declares itself here too.
   [QUEUES.misaAmisTest]: ['provider:misa_amis'],
   // The column check of an unrecognised order report reads a file from the blob store and calls the extract sandbox (which has no egress of its own); it reaches no provider and no tenant URL (#4036).
   [QUEUES.marketplaceColumns]: 'none',
   [QUEUES.misaAmisMatch]: ['provider:misa_amis'],
   [QUEUES.misaAmisPush]: ['provider:misa_amis'],
-  // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
+  // The ad platform adapters (channels.adPlatforms, @ludy/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],
   // The platform's reply and hide calls of the conversation core, through the publishers' conversation adapters (the offline sandbox reaches nothing).

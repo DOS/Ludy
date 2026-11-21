@@ -15,8 +15,8 @@
 // - balance: a party's open balance (receivable on 131 for money in, payable on 331 for money out) equals the amount.
 // The line's suggestion is the party of the strongest reason when no other party shares that reason; otherwise the
 // candidates are listed and none is chosen.
-import { BANK_MATCH_REASONS, type BankMatchReason } from '@crove/kernel-contract';
-import { Decimal } from '@crove/l10n-vn';
+import { BANK_MATCH_REASONS, type BankMatchReason } from '@ludy/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
 import { foldVietnamese } from './portal-status.ts';
 
 export interface MatchParty {

@@ -3,7 +3,7 @@
 // working in the member's other orgs. So that answer leaves the org (back to the start page, which lists only the
 // orgs this session can enter) and never signs the device out of Supabase Auth. Any other dead session still signs
 // out, as before. No browser or API imports, so it is unit tested.
-import { ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_HEADER } from '@ludy/kernel-contract';
 import { isMfaRequired, isOrgAccessRevoked, isUnauthenticated } from './errors.ts';
 
 // The request headers for the kernel. `org` is null for org-less calls; the user's own sign-out revoke is one, so

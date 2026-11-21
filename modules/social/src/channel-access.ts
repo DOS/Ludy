@@ -21,9 +21,9 @@
 //   is what keeps a limited member from changing their own list or anyone's.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { zSocialChannelAccessSet } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zSocialChannelAccessSet } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import type { Trx } from './variants.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

@@ -15,8 +15,8 @@
 // only with its void (20261018150000).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
 import { marketplaceReversalNotes } from './marketplace-reversal-guard.ts';

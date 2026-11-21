@@ -9,8 +9,8 @@
 // Companies only: an entity of kind household keeps simplified books (Circular 152) and no accrual. An entity whose books have no map (TT99 today), a month in a locked period, and a platform with no debit
 // balance get no offer. The map's rows are `commentary` until the accountant confirms them, and the screen keeps the buttons locked until then (the work list's postingConfirmed).
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
-import { money, toMoney } from '@crove/l10n-vn';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { money, toMoney } from '@ludy/l10n-vn';
 import { REVERSAL_KIND } from './reversal.ts';
 import type { MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { feeAccrualDescription, feeAccrualsOf, pendingFeeAccrualProposal } from './marketplace-fee-accrual-guard.ts';

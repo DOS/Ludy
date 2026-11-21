@@ -14,10 +14,10 @@
 // TikTok's adapter reads creator_info again and refuses a privacy level or a length the account no longer allows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { SOCIAL_CHANNEL_OPTION_ERRORS, type MemberRole, type SocialChannelOptionError, type SocialChannelOptionKind, type SocialChannelOptionStatus } from '@crove/db';
-import { CHANNEL_OPTIONS_BYTES_MAX, CHANNEL_OPTIONS_DEADLINE_MS, CHANNEL_OPTIONS_MAX, CHANNEL_OPTION_NAME_MAX, OPTION_NAME_INVISIBLE, WORDPRESS_TAXONOMIES, capOptions, withCallSignal, type ChannelOption, type ChannelOptionsResult, type Publisher } from '@crove/channel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type QueryContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { SOCIAL_CHANNEL_OPTION_ERRORS, type MemberRole, type SocialChannelOptionError, type SocialChannelOptionKind, type SocialChannelOptionStatus } from '@ludy/db';
+import { CHANNEL_OPTIONS_BYTES_MAX, CHANNEL_OPTIONS_DEADLINE_MS, CHANNEL_OPTIONS_MAX, CHANNEL_OPTION_NAME_MAX, OPTION_NAME_INVISIBLE, WORDPRESS_TAXONOMIES, capOptions, withCallSignal, type ChannelOption, type ChannelOptionsResult, type Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type QueryContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { CHANNEL_OPTION_KIND_OF, isProvider } from './domain/channels.ts';
 import { refuseChannels } from './channel-access.ts';
 

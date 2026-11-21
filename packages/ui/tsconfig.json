@@ -6,7 +6,7 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "types": [],
-    "paths": { "@crove/ui/*": ["./src/*"] }
+    "paths": { "@ludy/ui/*": ["./src/*"] }
   },
   "include": ["src", "test"]
 }

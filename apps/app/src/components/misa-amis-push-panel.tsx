@@ -5,9 +5,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MisaAmisPreview, MisaAmisPushConfirm, MisaAmisPushConfirmed, MisaAmisPushRow } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import type { MisaAmisPreview, MisaAmisPushConfirm, MisaAmisPushConfirmed, MisaAmisPushRow } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canSettle, checkIsYoung, confirmedAnything, openRows, previewSendable, type PushOffer } from '../lib/misa-amis-push.ts';

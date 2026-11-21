@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The fetch of a customer's image for the conversation core (issue #2357, plan docs/plan/conversations.md section 10). The address comes
-// from a platform's notice, so it is a URL somebody else chose: it is fetched only through the egress guard of @crove/kernel-runtime (a
+// from a platform's notice, so it is a URL somebody else chose: it is fetched only through the egress guard of @ludy/kernel-runtime (a
 // public address, the connection pinned to the address that was checked), only from the platform's own media hosts on every hop of a
 // redirect, at most CONVERSATION_IMAGE_MAX_BYTES, and what comes back is an image only if its first bytes say so (JPEG, PNG, WebP or GIF:
 // never what the platform or the host declared, and never SVG or anything that could be rendered as a page).
 //
 // Nothing here logs or returns the address or any byte of the image except as the result's own bytes: a failure is a short code.
-import { FACEBOOK_MEDIA_HOSTS, INSTAGRAM_MEDIA_HOSTS, TELEGRAM_MEDIA_HOSTS, WHATSAPP_MEDIA_HOSTS, ZALO_MEDIA_HOSTS, mediaHostAllowed, type ConversationAdapter } from '@crove/channel';
-import { CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@crove/kernel-contract';
-import { EgressError, egressFetch, guardedFetch, type EgressOptions } from '@crove/kernel-runtime';
+import { FACEBOOK_MEDIA_HOSTS, INSTAGRAM_MEDIA_HOSTS, TELEGRAM_MEDIA_HOSTS, WHATSAPP_MEDIA_HOSTS, ZALO_MEDIA_HOSTS, mediaHostAllowed, type ConversationAdapter } from '@ludy/channel';
+import { CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@ludy/kernel-contract';
+import { EgressError, egressFetch, guardedFetch, type EgressOptions } from '@ludy/kernel-runtime';
 import { imageSize } from './media-probe.ts';
 
 // The fetch's deadline, redirects included.

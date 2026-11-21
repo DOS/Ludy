@@ -9,8 +9,8 @@
 //   (unverified whether it does), so it is answered for a plainToken of a safe shape only (see meeting-platform-zoom-webhook.ts, THE SIGNING ORACLE), and it is charged to the same rate limit as a refusal.
 // - Nothing of the body is logged.
 import { sql } from 'kysely';
-import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZoomNoticeError, parseZoomNotice, zoomSignatureOk, zoomValidationAnswer } from '@crove/channel';
-import type { Runtime } from '@crove/kernel-runtime';
+import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZoomNoticeError, parseZoomNotice, zoomSignatureOk, zoomValidationAnswer } from '@ludy/channel';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 export const ZOOM_WEBHOOK_PATH = '/api/meeting-platform/zoom/webhook';
 export { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER };

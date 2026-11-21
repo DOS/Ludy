@@ -2,7 +2,7 @@
 // which redirects to the link with its UTM tags and counts the click (short_link_hit, the redirect's definer). The
 // code is made when the variant first goes out and kept for its revision, so a retry, a status check or a reconcile
 // sends the same link; the target is fixed then and never taken from a request.
-import type { CommandContext } from '@crove/kernel-runtime';
+import type { CommandContext } from '@ludy/kernel-runtime';
 import { mapTelegramButtonUrls } from './domain/channels.ts';
 import type { PublishWork } from './publishing.ts';
 

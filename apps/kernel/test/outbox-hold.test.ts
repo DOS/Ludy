@@ -4,9 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NEVER_HELD_EVENTS, SELF_RECOVERING_EVENTS, heldAppOf, planHolds } from '../src/outbox-hold.ts';
-import { KERNEL_NOTIFYING_EVENTS } from '@crove/kernel';
-import { FINANCE_NOTIFYING_EVENTS } from '@crove/mod-finance';
-import { CHAT_ALERTING_EVENTS, NOTIFYING_EVENTS } from '@crove/mod-social';
+import { KERNEL_NOTIFYING_EVENTS } from '@ludy/kernel';
+import { FINANCE_NOTIFYING_EVENTS } from '@ludy/mod-finance';
+import { CHAT_ALERTING_EVENTS, NOTIFYING_EVENTS } from '@ludy/mod-social';
 import { KEEPING_EVENT_COMMANDS } from '../src/worker.ts';
 
 // The kernel's own events the relay names, each consumed by a kernel job or command (conversations, sign-out, export, agents), or by a kernel step with an app's beside it that

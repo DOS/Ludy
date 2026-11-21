@@ -6,13 +6,13 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type UserActor } from '@crove/kernel-runtime';
-import { adsCommands, adsQueries } from '@crove/mod-ads';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { adsCommands, adsQueries } from '@ludy/mod-ads';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 export const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

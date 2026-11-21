@@ -1,4 +1,4 @@
-import { LocalDiskStore, S3BlobStore, createS3Client, type BlobStore } from '@crove/kernel-runtime';
+import { LocalDiskStore, S3BlobStore, createS3Client, type BlobStore } from '@ludy/kernel-runtime';
 import type { Config } from './config.ts';
 import { LocalArchiveStore, S3ArchiveStore, type ArchiveStore } from './worm.ts';
 

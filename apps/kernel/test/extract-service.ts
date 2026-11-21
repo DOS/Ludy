@@ -3,8 +3,8 @@
 // client exactly as in compose. inProcessExtract skips the port (app.fetch) but still runs the parser process.
 import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
 
 export async function startExtractService(): Promise<{ client: ExtractClient; url: string; stop: () => Promise<void> }> {
   const app = createExtractApp({ concurrency: 2 });

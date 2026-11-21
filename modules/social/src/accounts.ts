@@ -10,10 +10,10 @@
 // Google refuses there marks the connection expired, as publishing does.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialAudience } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import type { Publisher } from '@crove/channel';
-import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId, zSocialAudience } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import type { Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { channelScope, connectionInScope } from './channel-access.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

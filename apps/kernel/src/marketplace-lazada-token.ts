@@ -14,7 +14,7 @@
 // One call, to one host, never repeated: a call that was sent and whose answer was lost may already have spent the refresh token (or the single-use authorization code), so asking again could not help and
 // a refused answer would then expire a connection that was fine. A lost answer ends as the seller authorizing again, as for Zalo. The sealed secret is the S1 JSON of the connection plus what the
 // authorize step added; only the worker opens it, and nothing here puts it, a token or Lazada's text in an error or a log.
-import type { Refresher } from '@crove/channel';
+import type { Refresher } from '@ludy/channel';
 import { readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 import { signLazadaRequest } from './marketplace-lazada.ts';
 

@@ -1,8 +1,8 @@
 // The worker side of crove-extract (External-tenant gate T12): configuration, and how an inbound email is handed
 // to the sandbox instead of being parsed here.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMIT_RETRIES, ExtractServiceError, type ExtractClient } from '@crove/extract-contract';
-import { DomainError, inboundKey, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMIT_RETRIES, ExtractServiceError, type ExtractClient } from '@ludy/extract-contract';
+import { DomainError, inboundKey, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { processInboundEmail } from '../src/inbound.ts';
 
