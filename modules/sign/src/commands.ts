@@ -56,6 +56,7 @@ import {
   type IssuedSigningLink,
 } from './shared.ts';
 import { signCaCommands } from './ca.ts';
+import { signObligationCommands } from './obligations.ts';
 import { signTemplateCommands } from './templates.ts';
 import { envelopePreExpiryRemindSweep } from './today-and-reminders.ts';
 
@@ -1972,4 +1973,5 @@ export const signCommands = [
   ...signTemplateCommands,
   ...signCaCommands,
   ...signInPersonCommands,
+  ...signObligationCommands,
 ];

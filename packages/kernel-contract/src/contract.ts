@@ -705,6 +705,16 @@ import {
   zSignTemplateSharedSummarySetResult,
   zSignTemplateUpdateInput,
   zSignTemplateUpdateResult,
+  zSignEnvelopeObligationRecord,
+  zSignObligationCompleteItemInput,
+  zSignObligationDismissInput,
+  zSignObligationDismissResult,
+  zSignObligationExtractInput,
+  zSignObligationExtractResult,
+  zSignObligationGetResult,
+  zSignObligationRenewalsListInput,
+  zSignObligationRenewalsListResult,
+  zSignObligationUpsertInput,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -3426,6 +3436,14 @@ export const contract = {
       test_connection: oc.input(zSignCaConnectionTestInput).output(zSignCaConnectionRecord),
       list_requests: oc.input(z.strictObject({ envelopeId: zId })).output(zSignCaRequestListResult),
       initiate_request: oc.input(zSignCaRequestInitiateInput).output(zSignCaSigningRequestRecord),
+    },
+    obligation: {
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignObligationGetResult),
+      renewals_list: oc.input(zSignObligationRenewalsListInput).output(zSignObligationRenewalsListResult),
+      extract: oc.input(zSignObligationExtractInput).output(zSignObligationExtractResult),
+      upsert: oc.input(zSignObligationUpsertInput).output(zSignEnvelopeObligationRecord),
+      dismiss_proposal: oc.input(zSignObligationDismissInput).output(zSignObligationDismissResult),
+      complete_item: oc.input(zSignObligationCompleteItemInput).output(zSignEnvelopeObligationRecord),
     },
   },
 };

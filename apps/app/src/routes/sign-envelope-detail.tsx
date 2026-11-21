@@ -15,6 +15,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
@@ -1278,6 +1279,19 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="space-y-4">
+          {envelope.status === 'completed' ? (
+            <EnvelopeObligationsCard
+              envelopeId={envelope.id}
+              sourceFileId={envelope.sourceFileId}
+              pdfBytes={
+                envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
+                  ? null
+                  : (pdfQuery.data ?? null)
+              }
+              onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            />
+          ) : null}
+
           <VyClausePanel
             aiAnalysis={effectiveAi}
             pendingProposals={pendingProposals}

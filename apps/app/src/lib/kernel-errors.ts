@@ -1452,6 +1452,13 @@ export const KERNEL_ERROR_CODES = [
   // eSign Slice 3a shared meeting minutes handoff (#3811).
   'SIGN_MINUTES_NOT_SHARED',
   'SIGN_SOURCE_NOT_FOUND',
+  // eSign Slice 4e post-signature obligations & renewals (#3821).
+  'SIGN_OBLIGATION_DATE_ORDER',
+  'SIGN_OBLIGATION_ENVELOPE_NOT_COMPLETED',
+  'SIGN_OBLIGATION_INVALID_DATE',
+  'SIGN_OBLIGATION_INVALID_VALUE',
+  'SIGN_OBLIGATION_ITEM_NOT_FOUND',
+  'SIGN_OBLIGATION_NOT_FOUND',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];
@@ -1497,6 +1504,12 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'CAPTURE_ALREADY_RUNNING',
   'SIGN_MINUTES_NOT_SHARED',
   'SIGN_SOURCE_NOT_FOUND',
+  'SIGN_OBLIGATION_DATE_ORDER',
+  'SIGN_OBLIGATION_ENVELOPE_NOT_COMPLETED',
+  'SIGN_OBLIGATION_INVALID_DATE',
+  'SIGN_OBLIGATION_INVALID_VALUE',
+  'SIGN_OBLIGATION_ITEM_NOT_FOUND',
+  'SIGN_OBLIGATION_NOT_FOUND',
 ]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
