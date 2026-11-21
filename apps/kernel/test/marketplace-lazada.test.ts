@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The Lazada adapter (#2524, S1 = #4237) against a made-up Lazada (fake-lazada.ts): the signature checked by the fake's own implementation of the official algorithm, the window and its cursor, an order
+// whose items are in different states, every status of the closed table, a buyer's data never reaching a type or a file, and a hostile, masked or oversized answer ending as `not_recognized` or a
+// failure of the port, never a stored value. No call to Lazada: the fetch is the fake.
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceOrdersCsv, parseMarketplaceOrderPage } from '@crove/mod-finance';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
+import { fakeLazada, fakeOrder, type FakeOrder } from './fake-lazada.ts';
+
+const KEY = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
+const SECRET = JSON.stringify(KEY);
+const NOW = Date.parse('2026-11-10T03:00:00Z');
+
+function setup(orders: FakeOrder[], over: { intercept?: Parameters<typeof fakeLazada>[0]['intercept'] } = {}) {
+  const fake = fakeLazada({ ...KEY, orders, ...(over.intercept ? { intercept: over.intercept } : {}) });
+  const waits: number[] = [];
+  const provider = lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS, fake.fetch), now: () => new Date(NOW), sleep: async (ms) => void waits.push(ms) });
+  return { provider, fake, waits };
+}
+
+const kind = async (run: () => Promise<unknown>): Promise<string> => {
+  try {
+    await run();
+    return 'no error';
+  } catch (error) {
+    return error instanceof MarketplaceProviderError ? error.kind : `other: ${String(error)}`;
+  }
+};
+
+describe('the signature', () => {
+  it('is the official algorithm: sorted keys, the path first, upper-case HMAC-SHA256 hex (a vector from the official Python sample)', () => {
+    const params = { app_key: '123456', timestamp: '1517820392000', sign_method: 'sha256', access_token: '50000000001abcDEF', update_after: '2018-02-01T00:00:00+07:00', limit: '100', offset: '0', sort_by: 'updated_at', sort_direction: 'ASC' };
+    expect(signLazadaRequest('helloworld', '/orders/get', params)).toBe('86218DD3C050BDC8A89D8C22205A993284B87D496D7EE65F1674019EF9347315');
+  });
+
+  it('leaves an empty parameter out and does not depend on the order the keys were written in', () => {
+    const a = signLazadaRequest('s', '/orders/get', { b: '2', a: '1', c: '' });
+    expect(a).toBe(signLazadaRequest('s', '/orders/get', { a: '1', b: '2' }));
+    expect(a).toMatch(/^[0-9A-F]{64}$/);
+  });
+});
+
+describe('the sealed secret and the times', () => {
+  it('reads the three fields, ignores the rest, and refuses a malformed secret without echoing it', () => {
+    expect(parseLazadaSecret(JSON.stringify({ ...KEY, refreshToken: 'later', extra: 1 }))).toEqual(KEY);
+    for (const bad of ['not json', '{}', JSON.stringify({ ...KEY, appKey: '' }), JSON.stringify({ ...KEY, accessToken: 'has space' }), JSON.stringify({ ...KEY, appSecret: 7 }), 'null']) {
+      expect(() => parseLazadaSecret(bad)).toThrow(MarketplaceProviderError);
+    }
+    try {
+      parseLazadaSecret('{"appKey":"leakme"');
+    } catch (error) {
+      expect(String(error)).not.toContain('leakme');
+    }
+  });
+
+  it('reads Lazada\'s two time spellings and writes Vietnam time with its offset', () => {
+    expect(parseLazadaTime('2018-02-10T16:00:00+08:00')).toBe(Date.parse('2018-02-10T08:00:00Z'));
+    expect(parseLazadaTime('2018-02-10 16:00:00 +0800')).toBe(Date.parse('2018-02-10T08:00:00Z'));
+    expect(parseLazadaTime('2026-02-30T10:00:00+07:00')).toBeNull();
+    expect(parseLazadaTime('yesterday')).toBeNull();
+    expect(parseLazadaTime(20260210)).toBeNull();
+    expect(lazadaStamp(Date.parse('2026-11-10T03:00:00Z'))).toBe('2026-11-10T10:00:00+07:00');
+  });
+});
+
+describe('the provider', () => {
+  it('declares what it is: the id, the one host, the two connect fields, the platform and its limits', () => {
+    const { provider } = setup([]);
+    expect(provider.id).toBe('lazada');
+    expect(provider.hosts).toEqual(['api.lazada.vn']);
+    expect(provider.connectFields).toEqual(['appKey', 'appSecret']);
+    expect(provider.capabilities.platforms).toEqual({ lazada: MARKETPLACE_PLATFORM_LIMITS.lazada });
+  });
+
+  it('refuses a platform that is not Lazada', async () => {
+    const { provider } = setup([]);
+    expect(await kind(() => provider.listOrders(SECRET, 'shopee', null))).toBe('unreachable');
+  });
+});
+
+describe('listOrders', () => {
+  const two = [
+    fakeOrder({ id: '1000000000000001', number: '9101000001', updatedAt: '2026-11-09T10:00:00+07:00', createdAt: '2026-11-08T09:00:00+07:00' }, [{ id: '2000000000000001' }, { id: '2000000000000002', paidPrice: '65000.00', itemPrice: '66000.00', sku: null, name: 'Túi vải mẫu' }]),
+    // One order whose items are in different states: each keeps its own.
+    fakeOrder({ id: '1000000000000002', number: '9101000002', updatedAt: '2026-11-09T11:00:00+07:00', createdAt: '2026-11-08T10:00:00+07:00' }, [{ id: '2000000000000003', status: 'returned' }, { id: '2000000000000004', status: 'shipped' }]),
+  ];
+
+  it('starts 30 days back on the first read, signs every call, and answers one port line for each item', async () => {
+    const { provider, fake } = setup(two);
+    const page = await provider.listOrders(SECRET, 'lazada', null);
+    const first = fake.calls[0];
+    expect(first?.path).toBe('/orders/get');
+    expect(first?.params.update_after).toBe(lazadaStamp(NOW - 30 * 86_400_000));
+    expect(first?.params).toMatchObject({ sort_by: 'updated_at', sort_direction: 'ASC', limit: '100', offset: '0', app_key: '123456', sign_method: 'sha256' });
+    expect(page.orders.map((o) => [o.orderNo, o.stage, o.lines.map((l) => l.lineKey)])).toEqual([
+      ['9101000001', 'completed', ['2000000000000001', '2000000000000002']],
+      ['9101000002', 'returned', ['2000000000000003']],
+      ['9101000002', 'shipped', ['2000000000000004']],
+    ]);
+    const line = page.orders[0]?.lines[1];
+    // One unit each, the item's own price and paid price as decimal strings, an empty SKU as none, no delivery or shipping day invented.
+    expect(line).toEqual({ lineKey: '2000000000000002', sku: null, itemName: 'Túi vải mẫu', quantity: '1', unitPrice: '66000.00', amount: '65000.00' });
+    expect(page.orders[0]).toMatchObject({ orderedAt: '2026-11-08', shippedAt: null, deliveredAt: null });
+    // The page is one the port's own check takes, and the report writes one row for each unit, with the head row and the connection row.
+    expect(parseMarketplaceOrderPage(page)).not.toBeNull();
+    expect(marketplaceOrdersCsv('lazada', page.orders, 'c1').trimEnd().split('\n')).toHaveLength(2 + 4);
+  });
+
+  it('keeps an item id past 2^53 exactly (a JSON parse would turn it into another id)', async () => {
+    const { provider } = setup([fakeOrder({ id: '1234567890123456789', number: '9101000003' }, [{ id: '9007199254740993' }])]);
+    const page = await provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders[0]?.lines[0]?.lineKey).toBe('9007199254740993');
+  });
+
+  it('is deterministic: the same window gives the same page, byte for byte, so the intake recognises it', async () => {
+    const a = await setup(two).provider.listOrders(SECRET, 'lazada', null);
+    const b = await setup([...two].reverse()).provider.listOrders(SECRET, 'lazada', null);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('never lets a buyer\'s data through: not into a type, and not into the report', async () => {
+    const { provider } = setup(two);
+    const page = await provider.listOrders(SECRET, 'lazada', null);
+    const everything = JSON.stringify(page) + marketplaceOrdersCsv('lazada', page.orders, 'c1');
+    for (const secret of ['Nguyễn', 'Hà Nội', '0912345678', 'Phố Thử', '100200300', '079099123456', 'giao giờ', '0109876543', 'LZVN000000', 'customer_', 'address', 'buyer']) expect(everything).not.toContain(secret);
+  });
+
+  it('calls only the two read paths, by GET, one at a time, spaced a second apart', async () => {
+    const { provider, fake, waits } = setup(two);
+    await provider.listOrders(SECRET, 'lazada', null);
+    expect(fake.calls.map((c) => `${c.method} ${c.host} ${c.path}`)).toEqual(['GET api.lazada.vn /orders/get', 'GET api.lazada.vn /orders/items/get']);
+    expect(fake.calls[1]?.params.order_ids).toBe('[1000000000000001,1000000000000002]');
+    expect(waits).toEqual([1000]);
+  });
+
+  it('says nothing is new, and keeps the cursor it was given', async () => {
+    const { provider } = setup([]);
+    expect(await provider.listOrders(SECRET, 'lazada', null)).toEqual({ orders: [], nextCursor: null });
+    expect(await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:0')).toEqual({ orders: [], nextCursor: 'u:2026-11-09T03:00:00.000Z:0' });
+  });
+
+  it('resumes a little before the newest order, never earlier than the window it read, and reads the same page again for nothing new', async () => {
+    const { provider, fake } = setup(two);
+    const first = await provider.listOrders(SECRET, 'lazada', null);
+    // The newest order was updated 2026-11-09T11:00:00+07:00 = 04:00Z; ten minutes before.
+    expect(first.nextCursor).toBe('u:2026-11-09T03:50:00.000Z:0');
+    const again = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
+    expect(fake.calls.filter((c) => c.path === '/orders/get')[1]?.params.update_after).toBe('2026-11-09T10:50:00+07:00');
+    // Only the second order is inside the overlap, and the cursor does not move back or forward.
+    expect(again.orders.map((o) => o.orderNo)).toEqual(['9101000002', '9101000002']);
+    expect(again.nextCursor).toBe(first.nextCursor);
+  });
+
+  it('pages a full window: the same start with a growing skip, then the window moves on when it is read to its end', async () => {
+    const many = Array.from({ length: 230 }, (_, i) =>
+      fakeOrder({ id: String(3000000000000000 + i), number: `91020${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [{ id: String(4000000000000000 + i) }]),
+    );
+    const { provider } = setup(many);
+    const p1 = await provider.listOrders(SECRET, 'lazada', null);
+    expect(p1.orders).toHaveLength(100);
+    const start = lazadaStamp(NOW - 30 * 86_400_000);
+    expect(p1.nextCursor).toBe(`u:${new Date(NOW - 30 * 86_400_000).toISOString()}:100`);
+    const p2 = await provider.listOrders(SECRET, 'lazada', p1.nextCursor);
+    expect(p2.orders).toHaveLength(100);
+    expect(p2.nextCursor).toBe(`u:${new Date(NOW - 30 * 86_400_000).toISOString()}:200`);
+    const p3 = await provider.listOrders(SECRET, 'lazada', p2.nextCursor);
+    expect(p3.orders).toHaveLength(30);
+    // Read to its end: the next window starts ten minutes before the newest order (index 229 = 09:49 +07:00 = 02:49Z).
+    expect(p3.nextCursor).toBe('u:2026-11-09T02:39:00.000Z:0');
+    expect(start).toContain('+07:00');
+    expect(new Set([...p1.orders, ...p2.orders, ...p3.orders].map((o) => o.orderNo)).size).toBe(230);
+  });
+
+  it('moves the window to the last order seen when Lazada\'s offset limit of 5000 is reached', async () => {
+    const many = Array.from({ length: 5100 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
+    const { provider } = setup(many);
+    const page = await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T00:00:00.000Z:4900');
+    expect(page.orders).toHaveLength(100);
+    expect(page.nextCursor).toBe('u:2026-11-09T03:00:00.000Z:0');
+  });
+
+  it('treats an unreadable cursor as no cursor', async () => {
+    const { provider, fake } = setup(two);
+    await provider.listOrders(SECRET, 'lazada', 'sandbox:3');
+    expect(fake.calls[0]?.params.update_after).toBe(lazadaStamp(NOW - 30 * 86_400_000));
+  });
+});
+
+describe('the closed status table', () => {
+  it.each(Object.entries(LAZADA_ITEM_STAGE))('maps %s to %s', async (status, stage) => {
+    const { provider } = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status }])]);
+    expect((await provider.listOrders(SECRET, 'lazada', null)).orders[0]?.stage).toBe(stage);
+  });
+
+  it('is case-insensitive, and an unknown status makes the page not_recognized', async () => {
+    const upper = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status: 'Delivered' }])]);
+    expect((await upper.provider.listOrders(SECRET, 'lazada', null)).orders[0]?.stage).toBe('completed');
+    const odd = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status: 'package_scrapped' }])]);
+    expect(await kind(() => odd.provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+  });
+});
+
+describe('a page the adapter will not store', () => {
+  const base = (items: Array<Partial<FakeOrder['items'][number]> & { id: string }>, over: Partial<FakeOrder> = {}) => [fakeOrder({ id: '1', number: '9105000001', updatedAt: '2026-11-09T10:00:00+07:00', ...over }, items)];
+
+  it('refuses a masked order number, SKU or name, and an amount that is not a decimal string', async () => {
+    for (const orders of [
+      base([{ id: '2' }], { number: '91***0001' }),
+      base([{ id: '2', sku: 'MA***01' }]),
+      base([{ id: '2', name: 'Á*** ***' }]),
+      base([{ id: '2', paidPrice: '1e5' }]),
+      base([{ id: '2', paidPrice: '140,000' }]),
+      base([{ id: '2', paidPrice: '140000.12345' }]),
+      base([{ id: '2', paidPrice: '' }]),
+      base([{ id: '2', itemPrice: 'NaN' }]),
+    ]) {
+      expect(await kind(() => setup(orders).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    }
+  });
+
+  it('refuses an amount written as a JSON number, an item of another order, a currency that is not dong and an order with no item', async () => {
+    const asNumber = (path: string, params: Record<string, string>): Response | undefined => {
+      void params;
+      if (path !== '/orders/items/get') return undefined;
+      return new Response(JSON.stringify({ code: '0', data: [{ order_id: 1, order_items: [{ order_item_id: 2, order_id: 1, sku: 'A', name: 'a', item_price: 150000, paid_price: 140000, status: 'delivered' }] }] }));
+    };
+    expect(await kind(() => setup(base([{ id: '2' }]), { intercept: asNumber }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    const otherOrder = (path: string): Response | undefined => (path === '/orders/items/get' ? new Response(JSON.stringify({ code: '0', data: [{ order_id: 1, order_items: [{ order_item_id: 2, order_id: 9, sku: 'A', name: 'a', item_price: '1', paid_price: '1', status: 'delivered' }] }] })) : undefined);
+    expect(await kind(() => setup(base([{ id: '2' }]), { intercept: otherOrder }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    const usd = (path: string): Response | undefined => (path === '/orders/items/get' ? new Response(JSON.stringify({ code: '0', data: [{ order_id: 1, order_items: [{ order_item_id: 2, order_id: 1, sku: 'A', name: 'a', item_price: '1', paid_price: '1', status: 'delivered', currency: 'USD' }] }] })) : undefined);
+    expect(await kind(() => setup(base([{ id: '2' }]), { intercept: usd }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    const none = (path: string): Response | undefined => (path === '/orders/items/get' ? new Response(JSON.stringify({ code: '0', data: [] })) : undefined);
+    expect(await kind(() => setup(base([{ id: '2' }]), { intercept: none }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+  });
+
+  it('refuses an order with an unreadable time or a page larger than a page, whatever the fake would send', async () => {
+    const badTime = (path: string): Response | undefined => (path === '/orders/get' ? new Response(JSON.stringify({ code: '0', data: { orders: [{ order_id: '1', order_number: '91', created_at: 'soon', updated_at: '2026-11-09T10:00:00+07:00' }] } })) : undefined);
+    expect(await kind(() => setup([]).provider.listOrders(SECRET, 'lazada', null).then(() => setup([], { intercept: badTime }).provider.listOrders(SECRET, 'lazada', null)))).toBe('not_recognized');
+    const huge = (path: string): Response | undefined =>
+      path === '/orders/get'
+        ? new Response(JSON.stringify({ code: '0', data: { orders: Array.from({ length: 101 }, (_, i) => ({ order_id: String(i + 1), order_number: `91${i}`, created_at: '2026-11-09T10:00:00+07:00', updated_at: '2026-11-09T10:00:00+07:00' })) } }))
+        : undefined;
+    expect(await kind(() => setup([], { intercept: huge }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+  });
+});
+
+describe('a call that fails', () => {
+  const orders = [fakeOrder({ id: '1', number: '9106000001', updatedAt: '2026-11-09T10:00:00+07:00' })];
+
+  it('maps a refused token or signature to credentials, a call limit to rate_limited, and anything else to unreachable', async () => {
+    expect(await kind(() => setup(orders).provider.listOrders(JSON.stringify({ ...KEY, accessToken: 'expired-token' }), 'lazada', null))).toBe('credentials');
+    expect(await kind(() => setup(orders).provider.listOrders(JSON.stringify({ ...KEY, appSecret: 'wrong-secret' }), 'lazada', null))).toBe('credentials');
+    for (const code of ['ApiCallLimit', 'AppApiCallLimit', 'E1002']) {
+      const throttled = (): Response => new Response(JSON.stringify({ code, type: 'ISV', message: 'call limit' }));
+      expect(await kind(() => setup(orders, { intercept: throttled }).provider.listOrders(SECRET, 'lazada', null))).toBe('rate_limited');
+    }
+    expect(await kind(() => setup(orders, { intercept: () => new Response('slow down', { status: 429 }) }).provider.listOrders(SECRET, 'lazada', null))).toBe('rate_limited');
+    expect(await kind(() => setup(orders, { intercept: () => new Response('no', { status: 403 }) }).provider.listOrders(SECRET, 'lazada', null))).toBe('credentials');
+    expect(await kind(() => setup(orders, { intercept: () => new Response('boom', { status: 500 }) }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+    expect(await kind(() => setup(orders, { intercept: () => new Response('<html>not json</html>') }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+    expect(await kind(() => setup(orders, { intercept: () => new Response(JSON.stringify({ code: 'SomethingNew', message: 'secret text' })) }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+  });
+
+  it('reads no more than a bounded answer', async () => {
+    const big = () => new Response('x', { headers: { 'content-length': '999999999' } });
+    expect(await kind(() => setup(orders, { intercept: big }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+  });
+
+  it('does not carry Lazada\'s text or the credential in its error', async () => {
+    try {
+      await setup(orders, { intercept: () => new Response(JSON.stringify({ code: 'IllegalAccessToken', message: 'token 50000000001abcDEF is bad' })) }).provider.listOrders(SECRET, 'lazada', null);
+      expect.unreachable();
+    } catch (error) {
+      expect(String(error)).not.toMatch(/50000000001|helloworld|bad/);
+    }
+  });
+
+  it('turns a network failure into unreachable', async () => {
+    const provider = lazadaMarketplace({ fetch: async () => Promise.reject(new Error('ECONNRESET https://api.lazada.vn/rest?access_token=x')), now: () => new Date(NOW), sleep: async () => undefined });
+    expect(await kind(() => provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+  });
+});
+
+describe('testConnection', () => {
+  it('works with a good key, and names the refusal of a bad one without raising it', async () => {
+    expect(await setup([]).provider.testConnection(SECRET)).toBe('works');
+    expect(await setup([]).provider.testConnection(JSON.stringify({ ...KEY, accessToken: 'bad-token' }))).toBe('wrong_credentials');
+    expect(await setup([]).provider.testConnection('garbage')).toBe('wrong_credentials');
+    expect(await setup([], { intercept: () => new Response('down', { status: 503 }) }).provider.testConnection(SECRET)).toBe('unreachable');
+  });
+
+  it('asks for one order from the last day, and nothing else', async () => {
+    const { provider, fake } = setup([]);
+    await provider.testConnection(SECRET);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]?.params).toMatchObject({ limit: '1', offset: '0', created_after: lazadaStamp(NOW - 86_400_000) });
+  });
+});
+
+describe('what the adapter is allowed to reach', () => {
+  const source = readFileSync(new URL('../src/marketplace-lazada.ts', import.meta.url), 'utf8');
+  const code = source.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
+
+  it('names exactly two API paths, both read paths', () => {
+    const paths = [...code.matchAll(/'(\/[a-z]+(?:\/[a-z]+)*)'/g)].map((m) => m[1]);
+    expect([...new Set(paths)].sort()).toEqual(['/orders/get', '/orders/items/get']);
+  });
+
+  it('uses GET only, the fetch it is given and no network module', () => {
+    expect(code).not.toMatch(/method:\s*'(POST|PUT|PATCH|DELETE)'/i);
+    expect(code).not.toMatch(/\bglobalThis\.fetch\b|[^.\w]fetch\(|node:https?|undici/);
+    expect(code).not.toMatch(/\/(product|order\/(cancel|reverse|status)|reverse|fulfillment|finance)\//);
+    expect(LAZADA_HOSTS).toEqual(['api.lazada.vn']);
+  });
+});

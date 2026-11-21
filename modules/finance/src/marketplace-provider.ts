@@ -10,17 +10,18 @@
 // Each provider declares static capability data (page size, window and rate per platform), its hosts and the fields the org types to connect. The offline provider reaches no host,
 // asks for no field and serves a small recorded set of orders for each platform: made-up SKUs and names, no buyer data of any kind, amounts as decimal strings, dates as ISO days.
 // A real adapter (a later issue, one per platform with its own review) reaches its platform only through guardedRequest of @crove/kernel-runtime (egress.ts), never with a bare fetch.
+import { z } from 'zod';
 import { MARKETPLACE_PLATFORM_KEYS } from '@crove/kernel-contract';
 import { money, toMoney } from '@crove/l10n-vn';
 
 export type MarketplacePlatformKey = (typeof MARKETPLACE_PLATFORM_KEYS)[number];
 
-// The adapters this build knows. `sandbox` is the offline provider.
-export const MARKETPLACE_ADAPTERS = ['sandbox'] as const;
+// The adapters this build knows. `sandbox` is the offline provider; `lazada` is the real Lazada adapter (#2524), built dormant: a deployment turns it on with MARKETPLACE_PROVIDERS (a later slice).
+export const MARKETPLACE_ADAPTERS = ['sandbox', 'lazada'] as const;
 export type MarketplaceAdapterId = (typeof MARKETPLACE_ADAPTERS)[number];
 
 // The platforms each adapter serves, as static data: the commands check a connection against it before anything is sealed, and the adapter's capabilities are built from it.
-export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS };
+export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS, lazada: ['lazada'] };
 
 export function isMarketplaceAdapter(value: string): value is MarketplaceAdapterId {
   return (MARKETPLACE_ADAPTERS as readonly string[]).includes(value);
@@ -34,8 +35,8 @@ export type MarketplaceTestResult = (typeof MARKETPLACE_TEST_RESULTS)[number];
 export const MARKETPLACE_POLL_RESULTS = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollEnding = (typeof MARKETPLACE_POLL_RESULTS)[number];
 
-// A failure the caller maps to a state on screen.
-export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited'] as const;
+// A failure the caller maps to a state on screen. `not_recognized`: the platform answered, but with a page the adapter will not store (a masked value, an unknown status, a malformed amount).
+export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized'] as const;
 export type MarketplaceErrorKind = (typeof MARKETPLACE_ERROR_KINDS)[number];
 
 export class MarketplaceProviderError extends Error {
@@ -298,6 +299,21 @@ const wholeUnits = (quantity: string): number | null => {
   return q.isInteger() && q.gte(1) && q.lte(100_000) ? q.toNumber() : null;
 };
 
+// The most rows one file may carry (the same as EXTRACT_LIMITS.maxOrderLines of the parsing sandbox; a test keeps the two equal). The rows are counted BEFORE any is built (#2840 point 1), so a page
+// of a few lines with huge quantities on a platform that writes a row for each unit is refused early and never materialised.
+export const MARKETPLACE_CSV_MAX_ROWS = 20_000;
+
+// How many rows a page of orders writes in the platform's layout: one for each line, on a platform with a row per unit one for each unit. A line a per-unit layout cannot carry (a fractional or
+// absurd quantity) counts as one row here; splitWritableOrders names those, and writing one throws.
+export function marketplaceCsvRows(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[]): number {
+  const perUnit = LAYOUTS[platform].rowPerUnit;
+  let rows = 0;
+  for (const order of orders) {
+    for (const line of order.lines) rows += perUnit ? (wholeUnits(line.quantity) ?? 1) : 1;
+  }
+  return rows;
+}
+
 // What a page can be written as: the orders the layout can carry, and how many it cannot (a platform that writes a row for each unit cannot carry a line of 1.5 units). Those are named
 // by the caller, never written half and never dropped without a trace.
 export function splitWritableOrders(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[]): { writable: MarketplaceOrder[]; refused: number } {
@@ -313,6 +329,7 @@ export function splitWritableOrders(platform: MarketplacePlatformKey, orders: re
 // carry throws; the caller removes those first (splitWritableOrders).
 export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[], connectionId?: string): string {
   const layout = LAYOUTS[platform];
+  if (marketplaceCsvRows(platform, orders) > MARKETPLACE_CSV_MAX_ROWS) throw new Error('the page writes more rows than one file may carry');
   const rows: string[][] = [];
   if (connectionId !== undefined) rows.push([`Ludy marketplace connection ${connectionId}`]);
   rows.push([...layout.head]);
@@ -342,4 +359,57 @@ export function ordersSpan(orders: readonly MarketplaceOrder[]): { from: string;
   const from = days[0];
   const to = days.at(-1);
   return from === undefined || to === undefined ? null : { from, to };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// A page as a provider returns it, checked before anything is written (#2840 point 2)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const noControl = (value: string): boolean => ![...value].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+const validDay = (value: string): boolean => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+};
+const zDay = z.string().refine(validDay);
+const zIdent = (max: number) => z.string().min(1).max(max).refine(noControl);
+const zAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/);
+const zQuantity = z.string().regex(/^\d{1,9}(\.\d{1,3})?$/).refine((value) => Number(value) > 0);
+
+// Strict: a field the port does not name (a buyer's name, an address) is a provider's bug and refuses the page, so nothing a provider adds can ride along into a file.
+export const zMarketplaceOrderPage = z.strictObject({
+  orders: z
+    .array(
+      z.strictObject({
+        orderNo: zIdent(100),
+        orderedAt: zDay,
+        shippedAt: zDay.nullable(),
+        deliveredAt: zDay.nullable(),
+        stage: z.enum(MARKETPLACE_ORDER_STAGES),
+        lines: z
+          .array(
+            z.strictObject({
+              lineKey: zIdent(120),
+              sku: zIdent(100).nullable(),
+              itemName: z.string().max(300).refine(noControl),
+              quantity: zQuantity,
+              unitPrice: zAmount,
+              amount: zAmount,
+            }),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
+    .max(1000),
+  nextCursor: z.string().max(200).nullable(),
+});
+
+// The page when it is one the writer may take, or null: decimal strings, real calendar days, known stages, bounded lengths, no field the port does not name. The caller maps null to the poll
+// state `not_recognized` and leaves the cursor where it was; the provider's own text is never kept.
+export function parseMarketplaceOrderPage(page: unknown): MarketplaceOrderPage | null {
+  const parsed = zMarketplaceOrderPage.safeParse(page);
+  return parsed.success ? (parsed.data as MarketplaceOrderPage) : null;
 }
