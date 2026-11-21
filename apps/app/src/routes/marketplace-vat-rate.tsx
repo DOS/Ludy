@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The VAT card of marketplace sales in Settings (#4303 S3a, parent #2520): the method and rate an entity's marketplace sales carry, as dated rows. Owners and admins confirm the suggested schedule in one click or
-// add a row; every member reads. Nothing is applied until a person saves it, and a change is a later row, never an edit. The sales posting (S3b) reads these rows; until a row covers a month, that month is
+// add a row. The card is theirs alone: the entity list it needs is an owner and admin read, so a member sees no card (the rate list itself is readable by every member). Nothing is applied until a person saves it, and a change is a later row, never an edit. The sales posting (S3b) reads these rows; until a row covers a month, that month is
 // held back with words instead of posted with a guessed rate. One rate per entity: a shop selling goods at different rates waits for the accountant.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
