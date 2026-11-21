@@ -6,7 +6,8 @@
 -- scope, changes no grant check and revokes nothing (the person decides on the AI connections screen).
 -- Which grants are "before" is a fact of each instance (a release reaches the pilot and every self-hosted install at its own time), so it is not a date in this file: the column below is true for every grant that
 -- exists when this migration runs and for the grants made in the hour after (the rollout window, in which the API of the old release can still show the old consent screen), and false for every grant made later.
--- Telling a grant of that window needlessly is harmless; missing one is not.
+-- Telling a grant of that window needlessly is harmless; missing one is not. A new install has no grant to tell about and no old consent screen to wait out, so when the table is empty at this point the window
+-- is empty too (the default is false from the start): no "apps you connected earlier" notice on a fresh install or a fresh test stack.
 --   crove_kernel.agent_grant.engage_reads_due        true for a grant that needs the notice (the default, evaluated at insert, is `now() < <this migration's time + 1 hour>`).
 --   crove_kernel.agent_grant.engage_reads_told_at    when the grantor was told (stamped by kernel.mcp.engage_reads_notify, once per grant, never reset).
 --   crove_kernel.mcp_engage_reads_to_tell            the worker's scan, across active orgs, of the (org, person) pairs with a due grant not told yet, the person being a member now. Ids only.
@@ -15,11 +16,14 @@
 -- agent_grant is definer-only and its write guard is untouched. No policy, no scope list and no check of mcp_grant_standing changes.
 SET LOCAL lock_timeout = '2s';
 
--- The default is fixed when the column is first added (a re-run finds the column and leaves it alone): existing rows get true, rows inserted within the hour get true, later rows false.
+-- The default is fixed when the column is first added (a re-run finds the column and leaves it alone): existing rows get true, rows inserted within the hour get true, later rows false; on an empty table
+-- the window end is already past, so every row is false. The default stays non-volatile (now() against a constant), so the ALTER rewrites nothing.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = 'crove_kernel.agent_grant'::pg_catalog.regclass AND a.attname = 'engage_reads_due' AND NOT a.attisdropped) THEN
-    EXECUTE pg_catalog.format('ALTER TABLE crove_kernel.agent_grant ADD COLUMN engage_reads_due boolean NOT NULL DEFAULT (pg_catalog.now() < %L::timestamptz)', (pg_catalog.clock_timestamp() + interval '1 hour')::text);
+    EXECUTE pg_catalog.format(
+      'ALTER TABLE crove_kernel.agent_grant ADD COLUMN engage_reads_due boolean NOT NULL DEFAULT (pg_catalog.now() < %L::timestamptz)',
+      (CASE WHEN EXISTS (SELECT 1 FROM crove_kernel.agent_grant) THEN pg_catalog.clock_timestamp() + interval '1 hour' ELSE pg_catalog.clock_timestamp() - interval '1 hour' END)::text);
   END IF;
 END $$;
 ALTER TABLE crove_kernel.agent_grant ADD COLUMN IF NOT EXISTS engage_reads_told_at timestamptz;

@@ -26,8 +26,8 @@ suite('the notice of the Engage reads (#4069)', () => {
     await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
     return id;
   };
-  // A grant of `userId`, kind company or member. `due` is what the column holds: the database's default is true for a grant made when the migration ran or in the hour after (every grant of this test), and
-  // false for one made later, which `due: false` stands for.
+  // A grant of `userId`, kind company or member. `due` is what the column holds. These cases set it by hand: the test database was empty when the migration ran, so its default is false (a new install is told nothing);
+  // on an instance that had grants, the default is true for the hour after the migration and false later. `'default'` leaves the column to the database.
   const grant = async (userId: string, due: boolean | 'default', kind: 'company' | 'member' = 'company', scopes: string[] = ['ludy.read']) => {
     const id = randomUUID();
     await h.q(
@@ -38,7 +38,8 @@ suite('the notice of the Engage reads (#4069)', () => {
     if (due !== 'default') await h.q('UPDATE crove_kernel.agent_grant SET engage_reads_due = $3 WHERE org_id = $1 AND id = $2', [h.orgId, id, due]);
     return id;
   };
-  const OLD = 'default' as const;
+  // A grant that needs the notice (made before the instance served the consent screen that names the reads).
+  const OLD = true;
   const notices = async (userId: string) => (await h.q<{ detail: Record<string, string>; subject_type: string | null; dedupe_key: string }>(`SELECT detail, subject_type, dedupe_key FROM crove_kernel.notification WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [h.orgId, userId, KIND])).rows;
   const stamp = async (grantId: string) => (await h.q<{ at: Date | null }>('SELECT engage_reads_told_at AS at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, grantId])).rows[0]?.at ?? null;
 
@@ -107,17 +108,29 @@ suite('the notice of the Engage reads (#4069)', () => {
     }
   });
 
-  it('a grant made now is due, the database default of the rollout window; one made after it is not, and its person is not told: the consent screen named the reads', async () => {
+  it('a new install tells nothing: the table was empty when the migration ran, so a grant made now is not due, and neither is one made later', async () => {
     const owner = await person('owner');
     const fresh = await grant(owner, 'default');
-    expect((await h.q<{ due: boolean }>('SELECT engage_reads_due AS due FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, fresh])).rows[0]?.due).toBe(true);
-    const g = await grant(await person('owner'), false);
-    const later = (await h.q<{ user_id: string }>('SELECT user_id FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, g])).rows[0]?.user_id as string;
+    expect((await h.q<{ due: boolean }>('SELECT engage_reads_due AS due FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, fresh])).rows[0]?.due).toBe(false);
+    const explicit = await grant(owner, false);
     await pass();
-    expect(await notices(later)).toEqual([]);
-    expect(await stamp(g)).toBeNull();
-    // The one made inside the window is told.
-    expect(await notices(owner)).toHaveLength(1);
+    expect(await notices(owner)).toEqual([]);
+    expect(await stamp(fresh)).toBeNull();
+    expect(await stamp(explicit)).toBeNull();
+  });
+
+  it('a member limited to another legal entity sees the notice: it is filed under the entity they see, not the default one', async () => {
+    const branch = (await h.q<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 4069', 'branch', $2) RETURNING id`, [h.orgId, h.owner])).rows[0]?.id as string;
+    const limited = await person('member');
+    await h.q(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [h.orgId, limited, branch, h.owner]);
+    const g = await grant(limited, OLD, 'member', ['ludy.read']);
+    await pass();
+    expect(await stamp(g)).not.toBeNull();
+    const row = (await h.q<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_kernel.notification WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [h.orgId, limited, KIND])).rows[0];
+    expect(row?.legal_entity_id).toBe(branch);
+    // The bell shows it to them (the restrictive le_scope policy would hide a row under the default entity).
+    const seen = await h.runtime.query<{ items: NotificationItem[] }>('kernel.notification.list', {}, { actor: h.person(limited), orgId: h.orgId });
+    expect(seen.items.filter((i) => i.kind === KIND)).toHaveLength(1);
   });
 
   it('is a command only the system runs: a person, even an owner, cannot', async () => {

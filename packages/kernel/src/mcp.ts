@@ -20,6 +20,7 @@ import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zM
 import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
+import { uploaderEntity } from './extraction.ts';
 import { APPROVAL_WAITING, MCP_ENGAGE_READS_NOTICE, notifyMembers } from './notifications.ts';
 import { approversNow } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
@@ -425,6 +426,8 @@ export const mcpEngageReadsNotify = defineCommand({
       kind: MCP_ENGAGE_READS_NOTICE,
       users: [input.userId],
       key: 'mcp_engage_reads',
+      // Under an entity the person sees (the notification's le_scope policy, #1280), as the personal-data notice is: a member limited to other entities would otherwise be stamped told and never see the row.
+      legalEntityId: await uploaderEntity(ctx, input.userId),
       required: true,
       detail: { grants: company > 0 && member > 0 ? 'both' : company > 0 ? 'company' : 'member' },
     });
