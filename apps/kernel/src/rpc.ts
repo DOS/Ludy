@@ -4471,6 +4471,7 @@ export function createRpcHandler(
         send: os.sign.envelope.send.handler(signNoIdempotencyCommand('sign.envelope.send')),
         remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
         void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
+        acknowledge_decline: os.sign.envelope.acknowledge_decline.handler(signCommand('sign.envelope.acknowledge_decline')),
       },
       signer: {
         add: os.sign.signer.add.handler(signCommand('sign.signer.add')),
