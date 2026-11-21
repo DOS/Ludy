@@ -1825,7 +1825,7 @@ export const vi = {
     invoice: 'Hóa đơn phí',
     clearable: 'Cấn trừ được',
     settlementsTitle: 'Kỳ đối soát chờ ghi sổ',
-    settlementsHint: 'Mỗi kỳ ghi một bút toán cho mỗi tháng giao, cùng một đề xuất: sàn nợ bạn doanh thu ròng (131 / 511). Kỳ còn dòng chưa có ngày giao thì chờ. Ở đây chỉ lập đề xuất; người thứ hai duyệt trong Hộp thư.',
+    settlementsHint: 'Mỗi kỳ ghi một bút toán cho mỗi tháng giao, cùng một đề xuất: sàn nợ bạn tiền bán hàng (131), tách thành doanh thu (511) và thuế GTGT đầu ra (33311) theo thuế suất có hiệu lực vào ngày giao từng dòng; với phương pháp không có thuế thì không có dòng 33311. Kỳ còn dòng chưa có ngày giao, hoặc có ngày giao chưa có thuế suất, thì chờ. Ở đây chỉ lập đề xuất; người thứ hai duyệt trong Hộp thư.',
     post: 'Ghi sổ',
     payoutsTitle: 'Kỳ đối soát đã ghi sổ, chờ ghi nhận tiền về',
     payoutsHint: 'Chọn dòng sao kê của khoản sàn chuyển: tiền vào, đúng bằng số tiền ròng của kỳ, không trước kỳ đó. Ở đây chỉ lập đề xuất.',
@@ -5788,7 +5788,7 @@ export const vi = {
     intro:
       'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; sổ sách dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi hay sửa chỗ nhập sai thì thêm dòng mới từ ngày đó (nhập lại cùng ngày để thay dòng sai), không sửa dòng cũ.',
     entity: 'Công ty',
-    empty: 'Chưa lưu thuế suất nào. Tháng nào chưa có dòng nào phủ tới thì doanh thu sàn của tháng đó được giữ lại, không hạch toán với thuế suất đoán.',
+    empty: 'Chưa lưu thuế suất nào. Mỗi ngày giao cần có một thuế suất; kỳ nào còn ngày giao chưa có thì cả kỳ được giữ lại, không hạch toán với thuế suất đoán.',
     statusNone: 'Chưa lưu thuế suất',
     statusLater: 'Bắt đầu từ ngày sau',
     rowsTitle: 'Thuế suất GTGT',

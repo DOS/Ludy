@@ -1827,7 +1827,7 @@ export const en = {
     invoice: 'Fee invoice',
     clearable: 'Can clear',
     settlementsTitle: 'Settlements waiting to be posted',
-    settlementsHint: 'One entry for each month of delivery of a settlement, in one proposal: the platform owes you the net sales (131 / 511). A settlement with lines that have no delivery day yet waits. It is only proposed here; a second person approves it in the Inbox.',
+    settlementsHint: 'One entry for each month of delivery of a settlement, in one proposal: the platform owes you the sales (131), split into revenue (511) and output VAT (33311) by the VAT rate in force on each delivery day; with the no-VAT method there is no 33311 line. A settlement with lines that have no delivery day yet, or a delivery day with no VAT rate, waits. It is only proposed here; a second person approves it in the Inbox.',
     post: 'Post',
     payoutsTitle: 'Posted settlements waiting for the money to be recorded',
     payoutsHint: 'Choose the bank line of the platform\'s transfer: money in, equal to the net of the settlement, not before its period. It is only proposed here.',
@@ -5790,7 +5790,7 @@ export const en = {
     intro:
       'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books use it to split output VAT (33311) from the sales. A change or a correction is a new row from its date, never an edit: enter the date again to fix a wrong row.',
     entity: 'Company',
-    empty: 'No VAT rate saved yet. Until one covers a month, that month of marketplace sales is held back instead of posted with a guessed rate.',
+    empty: 'No VAT rate saved yet. Each delivery day needs a rate; while any day of a settlement has none, the whole settlement is held back instead of posted with a guessed rate.',
     statusNone: 'No rate saved yet',
     statusLater: 'Starts later',
     rowsTitle: 'VAT rates',
