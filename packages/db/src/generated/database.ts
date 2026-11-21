@@ -1447,6 +1447,15 @@ export interface FinanceMarketplaceColumnProfileTable {
   confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_finance.marketplace_connection_file */
+export interface FinanceMarketplaceConnectionFileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  marketplace_connection_id: ColumnType<string, string, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.marketplace_connection */
 export interface FinanceMarketplaceConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1462,15 +1471,6 @@ export interface FinanceMarketplaceConnectionTable {
   last_poll_state: string | null;
   orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
-  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
-}
-
-/** crove_finance.marketplace_connection_file */
-export interface FinanceMarketplaceConnectionFileTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  marketplace_connection_id: ColumnType<string, string, NotGranted>;
-  file_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
