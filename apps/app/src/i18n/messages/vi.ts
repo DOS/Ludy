@@ -5776,7 +5776,7 @@ export const vi = {
     // Lý do lần lấy giao dịch gần nhất dừng (#4244): mỗi loại một câu, không bao giờ chép lời của ngân hàng.
     pullReason: {
       credentials: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng không chấp nhận khóa đã lưu. Hãy kết nối lại bên dưới.',
-      clock: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng từ chối giờ của máy chủ này. Hãy thử lại sau; nếu vẫn lặp lại, hãy liên hệ hỗ trợ.',
+      clock: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng từ chối thời gian của hệ thống. Hãy thử lại sau; nếu vẫn lặp lại, hãy liên hệ hỗ trợ.',
       rate_limited: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng yêu cầu chậm lại. Hệ thống sẽ tự thử lại.',
       upstream: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng trả lời không đúng. Hệ thống sẽ tự thử lại.',
       config: 'Lần lấy giao dịch gần nhất đã dừng: kết nối đã lưu chưa được thiết lập đúng. Hãy kết nối lại bên dưới.',
@@ -14947,6 +14947,7 @@ export const vi = {
         hook: 'Xem trạng thái địa chỉ nhận thông báo của nguồn giao dịch ngân hàng',
         hook_set: 'Tạo hoặc đổi địa chỉ nhận thông báo của nguồn giao dịch ngân hàng',
         record_accounts: 'Ghi các tài khoản mà nguồn giao dịch ngân hàng có',
+        record_outcome: 'Ghi lý do một lần lấy giao dịch của nguồn ngân hàng đã dừng',
         record_pull: 'Ghi một lần lấy giao dịch của tài khoản nguồn ngân hàng',
         map: 'Liên kết tài khoản của nguồn giao dịch ngân hàng',
         unmap: 'Gỡ liên kết tài khoản của nguồn giao dịch ngân hàng',

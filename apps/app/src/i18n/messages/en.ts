@@ -5779,7 +5779,7 @@ export const en = {
     // Why the last pull stopped (#4244): one plain sentence per kind, never the bank's own text.
     pullReason: {
       credentials: 'The last pull stopped: the bank did not accept the saved key. Connect again below.',
-      clock: 'The last pull stopped: the bank rejected the time of this server. Try again later; if it keeps happening, contact support.',
+      clock: 'The last pull stopped: the bank rejected the time of our system. Try again later; if it keeps happening, contact support.',
       rate_limited: 'The last pull stopped: the bank asked us to slow down. It will try again on its own.',
       upstream: 'The last pull stopped: the bank did not answer properly. It will try again on its own.',
       config: 'The last pull stopped: the saved connection is not set up correctly. Connect again below.',
@@ -14948,6 +14948,7 @@ export const en = {
         hook: 'Read the status of the notice address of a bank feed connection',
         hook_set: 'Make or replace the notice address of a bank feed connection',
         record_accounts: 'Record the accounts a bank feed reaches',
+        record_outcome: 'Record why a pull of a bank feed stopped',
         record_pull: 'Record a pull of a bank feed account',
         map: 'Map a bank feed account',
         unmap: 'Unmap a bank feed account',
