@@ -156,7 +156,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const file = await exportPlan(a, a.member, { ...range, timeZone: 'Asia/Ho_Chi_Minh' });
     expect(file.truncated).toBe(false);
     expect(file.rows).toBeNull();
-    expect(file.filename).toBe(`crove-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
+    expect(file.filename).toBe(`ludy-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
     expect(file.csv?.startsWith('\uFEFF')).toBe(true);
     const day = (offset: number) => new Date(base.getTime() + offset * DAY).toISOString().slice(0, 10);
     expect(lines(file.csv)).toEqual([

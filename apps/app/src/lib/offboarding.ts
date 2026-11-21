@@ -69,5 +69,5 @@ export function formatBytes(bytes: number, number: (value: number) => string): s
 
 // The file name a download is saved as, prefixed by the product name (BRAND_NAME, #1045).
 export function exportFileName(slug: string, part: string): string {
-  return brandFileName(`crove-${slug}-${part}.${part === 'manifest' ? 'json' : 'ndjson'}`);
+  return brandFileName(`ludy-${slug}-${part}.${part === 'manifest' ? 'json' : 'ndjson'}`);
 }

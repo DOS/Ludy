@@ -47,7 +47,7 @@ async function scanAt(page: Page, slug: string, meetingId: string, width: number
   await page.setViewportSize({ width, height });
   for (const theme of ['light', 'dark'] as const) {
     // The theme the app reads at load (lib/theme.ts), from this browser only.
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     await answersOnScreen(page, slug, meetingId);
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
     problems.push(...(await problemsOf(page, `${theme} ${width}px`)));

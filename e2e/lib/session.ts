@@ -91,9 +91,9 @@ export interface StoredSession {
   expires_at: number;
 }
 
-// The session auth-js keeps in localStorage (storage key `crove-auth`).
+// The session auth-js keeps in localStorage (storage key `ludy-auth`).
 export async function storedSession(page: Page): Promise<StoredSession | null> {
-  const raw = await page.evaluate(() => window.localStorage.getItem('crove-auth'));
+  const raw = await page.evaluate(() => window.localStorage.getItem('ludy-auth'));
   return raw ? (JSON.parse(raw) as StoredSession) : null;
 }
 

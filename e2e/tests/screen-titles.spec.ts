@@ -49,7 +49,7 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
 
   for (const locale of ['vi', 'en'] as const) {
     test(`six screens of different apps have distinct titles in ${locale}`, async ({ page }) => {
-      await page.evaluate((value) => localStorage.setItem('crove-locale', value), locale);
+      await page.evaluate((value) => localStorage.setItem('ludy-locale', value), locale);
       const screens = [`/o/${slug}/overview`, `/o/${slug}/inbox`, proposal, `/o/${slug}/journal`, `/o/${slug}/settings`, `/o/${slug}/social`];
       const titles: string[] = [];
       for (const path of screens) {
@@ -74,7 +74,7 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
     await page.goto(`/o/${slug}/settings`);
     await expect(page.locator('main h1').first()).toBeVisible();
     const vi = (await page.title()).split(' · ')[0];
-    await page.evaluate(() => localStorage.setItem('crove-locale', 'en'));
+    await page.evaluate(() => localStorage.setItem('ludy-locale', 'en'));
     await page.reload();
     await expect(page.locator('main h1').first()).toBeVisible();
     const en = (await page.title()).split(' · ')[0];

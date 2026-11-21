@@ -54,7 +54,7 @@ describe('Turnstile on the booking form (#1353)', () => {
   it("lets Turnstile's script, frame and Trusted Types policy into the CSP only when the keys are set", () => {
     const off = contentSecurityPolicy('/auth/v1', null);
     expect(off).not.toContain('challenges.cloudflare.com');
-    expect(off.endsWith('trusted-types crove-sw')).toBe(true);
+    expect(off.endsWith('trusted-types ludy-sw')).toBe(true);
     const on = new Map(
       contentSecurityPolicy('/auth/v1', null, true)
         .split('; ')
@@ -62,7 +62,7 @@ describe('Turnstile on the booking form (#1353)', () => {
     );
     expect(on.get('script-src')).toBe("'self' https://challenges.cloudflare.com");
     expect(on.get('frame-src')).toBe('https://challenges.cloudflare.com');
-    expect(on.get('trusted-types')).toBe('crove-sw crove-turnstile');
+    expect(on.get('trusted-types')).toBe('ludy-sw ludy-turnstile');
     expect(on.get('require-trusted-types-for')).toBe("'script'");
   });
 

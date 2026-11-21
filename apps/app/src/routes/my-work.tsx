@@ -176,7 +176,7 @@ export function TodoRecurrenceBadge({ recurrence }: { recurrence: TodoRecurrence
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0] as const;
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
-const TODO_DRAG_MIME = 'application/x-crove-todo';
+const TODO_DRAG_MIME = 'application/x-ludy-todo';
 
 /** Recurrence selector in the personal to-do editor (#3557). */
 export function TodoRecurrenceField({ value, onChange }: { value: TodoRecurrence | null; onChange: (next: TodoRecurrence | null) => void }) {

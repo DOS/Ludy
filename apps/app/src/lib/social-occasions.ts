@@ -1,6 +1,7 @@
 // Vietnamese occasions on the Social calendar (#702): when a post for one is planned, and whether this browser shows
 // them (a per-viewer choice, kept in the browser; the calendar shows them unless turned off).
 import { OCCASIONS } from '@ludy/mod-social/contract';
+import { readMigratedItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export const OCCASION_IDS: ReadonlySet<string> = new Set(OCCASIONS.map((o) => o.id));
 // A post for an occasion is planned this many days before it, at 09:00.
@@ -19,18 +20,19 @@ export function occasionStart(date: string, now: Date = new Date()): Date | null
   return next.getTime() < end.getTime() ? next : null;
 }
 
-const keyOf = (slug: string) => `crove.social.occasions.${slug}`;
+const keyOf = (slug: string) => `ludy.social.occasions.${slug}`;
+const legacyKeyOf = (slug: string) => `crove.social.occasions.${slug}`;
 export function occasionsShown(slug: string): boolean {
   try {
-    return localStorage.getItem(keyOf(slug)) !== 'off';
+    return readMigratedItem(localStorage, keyOf(slug), legacyKeyOf(slug)) !== 'off';
   } catch {
     return true;
   }
 }
 export function setOccasionsShown(slug: string, shown: boolean): void {
   try {
-    if (shown) localStorage.removeItem(keyOf(slug));
-    else localStorage.setItem(keyOf(slug), 'off');
+    if (shown) removeMigratedItem(localStorage, keyOf(slug), legacyKeyOf(slug));
+    else writeMigratedItem(localStorage, keyOf(slug), legacyKeyOf(slug), 'off');
   } catch {
     // A browser that keeps nothing shows them each time.
   }
