@@ -2,7 +2,7 @@
 // The mapping of a marketplace report's columns that a person confirmed (#4037, slice 2 of #3850; plan stock-and-marketplaces.md section 8.6 "Columns"): what the confirm command takes and what the
 // read of the latest profile answers. Only the header texts of the mapped columns and the standard field of each: never a cell value, a sample or a buyer column (the field list has no buyer field).
 import { z } from 'zod';
-import { MARKETPLACE_COLUMN_FIELDS } from './marketplace-columns.ts';
+import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnAssignment } from './marketplace-columns.ts';
 import { zMarketplacePlatform } from './marketplace.ts';
 import { zId } from './schemas.ts';
 
@@ -25,12 +25,16 @@ export type MarketplaceColumnEntry = z.infer<typeof zMarketplaceColumnEntry>;
 // the profile. Computed where the file is read (the sandboxed extract step), never from a cell below the header.
 export const zMarketplaceHeaderDigest = z.string().regex(/^[0-9a-f]{64}$/);
 
-// The confirmation a person makes. The kernel re-checks here what the header row alone decides (see the command); the checks that read the rows of the file run where the file is read.
+// The confirmation a person makes (#4037): the file whose passed check they looked at, and the platform and mapping they saw checked (the same as the file's last check, or the confirmation is refused as
+// stale). No header text, no digest and no sample travels in it: the profile's headers, the header row and the digest are read from what the worker recorded for THAT file, never from the caller.
 export const zMarketplaceColumnsConfirm = z.strictObject({
+  fileId: zId,
   platform: zMarketplacePlatform,
-  headerRow: z.number().int().min(0).max(100_000),
-  columns: z.array(zMarketplaceColumnEntry).min(2).max(MARKETPLACE_COLUMN_FIELDS.length),
-  headerDigest: zMarketplaceHeaderDigest,
+  assignments: z
+    // Same index bound as the column check: a column the profile cannot hold (above its 999) reaches the command and is refused as `bad_column`, not as a validation error.
+    .array(zMarketplaceColumnAssignment)
+    .min(2)
+    .max(MARKETPLACE_COLUMN_FIELDS.length),
 });
 export type MarketplaceColumnsConfirm = z.infer<typeof zMarketplaceColumnsConfirm>;
 

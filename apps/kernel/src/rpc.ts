@@ -3589,6 +3589,14 @@ export function createRpcHandler(
           return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
         }),
       ),
+      // Saves the mapping of a passed check (#4037): the command re-reads the file's check in its own transaction and refuses anything that is not the same file, platform and mapping the person saw checked.
+      columnsConfirm: os.marketplace.columnsConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsProfile: os.marketplace.columnsProfile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_profile', input, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {

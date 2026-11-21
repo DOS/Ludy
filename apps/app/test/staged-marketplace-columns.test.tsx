@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inbox card of an unrecognised marketplace order report (#4036), rendered on the server with the API's answers seeded in the cache: the button that reads the columns, the pickers (labelled, none for
 // a buyer's column), Ly's suggestion only filling them, the same markup with the AI off, the named refusal, the parsed lines with their line keys and nothing saved, a verdict held back when the
-// choices changed since, and nothing for a viewer. The check through the real worker and sandbox is CI's database test and the e2e stack.
+// choices changed since, the save button only for an owner or admin once a passed check with its header digest is on screen (#4037), and nothing for a viewer. The check through the real worker and sandbox is CI's database test and the e2e stack.
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -49,6 +49,8 @@ const status = (over: Partial<MarketplaceColumnsStatus> = {}): MarketplaceColumn
   preview: null,
   ...over,
 });
+// A sheet the worker recorded with its header digest (#4037): the one a mapping can be saved from.
+const SIGNED_SHEET = { ...SHEET, headerDigest: 'a'.repeat(64) };
 const MAPPING = { platform: 'shopee' as const, assignments: [{ index: 0, field: 'orderNo' as const }, { index: 2, field: 'quantity' as const }] };
 const PREVIEW = {
   lines: [
@@ -60,7 +62,7 @@ const PREVIEW = {
 };
 const proposal = (ai: MarketplaceColumnsProposal['ai'], assignments: MarketplaceColumnsProposal['assignments'] = []): MarketplaceColumnsProposal => ({ ai, assignments });
 
-function card(opts: { files?: MarketplaceColumnsFile[]; status?: MarketplaceColumnsStatus; proposal?: MarketplaceColumnsProposal; canDecide?: boolean; locale?: 'en' | 'vi' } = {}): string {
+function card(opts: { files?: MarketplaceColumnsFile[]; status?: MarketplaceColumnsStatus; proposal?: MarketplaceColumnsProposal; canDecide?: boolean; canSave?: boolean; locale?: 'en' | 'vi' } = {}): string {
   const qc = client.current;
   qc.clear();
   qc.setQueryData(['marketplace', 'columnsFiles'], opts.files ?? [file(opts.status ? 'done' : 'none')]);
@@ -70,7 +72,7 @@ function card(opts: { files?: MarketplaceColumnsFile[]; status?: MarketplaceColu
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <StagedMarketplaceColumns canDecide={opts.canDecide ?? true} refetchMs={false} />
+        <StagedMarketplaceColumns canDecide={opts.canDecide ?? true} canSave={opts.canSave ?? true} refetchMs={false} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -166,7 +168,7 @@ describe('the unrecognised report card', () => {
     expect(html).not.toContain('staged-columns-preview');
   });
 
-  it('shows the parsed lines with their line keys, the counts and that nothing is saved, and no way to import', () => {
+  it('shows the parsed lines with their line keys, the counts and that nothing is imported from here', () => {
     const html = card({ status: status({ mapping: MAPPING, preview: PREVIEW }), proposal: proposal('used') });
     expect(html).toContain('staged-columns-preview');
     expect((html.match(/data-testid="staged-columns-line-key"/g) ?? []).length).toBe(2);
@@ -175,10 +177,40 @@ describe('the unrecognised report card', () => {
     expect(html).toContain('SP001');
     expect(html).toContain('Các dòng đọc được: hiện 2 trên 2 dòng');
     expect(html).toContain('Có 1 dòng bị bỏ qua');
-    expect(html).toContain('Chưa lưu gì');
+    expect(html).toContain('Chưa nhập gì từ đây');
     expect(html).toContain('tối đa 7 ngày');
     expect(html).not.toContain('staged-marketplace-import');
-    expect(html).not.toContain('staged-columns-save');
+  });
+
+  it('offers to save the mapping to an owner or admin once a passed check with its digest is on screen', () => {
+    const html = card({ status: status({ mapping: MAPPING, preview: PREVIEW, sheet: SIGNED_SHEET }) });
+    expect(html).toContain('data-testid="staged-columns-save-area"');
+    const save = buttonTag(html, 'staged-columns-save');
+    expect(isDisabled(save)).toBe(false);
+    // 44 px high on a phone, like the other buttons.
+    expect(save).toContain('min-h-11');
+    expect(html).toContain('Lưu cách ghép này');
+    expect(html).toContain('Chỉ lưu khi các dòng này đúng như bạn mong đợi');
+    expect(card({ status: status({ mapping: MAPPING, preview: PREVIEW, sheet: SIGNED_SHEET }), locale: 'en' })).toContain('Save this mapping');
+  });
+
+  it('offers no save to a member, and says only an owner or admin can', () => {
+    const html = card({ status: status({ mapping: MAPPING, preview: PREVIEW, sheet: SIGNED_SHEET }), canSave: false });
+    expect(html).not.toContain('data-testid="staged-columns-save"');
+    expect(html).toContain('data-testid="staged-columns-save-note"');
+    expect(html).toContain('Chỉ chủ sở hữu hoặc quản trị viên mới lưu được cách ghép');
+  });
+
+  it('asks for a new check when the one on screen has no header digest (an older check), and offers no save', () => {
+    const html = card({ status: status({ mapping: MAPPING, preview: PREVIEW }) });
+    expect(html).not.toContain('data-testid="staged-columns-save"');
+    expect(html).toContain('data-testid="staged-columns-save-note"');
+    expect(html).toContain('hãy kiểm tra lại cách ghép');
+  });
+
+  it('offers no save for a refused mapping or before any check', () => {
+    expect(card({ status: status({ mapping: MAPPING, refusal: 'buyer_text', sheet: SIGNED_SHEET }) })).not.toContain('staged-columns-save');
+    expect(card({ status: status({ sheet: SIGNED_SHEET }) })).not.toContain('staged-columns-save');
   });
 
   it('says a file that could not be read, and that a check is under way', () => {

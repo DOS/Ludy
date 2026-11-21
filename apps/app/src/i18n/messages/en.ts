@@ -8223,7 +8223,7 @@ export const en = {
     // Marketplace order reports no platform profile fits (#4036, slice 1c of #3850): the member reads the columns, picks the platform and which column is which field, and the worker checks that on the real file.
     marketplaceColumns: {
       title: 'Marketplace order reports not recognised',
-      hint: 'This spreadsheet does not match any marketplace Ludy knows. Look at the columns, pick the marketplace and say what each column is; Ludy reads it on the real file and shows you the lines it could read. Nothing is saved yet.',
+      hint: 'This spreadsheet does not match any marketplace Ludy knows. Look at the columns, pick the marketplace and say what each column is; Ludy reads it on the real file and shows you the lines it could read. Once the lines look right, an owner or admin can save the mapping for this marketplace.',
       read: 'Look at the columns',
       readAgain: 'Read the file again',
       stuck: 'Reading the file is taking too long and seems to have been dropped; press again.',
@@ -8267,7 +8267,12 @@ export const en = {
       previewTitle: 'The lines it reads: showing {shown, number} of {total, number}',
       previewSkipped: '{count, number} rows were skipped (a totals row, for one).',
       previewColumns: { rowNo: 'Row', orderNo: 'Order', lineKey: 'Line key', sku: 'SKU', itemName: 'Item', quantity: 'Quantity', amount: 'Amount', status: 'Status' },
-      notSaved: 'Nothing is saved: this is only a preview for you to check. The step that confirms the mapping and imports the report comes next.',
+      notSaved: 'Nothing is imported from here: this is only a preview for you to check.',
+      save: 'Save this mapping',
+      saved: 'Mapping saved for this marketplace.',
+      saveOwnerOnly: 'Only an owner or admin can save a mapping.',
+      saveCheckAgain: 'This check is from an older version and cannot be saved; check the mapping again.',
+      saveHint: 'Save it only if these lines are what you expect.',
       retention: 'These lines come from your file and are kept for 7 days at most.',
       failures: {
         not_a_sheet: 'This file is not a spreadsheet that can be read.',
@@ -14134,6 +14139,8 @@ export const en = {
       MARKETPLACE_COLUMNS_NOT_FOUND: 'This order report was not found, or it is no longer waiting to have its columns checked.',
       MARKETPLACE_COLUMNS_BUSY: 'This report was just asked about somewhere else; try again in a moment.',
       MARKETPLACE_COLUMNS_INVALID: 'The result of the column check is not valid and was not recorded.',
+      MARKETPLACE_COLUMNS_NOT_CHECKED: 'This mapping has not passed a check on this file yet, so it was not saved. Check it first.',
+      MARKETPLACE_COLUMNS_STALE: 'The mapping on screen is not the one that was checked, so it was not saved. Check it again.',
       STOCK_MOVE_ORDER_LINE: 'This move comes from a marketplace order, so it cannot be reversed on its own; unassign the order line, or stock comes back when the order is reported returned or cancelled after shipping.',
       MARKETPLACE_LINE_NOT_FOUND: 'This order line was not found.',
       MARKETPLACE_LINE_NOT_SHIPPED: 'This line has not shipped, so there is nothing to take out of stock yet.',
