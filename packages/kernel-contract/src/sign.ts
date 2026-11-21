@@ -19,6 +19,8 @@ export const SIGN_SIGNATURE_PNG_MAX_HEIGHT = 1000;
 export const SIGN_SIGNATURE_PNG_BASE64_MAX = 360_000;
 export const SIGN_FIELD_TEXT_MAX = 2000;
 export const SIGN_DECLINE_REASON_MAX = 1000;
+export const SIGN_DELEGATE_REASON_MAX = 500;
+export const SIGN_MAX_DELEGATIONS = 2;
 export const SIGN_SIGNATURE_TYPED_TEXT_MAX = 200;
 export const SIGN_PUBLIC_FIELDS_MAX = 500;
 
@@ -60,6 +62,13 @@ export const zSignPublicSubmitInput = z.strictObject({
 export const zSignPublicDeclineInput = z.strictObject({
   token: zSignToken,
   reason: z.string().trim().min(1).max(SIGN_DECLINE_REASON_MAX).optional(),
+});
+
+export const zSignPublicDelegateInput = z.strictObject({
+  token: zSignToken,
+  delegateName: z.string().trim().min(1).max(200),
+  delegateEmail: z.string().trim().toLowerCase().pipe(z.email().max(254)),
+  reason: z.string().trim().min(1).max(SIGN_DELEGATE_REASON_MAX),
 });
 
 export const zSignPublicVerifyInput = z.strictObject({
@@ -121,6 +130,9 @@ export type SignPublicView =
       pageDimensions: SignPageDimension[];
       requireEmailOtp: boolean;
       otpVerified: boolean;
+      allowDelegation?: boolean;
+      delegationCount?: number;
+      delegatedFromName?: string | null;
       fields: SignPublicField[];
       sharedSummary?: SignSharedSummary | null;
     };
@@ -154,6 +166,14 @@ export interface SignPublicDeclineResult {
   declinedAt: string;
 }
 
+export interface SignPublicDelegateResult {
+  signerId: string;
+  delegateName: string;
+  maskedDelegateEmail: string | null;
+  delegationCount: number;
+  delegatedAt: string;
+}
+
 export interface SignPublicVerifyResult {
   matched: true;
   envelopeStatus: 'completed';
@@ -169,6 +189,7 @@ export type SignPublicOtpVerifyInput = z.infer<typeof zSignPublicOtpVerifyInput>
 export type SignFieldSubmission = z.infer<typeof zSignFieldSubmission>;
 export type SignPublicSubmitInput = z.infer<typeof zSignPublicSubmitInput>;
 export type SignPublicDeclineInput = z.infer<typeof zSignPublicDeclineInput>;
+export type SignPublicDelegateInput = z.infer<typeof zSignPublicDelegateInput>;
 export type SignPublicVerifyInput = z.infer<typeof zSignPublicVerifyInput>;
 
 // Public direct-signing link ceremony contracts (/-/sign/d#<token>, Slice 2a A1, #3551).
@@ -453,6 +474,7 @@ export const zSignEnvelopeDetail = z.strictObject({
     message: z.string().nullable(),
     status: zSignEnvelopeStatus,
     routingMode: zSignRoutingMode,
+    allowDelegation: z.boolean().optional(),
     sourceKind: zSignSourceKind,
     sourceId: zId.nullable(),
     sourceFileId: zId,
@@ -511,6 +533,10 @@ export const zSignEnvelopeDetail = z.strictObject({
       otpVerifiedAt: z.string().nullable(),
       signatureKind: zSignSignatureKind.nullable(),
       consentAcceptedAt: z.string().nullable(),
+      delegatedFromName: z.string().nullable().optional(),
+      delegatedFromEmail: z.string().nullable().optional(),
+      delegationReason: z.string().nullable().optional(),
+      delegationCount: z.number().int().min(0).max(SIGN_MAX_DELEGATIONS).optional(),
       createdAt: z.string(),
       updatedAt: z.string(),
     }),
@@ -584,6 +610,7 @@ export const zSignEnvelopeCreateInput = z.strictObject({
   subject: z.string().trim().min(1).max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: zSignRoutingMode.default('parallel'),
+  allowDelegation: z.boolean().optional(),
   sourceKind: zSignSourceKind.default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
@@ -606,6 +633,7 @@ export const zSignEnvelopeUpdateInput = z.strictObject({
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: zSignRoutingMode.optional(),
   autoRemindBeforeExpiry: z.boolean().optional(),
+  allowDelegation: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
 });
@@ -711,6 +739,27 @@ export const zSignSignerCreateLinkResult = z.strictObject({
   tokenId: zId,
   token: z.string(),
   expiresAt: z.string(),
+});
+
+// Issued one-time links are never persisted in idempotency replay records (no idempotencyKey).
+export const zSignSignerCorrectRecipientInput = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  name: z.string().trim().min(1).max(200),
+  email: z.email().max(254).nullable().optional(),
+  phone: z.string().trim().min(6).max(32).nullable().optional(),
+  deliveryMode: zSignDeliveryMode,
+  requireEmailOtp: z.boolean().optional(),
+});
+export const zSignSignerCorrectRecipientResult = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  status: zSignSignerStatus,
+  deliveryMode: zSignDeliveryMode,
+  version: z.number().int(),
+  revokedTokens: z.number().int(),
+  mailStatus: z.enum(['sending', 'queued', 'suppressed']).nullable(),
+  link: zSignIssuedLink.nullable(),
 });
 
 export const zSignFieldItemInput = z
@@ -884,6 +933,7 @@ export const zSignTemplateDetail = z.strictObject({
     title: z.string(),
     description: z.string().nullable(),
     routingMode: zSignRoutingMode,
+    allowDelegation: z.boolean().optional(),
     subject: z.string().nullable(),
     message: z.string().nullable(),
     expiresInHours: z.number().int().nullable(),
@@ -913,6 +963,7 @@ export const zSignTemplateCreateInput = z
     title: z.string().trim().min(1).max(300),
     description: z.string().trim().max(2000).nullable().optional(),
     routingMode: zSignRoutingMode.optional(),
+    allowDelegation: z.boolean().optional(),
     subject: z.string().trim().max(300).nullable().optional(),
     message: z.string().trim().max(5000).nullable().optional(),
     expiresInHours: z.number().int().min(1).max(8760).nullable().optional(),
@@ -943,6 +994,7 @@ export const zSignTemplateUpdateInput = z.strictObject({
   title: z.string().trim().min(1).max(300).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   routingMode: zSignRoutingMode.optional(),
+  allowDelegation: z.boolean().optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   expiresInHours: z.number().int().min(1).max(8760).nullable().optional(),
@@ -1037,6 +1089,7 @@ export const zSignTemplateInstantiateInput = z.strictObject({
   title: z.string().trim().min(1).max(300).optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
+  allowDelegation: z.boolean().optional(),
   sourceKind: zSignSourceKind.default('standalone'),
   sourceId: zId.nullable().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),

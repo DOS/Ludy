@@ -170,14 +170,14 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await rootDb.end();
   });
 
-  it('posts one voucher naming the settlement: Dr 131 (the platform) / Cr 511, the party and its link created on first use', async () => {
+  it('posts one voucher naming the settlement: Dr 131 (the platform) / Cr 5111, the party and its link created on first use', async () => {
     const o = await org();
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', TWO);
     const { proposalId } = await ask(o, settlement);
     // Before the first posting the platform has no party: the 131 line names none, and the payload says what it posts.
     const stored = await payloadOf(o, proposalId);
     expect(stored).toMatchObject({ settlementId: settlement, platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', date: '2026-10-15', sales: '350000', sellerDiscount: '15000', refund: '0', total: '335000', legalEntityId: o.entity });
-    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit, l.party])).toEqual([['131', '335000', '0', null], ['511', '0', '335000', null]]);
+    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit, l.party])).toEqual([['131', '335000', '0', null], ['5111', '0', '335000', null]]);
     expect(await vouchersOf(o, settlement)).toHaveLength(0);
     expect(await parties(o, 'Shopee')).toHaveLength(0);
 
@@ -188,7 +188,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(created?.kind).toBe('organization');
     expect(await links(o, 'shopee')).toEqual([{ party_id: created?.id }]);
     const lines = await entryOf(o, done.journalEntryId);
-    expect(lines.map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['131', '335000', '0', created?.id], ['511', '0', '335000', null]]);
+    expect(lines.map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['131', '335000', '0', created?.id], ['5111', '0', '335000', null]]);
     // The proposal moved to executed with its ledger effect (the database checks it at commit).
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
   });
@@ -228,10 +228,10 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const o = await org();
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', discount: '10000', refund: '140000' }]);
     const { proposalId } = await ask(o, settlement);
-    expect((await payloadOf(o, proposalId))?.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '50000', '0'], ['131', '0', '50000']]);
+    expect((await payloadOf(o, proposalId))?.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['5111', '50000', '0'], ['131', '0', '50000']]);
     const done = await approve(o, proposalId);
     const [party] = await parties(o, 'Shopee');
-    expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['511', '50000', '0', null], ['131', '0', '50000', party?.id]]);
+    expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['5111', '50000', '0', null], ['131', '0', '50000', party?.id]]);
   });
 
   it('posts a settlement once: a second request and a second approval of a pending one are refused', async () => {
@@ -258,7 +258,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     };
     // Larger amounts (balanced, so only the rebuild catches it), other accounts, another settlement's id, another entity, a party the link does not hold.
     await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"999000"'), '{lines,1,credit}', '"999000"'), '{total}', '"999000"') WHERE org_id = $1 AND id = $2`);
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"5111"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"511"') WHERE org_id = $1 AND id = $2`);
     await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, randomUUID());
     await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,party}', jsonb_build_object('id', $3::text, 'name', 'Shopee', 'taxCode', null)) WHERE org_id = $1 AND id = $2`, randomUUID());
     await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,memo}', '"khác"') WHERE org_id = $1 AND id = $2`);
@@ -409,7 +409,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(credit('3331')).toBe(vat);
     expect(credit('3335')).toBe(45000 - vat);
     expect(debit('4212')).toBe(45000 - vat);
-    expect(debit('511')).toBe(vat);
+    expect(debit('5111')).toBe(vat);
     // The split is an estimate: the tax lines say so, and the proposal carries what the household's rate pair would take from the 3000000 of revenue beside what the platform withheld.
     const expected = Math.round((3000000 * (r.vat + r.pit)) / 100);
     expect(stored.taxEstimate).toEqual({ withheld: '45000', expected: String(expected), difference: String(45000 - expected) });
@@ -419,7 +419,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const posted = Object.fromEntries(
       (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
     );
-    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '4212': [45000 - vat, 0], '3335': [0, 45000 - vat] });
+    expect(posted).toEqual({ '131': [3000000, 0], '5111': [vat, 3000000], '3331': [0, vat], '4212': [45000 - vat, 0], '3335': [0, 45000 - vat] });
   });
 
   it('refuses a household whose rate row is not confirmed, or whose profile has no single trade, and posts nothing', async () => {
@@ -453,7 +453,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const o = await org();
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
     const stored = await proposalOf((await ask(o, settlement)).proposalId);
-    expect(stored.lines.map((l) => l.account)).toEqual(['131', '511']);
+    expect(stored.lines.map((l) => l.account)).toEqual(['131', '5111']);
   });
 
   it('holds the month in the database: the first day of a month, one voucher per settlement and month, and a month only on a settlement voucher', async () => {

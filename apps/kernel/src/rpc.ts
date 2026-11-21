@@ -4553,6 +4553,7 @@ export function createRpcHandler(
         remove: os.sign.signer.remove.handler(signCommand('sign.signer.remove')),
         reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
         create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
+        correct_recipient: os.sign.signer.correct_recipient.handler(signNoIdempotencyCommand('sign.signer.correct_recipient')),
       },
       field: {
         set: os.sign.field.set.handler(signCommand('sign.field.set')),

@@ -19,6 +19,8 @@ export const SIGN_EVENT_TYPES = [
   'link_created',
   'signer_reminded',
   'signer_pre_expiry_reminded',
+  'signer_corrected',
+  'signer_delegated',
   'signer_viewed',
   'signer_otp_verified',
   'signer_signed',

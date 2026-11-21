@@ -12,7 +12,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-const ROWS = ['receivable', 'revenue', 'salesReturn', 'cash', 'feePayable', 'feeAwaitingInvoice', 'taxWithheld', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'feeExpense', 'accruedExpense'] as const;
+const ROWS = ['receivable', 'revenue', 'salesReturn', 'cash', 'feePayable', 'feeAwaitingInvoice', 'taxWithheld', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'feeExpense', 'accruedExpense', 'outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
 
 suite('the marketplace posting maps against their charts on PostgreSQL (#3711)', () => {
   const dbName = `crove_test_mkt_map_chart_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -52,6 +52,9 @@ suite('the marketplace posting maps against their charts on PostgreSQL (#3711)',
     const chart = new Set((await rows<{ code: string }>('SELECT code FROM crove_finance.account')).map((r) => r.code));
     const map = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
     for (const [key, code] of codesOf(map)) expect(chart.has(code), `${key} ${code}`).toBe(true);
+    // Revenue and returns are 5111 (Doanh thu bán hàng hóa) under TT133, which has no 521.
+    expect([map.revenue.code, map.salesReturn.code]).toEqual(['5111', '5111']);
+    expect(chart.has('521')).toBe(false);
   });
 
   it('has every account of the TT99 map in the TT99 2026.1 chart, and the fee expense is 641 / 6417, not the staff cost 6421', async () => {
@@ -59,6 +62,9 @@ suite('the marketplace posting maps against their charts on PostgreSQL (#3711)',
     const map = MARKETPLACE_POSTING_MAPS.tt99 as MarketplacePostingMap;
     for (const [key, code] of codesOf(map)) expect(chart.has(code), `${key} ${code}`).toBe(true);
     expect(map.feeExpense.code).toBe('6417');
+    // Revenue is 511 here: the TT99 chart has no 5111 (a TT133 sub-account), and a return is a deduction on 521.
+    expect([map.revenue.code, map.salesReturn.code]).toEqual(['511', '521']);
+    expect(chart.has('5111')).toBe(false);
     expect(chart.get('6417')).toBe('Chi phí dịch vụ mua ngoài');
     // 6421 is a different expense in this chart (staff cost): the map must not use it for platform fees.
     expect(chart.get('6421')).toBe('Chi phí nhân viên quản lý');
