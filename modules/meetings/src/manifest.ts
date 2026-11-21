@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const meetingsManifest = defineModule({
   id: 'meetings',
@@ -157,4 +157,4 @@ export const VIDEO_RETENTION_DAYS = 7;
 export const AUDIO_MAX_BYTES = 300 * 1024 * 1024;
 export const VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // The version of the notice text lives in the contract (a client sends the version it showed); the current one is the default.
-export { CONSENT_NOTICE_VERSION } from '@crove/kernel-contract';
+export { CONSENT_NOTICE_VERSION } from '@ludy/kernel-contract';

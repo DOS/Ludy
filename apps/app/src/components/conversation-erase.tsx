@@ -6,8 +6,8 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_OTHERS_MAX, type ConversationDetail, type ConversationMessage } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import { CONVERSATION_OTHERS_MAX, type ConversationDetail, type ConversationMessage } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { StepUpPrompt } from './two-factor.tsx';
 import { ErrorText } from './ui.tsx';

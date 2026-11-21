@@ -53,7 +53,7 @@ import {
   type S3Client,
 } from '@aws-sdk/client-s3';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 
 export const ARCHIVE_PREFIX = 'chain/v1/';
 export const ARCHIVE_WRITE_CRON = '* * * * *';

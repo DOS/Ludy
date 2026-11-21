@@ -3,7 +3,7 @@
 // before a save, the largest amount a plan can spend (exact), what a Social post pre-fills, which fields still count as drafted by the AI coworker, and the
 // words for every finding of local validation and every refusal of the AI coworker, in both languages.
 import { describe, expect, it } from 'vitest';
-import type { AdsCampaignPlanDraft, AdsLaunchObjectView, AdsLaunchView, AdsPlanIssue } from '@crove/kernel-contract';
+import type { AdsCampaignPlanDraft, AdsLaunchObjectView, AdsLaunchView, AdsPlanIssue } from '@ludy/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
   badLocationIndex,

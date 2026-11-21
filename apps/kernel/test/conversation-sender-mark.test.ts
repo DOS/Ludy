@@ -2,7 +2,7 @@
 // The Inbox's "sender not confirmed" mark travels in the authenticated conversation reads, not in the public /api/config (#3636): a deployment that cannot check
 // senders (INBOUND_AUTHSERV_ID unset, the shipped default) sends no mark at all, and one that can sends what the database holds.
 import { describe, expect, it } from 'vitest';
-import type { ConversationDetail, ConversationListed, ConversationSummary } from '@crove/kernel-contract';
+import type { ConversationDetail, ConversationListed, ConversationSummary } from '@ludy/kernel-contract';
 import { markableDetail, markableListed, markableSummary } from '../src/conversation-sender-mark.ts';
 
 const summary = (over: Partial<ConversationSummary> = {}): ConversationSummary => ({ id: 'c1', kind: 'email', senderUnverified: true, subject: 'Hỏi giá', ...over }) as unknown as ConversationSummary;

@@ -6,8 +6,8 @@
 // is dropped. A form with more fields than a dialog holds uses FormPanel. The caller keeps its own state and mutation.
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
 import { isSaveShortcut } from './form-panel.tsx';
 
 // False once the component has gone away: the answer of a second-factor check that comes back after the dialog was dropped must not send the request the person gave up.

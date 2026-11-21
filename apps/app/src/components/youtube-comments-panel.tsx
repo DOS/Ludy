@@ -4,9 +4,9 @@
 // every channel of the Google project) or the budget resets. Nothing is read or stored until the switch is on.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { YOUTUBE_POLL_MAX_UNITS } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import { YOUTUBE_POLL_MAX_UNITS } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';

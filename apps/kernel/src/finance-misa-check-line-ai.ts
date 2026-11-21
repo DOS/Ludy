@@ -6,8 +6,8 @@
 // The line is read, never written: nothing here changes a voucher or stores a text, and it is not a command. With nothing flagged there is no call (`none`). When there is no model, the AI budget is spent, the
 // member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows the list alone. An answer is kept for a while by its counts, so
 // reopening the check does not pay for the same line twice. A failure is named, never quoted: neither the counts nor the model's answer is logged.
-import { AiBudgetExhaustedError, misaCheckLineFactsText, misaCheckLineHasNews, type InboxReader, type MisaCheckLineFacts } from '@crove/agent';
-import type { MisaCheck, MisaCheckCounts, MisaCheckLine } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, misaCheckLineFactsText, misaCheckLineHasNews, type InboxReader, type MisaCheckLineFacts } from '@ludy/agent';
+import type { MisaCheck, MisaCheckCounts, MisaCheckLine } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface MisaCheckLineAi {

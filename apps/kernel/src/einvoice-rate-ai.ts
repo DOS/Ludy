@@ -7,8 +7,8 @@
 // It is read, never written: nothing here stores a text, decides a rate or starts a correction; a person confirms the proposal by starting it. When there is no model, the member's calls are too frequent,
 // the AI budget is spent, the call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows the fixed reason alone, so everything works with AI off. A text is kept for a while
 // by its facts, so choosing the same nature again does not pay twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { AiBudgetExhaustedError, einvoiceRateFactsText, type EInvoiceRateFacts, type InboxReader } from '@crove/agent';
-import type { EInvoiceCorrectionRate, EInvoiceCorrectionRateExplained } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, einvoiceRateFactsText, type EInvoiceRateFacts, type InboxReader } from '@ludy/agent';
+import type { EInvoiceCorrectionRate, EInvoiceCorrectionRateExplained } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface EInvoiceRateAi {

@@ -4,7 +4,7 @@
 import { existsSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { z } from 'zod';
-import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs } from '@crove/extract-contract';
+import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs } from '@ludy/extract-contract';
 import { DEFAULT_SANDBOX } from './sandbox.ts';
 import { createExtractApp } from './server.ts';
 

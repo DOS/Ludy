@@ -11,11 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import {
   extractAndPropose,
   financeCommands,
@@ -23,9 +23,9 @@ import {
   goodsPurchaseRows,
   servicePurchaseRows,
   type PurchaseVoucher,
-} from '@crove/mod-finance';
-import { accountParents, type MisaGoodsCode } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
+} from '@ludy/mod-finance';
+import { accountParents, type MisaGoodsCode } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

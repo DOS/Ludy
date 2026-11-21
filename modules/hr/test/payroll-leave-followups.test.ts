@@ -6,7 +6,7 @@ import {
   zHrLeaveSet,
   zHrLineInputsSet,
   zHrPayrollInputs,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { computeAnnualLeaveBalance, hrManifest } from '../src/index.ts';
 
 const EMP_ID = '00000000-0000-7000-8000-000000000001';

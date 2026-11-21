@@ -3,8 +3,8 @@
 // indicators. Amounts are hand-checked.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { Decimal } from '@crove/l10n-vn';
-import { zVatPeriod } from '@crove/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
+import { zVatPeriod } from '@ludy/kernel-contract';
 import {
   documentVatByRate,
   form01Indicators,

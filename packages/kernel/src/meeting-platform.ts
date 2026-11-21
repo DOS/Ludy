@@ -25,9 +25,9 @@ import {
   zMeetingPlatformRecordingRef,
   type MeetingPlatformConnectionView,
   type MeetingPlatformRecordingView,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { offAppsOf } from './org-apps.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];

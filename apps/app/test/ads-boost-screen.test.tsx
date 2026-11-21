@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ADS_BOOST_STATES, type AdsBoostOptions, type AdsBoostState, type AdsBoostStateView } from '@crove/kernel-contract';
+import { ADS_BOOST_STATES, type AdsBoostOptions, type AdsBoostState, type AdsBoostStateView } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));

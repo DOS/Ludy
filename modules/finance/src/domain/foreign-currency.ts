@@ -7,7 +7,7 @@
 //     largest amount (the first of them on a tie);
 //   - the invoice's VAT table is fitted the same way to the converted subtotal of its rows and to the converted VAT.
 // Exchange differences on payment (515, 635) are not booked here.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { FX_RATE_LIMIT, FX_RATE_SCALE, MoneyError, canonical, parseDecimal, roundToCurrency } from './money.ts';
 
 export const BOOK_CURRENCY = 'VND';

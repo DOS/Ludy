@@ -3,7 +3,7 @@
 // repost rule. Closed by default so the settings and the preview come first; open from the start when one is already set,
 // so a rule that is on is never hidden.
 import { useEffect, useState, type ReactNode } from 'react';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 
 export function AdvancedOptions({ title, filled, children }: { title: string; filled: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(filled);

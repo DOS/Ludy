@@ -9,7 +9,7 @@ import {
   zProjectTaskCreate,
   zTaskChecklist,
   type ProjectTaskCard,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';

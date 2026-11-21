@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The narrow crove-media client of the kernel (#2985): the probe and the measure, nothing else. The kernel's upload and transcription
-// paths import only this entry (`@crove/media-contract/measure`), so the code they reach has no normalize, split or process call; the full
+// paths import only this entry (`@ludy/media-contract/measure`), so the code they reach has no normalize, split or process call; the full
 // client (client.ts) stays for the worker's other uses and the evaluation.
 import { MEDIA_LIMITS, zMediaProbeResult, type MediaProbeResult } from './types.ts';
 import { createTransport, MediaClientError } from './transport.ts';

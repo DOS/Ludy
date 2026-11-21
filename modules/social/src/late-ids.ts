@@ -11,10 +11,10 @@
 // (ADR-0025): the sweep opens the connection's token with kernel.channel.credential; the commands never see it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import type { LateIdResult, Publisher } from '@crove/channel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import type { LateIdResult, Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { TIKTOK_NO_POST_ID, TIKTOK_POST_ID, lateIdNextCheck, lateIdOver, lateIdStopped, lateIdWait } from './domain/late-ids.ts';
 import { lockPost, lockVariants, setVariant, settingsOf, type VariantRow } from './variants.ts';

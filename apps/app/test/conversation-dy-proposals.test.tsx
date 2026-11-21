@@ -5,7 +5,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationDetail } from '@crove/kernel-contract';
+import type { ConversationDetail } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { DISMISSED_THREADS_MAX, dismissContactMatch, dismissedContactMatches } from '../src/lib/conversation-dismissed.ts';
 

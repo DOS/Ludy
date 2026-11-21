@@ -5,9 +5,9 @@
 //   and also shows what the VAT would be if the household were eligible (`ifEligible`), so the household sees what the answer is worth.
 // - The cut of a line is the cut percentage of that line's VAT (already rounded to a whole dong), rounded to a whole dong; the VAT payable is the VAT less the cut. Nothing is ever negative.
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import type { HouseholdTrade, HouseholdVatCut, HouseholdVatCutAnswer } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import type { HouseholdTrade, HouseholdVatCut, HouseholdVatCutAnswer } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 

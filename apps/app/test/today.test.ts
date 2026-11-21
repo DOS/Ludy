@@ -2,7 +2,7 @@
 // "Hôm nay cần bạn" on Home (#2383), the parts without a screen: grouping by kind with flags first, the screen an item
 // opens, and what the heading counts.
 import { describe, expect, it } from 'vitest';
-import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
+import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
 import { QUEUE_ROWS, groupToday, limitGroups, proposalChips, queueRows, todayPath, todayTotal } from '../src/lib/today.ts';
 
 const item = (over: Record<string, unknown>): TodayItem =>

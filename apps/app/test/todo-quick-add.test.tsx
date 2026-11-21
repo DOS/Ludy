@@ -3,8 +3,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { zTodoCreate } from '@crove/kernel-contract';
-import { parseTodoQuickAdd } from '@crove/l10n-vn';
+import { zTodoCreate } from '@ludy/kernel-contract';
+import { parseTodoQuickAdd } from '@ludy/l10n-vn';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 import {

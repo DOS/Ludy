@@ -2,7 +2,7 @@
 // What the committed-spend line of the Ads screen says for the server's figures (#3297): which of the three states it is in, and for each scope
 // whether the room left went below zero. No arithmetic on money here: the server worked every amount out in decimal, and the screen only reads the
 // sign of a decimal string.
-import type { AdsCommitted, AdsCommittedLine } from '@crove/kernel-contract';
+import type { AdsCommitted, AdsCommittedLine } from '@ludy/kernel-contract';
 import { isZeroAmount } from './decimal.ts';
 
 // A decimal string below zero, in any spelling of zero ("-0.00" is not below zero).

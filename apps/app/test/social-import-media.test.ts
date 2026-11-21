@@ -2,7 +2,7 @@
 // per line, ";" or a Publer-style list of URLs), the problems said before any lookup, the server's answers joined to
 // each row, the labels the import would create, and a plan exported by social.plan.export coming back as it went out.
 import { describe, expect, it } from 'vitest';
-import { planCsv, type PlanRow } from '@crove/mod-social/contract';
+import { planCsv, type PlanRow } from '@ludy/mod-social/contract';
 import { parseCsv } from '../src/lib/bank-statement.ts';
 import { IMPORT_TEMPLATE, LABEL_LIMIT, fetchableUrl, importRows, lookupKey, newLabels, pendingRefs, withMedia, type ImportRow, type MediaLookup } from '../src/lib/social-import.ts';
 

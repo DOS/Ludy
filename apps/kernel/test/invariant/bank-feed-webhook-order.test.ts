@@ -4,8 +4,8 @@
 // Keep this directory self-contained: no imports from outside test/invariant/ besides the app's own source.
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { BankFeedWebhookRejected, type BankFeedProvider } from '@crove/bank-feed';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import { BankFeedWebhookRejected, type BankFeedProvider } from '@ludy/bank-feed';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { RateLimiter } from '../../src/rate-limit.ts';

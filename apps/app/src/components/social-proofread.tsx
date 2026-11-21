@@ -1,7 +1,7 @@
 // An AI proofread of a text (#1167): what the fix would change, as the review panel's word diff (#944), with Áp dụng to
 // take it into the text (the post is then AI-assisted, as with any accepted rewrite) and Bỏ qua to leave it.
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { diffText, type DiffPart } from '../lib/social-review-diff.ts';
 import { DiffText } from './social-review-diff.tsx';
 

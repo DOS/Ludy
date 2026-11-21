@@ -7,11 +7,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankAccountNumberView, LegalEntity } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { BankAccountNumberView, LegalEntity } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { DuplicateHint } from '../components/form-panel.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
 import { ErrorText, Field, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';

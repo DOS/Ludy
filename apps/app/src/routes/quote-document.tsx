@@ -5,8 +5,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
-import { Button, buttonVariants } from '@crove/ui/components/button';
+import { vietnamToday, type QuoteDocument } from '@ludy/kernel-contract';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { ErrorText, isEmailAddress, Logo, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiUrl } from '../lib/api-base.ts';

@@ -3,7 +3,7 @@
 // API login role; the token is the only credential, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { PageBrand } from './report-link.ts';
 
 export const REVIEW_VIEWS_PER_MINUTE = 60;

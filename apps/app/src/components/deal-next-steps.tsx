@@ -6,12 +6,12 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { NEXT_STEP_BULK_MAX, NEXT_STEP_SNOOZE_DAYS, type NextStep, type NextStepCursor, type NextStepSnoozeDays } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { NEXT_STEP_BULK_MAX, NEXT_STEP_SNOOZE_DAYS, type NextStep, type NextStepCursor, type NextStepSnoozeDays } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';

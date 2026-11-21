@@ -2,7 +2,7 @@
 // the followers' ages and genders as bars and their largest cities and countries, from the latest weekly capture.
 import { useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { audienceOf, countryName, sharesOf, type Audience, type AudienceShare } from '../lib/social-audience.ts';

@@ -1,8 +1,8 @@
 // Team chat alerts (#863): the line each alert posts (wording, length, escaping), the per-org limits and what a failed
 // call means. The database and the worker path are in social-chat-alerts.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DiscordError, TelegramError } from '@crove/channel';
-import type { ChatAlertFacts } from '@crove/mod-social';
+import { DiscordError, TelegramError } from '@ludy/channel';
+import type { ChatAlertFacts } from '@ludy/mod-social';
 import { ChatAlertSaveBudget, ChatAlertTestBudget } from '../src/chat-alert-save.ts';
 import { ChatAlertLimiter, chatAlertFailure, chatAlertText, CHAT_ALERT_TITLE_MAX, clip, discordEscape, telegramEscape } from '../src/chat-alerts.ts';
 

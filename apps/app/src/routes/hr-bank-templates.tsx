@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_BANK_CONTENT_MAX, HR_BANK_HEADER_MAX, HR_BANK_NAME_MAX, type HrBankTemplate } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { HR_BANK_CONTENT_MAX, HR_BANK_HEADER_MAX, HR_BANK_NAME_MAX, type HrBankTemplate } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { blankTemplateForm, formOfTemplate, moveColumn, templateInput, templateProblems, type TemplateForm } from '../lib/bank-template.ts';

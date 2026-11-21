@@ -8,10 +8,10 @@
 // it open with its closing; so a figure of a closed month does not move with a later change of the rules or of the rounding.
 // Quantities and values are decimal strings made by decimal.js; the reads keep the caller's own row policies, so an entity the caller may not see is not in them.
 import { sql } from 'kysely';
-import { zStockCardInput, zStockPeriodsInput, zStockReportInput, type StockCard, type StockPeriod, type StockReportRow } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { zStockCardInput, zStockPeriodsInput, zStockReportInput, type StockCard, type StockPeriod, type StockReportRow } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { monthFigures, nextMonth, type CostMove, type MonthFigures, type OpeningBalance } from './domain/stock-cost.ts';
 import { plainQuantity } from './domain/stock.ts';
 

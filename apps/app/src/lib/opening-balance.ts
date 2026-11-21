@@ -1,6 +1,6 @@
 // Opening balances from Excel (issue #320): the template and reading a filled one back into the rows the kernel
 // checks. The kernel decides every rule (accounts, amounts, totals, dates); this only moves cells into text.
-import { OPENING_BALANCE_MAX_ROWS, normalizeAmountText, type OpeningBalanceRow } from '@crove/kernel-contract';
+import { OPENING_BALANCE_MAX_ROWS, normalizeAmountText, type OpeningBalanceRow } from '@ludy/kernel-contract';
 import { withBrand } from '../i18n/brand.ts';
 import { writeWorkbook, type SheetCell, type SheetRows } from './xlsx.ts';
 

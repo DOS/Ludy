@@ -17,7 +17,7 @@
 // /auth/v1 proxy at PUBLIC_URL, or PUBLIC_AUTH_URL when Auth is hosted elsewhere, or PROBER_AUTH_URL to name another
 // path), and an `auth` finding goes out after PROBER_AUTH_MISSES failed answers in a row. Before, nobody learned of an
 // Auth outage until a member could not sign in.
-import { createS3Client } from '@crove/kernel-runtime';
+import { createS3Client } from '@ludy/kernel-runtime';
 import pg from 'pg';
 import { z } from 'zod';
 import { isHostedSupabase, modulesSetting } from './config.ts';

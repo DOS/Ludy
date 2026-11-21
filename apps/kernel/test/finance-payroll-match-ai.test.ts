@@ -2,8 +2,8 @@
 // The coworker's one line on why a bank statement line may be a payroll payment, on the API side (#2532): the model is asked once with four facts, an answer is kept, and every state with no text
 // (no model, a spent budget, too many calls, a failed or refused call) is named and never quoted.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type PayrollMatchFacts, type PayrollMatchResult } from '@crove/agent';
-import type { BankPayrollCandidate } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type PayrollMatchFacts, type PayrollMatchResult } from '@ludy/agent';
+import type { BankPayrollCandidate } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { PAYROLL_MATCH_KEEP_MS, explainPayrollMatch, payrollMatchAi, payrollMatchFacts } from '../src/finance-payroll-match-ai.ts';
 

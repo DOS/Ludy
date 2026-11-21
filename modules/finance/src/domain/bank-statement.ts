@@ -4,8 +4,8 @@
 // stored facts and inserts what this calls new or ambiguous; the database's unique key on (account, dedupe_key) is the
 // last word on duplicates.
 // Amounts go through decimal.js, never JS numbers.
-import { isCalendarDate, type BankFeedLine, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@crove/kernel-contract';
-import { Decimal, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { isCalendarDate, type BankFeedLine, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@ludy/kernel-contract';
+import { Decimal, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { AMOUNT_LIMIT } from './money.ts';
 
 // A row that parsed: position is its place in the file once put oldest first (1-based).

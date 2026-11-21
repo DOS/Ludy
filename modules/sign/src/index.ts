@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Public entrypoint of @crove/mod-sign (#3323).
+// Public entrypoint of @ludy/mod-sign (#3323).
 export {
   DEFAULT_OTP_RETENTION_HOURS,
   DEFAULT_RETENTION_DAYS,

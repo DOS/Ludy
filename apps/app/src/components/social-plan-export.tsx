@@ -4,10 +4,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Label } from '@crove/ui/components/label';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Label } from '@ludy/ui/components/label';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { brandFileName } from '../i18n/brand.ts';

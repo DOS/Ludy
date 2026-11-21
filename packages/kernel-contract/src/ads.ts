@@ -17,7 +17,7 @@ export const isAdProviderId = (provider: string): boolean => AD_PROVIDER_ID.test
 // provider id is the read provider's own kind with a write twin (the ids match the pattern above, so the Social screens leave them
 // out too): `metawrite_ads` beside `meta_ads`, `sandboxwrite_ads` beside `sandbox_ads`. A write connection is never an ad account of
 // its own: it hangs off the account the read connection linked (`ad_account.write_connection_id`), and it never goes through
-// `ads.account.link`. The readers (@crove/ad-platform adPlatforms) never see these ids.
+// `ads.account.link`. The readers (@ludy/ad-platform adPlatforms) never see these ids.
 export const AD_WRITE_PROVIDERS = ['metawrite_ads', 'sandboxwrite_ads'] as const;
 export type AdWriteProviderId = (typeof AD_WRITE_PROVIDERS)[number];
 export const isAdWriteProviderId = (provider: string): provider is AdWriteProviderId => (AD_WRITE_PROVIDERS as readonly string[]).includes(provider);
@@ -55,7 +55,7 @@ const zResults = z
   .record(z.string().min(1).max(100), zResultCount)
   .refine((r) => Object.keys(r).length <= ADS_RESULTS_MAX_KEYS, `at most ${ADS_RESULTS_MAX_KEYS} result keys`);
 
-// One day of one object as an adapter reports it (@crove/ad-platform AdDailyRow); the sync command checks the whole answer
+// One day of one object as an adapter reports it (@ludy/ad-platform AdDailyRow); the sync command checks the whole answer
 // again, since an adapter's answer is external data.
 export const zAdDailyRow = z.strictObject({
   level: z.enum(ADS_LEVELS),
@@ -75,7 +75,7 @@ export const zAdsAccountLink = z.strictObject({
   connectionId: zId,
   legalEntityId: zId.optional(),
   expenseAccountCode: zAccountCode.nullable().optional(),
-  // A keyed hash of the platform user who granted the connection (@crove/ad-platform platformUserHash), so the platform's data
+  // A keyed hash of the platform user who granted the connection (@ludy/ad-platform platformUserHash), so the platform's data
   // deletion callback can find the accounts that person granted without the id being stored (plan section 9).
   // null: the platform did not name the person this time, so a hash kept from an earlier grant is dropped, not left to name someone
   // who did not grant this one. Left out: a link that says nothing of it (the sandbox, a link made again) keeps what is there.

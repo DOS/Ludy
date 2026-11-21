@@ -1,6 +1,6 @@
 // LinkedIn Company Pages (#1077): the channel rules the composer and the adapter share.
 import { describe, expect, it } from 'vitest';
-import { CHANNEL_PROVIDERS } from '@crove/channel';
+import { CHANNEL_PROVIDERS } from '@ludy/channel';
 import { CAPABILITIES, COMMENT_RULES, LINK_PLACEMENT, PROVIDERS, UTM_SOURCE, VIDEO_READY, linkedinVisibilities, sentText, validateVariant } from '../src/contract.ts';
 
 const check = (settings: Record<string, unknown>) => validateVariant({ provider: 'linkedin_page', body: 'Khai trương chi nhánh mới', title: null, media: [], settings });

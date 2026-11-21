@@ -4,8 +4,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import type { MeetingLinkKind } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
+import type { MeetingLinkKind } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';

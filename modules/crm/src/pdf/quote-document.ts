@@ -4,11 +4,11 @@
 // page. A long table goes on to further pages with its header row repeated.
 //
 // It draws what it is given and works out nothing about money: every amount is a string the quote already holds (the shared line-totals rule of
-// @crove/l10n-vn made them), written with dots between thousands and a comma for decimals. The words come from the quote and the seller's and buyer's
+// @ludy/l10n-vn made them), written with dots between thousands and a comma for decimals. The words come from the quote and the seller's and buyer's
 // own records, never from a customer's message. The letterhead's logo (#2814) is drawn when the caller hands in one already read and checked by ./image.ts; the
 // document itself reads no file.
-import type { Quote, QuoteLine } from '@crove/kernel-contract';
-import { writtenVatRate } from '@crove/l10n-vn';
+import type { Quote, QuoteLine } from '@ludy/kernel-contract';
+import { writtenVatRate } from '@ludy/l10n-vn';
 import { quoteFonts, type FontSet, type FontWeight } from './fonts.ts';
 import type { PdfImage } from './image.ts';
 import { A4_HEIGHT, A4_WIDTH, PdfDocument, type PdfPage, type Rgb } from './writer.ts';

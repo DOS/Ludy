@@ -12,9 +12,9 @@
 // Dedupe: the delivery's id is derived from the outbox event's id and the grant's id (a name-based UUID), so a retry of the same event stores nothing new and sends nothing new, while a second publish is
 // a second event and sends one more.
 import { createHash } from 'node:crypto';
-import { MINUTES_WAKE_TYPE } from '@crove/kernel-contract';
-import type { McpWakeMinutesTargets } from '@crove/kernel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { MINUTES_WAKE_TYPE } from '@ludy/kernel-contract';
+import type { McpWakeMinutesTargets } from '@ludy/kernel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { wakeEvent } from './mcp-wake-body.ts';
 import type { WakeJob } from './mcp-wake.ts';
 

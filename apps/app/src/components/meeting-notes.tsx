@@ -5,11 +5,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Textarea } from '@crove/ui/components/textarea';
-import type { MinutesTemplateCopy } from '@crove/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Textarea } from '@ludy/ui/components/textarea';
+import type { MinutesTemplateCopy } from '@ludy/kernel-contract';
 import { ErrorText } from './ui.tsx';
 import { codeText, sectionHeadingText } from './meeting-results.tsx';
 import { clock } from './meeting-transcript.tsx';

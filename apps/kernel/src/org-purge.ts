@@ -15,7 +15,7 @@
 // Exit codes: 0 done or already closed, 1 refused (a precondition is not met), 2 the command could not run.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, defineCommand, type Actor, type BlobStore, type CommandDef, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, type Actor, type BlobStore, type CommandDef, type Runtime } from '@ludy/kernel-runtime';
 
 export const ORG_PURGE_EXIT = { ok: 0, refused: 1, failed: 2 } as const;
 // The database refuses fewer days (crove_kernel.org_purge_refusal); a deployment may only wait longer.

@@ -2,8 +2,8 @@
 // The sets of the stale-deal next steps are written twice: the database copy in packages/db (which check-unions compares with the CHECK
 // constraints) and the contract's in packages/kernel-contract (which the screens and the schemas use). They must stay equal.
 import { describe, expect, it } from 'vitest';
-import { DEAL_NEXT_STEP_CLOSE_REASONS, DEAL_NEXT_STEP_REASONS, DEAL_NEXT_STEP_STATUSES } from '@crove/db';
-import { DEAL_NEXT_STEP_REASONS as CONTRACT_REASONS } from '@crove/kernel-contract';
+import { DEAL_NEXT_STEP_CLOSE_REASONS, DEAL_NEXT_STEP_REASONS, DEAL_NEXT_STEP_STATUSES } from '@ludy/db';
+import { DEAL_NEXT_STEP_REASONS as CONTRACT_REASONS } from '@ludy/kernel-contract';
 
 describe('the next step sets (#2381)', () => {
   it('has one list of reasons in the database package and the contract', () => {

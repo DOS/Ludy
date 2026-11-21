@@ -7,8 +7,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
-import { personalDataProbe } from '@crove/kernel';
+import { migrate } from '@ludy/db/migrate';
+import { personalDataProbe } from '@ludy/kernel';
 import { PII_TEXT_CASES } from './pii-text-cases.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

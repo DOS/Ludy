@@ -2,7 +2,7 @@
 // what refuses the whole archive. One case runs through the real parser process (permission model on).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMITS, zExtractResponse } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, zExtractResponse } from '@ludy/extract-contract';
 import { parse } from '../src/parse.ts';
 import { DEFAULT_SANDBOX, runSandboxed } from '../src/sandbox.ts';
 import { ArchiveError, looksLikeArchive, readZip, safeEntryName } from '../src/zip.ts';

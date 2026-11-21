@@ -10,11 +10,11 @@ import {
   type NoteSummary,
   type NoteVisibility,
   type NotebookSummary,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { VisibilityIcon } from '@crove/ui/components/visibility-icon';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { VisibilityIcon } from '@ludy/ui/components/visibility-icon';
 import { useFormat } from '../i18n/provider.tsx';
 import { clientForOrg, errorMessage, orpc } from '../lib/api.ts';
 import { listOfNote, normalizeWikiTitle, type NotesSearch } from '../lib/notes.ts';

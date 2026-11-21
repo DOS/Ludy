@@ -2,7 +2,7 @@
 // Deterministic PDF contract version diff engine for Ludy eSign Slice 4f (#3822).
 // Works 100% with AI off: normalizes extracted PDF page text into clause/paragraph segments, aligns revisions via
 // bounded LCS, and coalesces adjacent removals/additions into 'modified' hunks with exact v1 and v2 page numbers.
-import type { SignDiffHunk, SignVersionDiffResult } from '@crove/kernel-contract';
+import type { SignDiffHunk, SignVersionDiffResult } from '@ludy/kernel-contract';
 
 export interface SignDiffPageText {
   page: number;

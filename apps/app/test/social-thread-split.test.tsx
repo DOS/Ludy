@@ -5,7 +5,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { splitThread, validateVariant, type ThreadSplit } from '@crove/mod-social/contract';
+import { splitThread, validateVariant, type ThreadSplit } from '@ludy/mod-social/contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { ThreadSplitField, applySplit, joinSplit, type SplitValue } from '../src/components/social-thread-split.tsx';
 

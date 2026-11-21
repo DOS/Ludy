@@ -9,9 +9,9 @@
 //   still reviewed as usual; nothing goes out before an approval and a schedule.
 // Lock order: the queue rows (sorted by connection) before any post, as social.variant.schedule takes them.
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zSocialDraftsFromMedia, type zSocialDraftsFromMediaResult } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zSocialDraftsFromMedia, type zSocialDraftsFromMediaResult } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { captionFromFilename, fileIssues } from './domain/bulk-drafts.ts';
 import { nextFreeSlot } from './domain/queue.ts';
 import { validateVariant, type MediaItem } from './domain/validate.ts';

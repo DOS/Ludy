@@ -5,12 +5,12 @@
 // client and its host. A person approves it in Ludy (the Inbox); only then does the original command run, as that person, with every check it has (the reply window, the platform's limits, the caps, the kill
 // switch). The tool answers `{ proposalId, status: 'pending' }`: asked, not done. The arguments are the original command's own strict input, checked here before anything runs.
 import { z } from 'zod';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
-import { conversationProposalCommands } from '@crove/kernel';
-import type { McpWriteScopeId } from '@crove/kernel-contract';
-import { adsEngageProposalCommands } from '@crove/mod-ads';
-import { crmEngageProposalCommands } from '@crove/mod-crm';
-import { postSubmitApproved, variantScheduleApproved } from '@crove/mod-social';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
+import { conversationProposalCommands } from '@ludy/kernel';
+import type { McpWriteScopeId } from '@ludy/kernel-contract';
+import { adsEngageProposalCommands } from '@ludy/mod-ads';
+import { crmEngageProposalCommands } from '@ludy/mod-crm';
+import { postSubmitApproved, variantScheduleApproved } from '@ludy/mod-social';
 import type { ToolDescriptor } from './mcp-protocol.ts';
 
 const PROPOSED = {
@@ -136,6 +136,14 @@ const SPECS: readonly ToolSpec[] = [
     tool: 'ludy_ads_schedule_shorten',
     title: 'Propose ending an ad earlier',
     description: 'Proposes an EARLIER last day for a live ad launch (launchId from ludy_ads_launches; endOn: YYYY-MM-DD, before the launch\'s `heldEndOn` (later than `endOn` while an extension waits), and not before its `startOn` or today in the account\'s time zone). A day that is not earlier is refused when a person approves.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.manage.cancel_approved',
+    tool: 'ludy_ads_change_cancel',
+    title: 'Propose cancelling a waiting ad change that would raise spend',
+    description:
+      'Proposes cancelling ONE change of a running ad that a person asked for and that is still waiting, and that would start or raise spend: starting a paused part again, a higher daily budget or a later last day (changeId from `queuedRaises` of the launch in ludy_ads_launches). Cancelling only reduces what is pending; a change that was already sent to the ad platform cannot be cancelled. It cannot cancel a waiting pause, archive, lower budget or earlier end (that would keep an ad running that a person wanted stopped).' + HOW,
     module: 'ads',
   },
 ];

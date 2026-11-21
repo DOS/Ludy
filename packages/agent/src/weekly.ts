@@ -7,7 +7,7 @@
 // WeeklyWriter; nothing is stored.
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { chatModel, type AiConfig } from './index.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { amountText, statedFiguresProblem } from './overview.ts';

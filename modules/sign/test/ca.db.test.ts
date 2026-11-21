@@ -9,21 +9,21 @@
 //   - Hash-chained ca_requested, ca_completed, and ca_failed signing_event verification
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   createOrg,
   kernelCommands,
   kernelManifest,
   kernelQueries,
   upsertIdentity,
-} from '@crove/kernel';
+} from '@ludy/kernel';
 import type {
   SignCaConnectionRecord,
   SignCaSettingsResult,
   SignCaSigningRequestRecord,
-} from '@crove/kernel-contract';
-import { Runtime, contentGeneration, fileKey, sha256Hex } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { Runtime, contentGeneration, fileKey, sha256Hex } from '@ludy/kernel-runtime';
 import {
   generateCertificateCode,
   hashSigningToken,

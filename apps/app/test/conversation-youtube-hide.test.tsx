@@ -6,7 +6,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CONVERSATION_PROVIDER_RULES, type ConversationDetail, type ConversationMessage } from '@crove/kernel-contract';
+import { CONVERSATION_PROVIDER_RULES, type ConversationDetail, type ConversationMessage } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const state = vi.hoisted(() => ({ intents: undefined as unknown, asked: 0 }));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localTime } from '@crove/mod-social/contract';
+import { localTime } from '@ludy/mod-social/contract';
 import {
   BULK_EDIT_MAX,
   BULK_REPLACE_MAX,

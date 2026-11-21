@@ -11,9 +11,9 @@ import {
   type NoteTemplate,
   type NoteVersion,
   type NoteVisibility,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
 import {
   Dialog,
   DialogContent,
@@ -21,9 +21,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+} from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import {
   Sheet,
   SheetBody,
@@ -32,9 +32,9 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from '@crove/ui/components/sheet';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/ui/components/sheet';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ClientError } from '../lib/errors.ts';

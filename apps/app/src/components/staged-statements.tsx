@@ -7,12 +7,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { FileStatus } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { FileStatus } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';

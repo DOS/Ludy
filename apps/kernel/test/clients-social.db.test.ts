@@ -11,12 +11,12 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { zClientOverviews } from '@crove/kernel-contract';
-import { clientOverviews, createOrg, kernelCommands, kernelQueries, upsertIdentity, type ClientOverview } from '@crove/kernel';
-import { Runtime, defineQuery } from '@crove/kernel-runtime';
-import { AGENDA_STATUSES, socialCommands, socialOverviewContributions, socialQueries, type PostView, type SocialClientFigures } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { zClientOverviews } from '@ludy/kernel-contract';
+import { clientOverviews, createOrg, kernelCommands, kernelQueries, upsertIdentity, type ClientOverview } from '@ludy/kernel';
+import { Runtime, defineQuery } from '@ludy/kernel-runtime';
+import { AGENDA_STATUSES, socialCommands, socialOverviewContributions, socialQueries, type PostView, type SocialClientFigures } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

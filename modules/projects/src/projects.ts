@@ -40,9 +40,9 @@ import {
   type ProjectTaskCard,
   type ProjectTaskProjectEntry,
   type ProjectTaskReorderResult,
-} from '@crove/kernel-contract';
-import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {

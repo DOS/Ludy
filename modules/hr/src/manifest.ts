@@ -2,9 +2,9 @@
 // The HR module's manifest (plan §5.2, #2530; payroll plan docs/plan/payroll.md §6.1 and §6.6): the tables it owns and the class of every column. A migration that adds or
 // drops a table or column of crove_hr changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the
 // second argument of columns() classifies it. The identity number and the bank account number are stored sealed under the person's own key (ADR-0017), so their columns are
-// classified as what they hold (national_id, payment) and are registered in SEALED_COLUMNS (@crove/kernel), not in the personal-data registry. The wage is sensitive: chosen to
+// classified as what they hold (national_id, payment) and are registered in SEALED_COLUMNS (@ludy/kernel), not in the personal-data registry. The wage is sensitive: chosen to
 // restrict and audit, not as a legal conclusion (payroll plan 6.6).
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const hrManifest = defineModule({
   id: 'hr',
@@ -85,6 +85,6 @@ export const hrManifest = defineModule({
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,
 });

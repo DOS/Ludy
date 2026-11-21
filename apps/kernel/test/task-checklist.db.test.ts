@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   ACTIVITY_SHORT_NUMBER_REASON,
   REDACTED_MARK,
@@ -19,7 +19,7 @@ import {
   kernelCommands,
   kernelQueries,
   upsertIdentity,
-} from '@crove/kernel';
+} from '@ludy/kernel';
 import {
   zTask,
   zTaskDetail,
@@ -27,11 +27,11 @@ import {
   type PersonalDataErasure,
   type PersonalDataResult,
   type ProjectBoard,
-} from '@crove/kernel-contract';
-import { Runtime, sha256Hex, type AgentActor, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
-import { projectsCommands, projectsQueries } from '@crove/mod-projects';
+} from '@ludy/kernel-contract';
+import { Runtime, sha256Hex, type AgentActor, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { ExportSealer, exportAad } from '../src/export-seal.ts';
 import { runOrgExport } from '../src/org-export.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';

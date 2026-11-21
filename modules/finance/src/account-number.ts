@@ -3,7 +3,7 @@
 // prints (spaces, dots or dashes between groups). Shared by the recording of a number (bank-account-number.ts) and the
 // statement path (bank-statement-file.ts), which compare digits alone.
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 // The digits of a typed number, or null when it holds anything but digits and the usual group separators, or has fewer
 // than 6 or more than 20 digits.

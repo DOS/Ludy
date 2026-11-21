@@ -6,12 +6,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Publisher, PublishResult, ReconcileResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { runPublishJob, socialCommands, socialQueries, sweepEvergreen, type PostView } from '@crove/mod-social';
+import type { Publisher, PublishResult, ReconcileResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { runPublishJob, socialCommands, socialQueries, sweepEvergreen, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

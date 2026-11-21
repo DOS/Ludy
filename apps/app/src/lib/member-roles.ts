@@ -1,5 +1,5 @@
 // Member roles in Settings (issue #1279): which roles an owner may still give a member. The kernel checks again.
-import { VY_USE_PERMISSION, type BuiltinRoleKey, type MemberRoles, type RoleAssignment } from '@crove/kernel-contract';
+import { VY_USE_PERMISSION, type BuiltinRoleKey, type MemberRoles, type RoleAssignment } from '@ludy/kernel-contract';
 
 type CatalogRole = MemberRoles['roles'][number];
 

@@ -9,10 +9,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { InboxReader } from '@crove/agent';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { InboxReader } from '@ludy/agent';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type {
   HrCoworkerExplained,
   HrCoworkerFlagged,
@@ -22,7 +22,7 @@ import type {
   HrRunSummary,
   HrRunWritten,
   HrWritten,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   CredentialVault,
   Runtime,
@@ -31,9 +31,9 @@ import {
   parseVaultKey,
   sha256Hex,
   type BlobStore,
-} from '@crove/kernel-runtime';
-import { PAYROLL_RULES } from '@crove/l10n-vn';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+} from '@ludy/kernel-runtime';
+import { PAYROLL_RULES } from '@ludy/l10n-vn';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -51,8 +51,8 @@ class EmptyBlobStore implements BlobStore {
   async delete(): Promise<void> {}
 }
 
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
 

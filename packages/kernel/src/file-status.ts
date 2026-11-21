@@ -2,8 +2,8 @@
 // (#314), opened into files of its own. Shared by files.recent and files.batch.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { EDITOR_ROLES } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, REEXTRACT_STALE_MINUTES, STALE_RUN_ERROR, voidedProposals } from './extraction.ts';
 import { isArchiveType } from './files.ts';

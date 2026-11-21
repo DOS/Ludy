@@ -24,8 +24,8 @@ import {
   type MeetingConsentPolicy,
   type MeetingConsentPolicyState,
   type MeetingSettings,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { dropFollowupPayloads } from './followup-erase.ts';
 
 // The retention periods count calendar days in Vietnam (UTC+7, no daylight saving), the zone the nightly job and the database's due check use.

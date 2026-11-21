@@ -9,9 +9,9 @@
 // sends it from the reply box of the conversation or from their own mail program. When the model is off, the AI budget is spent, the member's calls are too frequent, the call fails or
 // its words are refused, the answer names the state (`ai`) and the text uses the fixed Vietnamese words with the same facts. A failure is named, never quoted: neither the contact's name,
 // the hint nor the model's answer is logged.
-import { AiBudgetExhaustedError, buildCrmFollowupDraft, type CrmFollowupFacts, type CrmFollowupWords, type InboxReader } from '@crove/agent';
-import { QUOTE_PAGE_PATH, type CrmFollowupState, type FollowupDrafted, type QuoteLinkCreated } from '@crove/kernel-contract';
-import type { FollowupSource } from '@crove/mod-crm';
+import { AiBudgetExhaustedError, buildCrmFollowupDraft, type CrmFollowupFacts, type CrmFollowupWords, type InboxReader } from '@ludy/agent';
+import { QUOTE_PAGE_PATH, type CrmFollowupState, type FollowupDrafted, type QuoteLinkCreated } from '@ludy/kernel-contract';
+import type { FollowupSource } from '@ludy/mod-crm';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface CrmFollowupAi {

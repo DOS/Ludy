@@ -8,23 +8,23 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type AiMeter } from '@crove/agent';
-import type { ModelPort } from '@crove/agent/member-vy';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { type AiMeter } from '@ludy/agent';
+import type { ModelPort } from '@ludy/agent/member-vy';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type {
   ConversationEvent,
   ProjectBoard,
   ProjectTasksFromSourceConfirmResult,
   ProjectTasksFromSourceResult,
   ProjectTasksFromSourceStatus,
-} from '@crove/kernel-contract';
-import { financeCommands } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
-import { projectsCommands, projectsQueries } from '@crove/mod-projects';
-import { Runtime, type BlobStore, type UserActor } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { financeCommands } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
+import { Runtime, type BlobStore, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';

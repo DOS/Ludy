@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inbox screen's address (CV3, #2306): which params it reads, what it drops, and what the list and the counts ask the server for.
 import { describe, expect, it } from 'vitest';
-import type { ConversationListed, ConversationSummary } from '@crove/kernel-contract';
+import type { ConversationListed, ConversationSummary } from '@ludy/kernel-contract';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxCountsInput, inboxListInput, mergeConversationPages, nextConversationCursor, parseConversationInboxSearch } from '../src/lib/conversation-inbox.ts';
 import { notificationTarget } from '../src/lib/notifications.ts';
 

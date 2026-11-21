@@ -13,9 +13,9 @@
 // them: a post being queued is either seen or queued after the check.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { queueRunway, type QueueSpec } from './domain/queue.ts';
 import { publishingHeld } from './publish-hold.ts';
 import { SLOT_FREED } from './variants.ts';

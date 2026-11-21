@@ -2,8 +2,8 @@
 // The tools an AI app asks a person with (epic #3857, E4, issue #3863): who is offered which, that each is a strict, not-read-only descriptor over the proposal-only twin of one command, and that a call
 // hands the twin `{ payload }` and nothing else. The database and end-to-end tests of the twins (engage-proposals.db.test.ts) run what a call does.
 import { describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import { ENGAGE_PROPOSALS } from '@ludy/kernel-contract';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor } from '../src/mcp-endpoint.ts';
@@ -33,15 +33,16 @@ const TOOLS: Record<string, string> = {
   ludy_ads_object_archive: 'ads.object.archive_approved',
   ludy_ads_budget_lower: 'ads.budget.lower_approved',
   ludy_ads_schedule_shorten: 'ads.schedule.shorten_approved',
+  ludy_ads_change_cancel: 'ads.manage.cancel_approved',
 };
 const ENGAGE_TOOLS = Object.entries(TOOLS).filter(([, c]) => !c.startsWith('ads.')).map(([t]) => t);
 const ADS_TOOLS = Object.entries(TOOLS).filter(([, c]) => c.startsWith('ads.')).map(([t]) => t);
 const names = (actor: UserActor) => listed(actor).map((t) => t.name).filter((n) => n in TOOLS);
 
 describe('the Engage proposal tools (#3863)', () => {
-  it('has one tool for each of the 14 twins of ENGAGE_PROPOSALS, and none for another command (the four ads commands that start or raise spend are not offered, by decision)', () => {
+  it('has one tool for each of the 15 twins of ENGAGE_PROPOSALS, and none for another command (the four ads commands that start or raise spend are not offered, by decision)', () => {
     expect(Object.values(TOOLS).sort()).toEqual(ENGAGE_PROPOSALS.map((p) => p.command).sort());
-    expect(Object.values(TOOLS)).toHaveLength(14);
+    expect(Object.values(TOOLS)).toHaveLength(15);
     for (const raised of ['ads.campaign.launch', 'ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend']) expect(Object.values(TOOLS).join(' ')).not.toContain(raised);
   });
 
@@ -56,7 +57,7 @@ describe('the Engage proposal tools (#3863)', () => {
 
   it('makes each a write descriptor under its twin\'s scope, with a strict argument schema, a module where the app can be switched off, and a description that says it only asks', () => {
     const all = listed(grant(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'])).filter((t) => t.name in TOOLS);
-    expect(all.length).toBe(14);
+    expect(all.length).toBe(15);
     for (const tool of all) {
       const twin = ENGAGE_PROPOSALS.find((p) => p.command === TOOLS[tool.name]);
       expect(tool.writeScope, tool.name).toBe(twin?.scope);

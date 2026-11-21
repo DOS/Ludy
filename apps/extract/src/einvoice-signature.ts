@@ -42,7 +42,7 @@
 import { X509Certificate } from 'node:crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { SignedXml } from 'xml-crypto';
-import type { InvoiceSignature, SignatureReason } from '@crove/l10n-vn';
+import type { InvoiceSignature, SignatureReason } from '@ludy/l10n-vn';
 import type { TrustStore } from './einvoice-trust.ts';
 
 const DSIG = 'http://www.w3.org/2000/09/xmldsig#';

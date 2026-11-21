@@ -7,7 +7,7 @@
 // message itself: crove-extract does, and its answer is validated and treated as untrusted (gate T12).
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
-import { EXTRACT_LIMIT_RETRIES, type ExtractClient, type ExtractedEmail } from '@crove/extract-contract';
+import { EXTRACT_LIMIT_RETRIES, type ExtractClient, type ExtractedEmail } from '@ludy/extract-contract';
 import {
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
@@ -19,10 +19,10 @@ import {
   MAX_UPLOAD_BYTES,
   type ConversationEvent,
   type ConversationIngested,
-} from '@crove/kernel-contract';
-import type { UsageLimits, UsageOver } from '@crove/kernel';
-import { BlobConflictError, DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { readLookupHints, type LookupHint } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { UsageLimits, UsageOver } from '@ludy/kernel';
+import { BlobConflictError, DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { readLookupHints, type LookupHint } from '@ludy/l10n-vn';
 import { isCsvName, safeFilename, sniffType } from './sniff.ts';
 import { mailFilesNote, readMailFiles, type MailImage } from './conversation-mail-files.ts';
 

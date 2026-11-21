@@ -2,7 +2,7 @@
 // /o/$slug belongs to exactly one module's manifest and every declared screen is a route, every menu item is a screen
 // of its own module with its label in Vietnamese and English, and a screen of a module the deployment leaves out
 // redirects to the overview, whichever module it is.
-import { APP_IDS, MODULE_CATALOG, MODULE_IDS, MODULE_SCREENS, isKnownModule, type ModuleScreens } from '@crove/kernel-contract';
+import { APP_IDS, MODULE_CATALOG, MODULE_IDS, MODULE_SCREENS, isKnownModule, type ModuleScreens } from '@ludy/kernel-contract';
 import { createMemoryHistory, createRouter, isNotFound } from '@tanstack/react-router';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';

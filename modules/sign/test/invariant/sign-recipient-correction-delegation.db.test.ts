@@ -14,8 +14,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
@@ -23,9 +23,9 @@ import {
   kernelManifest,
   kernelQueries,
   upsertIdentity,
-} from '@crove/kernel';
-import type { PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
-import { contentGeneration, fileKey, mintContextToken, Runtime, sha256Hex } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import type { PersonalDataErasure, PersonalDataResult } from '@ludy/kernel-contract';
+import { contentGeneration, fileKey, mintContextToken, Runtime, sha256Hex } from '@ludy/kernel-runtime';
 import {
   SIGN_DELEGATED_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,

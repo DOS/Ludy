@@ -4,9 +4,9 @@
 // again. No platform tells whether an unclear comment went through, so an unclear answer is never retried by itself.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { COMMENT_RULES, firstCommentOf, isProvider } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { lockPost, lockVariants, settingsOf, variantPost, type Trx, type VariantRow } from './variants.ts';

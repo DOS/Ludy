@@ -4,10 +4,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { SupplierBankAccount } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import type { SupplierBankAccount } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { StepUpPrompt } from './two-factor.tsx';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';

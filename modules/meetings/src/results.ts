@@ -34,8 +34,8 @@ import {
   type ActionItemView,
   type ItemFlag,
   type MeetingResults,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';

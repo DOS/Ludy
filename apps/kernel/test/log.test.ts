@@ -6,13 +6,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import { ORG_HEADER } from '@ludy/kernel-contract';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { describeError, installJsonLogs, orgIdOf, parseLogFormat, redact, runWithLogContext, setLogContext, withJobLogContext, type LogLevel } from '../src/log.ts';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 
 const SECRET = 'x'.repeat(32);
 const NOW = new Date('2026-10-31T12:34:56.789Z');

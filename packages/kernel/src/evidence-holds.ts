@@ -3,8 +3,8 @@
 // change only in a system context, and held_until only grow: a hold once recorded is never cleared or shortened.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
 
 // A code, never a message: members of the org read their file rows (apps/kernel/src/evidence-hold.ts holdErrorText).
 const HOLD_ERROR_CODE = /^[A-Z][A-Z_]{0,31}(?::[A-Za-z][A-Za-z0-9_]{0,63})?$/;

@@ -8,8 +8,8 @@
 // the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows the figures
 // alone. An answer is kept for a while by its figures, so reopening the screen or changing tabs does not pay for the same sentence twice. A failure is named,
 // never quoted: neither the figures nor the model's answer is logged.
-import { AiBudgetExhaustedError, overviewFactsText, overviewQuiet, type InboxReader, type OverviewFacts } from '@crove/agent';
-import type { FinanceOverview, OverviewExplanation } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, overviewFactsText, overviewQuiet, type InboxReader, type OverviewFacts } from '@ludy/agent';
+import type { FinanceOverview, OverviewExplanation } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface OverviewAi {

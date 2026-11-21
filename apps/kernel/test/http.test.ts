@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@crove/kernel';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@ludy/kernel';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@ludy/kernel-contract';
 import {
   BlobConflictError,
   BlobNotFoundError,
@@ -19,7 +19,7 @@ import {
   newInboundBlobId,
   type BlobStore,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { assertExportKey, assertSplitRoles, extractConcurrency, loadConfig } from '../src/config.ts';

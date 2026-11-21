@@ -9,8 +9,8 @@
 // the table deletes it the moment it is stored. A verified update with no customer message in it (an edit, a group) is answered 200 and not parked,
 // so Telegram stops sending it and the queue holds messages only.
 import { sql } from 'kysely';
-import { TELEGRAM_HOOK_PATTERN, telegramBusinessState, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@crove/channel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { TELEGRAM_HOOK_PATTERN, telegramBusinessState, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@ludy/channel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const TELEGRAM_WEBHOOK_PATH = '/api/channels/telegram/webhook/:hook';
 export const TELEGRAM_SECRET_HEADER = 'x-telegram-bot-api-secret-token';

@@ -2,7 +2,7 @@
 // and what is left. Amounts exact and no text read as a formula, as in the other exports.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { FixedAsset } from '@crove/kernel-contract';
+import type { FixedAsset } from '@ludy/kernel-contract';
 import { buildFixedAssetsWorkbook } from '../src/index.ts';
 import { expectExcelSheetNames } from './sheet-names.ts';
 

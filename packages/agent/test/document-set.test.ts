@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { checkInvoice, parseTaxCode } from '@crove/l10n-vn';
+import { checkInvoice, parseTaxCode } from '@ludy/l10n-vn';
 import { expectedAsParsed, summarizeDocumentEval } from '../src/index.ts';
 import { inProcessExtract, loadDocumentSet, scoreDocument, SYNTHETIC_DOCUMENTS } from './documents.ts';
 

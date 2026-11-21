@@ -9,8 +9,8 @@
 // whole counts, one row per object and day), and refuses the whole window rather than store part of it.
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
-import { ADS_BACKFILL_MONTHS, isAdProviderId, zAdsSyncFailure, zAdsSyncRecord, zId, type AdDailyRowInput } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { ADS_BACKFILL_MONTHS, isAdProviderId, zAdsSyncFailure, zAdsSyncRecord, zId, type AdDailyRowInput } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { addMonths, nextSettledThrough, todayIn } from './domain.ts';
 
 function assertSystem(ctx: CommandContext): void {

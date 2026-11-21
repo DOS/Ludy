@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@crove/kernel-contract';
-import { Runtime, defineQuery } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@ludy/kernel-contract';
+import { Runtime, defineQuery } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

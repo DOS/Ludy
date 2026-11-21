@@ -11,11 +11,11 @@
 // When a call or a page is refused, the sync first records why (finance.bank_feed.record_outcome, #4244): a closed kind and, for a page with a line it cannot read, that line's position, never a provider's text
 // or a line; then it raises the same error as before, so the job retries as it did. A refusal of the credential, the clock or the saved connection concerns every account of the connection and is recorded on all
 // of them; a refused page is recorded on its own account. Recording never replaces the error it reports: a failure of the record is swallowed.
-import { TingeeError, type BankFeedProvider } from '@crove/bank-feed';
-import { BANK_FEED_MAX_ACCOUNTS, BANK_FEED_MAX_LINES, type BankFeedPullOutcome } from '@crove/kernel-contract';
+import { TingeeError, type BankFeedProvider } from '@ludy/bank-feed';
+import { BANK_FEED_MAX_ACCOUNTS, BANK_FEED_MAX_LINES, type BankFeedPullOutcome } from '@ludy/kernel-contract';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.bank_feed' };
 

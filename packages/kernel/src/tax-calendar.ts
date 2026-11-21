@@ -1,5 +1,5 @@
 // The tax calendar of an org (issue #921): which recurring tax obligations apply to it, what is due soon or overdue,
-// and what a member marked done. The rules are data in @crove/kernel-contract (tax-calendar.ts); this module keeps the
+// and what a member marked done. The rules are data in @ludy/kernel-contract (tax-calendar.ts); this module keeps the
 // org's choices (crove_kernel.tax_profile, one row per org) and the done marks (crove_kernel.tax_obligation_done).
 //
 // Each legal entity files its own returns (#1496): a mark is one entity's, and the org's obligation for a period is done
@@ -24,9 +24,9 @@ import {
   type TaxProfile,
   type TaxProfileSettings,
   type VatFilingPeriod,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];

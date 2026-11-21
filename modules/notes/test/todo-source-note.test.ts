@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for sourceNoteId validation, batch loading, and audit behavior (#1676, notes plan step N7).
 import { describe, expect, it } from 'vitest';
-import { zTodoSourceNote, zTodoSummary, type TodoSourceNote } from '@crove/kernel-contract';
-import type { CommandContext, Lookup, QueryContext } from '@crove/kernel-runtime';
+import { zTodoSourceNote, zTodoSummary, type TodoSourceNote } from '@ludy/kernel-contract';
+import type { CommandContext, Lookup, QueryContext } from '@ludy/kernel-runtime';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, myWork, todoCreate, todoGet, todoList, todoSummaryRow } from '../src/todos.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

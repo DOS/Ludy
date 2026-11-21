@@ -18,9 +18,9 @@ import {
   type HouseholdProfile,
   type HouseholdProfileView,
   type HouseholdRules,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { pickInForce } from './domain/household-rules.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

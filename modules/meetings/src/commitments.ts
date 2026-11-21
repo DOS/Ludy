@@ -2,8 +2,8 @@
 // What each speaker of a meeting committed to or decided (#3954): the recorder's Vy lists it from the transcript (the start and the status here, the same guards as the chapters' and the title's runs: a switch, the
 // recorder, a transcript, not while it is being transcribed). Nothing about the answer is stored: the lines go back to the recorder's browser and the run's result row holds counts only (apps/kernel
 // member-vy-ports.ts). Nothing here publishes anything or makes a task: a person still takes the summary's action items as before.
-import { zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';

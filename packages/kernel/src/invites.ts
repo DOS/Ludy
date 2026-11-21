@@ -5,9 +5,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import type { Db, MemberRole } from '@crove/db';
-import { zBuiltinRoleKey, zId, zInviteLegalEntityIds, zInviteRole, zInviteToken } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type SessionStatusSource } from '@crove/kernel-runtime';
+import type { Db, MemberRole } from '@ludy/db';
+import { zBuiltinRoleKey, zId, zInviteLegalEntityIds, zInviteRole, zInviteToken } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type SessionStatusSource } from '@ludy/kernel-runtime';
 import { createMailMessage, type DirectMail } from './mail.ts';
 import { memberProfiles } from './profiles.ts';
 import { ROLE_LABELS, roleRefusal } from './roles.ts';

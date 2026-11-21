@@ -3,7 +3,7 @@
 // API, read again before it is shown: a logo only as a PNG, WebP or JPEG data URL with the matching magic number, an
 // accent only as #rrggbb, which then reaches the page through one CSS custom property and nowhere else.
 import type { CSSProperties } from 'react';
-import { BRAND_LOGO_MAX_BYTES, BRAND_LOGO_MAX_SIDE, checkLogoDataUrl, isAccent, type ReportBrand } from '@crove/mod-social/contract';
+import { BRAND_LOGO_MAX_BYTES, BRAND_LOGO_MAX_SIDE, checkLogoDataUrl, isAccent, type ReportBrand } from '@ludy/mod-social/contract';
 import { ClientError } from './errors.ts';
 
 export type { ReportBrand };

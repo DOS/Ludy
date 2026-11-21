@@ -3,7 +3,7 @@
 // notice level, the language, the sender and the hint and nothing else, and every state of `ai` is an answer with no words (the screen then keeps the fixed
 // template), never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type ReminderWordsRequest, type ReminderWordsResult } from '@crove/agent';
+import { AiBudgetExhaustedError, type ReminderWordsRequest, type ReminderWordsResult } from '@ludy/agent';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { wordReminder, type ReminderAi } from '../src/payment-reminder-ai.ts';
 

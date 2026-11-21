@@ -12,8 +12,8 @@ import {
   type MeetingSearchHit,
   type MeetingSearchResult,
   type TranscriptStage,
-} from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { ROLES, userOf } from './transcript.ts';
 

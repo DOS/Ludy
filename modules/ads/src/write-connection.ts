@@ -14,9 +14,9 @@
 //   covered, this file's closers included); where the sweep cannot remove it, the Ads screen tells the owner to remove the app by hand.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { cancelQueuedLaunches, stopStartedLaunches } from './launch-ledger.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];

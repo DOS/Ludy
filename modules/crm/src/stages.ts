@@ -19,10 +19,10 @@ import {
   type BoardColumn,
   type FilterAst,
   type PipelineStage,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { filterCondition } from '@crove/kernel';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { filterCondition } from '@ludy/kernel';
 import { dealFields } from './deal-filter.ts';
 import { base, ensureStages, loadStages, mayDelete, view } from './deals.ts';
 

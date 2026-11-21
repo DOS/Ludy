@@ -4,9 +4,9 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import type { EInvoiceIssueView } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Card } from '@crove/ui/components/card';
+import type { EInvoiceIssueView } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { CardSkeleton, ErrorText } from './ui.tsx';

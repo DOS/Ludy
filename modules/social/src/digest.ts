@@ -18,9 +18,9 @@
 // four-eyes channel, #740). Nobody gets an empty mail. Links are app paths built here; nothing secret is in the mail.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db } from '@crove/db';
-import { createMailMessage } from '@crove/kernel';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { createMailMessage } from '@ludy/kernel';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { digestFor, emptyQueueDays, type DigestContent, type DigestReviewItem, type DigestWeekData } from './domain/digest.ts';
 import type { QueueSpec } from './domain/queue.ts';

@@ -9,8 +9,8 @@
 // lookup of the same client does not call the provider again; failures are not cached. Requests that reach the
 // provider are limited per user and per process (RATE_LIMITED, 429): a person adds a few clients a minute, and a
 // flood from one account must not get this server's address blocked at the provider.
-import { normalizeTaxCode } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+import { normalizeTaxCode } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import { z } from 'zod';
 import { RateLimiter } from './rate-limit.ts';
 
