@@ -10,6 +10,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { SIGN_ATTACHMENT_MAX_BYTES, verifySignAttachmentBytes } from '../src/sign-link.ts';
 
 const ORG_ID = '01900000-0000-7000-8000-000000000010';
 const USER_ID = '01900000-0000-7000-8000-000000000020';
@@ -732,5 +733,42 @@ describe('os.sign RPC handlers (#3325)', () => {
     });
     expect(resUsed.status).toBe(409);
     expect(await resUsed.json()).toMatchObject({ code: 'SIGN_ALREADY_SUBMITTED' });
+  });
+
+  it('verifies signer supporting attachment magic bytes and structure (PDF/PNG/JPEG only, <= 10 MB) (#3818)', () => {
+    const validPdf = new TextEncoder().encode('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n');
+    const validPng = new Uint8Array(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    // Minimal valid baseline JPEG: SOI (FF D8), APP0 JFIF (FF E0), SOF0 1x1 (FF C0), SOS + 1 byte + EOI (FF D9).
+    const validJpeg = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01,
+      0x00, 0x00, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xda, 0x00,
+      0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x7f, 0xff, 0xd9,
+    ]);
+
+    expect(verifySignAttachmentBytes(validPdf)).toBe('application/pdf');
+    expect(verifySignAttachmentBytes(validPng)).toBe('image/png');
+    expect(verifySignAttachmentBytes(validJpeg)).toBe('image/jpeg');
+
+    // Reject empty, truncated, active-content SVG/HTML/XML, ZIP/Office, GIF, PE/EXE, and > 10 MB payloads.
+    expect(verifySignAttachmentBytes(new Uint8Array(0))).toBeNull();
+    expect(verifySignAttachmentBytes(new TextEncoder().encode('%PDF-1.4\ntruncated without eof'))).toBeNull();
+    expect(verifySignAttachmentBytes(validPng.subarray(0, validPng.byteLength - 8))).toBeNull();
+    expect(verifySignAttachmentBytes(validJpeg.subarray(0, validJpeg.byteLength - 2))).toBeNull();
+    expect(
+      verifySignAttachmentBytes(new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')),
+    ).toBeNull();
+    expect(verifySignAttachmentBytes(new TextEncoder().encode('<!doctype html><html><body>hi</body></html>'))).toBeNull();
+    expect(verifySignAttachmentBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]))).toBeNull();
+    expect(verifySignAttachmentBytes(new TextEncoder().encode('GIF89a\u0001\u0000\u0001\u0000'))).toBeNull();
+    expect(verifySignAttachmentBytes(new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]))).toBeNull();
+
+    const oversizedPdf = new Uint8Array(SIGN_ATTACHMENT_MAX_BYTES + 1);
+    oversizedPdf.set(validPdf, 0);
+    expect(verifySignAttachmentBytes(oversizedPdf)).toBeNull();
   });
 });

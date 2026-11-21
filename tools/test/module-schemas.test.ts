@@ -97,7 +97,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'packages/kernel/src/queries.ts': {
     modules: ['sign'],
-    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed and sign_certificate rows (#3553) whatever is installed now, so a confidential HR contract PDF or certificate stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
+    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed, sign_certificate and sign_attachment rows (#3553, #3818) whatever is installed now, so a confidential HR contract PDF, certificate or signer attachment stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },

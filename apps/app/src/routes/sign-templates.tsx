@@ -20,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
+import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
@@ -44,6 +45,8 @@ import {
   SIGN_SIGNER_ROLES,
   clampFieldBox,
   createPlacedFieldBox,
+  isChoiceFieldType,
+  normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForTemplateRoles,
   resizeFieldBox,
@@ -111,6 +114,7 @@ function toDraftFields(fields: readonly SignTemplateFieldRecord[]): DraftFieldPl
     required: f.required,
     proposedByAi: false,
     fontSizePt: f.fontSizePt,
+    options: f.options ? [...f.options] : null,
   }));
 }
 
@@ -154,6 +158,9 @@ export function canAutoSendTemplate(detail: SignTemplateDetail): boolean {
   if (template.inspectStatus !== 'passed' || template.pageCount === null) return false;
   const nonCc = roles.filter((r) => r.signerRole !== 'cc');
   if (nonCc.length === 0) return false;
+  if (fields.some((f) => isChoiceFieldType(f.fieldType) && normalizeChoiceOptions(f.options).length === 0)) {
+    return false;
+  }
   const sigRoles = new Set(fields.filter((f) => f.fieldType === 'signature').map((f) => f.templateRoleId));
   return nonCc.every((r) => r.signerRole !== 'signer' || sigRoles.has(r.id));
 }
@@ -1240,6 +1247,7 @@ export function SignTemplatesPage() {
         label: string | null;
         required: boolean;
         fontSizePt: number | null;
+        options?: string[] | null;
       }>;
     }) => signApi.setTemplateFields(vars.templateId, vars.fields),
     onSuccess: async (res, vars) => {
@@ -1423,6 +1431,11 @@ export function SignTemplatesPage() {
     });
   }, [detail, detectedTags, nonCcSavedRoles, fieldsDraft, effectivePageCount, draftTracker]);
 
+  const defaultTplChoiceOptions = () => [
+    tSign('fields.defaultOptionN', { index: '1' }),
+    tSign('fields.defaultOptionN', { index: '2' }),
+  ];
+
   const handleApplyDetectedTags = () => {
     if (!fieldsEditable || tplTagPlan.applicable.length === 0) return;
     const placed: DraftFieldPlacement[] = tplTagPlan.applicable.map((item) => ({
@@ -1438,6 +1451,9 @@ export function SignTemplatesPage() {
       required: item.required,
       proposedByAi: false,
       fontSizePt: null,
+      options: isChoiceFieldType(item.fieldType)
+        ? (item.options && item.options.length > 0 ? item.options : defaultTplChoiceOptions())
+        : null,
     }));
     updateFieldsDraft((prev) => [...prev, ...placed]);
     setSelectedFieldId(placed[0]!.localId);
@@ -1455,10 +1471,11 @@ export function SignTemplatesPage() {
       fieldType,
       pageNumber,
       ...box,
-      label: null,
+      label: fieldType === 'attachment' ? tSign('fields.attachmentPresets.idCard') : null,
       required: true,
       proposedByAi: false,
       fontSizePt: null,
+      options: isChoiceFieldType(fieldType) ? defaultTplChoiceOptions() : null,
     };
     updateFieldsDraft((prev) => [...prev, next]);
     setSelectedFieldId(next.localId);
@@ -1872,6 +1889,7 @@ export function SignTemplatesPage() {
                               label: f.label,
                               required: f.required,
                               fontSizePt: f.fontSizePt ?? null,
+                              options: isChoiceFieldType(f.fieldType) ? normalizeChoiceOptions(f.options) : null,
                             })),
                           })
                         }
@@ -1962,70 +1980,87 @@ export function SignTemplatesPage() {
                     )}
 
                     {selectedField && editable ? (
-                      <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-card p-3 sm:grid-cols-3">
-                        <div className="space-y-1">
-                          <Label htmlFor="sign-tpl-field-role">{tSign('fields.assignedSignerSelect')}</Label>
-                          <NativeSelect
-                            id="sign-tpl-field-role"
-                            disabled={!fieldsEditable}
-                            value={selectedField.signerId}
-                            onChange={(e) =>
-                              updateFieldsDraft((prev) =>
-                                prev.map((f) => (f.localId === selectedField.localId ? { ...f, signerId: e.target.value } : f)),
-                              )
-                            }
-                          >
-                            {nonCcSavedRoles.map((r) => (
-                              <NativeSelectOption key={r.id} value={r.id}>
-                                {r.roleLabel} ({r.roleKey})
-                              </NativeSelectOption>
-                            ))}
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="sign-tpl-field-label">{tSign('fields.fieldLabelInput')}</Label>
-                          <Input
-                            id="sign-tpl-field-label"
-                            disabled={!fieldsEditable}
-                            value={selectedField.label ?? ''}
-                            onChange={(e) =>
-                              updateFieldsDraft((prev) =>
-                                prev.map((f) =>
-                                  f.localId === selectedField.localId ? { ...f, label: e.target.value || null } : f,
-                                ),
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="flex items-end justify-between gap-2">
-                          <div className="flex items-center gap-2 pb-2">
-                            <Checkbox
-                              id="sign-tpl-field-required"
+                      <div className="space-y-3 rounded-md border border-border bg-card p-3">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <div className="space-y-1">
+                            <Label htmlFor="sign-tpl-field-role">{tSign('fields.assignedSignerSelect')}</Label>
+                            <NativeSelect
+                              id="sign-tpl-field-role"
                               disabled={!fieldsEditable}
-                              checked={selectedField.required}
-                              onCheckedChange={(checked) =>
+                              value={selectedField.signerId}
+                              onChange={(e) =>
+                                updateFieldsDraft((prev) =>
+                                  prev.map((f) => (f.localId === selectedField.localId ? { ...f, signerId: e.target.value } : f)),
+                                )
+                              }
+                            >
+                              {nonCcSavedRoles.map((r) => (
+                                <NativeSelectOption key={r.id} value={r.id}>
+                                  {r.roleLabel} ({r.roleKey})
+                                </NativeSelectOption>
+                              ))}
+                            </NativeSelect>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="sign-tpl-field-label">{tSign('fields.fieldLabelInput')}</Label>
+                            <Input
+                              id="sign-tpl-field-label"
+                              disabled={!fieldsEditable}
+                              value={selectedField.label ?? ''}
+                              onChange={(e) =>
                                 updateFieldsDraft((prev) =>
                                   prev.map((f) =>
-                                    f.localId === selectedField.localId ? { ...f, required: checked === true } : f,
+                                    f.localId === selectedField.localId ? { ...f, label: e.target.value || null } : f,
                                   ),
                                 )
                               }
                             />
-                            <Label htmlFor="sign-tpl-field-required">{tSign('fields.requiredToggle')}</Label>
                           </div>
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            disabled={!fieldsEditable}
-                            onClick={() => {
-                              updateFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
-                              setSelectedFieldId(null);
-                            }}
-                          >
-                            {tSign('fields.deleteField')}
-                          </Button>
+                          <div className="flex items-end justify-between gap-2">
+                            <div className="flex items-center gap-2 pb-2">
+                              <Checkbox
+                                id="sign-tpl-field-required"
+                                disabled={!fieldsEditable}
+                                checked={selectedField.required}
+                                onCheckedChange={(checked) =>
+                                  updateFieldsDraft((prev) =>
+                                    prev.map((f) =>
+                                      f.localId === selectedField.localId ? { ...f, required: checked === true } : f,
+                                    ),
+                                  )
+                                }
+                              />
+                              <Label htmlFor="sign-tpl-field-required">{tSign('fields.requiredToggle')}</Label>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={!fieldsEditable}
+                              onClick={() => {
+                                updateFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
+                                setSelectedFieldId(null);
+                              }}
+                            >
+                              {tSign('fields.deleteField')}
+                            </Button>
+                          </div>
                         </div>
+
+                        <FieldOptionsAndAttachmentEditor
+                          field={selectedField}
+                          disabled={!fieldsEditable}
+                          onChangeOptions={(nextOptions) =>
+                            updateFieldsDraft((prev) =>
+                              prev.map((f) => (f.localId === selectedField.localId ? { ...f, options: nextOptions } : f)),
+                            )
+                          }
+                          onChangeLabel={(nextLabel) =>
+                            updateFieldsDraft((prev) =>
+                              prev.map((f) => (f.localId === selectedField.localId ? { ...f, label: nextLabel } : f)),
+                            )
+                          }
+                        />
                       </div>
                     ) : null}
 

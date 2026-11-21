@@ -65,6 +65,7 @@ const PUBLIC: Record<string, string> = {
   '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
   '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
   '/api/sign/delegate': 'public eSign audited signer delegation (#3819): same token in JSON body; enforces org_app_on + entitlement opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), allow_delegation = true, delegation_count < 2 anti-relay cap, single-mailbox RFC validation, mail_suppression check, and atomic token consume',
+  '/api/sign/attachment': 'public eSign signer supporting attachment upload (#3818): active signing token in body, OTP gate (403 SIGN_OTP_REQUIRED), <= 10 MB magic-byte verified PDF/PNG/JPEG, isolated sign_attachment storage, and opaque 404',
   '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
   '/api/sign/direct/view': 'public eSign direct template link view (#3551): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
   '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (#3551): fragment token + optional OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
@@ -99,7 +100,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/sign/attachment': 'public eSign verified signer supporting attachment upload (#3818, Slice 4b): active signing token is the credential; enforces org_app_on and entitlement with opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), IP + token rate limits, 10 MB size cap, magic-byte check (PDF/PNG/JPEG only), and SHA-256 audit event',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

@@ -9,13 +9,21 @@ import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
-import { publicSignApi, PublicSignError, type PublicFieldSubmission, type PublicSignField, type PublicSignViewState } from '../lib/sign-api.ts';
-import type { SignSignerRole } from '../lib/sign-fields.ts';
+import {
+  publicSignApi,
+  PublicSignError,
+  type PublicFieldSubmission,
+  type PublicSignField,
+  type PublicSignFieldAttachment,
+  type PublicSignViewState,
+} from '../lib/sign-api.ts';
+import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } from '../lib/sign-fields.ts';
 import {
   forgetSignToken,
   hasInPersonQueryFlag,
@@ -33,6 +41,7 @@ export interface CeremonyFieldAnswer {
   signatureTypedText?: string;
   valueText?: string;
   valueChecked?: boolean;
+  attachment?: PublicSignFieldAttachment | null;
 }
 
 type ReadySignView = Extract<PublicSignViewState, { state: 'ready' }>;
@@ -54,6 +63,13 @@ export function isFieldFilled(field: PublicSignField, answer: CeremonyFieldAnswe
   }
   if (field.fieldType === 'checkbox') {
     return answer?.valueChecked === true;
+  }
+  if (field.fieldType === 'attachment') {
+    return Boolean(answer?.attachment?.fileId || field.attachment?.fileId);
+  }
+  if (isChoiceFieldType(field.fieldType)) {
+    const selected = answer?.valueText?.trim() ?? '';
+    return Boolean(selected && (field.options ?? []).includes(selected));
   }
   return Boolean(answer?.valueText?.trim());
 }
@@ -78,6 +94,9 @@ export function buildSignSubmitPayload(params: {
   let primaryIsSignature = false;
   const payloadFields: PublicFieldSubmission[] = params.fields.map((field) => {
     const answer = params.answers[field.id] ?? {};
+    if (field.fieldType === 'attachment') {
+      return { fieldId: field.id };
+    }
     if (answer.signaturePngDataUrl && answer.signatureKind) {
       const isPrimary = field.fieldType === 'signature';
       if (!signatureKind || (isPrimary && !primaryIsSignature)) {
@@ -198,6 +217,8 @@ export function SignCeremonyPage() {
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(0.95);
   const [answers, setAnswers] = useState<Record<string, CeremonyFieldAnswer>>({});
+  const [uploadingFieldIds, setUploadingFieldIds] = useState<Record<string, boolean>>({});
+  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const [padFieldId, setPadFieldId] = useState<string | null>(null);
   const [consentChecked, setConsentChecked] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -229,6 +250,8 @@ export function SignCeremonyPage() {
     setPdfRendered(false);
     setViewerRenderError(null);
     setAnswers({});
+    setUploadingFieldIds({});
+    setAttachmentErrors({});
     setPadFieldId(null);
     setConsentChecked(false);
     setOtpSent(false);
@@ -304,7 +327,9 @@ export function SignCeremonyPage() {
           const next = { ...prev };
           for (const field of view.fields) {
             if (field.fieldType === 'date' && !next[field.id]?.valueText) {
-              next[field.id] = { valueText: todayStr };
+              next[field.id] = { ...next[field.id], valueText: todayStr };
+            } else if (field.fieldType === 'attachment' && field.attachment && !next[field.id]?.attachment) {
+              next[field.id] = { ...next[field.id], attachment: field.attachment };
             }
           }
           return next;
@@ -372,16 +397,75 @@ export function SignCeremonyPage() {
     () => readyFields.filter((field) => !isFieldComplete(field, answers[field.id])),
     [readyFields, answers],
   );
-  const canSubmit = canSubmitCeremony({
-    viewReady: viewState?.state === 'ready',
-    incompleteRequiredCount: incompleteRequired.length,
-    consentChecked,
-    pdfBytes,
-    loadingPdf,
-    pdfError,
-    viewerRenderError,
-    pdfRendered,
-  });
+  const anyAttachmentUploading = useMemo(
+    () => Object.values(uploadingFieldIds).some(Boolean),
+    [uploadingFieldIds],
+  );
+  const canSubmit =
+    !anyAttachmentUploading &&
+    canSubmitCeremony({
+      viewReady: viewState?.state === 'ready',
+      incompleteRequiredCount: incompleteRequired.length,
+      consentChecked,
+      pdfBytes,
+      loadingPdf,
+      pdfError,
+      viewerRenderError,
+      pdfRendered,
+    });
+
+  const handleUploadAttachment = async (fieldId: string, file: File) => {
+    if (!token || viewState?.state !== 'ready') return;
+    if (file.size === 0) {
+      setAttachmentErrors((prev) => ({ ...prev, [fieldId]: t('attachmentEmptyError') }));
+      return;
+    }
+    if (file.size > SIGN_ATTACHMENT_MAX_BYTES) {
+      setAttachmentErrors((prev) => ({ ...prev, [fieldId]: t('attachmentTooLargeError') }));
+      return;
+    }
+    setUploadingFieldIds((prev) => ({ ...prev, [fieldId]: true }));
+    setAttachmentErrors((prev) => {
+      if (!(fieldId in prev)) return prev;
+      const copy = { ...prev };
+      delete copy[fieldId];
+      return copy;
+    });
+    setSubmitError(null);
+    try {
+      const uploaded = await publicSignApi.uploadAttachment({ token, fieldId, file });
+      setAnswers((prev) => ({
+        ...prev,
+        [fieldId]: {
+          ...prev[fieldId],
+          attachment: uploaded,
+        },
+      }));
+      toast(t('attachmentUploadedToast'));
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        const msg =
+          error instanceof PublicSignError && error.status === 413
+            ? t('attachmentTooLargeError')
+            : error instanceof PublicSignError && error.status === 415
+              ? t('attachmentInvalidTypeError')
+              : error instanceof Error && error.message
+                ? error.message
+                : t('attachmentUploadFailed');
+        setAttachmentErrors((prev) => ({ ...prev, [fieldId]: msg }));
+        toast(msg, 'error');
+      }
+    } finally {
+      setUploadingFieldIds((prev) => ({ ...prev, [fieldId]: false }));
+    }
+  };
 
   const handleRequestOtp = async () => {
     if (!token) return;
@@ -772,6 +856,9 @@ export function SignCeremonyPage() {
                 [fieldId]: updater(prev[fieldId]),
               }));
             }}
+            uploadingFieldIds={uploadingFieldIds}
+            attachmentErrors={attachmentErrors}
+            onUploadAttachment={(fieldId, file) => void handleUploadAttachment(fieldId, file)}
             onConsentChange={(checked) => {
               setConsentChecked(checked);
               setSubmitError(null);
@@ -823,6 +910,9 @@ export interface SignCeremonyReadyViewProps {
   delegating?: boolean;
   delegateError?: string | null;
   padFieldId: string | null;
+  uploadingFieldIds?: Readonly<Record<string, boolean>>;
+  attachmentErrors?: Readonly<Record<string, string>>;
+  onUploadAttachment?: (fieldId: string, file: File) => void;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
   onRenderStatusChange: (status: { rendered: boolean; error: string | null }) => void;
@@ -978,16 +1068,20 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                       />
                     ) : (
                       <span className="truncate">
-                        {answer?.valueText ||
-                          (field.fieldType === 'checkbox'
-                            ? answer?.valueChecked
-                              ? t('filledMark')
-                              : field.label || tField('types.checkbox')
-                            : field.fieldType === 'initials'
-                              ? t('tapToInitial')
-                              : isSig
-                                ? t('tapToSign')
-                                : field.label || tField(`types.${field.fieldType}`))}
+                        {field.fieldType === 'attachment'
+                          ? answer?.attachment?.filename ||
+                            field.attachment?.filename ||
+                            (field.label || tField('types.attachment'))
+                          : answer?.valueText ||
+                            (field.fieldType === 'checkbox'
+                              ? answer?.valueChecked
+                                ? t('filledMark')
+                                : field.label || tField('types.checkbox')
+                              : field.fieldType === 'initials'
+                                ? t('tapToInitial')
+                                : isSig
+                                  ? t('tapToSign')
+                                  : field.label || tField(`types.${field.fieldType}`))}
                       </span>
                     )}
                   </button>
@@ -1070,6 +1164,138 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                       />
                       <span>{field.label || t('checkboxLabel')}</span>
                     </label>
+                  ) : field.fieldType === 'dropdown' ? (
+                    <div className="w-full sm:max-w-xs">
+                      <Label htmlFor={`ceremony-field-input-${field.id}`} className="sr-only">
+                        {fieldLabel}
+                      </Label>
+                      <NativeSelect
+                        id={`ceremony-field-input-${field.id}`}
+                        className="min-h-11 w-full"
+                        value={answer?.valueText ?? ''}
+                        onChange={(e) =>
+                          props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueText: e.target.value }))
+                        }
+                        data-testid={`ceremony-dropdown-${field.id}`}
+                      >
+                        <NativeSelectOption value="">{t('dropdownPlaceholder')}</NativeSelectOption>
+                        {(field.options ?? []).map((opt) => (
+                          <NativeSelectOption key={opt} value={opt}>
+                            {opt}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                  ) : field.fieldType === 'radio' ? (
+                    <fieldset
+                      role="radiogroup"
+                      aria-labelledby={`ceremony-radiogroup-legend-${field.id}`}
+                      className="w-full sm:max-w-xs"
+                      data-testid={`ceremony-radiogroup-${field.id}`}
+                    >
+                      <legend id={`ceremony-radiogroup-legend-${field.id}`} className="sr-only">
+                        {fieldLabel}
+                      </legend>
+                      <div className="space-y-1.5">
+                        {(field.options ?? []).map((opt, idx) => {
+                          const radioId =
+                            idx === 0 ? `ceremony-field-input-${field.id}` : `ceremony-field-radio-${field.id}-${idx}`;
+                          const checked = answer?.valueText === opt;
+                          return (
+                            <label
+                              key={opt}
+                              htmlFor={radioId}
+                              className={cn(
+                                'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-colors',
+                                checked
+                                  ? 'border-primary bg-primary/5 font-medium text-foreground'
+                                  : 'border-border bg-card text-foreground',
+                              )}
+                            >
+                              <input
+                                id={radioId}
+                                type="radio"
+                                name={`ceremony-radio-${field.id}`}
+                                value={opt}
+                                checked={checked}
+                                onChange={() =>
+                                  props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueText: opt }))
+                                }
+                                className="size-4 shrink-0 accent-primary"
+                              />
+                              <span className="min-w-0 break-words">{opt}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  ) : field.fieldType === 'attachment' ? (
+                    <div className="w-full space-y-1.5 sm:max-w-xs" data-testid={`ceremony-attachment-${field.id}`}>
+                      {(() => {
+                        const isUploading = Boolean(props.uploadingFieldIds?.[field.id]);
+                        const currentAttachment = answer?.attachment ?? field.attachment ?? null;
+                        const fieldAttachmentError = props.attachmentErrors?.[field.id] ?? null;
+                        return (
+                          <>
+                            <input
+                              id={`ceremony-file-picker-${field.id}`}
+                              type="file"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                              disabled={isUploading}
+                              className="sr-only"
+                              onChange={(e) => {
+                                const picked = e.currentTarget.files?.[0];
+                                e.currentTarget.value = '';
+                                if (picked) {
+                                  props.onUploadAttachment?.(field.id, picked);
+                                }
+                              }}
+                              data-testid={`ceremony-attachment-input-${field.id}`}
+                            />
+                            <Button
+                              id={`ceremony-field-input-${field.id}`}
+                              type="button"
+                              variant={currentAttachment ? 'outline' : 'default'}
+                              className="min-h-11 w-full"
+                              loading={isUploading}
+                              aria-label={`${fieldLabel} - ${
+                                isUploading
+                                  ? t('attachmentUploading')
+                                  : currentAttachment
+                                    ? t('attachmentReplaceButton')
+                                    : t('attachmentPickButton')
+                              }`}
+                              onClick={() => document.getElementById(`ceremony-file-picker-${field.id}`)?.click()}
+                              data-testid={`ceremony-attachment-btn-${field.id}`}
+                            >
+                              {isUploading
+                                ? t('attachmentUploading')
+                                : currentAttachment
+                                  ? t('attachmentReplaceButton')
+                                  : t('attachmentPickButton')}
+                            </Button>
+                            {currentAttachment ? (
+                              <div
+                                className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs"
+                                data-testid={`ceremony-attachment-summary-${field.id}`}
+                              >
+                                <p className="truncate font-medium text-foreground">{currentAttachment.filename}</p>
+                                {currentAttachment.sha256 ? (
+                                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                                    SHA-256: {currentAttachment.sha256.slice(0, 16)}...
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-muted-foreground">{t('attachmentAcceptHint')}</p>
+                            )}
+                            {fieldAttachmentError ? <ErrorText>{fieldAttachmentError}</ErrorText> : null}
+                          </>
+                        );
+                      })()}
+                    </div>
                   ) : (
                     <div className="w-full sm:max-w-xs">
                       <Label htmlFor={`ceremony-field-input-${field.id}`} className="sr-only">
@@ -1166,6 +1392,7 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
             props.onUpdateAnswer(props.padFieldId, (prev) => ({
               ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
               ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+              ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
               signaturePngDataUrl: pngDataUrl,
               signatureKind: kind,
               ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
