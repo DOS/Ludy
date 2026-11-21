@@ -37,6 +37,14 @@ export {
   cleanUserAgent as sanitizeSignUserAgent,
   normalizePageDimensions as normalizeSignPageDimensions,
 } from './public-commands.ts';
+export {
+  signAcceptanceAiStatus,
+  signAcceptanceQueries,
+  signAcceptanceSource,
+  type SignAcceptanceAiStatus,
+  type SignAcceptanceSource,
+  type SignAcceptanceSourceTask,
+} from './acceptance.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
   signTemplateCommands,
@@ -67,6 +75,7 @@ export {
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_OTP_MAIL_SOURCE,
   SIGN_OTP_MAIL_TEMPLATE,
+  SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
@@ -94,3 +103,14 @@ export {
   type SignFieldForSeal,
   type SignSignerForSeal,
 } from './sealing.ts';
+export {
+  SIGN_ACTIVE_VIEW_GRACE_MINUTES,
+  SIGN_PRE_EXPIRY_REMIND_HOURS,
+  SIGN_TODAY_DECLINED_DAYS,
+  SIGN_TODAY_EXPIRING_HOURS,
+  selectPreExpiryEligibleSigners,
+  signTodayItemsOf,
+  type SignPreExpirySignerCandidate,
+  type SignPreExpirySweepResult,
+  type SignTodayEnvelopeRow,
+} from './today-and-reminders.ts';

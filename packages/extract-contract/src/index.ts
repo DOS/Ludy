@@ -470,7 +470,7 @@ export type ExtractedMarketplaceOrders = z.infer<typeof zExtractedMarketplaceOrd
 
 // A marketplace income report (#2516, ADR-0045): the per-order table of Shopee's or TikTok Shop's income export, read through the platform's profile. Like the order report, only an allow-list of columns
 // comes back (the order, the payment date, the amounts): the buyer's name, phone, email and address have no field here, so they are not read, not returned and not stored.
-export const MARKETPLACE_INCOME_PLATFORMS = ['shopee', 'tiktok_shop'] as const;
+export const MARKETPLACE_INCOME_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_INCOME_FIELDS = ['orderNo', 'paidAt', 'sales', 'sellerDiscount', 'commission', 'serviceFee', 'paymentFee', 'shipping', 'taxVat', 'taxPit', 'refund', 'net'] as const;
 export const MARKETPLACE_INCOME_SKIP_REASONS = ['no_order_no', 'bad_amount', 'bad_date', 'bad_id', 'too_long'] as const;
 // A deduction is a positive amount taken from the seller; `other` is the net the file states less what the named columns explain, and may be negative.

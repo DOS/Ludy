@@ -40,7 +40,7 @@ export const MARKETPLACE_POLL_RESULTS = ['ok', 'unreachable', 'credentials', 'ra
 export type MarketplacePollEnding = (typeof MARKETPLACE_POLL_RESULTS)[number];
 
 // A failure the caller maps to a state on screen. `not_recognized`: the platform answered, but with a page the adapter will not store (a masked value, an unknown status, a malformed amount).
-export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized'] as const;
+export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized', 'too_large'] as const;
 export type MarketplaceErrorKind = (typeof MARKETPLACE_ERROR_KINDS)[number];
 
 export class MarketplaceProviderError extends Error {
@@ -106,6 +106,33 @@ export interface MarketplaceOrderPage {
   more?: boolean;
 }
 
+// One order's income on one payment day, as the three readers (Lazada S5a, TikTok T3, Shopee S3) give it and the income path's lines hold it: decimal strings, every deduction a positive amount taken
+// from the seller, `other` and `net` signed: net = sales - sellerDiscount - commission - serviceFee - paymentFee - shipping - taxWithheld - refund + other. What a reader only carries (VAT and
+// withholding fields, fee ids) is not here: it is not written to the file the income path stages.
+export interface MarketplaceIncomeLine {
+  orderNo: string;
+  // YYYY-MM-DD, the payment day (Vietnam).
+  paidAt: string;
+  sales: string;
+  sellerDiscount: string;
+  commission: string;
+  serviceFee: string;
+  paymentFee: string;
+  shipping: string;
+  taxWithheld: string;
+  refund: string;
+  other: string;
+  net: string;
+}
+
+export interface MarketplaceIncomePage {
+  lines: MarketplaceIncomeLine[];
+  // Where the next read resumes: opaque, at most 100 characters; the cursor given when nothing moved.
+  nextCursor: string | null;
+  // True when the provider knows more closed days wait behind this one: the poll may read the next in the same run.
+  more?: boolean;
+}
+
 // What a platform paid and kept for one order (the figures of an income report, #2516), decimal strings.
 export interface MarketplaceOrderFinance {
   orderNo: string;
@@ -150,6 +177,9 @@ export interface MarketplaceProvider {
   // The orders changed since the cursor (null: from the start of the platform's window), at most one page.
   listOrders(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceOrderPage>;
   orderFinance(secret: string, orderNo: string): Promise<MarketplaceOrderFinance | null>;
+  // The income of ONE closed payment day after the cursor (null: from the start of the first window), at most one day, as the lines of the income path. Left out by an adapter with no income
+  // reader (the offline one): its poll has no income leg.
+  listIncome?(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceIncomePage>;
   listStock(secret: string): Promise<MarketplaceStockLevel[]>;
 }
 
@@ -316,6 +346,7 @@ const decimal = (value: string): string => value.replace(/\.(\d{3})$/, (_, digit
 
 // A cell as CSV: always quoted, a quote doubled.
 const cell = (value: string): string => `"${value.replaceAll('"', '""')}"`;
+export const marketplaceCsvCell = cell;
 
 // The number of units of a line on a platform that writes a row for each, or null when the quantity is no whole number of at least 1.
 const wholeUnits = (quantity: string): number | null => {

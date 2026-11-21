@@ -621,11 +621,15 @@ import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
 import { zPersonalDataErasure, zPersonalDataNotice, zPersonalDataQuery, zPersonalDataResult } from './personal-data.ts';
 import {
+  zSignAcceptanceDraftInput,
+  zSignAcceptanceDraftResult,
   zSignAiAnalysisRecord,
   zSignAiAnalyzeInput,
   zSignAiAnalyzeResult,
   zSignEnvelopeBySourceInput,
   zSignEnvelopeBySourceResult,
+  zSignEnvelopeAcknowledgeDeclineInput,
+  zSignEnvelopeAcknowledgeDeclineResult,
   zSignEnvelopeCreateInput,
   zSignEnvelopeCreateResult,
   zSignEnvelopeDetail,
@@ -3325,6 +3329,7 @@ export const contract = {
       send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
       remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
       void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
+      acknowledge_decline: oc.input(zSignEnvelopeAcknowledgeDeclineInput).output(zSignEnvelopeAcknowledgeDeclineResult),
     },
     signer: {
       add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),
@@ -3338,6 +3343,9 @@ export const contract = {
     ai: {
       analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
       get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
+    acceptance: {
+      draft_summary: oc.input(zSignAcceptanceDraftInput).output(zSignAcceptanceDraftResult),
     },
     template: {
       list: oc.input(zSignTemplateListInput).output(zSignTemplateListResult),

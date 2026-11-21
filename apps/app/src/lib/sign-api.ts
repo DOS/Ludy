@@ -27,8 +27,10 @@ export interface SignEnvelopeSummary {
   certificateCode: string | null;
   pageCount: number | null;
   expiresAt: string | null;
+  autoRemindBeforeExpiry?: boolean | undefined;
   sentAt: string | null;
   completedAt: string | null;
+  declineAcknowledgedAt?: string | null | undefined;
   voidedAt: string | null;
   expiredAt: string | null;
   version: number;
@@ -54,6 +56,19 @@ export interface SignSignerRecord {
   requireEmailOtp: boolean;
   status: SignSignerStatus;
   tokenLastRemindedAt: string | null;
+  preExpiryRemindedAt?: string | null | undefined;
+  preExpiryRemindStatus?:
+    | 'queued'
+    | 'sending'
+    | 'sent'
+    | 'delivered'
+    | 'bounced'
+    | 'complained'
+    | 'suppressed'
+    | 'failed'
+    | 'ambiguous'
+    | null
+    | undefined;
   viewedAt: string | null;
   signedAt: string | null;
   declinedAt: string | null;
@@ -307,8 +322,15 @@ export const signApi = {
   getEnvelope: (envelopeId: string) => client.sign.envelope.get({ envelopeId }),
   getEnvelopeEvents: (envelopeId: string) => client.sign.envelope.events({ envelopeId }),
   verifyEnvelope: (envelopeId: string) => client.sign.envelope.verify({ envelopeId }),
-  createEnvelope: (input: { title: string; subject?: string; message?: string; routingMode: SignRoutingMode; sourceFileId: string }) =>
-    client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
+  createEnvelope: (input: {
+    title: string;
+    subject?: string;
+    message?: string;
+    routingMode: SignRoutingMode;
+    sourceFileId: string;
+    expiresAt?: string | null;
+    autoRemindBeforeExpiry?: boolean;
+  }) => client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
   updateEnvelope: (input: {
     envelopeId: string;
     expectedVersion?: number;
@@ -316,12 +338,16 @@ export const signApi = {
     subject?: string | null;
     message?: string | null;
     routingMode?: SignRoutingMode;
+    expiresAt?: string | null;
+    autoRemindBeforeExpiry?: boolean;
   }) => client.sign.envelope.update({ ...input, idempotencyKey: crypto.randomUUID() }),
   sendEnvelope: (envelopeId: string) => client.sign.envelope.send({ envelopeId }),
   remindEnvelope: (envelopeId: string, signerId?: string) =>
     client.sign.envelope.remind({ envelopeId, ...(signerId ? { signerId } : {}), idempotencyKey: crypto.randomUUID() }),
   voidEnvelope: (envelopeId: string, reason?: string) =>
     client.sign.envelope.void({ envelopeId, ...(reason ? { reason } : {}), idempotencyKey: crypto.randomUUID() }),
+  acknowledgeDecline: (envelopeId: string) =>
+    client.sign.envelope.acknowledge_decline({ envelopeId, idempotencyKey: crypto.randomUUID() }),
   addSigner: (input: {
     envelopeId: string;
     routingOrder?: number;
@@ -428,7 +454,7 @@ export const signApi = {
     title?: string;
     subject?: string | null;
     message?: string | null;
-    sourceKind?: 'standalone' | 'crm_quote' | 'crm_order' | 'hr_contract';
+    sourceKind?: 'standalone' | 'crm_quote' | 'crm_order' | 'hr_contract' | 'project_acceptance';
     sourceId?: string | null;
     expiresAt?: string | null;
     autoSend?: boolean;
