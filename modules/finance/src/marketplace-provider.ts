@@ -62,7 +62,9 @@ export interface MarketplacePlatformCapability {
 // The figures a real adapter starts from; each is replaced by the platform's published limit when that adapter is built and reviewed. Nothing here is called today.
 export const MARKETPLACE_PLATFORM_LIMITS: Readonly<Record<MarketplacePlatformKey, MarketplacePlatformCapability>> = {
   shopee: { pageSize: 100, windowDays: 15, ratePerMinute: 60 },
-  tiktok_shop: { pageSize: 50, windowDays: 30, ratePerMinute: 60 },
+  // TikTok Shop (#2524, T2 = #4259): a request asks for 50 (the return list takes at most 50, the order list 100) and one poll page holds at most 250 orders, which is five requests: a bulk change within one
+  // second can only be read on by page token inside one call, and the orders read by id for returns count against the same figure.
+  tiktok_shop: { pageSize: 250, windowDays: 30, ratePerMinute: 60 },
   lazada: { pageSize: 100, windowDays: 30, ratePerMinute: 60 },
 };
 

@@ -14,6 +14,11 @@
 //
 // CANCELLATIONS come from the order itself (status and the line's `cancel_user`): the cancellation search adds only requests still pending, which move no stock, so it is not called.
 //
+// A LINE IS NEVER FOLDED INTO A QUANTITY. The TikTok report layout carries no line id, so the intake names a line by its seller SKU and numbers repeats of one SKU in one order `#2`, `#3` in ROW ORDER (packages/l10n-vn
+// marketplace-orders.ts). Folding units of one SKU into a quantity would make the key of a unit depend on how many units share its stage, so a partial return or a partial shipment would write a new line next
+// to the old one and move stock twice. Each line item is one row of quantity 1, and the rows of one order are written MOST ADVANCED STAGE FIRST (returned, completed, shipped, placed, cancelled), so as units
+// move forward the lower numbered keys are the ones that advance and a key never has to move back (the units of one SKU are interchangeable, which is what makes this exact).
+//
 // THE CURSOR is two windows, `o:<iso>;r:<iso>`: the orders changed since the first and the returns changed since the second. A page token is never kept between polls (it may expire): a window whose first page
 // is full and lies within one second of its start is read on by token in the same call, up to MAX_PAGES, and past that it is `not_recognized`, never skipped without a trace.
 import { money, toMoney } from '@crove/l10n-vn';
@@ -36,8 +41,10 @@ const ORDERS_SEARCH_PATH = '/order/202309/orders/search';
 const ORDERS_DETAIL_PATH = '/order/202507/orders';
 const RETURNS_SEARCH_PATH = '/return_refund/202602/returns/search';
 
-// The port's own page size for TikTok (50): the order list takes 1 to 100 and the return list 10 to 50, so one figure is inside both.
-const PAGE_SIZE = MARKETPLACE_PLATFORM_LIMITS.tiktok_shop.pageSize;
+// What one request asks for (50): the order list takes 1 to 100 and the return list 10 to 50, so one figure is inside both. The most orders one poll page may hold (the port's capability, 250) is what a call can
+// read: at most MAX_PAGES requests of this size, and the orders read by id for returns count against it.
+const PAGE_SIZE = 50;
+const PAGE_LIMIT = MARKETPLACE_PLATFORM_LIMITS.tiktok_shop.pageSize;
 const DETAIL_BATCH = 50;
 const WINDOW_DAYS = MARKETPLACE_PLATFORM_LIMITS.tiktok_shop.windowDays;
 // A resumed read starts this far before the newest record seen, so one TikTok updates late is caught; the confirm step dedupes and moves a stage forward only.
@@ -108,10 +115,15 @@ export const TIKTOK_RETURN_STATUS: Readonly<Record<string, ReturnEffect>> = {
 };
 // The return types: only `RETURN_AND_REFUND` sends the item back; `REFUND` is a refund with no return (the buyer keeps the item), `REPLACEMENT` and `EXCHANGE` make a new order.
 export const TIKTOK_RETURN_TYPES: readonly string[] = ['REFUND', 'RETURN_AND_REFUND', 'REPLACEMENT', 'EXCHANGE'];
+// The order the stages of one order are written in (see the header).
+const STAGE_ORDER: readonly MarketplaceOrderStage[] = ['returned', 'completed', 'shipped', 'placed', 'cancelled'];
 const CANCEL_USERS: ReadonlySet<string> = new Set(['BUYER', 'SELLER', 'OPERATOR', 'SYSTEM']);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const vietnamDay = (ms: number): string => new Date(ms + VIETNAM_OFFSET_MS).toISOString().slice(0, 10);
+
+// A record updated later than this past the clock is not TikTok's: it would move the cursor into the future and the shop would stop syncing without a word.
+const FUTURE_SLACK_MS = DAY_MS;
 
 // A time as TikTok writes it: whole Unix seconds, in milliseconds here. Optional ones may be missing, null or 0 (unset); one that is present and not a plausible time refuses the page.
 function timeOf(value: unknown, required: boolean): number | null {
@@ -152,13 +164,14 @@ interface RawOrder {
 }
 
 // One order of an answer as only the fields the adapter reads; anything malformed, unknown or masked refuses the page.
-function parseOrder(entry: unknown, seenLines: Set<string>): RawOrder {
+function parseOrder(entry: unknown, seenLines: Set<string>, latestMs: number): RawOrder {
   const o = pickAllowed(entry, ORDER_FIELDS);
   const id = marketplaceDigits(o?.id, 40);
   const status = typeof o?.status === 'string' ? o.status : '';
   if (!o || id === null || !Object.hasOwn(TIKTOK_ORDER_STAGE, status)) throw notRecognized();
   const created = timeOf(o.create_time, true)!;
   const updatedAt = timeOf(o.update_time, true)!;
+  if (updatedAt > latestMs) throw notRecognized();
   const shipped = timeOf(o.rts_time, false);
   const collected = timeOf(o.collection_time, false);
   const delivered = timeOf(o.delivery_time, false);
@@ -171,7 +184,8 @@ function parseOrder(entry: unknown, seenLines: Set<string>): RawOrder {
     const display = typeof l?.display_status === 'string' ? l.display_status : '';
     const price = marketplaceMoney(l?.original_price);
     const paid = marketplaceMoney(l?.sale_price);
-    if (!l || lineId === null || skuId === null || price === null || paid === null || !Object.hasOwn(TIKTOK_ORDER_STAGE, display)) throw notRecognized();
+    // `PARTIALLY_SHIPPING` is an order's word: a line is shipped or it is not. A negative price is not a price.
+    if (!l || lineId === null || skuId === null || price === null || paid === null || price.startsWith('-') || paid.startsWith('-') || display === 'PARTIALLY_SHIPPING' || !Object.hasOwn(TIKTOK_ORDER_STAGE, display)) throw notRecognized();
     // An amount in another currency than dong, or none stated, is not stored: the shop is a Vietnam one and a figure of another currency would be booked as dong.
     if (l.currency !== 'VND') throw notRecognized();
     const cancelUser = l.cancel_user === undefined || l.cancel_user === null || l.cancel_user === '' ? null : typeof l.cancel_user === 'string' && CANCEL_USERS.has(l.cancel_user) ? l.cancel_user : undefined;
@@ -189,7 +203,7 @@ function parseOrder(entry: unknown, seenLines: Set<string>): RawOrder {
     const variant = typeof l.sku_name === 'string' && l.sku_name !== '' ? ` - ${l.sku_name}` : '';
     return { id: lineId, skuId, sku, itemName: cleanLabel(`${product}${variant}`, 300), unitPrice: price, amount: paid, stage };
   });
-  return { id, updatedAt, createdDay: vietnamDay(created), shippedDay: shipped === null ? null : vietnamDay(shipped), deliveredDay: delivered === null ? null : vietnamDay(delivered), lines };
+  return { id, updatedAt, createdDay: vietnamDay(created), shippedDay: shipped === null && collected === null ? null : vietnamDay(shipped ?? collected!), deliveredDay: delivered === null ? null : vietnamDay(delivered), lines };
 }
 
 // One return of an answer as only the fields the adapter reads. A status or a type not in the closed tables refuses the page.
@@ -201,7 +215,7 @@ interface RawReturn {
   goodsBackLines: string[];
 }
 
-function parseReturn(entry: unknown): RawReturn {
+function parseReturn(entry: unknown, latestMs: number): RawReturn {
   const r = pickAllowed(entry, RETURN_FIELDS);
   const orderId = marketplaceDigits(r?.order_id, 40);
   const returnId = marketplaceDigits(r?.return_id, 40);
@@ -209,6 +223,7 @@ function parseReturn(entry: unknown): RawReturn {
   const status = typeof r?.return_status === 'string' ? r.return_status : '';
   if (!r || orderId === null || returnId === null || !TIKTOK_RETURN_TYPES.includes(type) || !Object.hasOwn(TIKTOK_RETURN_STATUS, status)) throw notRecognized();
   const updatedAt = timeOf(r.update_time, true)!;
+  if (updatedAt > latestMs) throw notRecognized();
   // Only a return that sends the item back, at a status that says the goods are with the seller, moves stock; the others are read (and checked) and ignored.
   const goodsBack = type === 'RETURN_AND_REFUND' && TIKTOK_RETURN_STATUS[status] === 'goods_back';
   const goodsBackLines: string[] = [];
@@ -257,6 +272,7 @@ async function readWindow<T extends { id: string; updatedAt: number }>(
 // `caller` is the one signed call of the TikTok adapters; pass the same instance to a later finance reader so one app and shop is paced across both.
 export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller = tiktokCaller(options)): MarketplaceProvider {
   const now = options.now ?? (() => new Date());
+  const latest = (): number => now().getTime() + FUTURE_SLACK_MS;
 
   // The shop the poll reads: the connection must have chosen one (T1's shop list gives its cipher); without one there is nothing to ask.
   const shopOf = (credential: TiktokCredential): string => {
@@ -279,7 +295,7 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
     const seenLines = new Set<string>();
     const seen = new Set<string>();
     const records = list.map((entry) => {
-      const order = parseOrder(entry, seenLines);
+      const order = parseOrder(entry, seenLines, latest());
       // An order id twice in one answer is not TikTok's: it would write the same lines twice.
       if (seen.has(order.id)) throw notRecognized();
       seen.add(order.id);
@@ -300,7 +316,7 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
     }
     if (!Array.isArray(list) || list.length > PAGE_SIZE) throw notRecognized();
     const records = list.map((entry) => {
-      const r = parseReturn(entry);
+      const r = parseReturn(entry, latest());
       return { ...r, id: r.returnId };
     });
     return { records, next: nextToken(data), full: records.length >= PAGE_SIZE };
@@ -317,7 +333,7 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
       const seenLines = new Set<string>();
       const got = new Map<string, RawOrder>();
       for (const entry of list) {
-        const order = parseOrder(entry, seenLines);
+        const order = parseOrder(entry, seenLines, latest());
         if (!batch.includes(order.id) || got.has(order.id)) throw notRecognized();
         got.set(order.id, order);
       }
@@ -330,41 +346,28 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
     return out;
   }
 
-  // The port orders of the raw ones: lines of one SKU, one price and one stage are folded into one line of that quantity (a line item is one unit, so the quantity is how many there are), and an order
-  // whose lines are in different stages answers as one port order for each stage.
+  // The port orders of the raw ones: one row for each line item (quantity 1, see the header: a line is never folded), and an order whose lines are in different stages answers as one port order for each
+  // stage, MOST ADVANCED FIRST, so the intake numbers repeated SKUs in an order that never has to move back. Within a stage the lines are in SKU and line item id order, so the same window gives the same bytes.
   function toPortOrders(orders: readonly RawOrder[]): MarketplaceOrder[] {
-    const grouped = new Map<string, Omit<MarketplaceOrder, 'lines'> & { lines: MarketplaceOrderLine[] }>();
-    for (const order of orders) {
-      const byStage = new Map<MarketplaceOrderStage, Map<string, { skuId: string; sku: string | null; itemName: string; unitPrice: string; quantity: number; amount: ReturnType<typeof money> }>>();
-      for (const line of order.lines) {
-        const stageLines = byStage.get(line.stage) ?? new Map();
-        const key = `${line.skuId}\u0000${line.unitPrice}`;
-        const have = stageLines.get(key);
-        if (have) {
-          have.quantity += 1;
-          have.amount = have.amount.plus(line.amount);
-        } else {
-          stageLines.set(key, { skuId: line.skuId, sku: line.sku, itemName: line.itemName, unitPrice: line.unitPrice, quantity: 1, amount: money(line.amount) });
-        }
-        byStage.set(line.stage, stageLines);
-      }
-      for (const [stage, stageLines] of byStage) {
+    const out: MarketplaceOrder[] = [];
+    for (const order of [...orders].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+      for (const stage of STAGE_ORDER) {
+        const own = order.lines.filter((l) => l.stage === stage).sort((a, b) => (a.skuId === b.skuId ? (a.id < b.id ? -1 : 1) : a.skuId < b.skuId ? -1 : 1));
+        if (own.length === 0) continue;
         // Dates only where the stage makes them true: a cancelled order shipped nothing, and only a completed or returned one was delivered.
         const shipped = stage === 'shipped' || stage === 'completed' || stage === 'returned';
         const delivered = stage === 'completed' || stage === 'returned';
-        const sorted = [...stageLines.values()].sort((a, b) => (a.skuId === b.skuId ? (a.unitPrice < b.unitPrice ? -1 : 1) : a.skuId < b.skuId ? -1 : 1));
-        // The line key: the SKU id, with `~n` after the first for a second price of the same SKU, so two lines never share one.
-        const seenSku = new Map<string, number>();
-        const lines = sorted.map((l): MarketplaceOrderLine => {
-          const n = (seenSku.get(l.skuId) ?? 0) + 1;
-          seenSku.set(l.skuId, n);
-          return { lineKey: n === 1 ? l.skuId : `${l.skuId}~${n}`, sku: l.sku, itemName: l.itemName, quantity: String(l.quantity), unitPrice: l.unitPrice, amount: toMoney(l.amount) };
+        out.push({
+          orderNo: order.id,
+          orderedAt: order.createdDay,
+          shippedAt: shipped ? order.shippedDay : null,
+          deliveredAt: delivered ? order.deliveredDay : null,
+          stage,
+          lines: own.map((l): MarketplaceOrderLine => ({ lineKey: l.id, sku: l.sku, itemName: l.itemName, quantity: '1', unitPrice: l.unitPrice, amount: toMoney(money(l.amount)) })),
         });
-        grouped.set(`${order.id}\u0000${stage}`, { orderNo: order.id, orderedAt: order.createdDay, shippedAt: shipped ? order.shippedDay : null, deliveredAt: delivered ? order.deliveredDay : null, stage, lines });
       }
     }
-    // Deterministic bytes: the same window gives the same page, so the intake's content hash recognises a page read twice.
-    return [...grouped.values()].sort((a, b) => (a.orderNo === b.orderNo ? (a.stage < b.stage ? -1 : 1) : a.orderNo < b.orderNo ? -1 : 1));
+    return out;
   }
 
   return {
@@ -392,18 +395,31 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
       const ordersRead = await readWindow(ordersStart, (token) => searchOrders(credential, ordersStart, token));
       const returnsRead = await readWindow(returnsStart, (token) => searchReturns(credential, returnsStart, token));
 
+      // The orders of the page by id, and the returns that come with them. A return whose order is not in the page needs that order read by id, and the orders of one page are at most PAGE_LIMIT: returns are taken
+      // in update order while they fit, and the window of the returns resumes just before the first one that did not (never skipped; the next call, with the orders window moved on, takes it).
+      const byId = new Map(ordersRead.records.map((o) => [o.id, o] as const));
+      const sortedReturns = [...returnsRead.records].sort((a, b) => a.updatedAt - b.updatedAt || (a.returnId < b.returnId ? -1 : 1));
+      const extra = new Set<string>();
+      let heldAt: number | null = null;
+      const taken: typeof sortedReturns = [];
+      for (const r of sortedReturns) {
+        const needs = r.goodsBackLines.length > 0 && !byId.has(r.orderId) && !extra.has(r.orderId);
+        if (needs && byId.size + extra.size + 1 > PAGE_LIMIT) {
+          heldAt = r.updatedAt;
+          break;
+        }
+        if (needs) extra.add(r.orderId);
+        taken.push(r);
+      }
+      if (extra.size > 0) for (const order of await readOrdersById(credential, [...extra].sort())) byId.set(order.id, order);
       // The lines a return says came back, by order.
       const backByOrder = new Map<string, Set<string>>();
-      for (const r of returnsRead.records) {
+      for (const r of taken) {
         if (r.goodsBackLines.length === 0) continue;
         const set = backByOrder.get(r.orderId) ?? new Set<string>();
         for (const lineId of r.goodsBackLines) set.add(lineId);
         backByOrder.set(r.orderId, set);
       }
-      // A return whose order is not in this page: the order is read by id so its lines can be named.
-      const byId = new Map(ordersRead.records.map((o) => [o.id, o] as const));
-      const missing = [...backByOrder.keys()].filter((id) => !byId.has(id)).sort();
-      if (missing.length > 0) for (const order of await readOrdersById(credential, missing)) byId.set(order.id, order);
       for (const [orderId, lineIds] of backByOrder) {
         const order = byId.get(orderId);
         if (!order) throw notRecognized();
@@ -414,11 +430,14 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
           if (line.stage !== 'cancelled') line.stage = 'returned';
         }
       }
+      // Returns held back: their window resumes a second before the first held one (those taken at that second are read again; the confirm step dedupes), never earlier than where it started.
+      const returnsCursor = heldAt === null ? returnsRead.cursor : Math.max(returnsStart, heldAt - TIE_MS);
+      const returnsMore = heldAt !== null || returnsRead.more;
 
       // Nothing new in either window: the cursor stays.
-      if (ordersRead.cursor === null && returnsRead.cursor === null) return { orders: [], nextCursor: since };
-      const next = writeCursor(ordersRead.cursor ?? ordersStart, returnsRead.cursor ?? returnsStart);
-      return { orders: toPortOrders([...byId.values()]), nextCursor: next, more: ordersRead.more || returnsRead.more };
+      if (ordersRead.cursor === null && returnsCursor === null) return { orders: [], nextCursor: since };
+      const next = writeCursor(ordersRead.cursor ?? ordersStart, returnsCursor ?? returnsStart);
+      return { orders: toPortOrders([...byId.values()]), nextCursor: next, more: ordersRead.more || returnsMore };
     },
 
     // Not in this slice: the order's money lines come with the finance reads (T3); a poll never asks for them today.

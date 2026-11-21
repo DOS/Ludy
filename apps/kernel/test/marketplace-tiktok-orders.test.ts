@@ -4,6 +4,7 @@
 // and the source reading as read only. No call to TikTok: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { findOrderColumns, orderLines, type StatementGrid } from '@crove/l10n-vn';
 import { MarketplaceProviderError, marketplaceOrdersCsv, splitWritableOrders, type MarketplaceOrder } from '@crove/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { TIKTOK_HOSTS } from '../src/marketplace-tiktok.ts';
@@ -90,7 +91,7 @@ describe('the stage table and the stock rule', () => {
 });
 
 describe('the orders', () => {
-  it('folds the line items of one SKU into a quantity, splits an order whose lines are in two stages, and keeps the days in Vietnam', async () => {
+  it('writes one row of quantity 1 for each line item, never a folded quantity, splits an order whose lines are in two stages (most advanced first) and keeps the days in Vietnam', async () => {
     const order = fakeOrder({
       status: 'PARTIALLY_SHIPPING',
       create_time: t(-86_400),
@@ -104,12 +105,17 @@ describe('the orders', () => {
     });
     const { provider } = setup({ orders: [order] });
     const page = await provider.listOrders(SECRET, 'tiktok_shop', null);
-    expect(page.orders).toHaveLength(2);
-    const shipped = page.orders.find((o) => o.stage === 'shipped')!;
-    expect(shipped.lines).toEqual([{ lineKey: '2729382476852921560', sku: 'MAU-001', itemName: 'Áo thun mẫu - Đen, L', quantity: '2', unitPrice: '180000', amount: '290000' }]);
+    // The shipped stage comes before the placed one.
+    expect(page.orders.map((o) => o.stage)).toEqual(['shipped', 'placed']);
+    const shipped = page.orders[0]!;
+    expect(shipped.lines.map(({ lineKey: _key, ...rest }) => rest)).toEqual([
+      { sku: 'MAU-001', itemName: 'Áo thun mẫu - Đen, L', quantity: '1', unitPrice: '180000', amount: '150000' },
+      { sku: 'MAU-001', itemName: 'Áo thun mẫu - Đen, L', quantity: '1', unitPrice: '180000', amount: '140000' },
+    ]);
     expect(shipped.shippedAt).toBe(new Date((t(-3600) + 7 * 3600) * 1000).toISOString().slice(0, 10));
-    const placed = page.orders.find((o) => o.stage === 'placed')!;
-    expect(placed.lines).toEqual([{ lineKey: '2729382476852921999', sku: 'MAU-002', itemName: 'Áo thun mẫu - Đen, L', quantity: '1', unitPrice: '90000', amount: '90000' }]);
+    const placed = page.orders[1]!;
+    expect(placed.lines).toHaveLength(1);
+    expect(placed.lines[0]).toMatchObject({ sku: 'MAU-002', quantity: '1', unitPrice: '90000', amount: '90000' });
     expect(placed.shippedAt).toBeNull();
     // The day of a 17:30 UTC order is the next day in Vietnam.
     const late = fakeOrder({ create_time: Math.floor(Date.parse('2026-11-20T17:30:00Z') / 1000), update_time: t(20) });
@@ -117,10 +123,54 @@ describe('the orders', () => {
     expect(lateRun.orders[0]?.orderedAt).toBe('2026-11-21');
   });
 
-  it('gives a second price of the same SKU its own line key', async () => {
-    const order = fakeOrder({ update_time: t(1), line_items: [fakeLine({ sale_price: '100', original_price: '100' }), fakeLine({ sale_price: '90', original_price: '90' })] });
-    const page = await setup({ orders: [order] }).provider.listOrders(SECRET, 'tiktok_shop', null);
-    expect(page.orders[0]?.lines.map((l) => l.lineKey)).toEqual(['2729382476852921560', '2729382476852921560~2']);
+  // What the intake does with the file this page writes: it names a line by its seller SKU and numbers repeats `#2`, `#3` in row order. This reads the CSV back with the real reader and follows the lines of
+  // one order across polls: a line may only move FORWARD, and the stages after each poll must be exactly the truth.
+  it('keeps the identity of a unit across polls: a partial return or a partial shipment moves the same keys forward and never writes a unit twice', async () => {
+    const RANK = ['placed', 'shipped', 'completed', 'returned'];
+    const gridOf = (csv: string): StatementGrid => {
+      const grid = new Map<number, Map<number, { kind: string; value: string }>>();
+      csv.trim().split('\n').forEach((line, i) => {
+        const cells = [...line.matchAll(/"((?:[^"]|"")*)"/g)].map((m) => m[1]!.replaceAll('""', '"'));
+        const row = new Map<number, { kind: string; value: string }>();
+        cells.forEach((value, col) => value !== '' && row.set(col, { kind: 'text', value }));
+        grid.set(i + 1, row);
+      });
+      return grid;
+    };
+    const readLines = async (orders: Array<Record<string, unknown>>, returns: Array<Record<string, unknown>> = []) => {
+      const page = await setup({ orders, returns }).provider.listOrders(SECRET, 'tiktok_shop', null);
+      const grid = gridOf(marketplaceOrdersCsv('tiktok_shop', page.orders, 'conn-1'));
+      const mapping = findOrderColumns(grid);
+      const read = mapping ? orderLines(grid, mapping, 20_000) : null;
+      expect(read?.skipped).toEqual([]);
+      return new Map((read?.lines ?? []).map((l) => [l.lineKey, l.stage] as const));
+    };
+    const ids = ['5770865121200001', '5770865121200002', '5770865121200003'];
+    const units = (statuses: string[]) => statuses.map((display_status, i) => fakeLine({ id: ids[i], display_status }));
+    const order = (statuses: string[], status = 'IN_TRANSIT') => fakeOrder({ id: '5764614130399999', status, update_time: t(10), delivery_time: t(-100), line_items: units(statuses) });
+    const returnOf = (lineId: string) => fakeReturn({ order_id: '5764614130399999', return_line_items: [{ order_line_item_id: lineId }] });
+    const follow = async (...polls: Array<[Array<Record<string, unknown>>, Array<Record<string, unknown>>?]>) => {
+      let before: Map<string, string> | null = null;
+      for (const [orders, returns] of polls) {
+        const now = await readLines(orders, returns);
+        if (before) for (const [key, stage] of before) expect(RANK.indexOf(now.get(key) ?? '')).toBeGreaterThanOrEqual(RANK.indexOf(stage));
+        before = now;
+      }
+      return before!;
+    };
+    // Three units delivered, then one of them returned.
+    const afterReturn = await follow([[order(['COMPLETED', 'COMPLETED', 'COMPLETED'], 'COMPLETED')]], [[order(['COMPLETED', 'COMPLETED', 'COMPLETED'], 'COMPLETED')], [returnOf(ids[1]!)]]);
+    expect([...afterReturn.values()].sort()).toEqual(['completed', 'completed', 'returned']);
+    expect(afterReturn.size).toBe(3);
+    // Three units placed, one shipped, then one delivered while one ships and one waits, then all delivered.
+    const final = await follow(
+      [[order(['AWAITING_SHIPMENT', 'AWAITING_SHIPMENT', 'AWAITING_SHIPMENT'], 'AWAITING_SHIPMENT')]],
+      [[order(['AWAITING_SHIPMENT', 'IN_TRANSIT', 'AWAITING_SHIPMENT'], 'PARTIALLY_SHIPPING')]],
+      [[order(['AWAITING_SHIPMENT', 'IN_TRANSIT', 'DELIVERED'], 'PARTIALLY_SHIPPING')]],
+      [[order(['DELIVERED', 'DELIVERED', 'DELIVERED'], 'DELIVERED')]],
+    );
+    expect([...final.values()]).toEqual(['completed', 'completed', 'completed']);
+    expect(final.size).toBe(3);
   });
 
   it('writes the delivery day only for a completed or returned stage', async () => {
@@ -136,13 +186,14 @@ describe('the orders', () => {
     for (const planted of ['Nguyễn Văn Thử', 'thu_nguyen_vn', 'chat.seller.tiktok.test', '7021436810468230477', 'Giao nhanh', '(+84)', 'Quận 1', 'giao giờ hành chính']) expect(text).not.toContain(planted);
   });
 
-  it('writes the TikTok report layout with the quantity, and nothing a one-row-per-unit layout would refuse', async () => {
+  it('writes the TikTok report layout, one row a line item, and nothing a one-row-per-unit layout would refuse', async () => {
     const order = fakeOrder({ update_time: t(1), line_items: [fakeLine(), fakeLine()] });
     const page = await setup({ orders: [order] }).provider.listOrders(SECRET, 'tiktok_shop', null);
     const csv = marketplaceOrdersCsv('tiktok_shop', page.orders);
     const rows = csv.trim().split('\n');
     expect(rows[0]).toContain('"Order ID"');
-    expect(rows[1]).toContain('"2"');
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toContain('"1"');
     expect(splitWritableOrders('tiktok_shop', page.orders).refused).toBe(0);
   });
 
@@ -153,6 +204,10 @@ describe('the orders', () => {
       fakeOrder({ update_time: t(1), line_items: [fakeLine({ seller_sku: 'MAU-***' })] }),
       fakeOrder({ update_time: t(1), line_items: [fakeLine({ sale_price: 150000 })] }),
       fakeOrder({ update_time: t(1), line_items: [fakeLine({ sale_price: '1.5e5' })] }),
+      fakeOrder({ update_time: t(1), line_items: [fakeLine({ sale_price: '-150000' })] }),
+      fakeOrder({ update_time: t(1), line_items: [fakeLine({ original_price: '-1' })] }),
+      fakeOrder({ update_time: t(1), line_items: [fakeLine({ display_status: 'PARTIALLY_SHIPPING' })] }),
+      fakeOrder({ update_time: Math.floor(NOW / 1000) + 2 * 86_400 }),
       fakeOrder({ update_time: t(1), line_items: [fakeLine({ original_price: '150,000' })] }),
       fakeOrder({ update_time: t(1), line_items: [fakeLine({ sku_id: 'abc' })] }),
       fakeOrder({ update_time: t(1), line_items: [] }),
@@ -264,7 +319,8 @@ describe('the cursor and the windows', () => {
     // Resumed from there, the next page continues with the orders after it (the second just before the newest is read again).
     const next = await provider.listOrders(SECRET, 'tiktok_shop', page.nextCursor);
     expect(next.orders).toHaveLength(50);
-    expect(Math.min(...next.orders.map((o) => Number(String(o.orderNo).slice(-5)))) >= 0).toBe(true);
+    // The second page starts at the second before the first page's newest (the order of t(49) is read twice), so nothing between them was skipped.
+    expect(new Set([...page.orders, ...next.orders].map((o) => o.orderNo)).size).toBe(98);
   });
 
   it('reads a bulk change within one second on by page token in the same call, and never keeps a token', async () => {
@@ -293,6 +349,34 @@ describe('the cursor and the windows', () => {
     const { provider } = setup({ orders });
     const first = await provider.listOrders(SECRET, 'tiktok_shop', null);
     expect(await kindOf(() => provider.listOrders(SECRET, 'tiktok_shop', first.nextCursor))).toBe('not_recognized');
+  });
+
+  it('never lets a page pass the 250 orders a poll page may hold: returns that need an order read by id wait for the next call, and the window of the returns resumes before the first one held', async () => {
+    const bulk = Array.from({ length: 250 }, () => fakeOrder({ update_time: t(5) }));
+    const old = fakeOrder({ status: 'COMPLETED', update_time: t(-5000), line_items: [fakeLine({ display_status: 'COMPLETED' })] });
+    const oldLine = (old.line_items as Array<Record<string, unknown>>)[0]!;
+    const { provider, fake } = setup({ orders: [...bulk, old], returns: [fakeReturn({ order_id: old.id, update_time: t(30), return_line_items: [{ order_line_item_id: oldLine.id }] })] });
+    // The orders window already sits a second before the bulk, so it cannot move and is read on by token: 250 orders.
+    const start = `o:${iso(t(4))};r:${iso(t(-10))}`;
+    // 250 orders in one second fill the page: the order of the return would be the 251st, so it is not read now and its window is not moved past it.
+    const first = await provider.listOrders(SECRET, 'tiktok_shop', start);
+    expect(first.orders).toHaveLength(250);
+    expect(new Set(first.orders.map((o) => o.orderNo)).size).toBe(250);
+    expect(fake.calls.some((c) => c.path === '/order/202507/orders')).toBe(false);
+    expect(first.nextCursor).toContain(`;r:${iso(t(29))}`);
+    expect(first.more).toBe(true);
+    // The next call, with the orders window past the bulk, reads the return and its order by id.
+    const second = await provider.listOrders(SECRET, 'tiktok_shop', `o:${iso(t(100))};r:${iso(t(29))}`);
+    expect(orderNos(second.orders)).toEqual([`${String(old.id)}:returned`]);
+  });
+
+  it('refuses a return updated in the future, and dates a line kept `shipped` by its collection day when the order has no shipping day', async () => {
+    const future = setup({ orders: [], returns: [fakeReturn({ update_time: Math.floor(NOW / 1000) + 2 * 86_400 })] });
+    expect(await kindOf(() => future.provider.listOrders(SECRET, 'tiktok_shop', null))).toBe('not_recognized');
+    const lost = fakeOrder({ status: 'CANCELLED', update_time: t(1), collection_time: t(-500), line_items: [fakeLine({ display_status: 'CANCELLED', cancel_user: 'SYSTEM' })] });
+    const page = await setup({ orders: [lost] }).provider.listOrders(SECRET, 'tiktok_shop', null);
+    expect(page.orders[0]?.stage).toBe('shipped');
+    expect(page.orders[0]?.shippedAt).toBe(new Date((t(-500) + 7 * 3600) * 1000).toISOString().slice(0, 10));
   });
 
   it('refuses a page token that is no token', async () => {
