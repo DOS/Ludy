@@ -2,7 +2,7 @@
 // The mapping of a marketplace report's columns that a person confirmed (#4037, slice 2 of #3850; plan stock-and-marketplaces.md section 8.6 "Columns"): what the confirm command takes and what the
 // read of the latest profile answers. Only the header texts of the mapped columns and the standard field of each: never a cell value, a sample or a buyer column (the field list has no buyer field).
 import { z } from 'zod';
-import { MARKETPLACE_COLUMN_FIELDS } from './marketplace-columns.ts';
+import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnAssignment } from './marketplace-columns.ts';
 import { zMarketplacePlatform } from './marketplace.ts';
 import { zId } from './schemas.ts';
 
@@ -31,7 +31,8 @@ export const zMarketplaceColumnsConfirm = z.strictObject({
   fileId: zId,
   platform: zMarketplacePlatform,
   assignments: z
-    .array(z.strictObject({ index: zMarketplaceColumnEntry.shape.index, field: zMarketplaceColumnField }))
+    // Same index bound as the column check: a column the profile cannot hold (above its 999) reaches the command and is refused as `bad_column`, not as a validation error.
+    .array(zMarketplaceColumnAssignment)
     .min(2)
     .max(MARKETPLACE_COLUMN_FIELDS.length),
 });
