@@ -2,8 +2,11 @@
 // Unit tests for the self-contained catalog resolver and query wrapper in apps/kernel/test/invariant/fixtures/db-identifiers.ts (#3969).
 import { describe, expect, it } from 'vitest';
 import {
+  auditRoleFunctionExecute,
+  auditRoleTablePrivileges,
   buildDbIdentifiers,
   canonicalizeCatalogRows,
+  rawQuery,
   rewriteCatalogParam,
   wrapClient,
 } from './fixtures/db-identifiers.ts';
@@ -215,5 +218,39 @@ describe('apps/kernel invariant db-identifiers helper (#3969)', () => {
     const rawRes = await rawCatalogClient.query('SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = $1', ['crove_kernel']);
     expect(recordedRaw[0]?.values).toEqual(['crove_kernel']);
     expect(rawRes.rows[0]).toEqual({ nspname: 'ludy_kernel' });
+  });
+
+  it('bypasses wrapping in rawQuery and evaluates un-rewritten active + legacy roles in role privilege audit helpers', async () => {
+    const fnRecorded: Array<{ text: string; values?: unknown[] }> = [];
+    const fnWrapped = wrapClient(
+      makeFakeClient(fnRecorded, [
+        { rolname: 'crove_app', ok: true, expected: true },
+        { rolname: 'ludy_app', ok: true, expected: true },
+        { rolname: 'crove_worker', ok: false, expected: false },
+      ]),
+      INTERMEDIATE_IDS,
+    );
+
+    const directRes = await rawQuery(fnWrapped, 'SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = $1', ['crove_kernel']);
+    expect(fnRecorded[0]).toEqual({
+      text: 'SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = $1',
+      values: ['crove_kernel'],
+    });
+    expect(directRes.rows[0]).toEqual({ rolname: 'crove_app', ok: true, expected: true });
+
+    const fnAudit = await auditRoleFunctionExecute(fnWrapped, INTERMEDIATE_IDS, 'crove_kernel.enter_mcp_member_context(uuid, uuid)', ['crove_app']);
+    expect(fnAudit.activeAllowed).toEqual(['ludy_app']);
+    expect(fnRecorded[1]?.values).toEqual(['ludy_kernel.enter_mcp_member_context(uuid, uuid)', ['ludy_app'], ['crove_app']]);
+    expect(fnAudit.rows.map((r) => r.rolname)).toEqual(['crove_app', 'ludy_app', 'crove_worker']);
+
+    const tblRecorded: Array<{ text: string; values?: unknown[] }> = [];
+    const tblWrapped = wrapClient(
+      makeFakeClient(tblRecorded, [{ rolname: 'crove_worker', privilege: 'INSERT', ok: false }]),
+      INTERMEDIATE_IDS,
+    );
+    const tblAudit = await auditRoleTablePrivileges(tblWrapped, INTERMEDIATE_IDS, 'crove_kernel.mcp_member_table', ['INSERT', 'UPDATE'], 'non_system');
+    expect(tblRecorded[0]?.values).toEqual(['ludy_kernel.mcp_member_table', ['INSERT', 'UPDATE']]);
+    expect(tblRecorded[0]?.text).toContain("r.rolname !~ '^pg_'");
+    expect(tblAudit).toEqual([{ rolname: 'crove_worker', privilege: 'INSERT', ok: false }]);
   });
 });

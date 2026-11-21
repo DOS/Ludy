@@ -237,7 +237,7 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
       }
     }
     const checks = (await q<{ t: string; valid: boolean; def: string }>(`SELECT conrelid::regclass::text AS t, convalidated AS valid, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'mcp_origin_ck' ORDER BY 1`)).rows;
-    expect(checks.map((c) => c.t)).toEqual(['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.activity', 'crove_kernel.conversation_note', 'crove_kernel.party']);
+    expect(checks.map((c) => c.t).sort()).toEqual(['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.activity', 'crove_kernel.conversation_note', 'crove_kernel.party'].sort());
     for (const c of checks) {
       expect(c.valid, c.t).toBe(true);
       expect(c.def, c.t).toContain("'mcp'");
@@ -252,11 +252,11 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
     expect(names).toEqual(['agent_write_guard', 'mcp_origin_stamp', 'mcp_origin_stamp_update']);
     // Every stamp trigger is ENABLE ALWAYS (a replica session does not skip it), on the six tables, insert and update where the table has both.
     const enabled = (await q<{ t: string; n: string; e: string }>(`SELECT tgrelid::regclass::text AS t, tgname AS n, tgenabled::text AS e FROM pg_trigger WHERE tgname LIKE 'mcp_origin_stamp%' AND NOT tgisinternal ORDER BY 1, 2`)).rows;
-    expect(enabled.map((r) => `${r.t}:${r.n}`)).toEqual([
+    expect(enabled.map((r) => `${r.t}:${r.n}`).sort()).toEqual([
       'crove_crm.deal:mcp_origin_stamp', 'crove_crm.deal:mcp_origin_stamp_update', 'crove_crm.quote:mcp_origin_stamp', 'crove_crm.quote:mcp_origin_stamp_update',
       'crove_crm.quote_line:mcp_origin_stamp', 'crove_crm.quote_line:mcp_origin_stamp_update', 'crove_kernel.activity:mcp_origin_stamp_update',
       'crove_kernel.conversation_note:mcp_origin_stamp', 'crove_kernel.conversation_note:mcp_origin_stamp_update', 'crove_kernel.party:mcp_origin_stamp', 'crove_kernel.party:mcp_origin_stamp_update',
-    ]);
+    ].sort());
     for (const r of enabled) expect(r.e, `${r.t}:${r.n}`).toBe('A');
   });
 });

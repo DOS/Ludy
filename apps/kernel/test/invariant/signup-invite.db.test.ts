@@ -13,7 +13,7 @@ import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -93,16 +93,19 @@ suite('invite-only sign-up check (#350)', () => {
   it('is a definer with the pinned search_path that only crove_app may execute', async () => {
     const rows = await admin(async (c) => {
       const def = await c.query<{ prosecdef: boolean; proconfig: string[] }>(`SELECT prosecdef, proconfig FROM pg_proc WHERE oid = $1::regprocedure`, [FN]);
-      const roles = await c.query<{ role: string; can: boolean }>(
-        `SELECT r.rolname AS role, has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS can
-         FROM pg_roles r WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') ORDER BY 1`,
-        [FN],
-      );
+      const roles = await auditRoleFunctionExecute(c, dbIds, FN, ['crove_app'], 'brand');
       const pub = await c.query<{ acl: string[] | null }>(`SELECT proacl::text[] AS acl FROM pg_proc WHERE oid = $1::regprocedure`, [FN]);
-      return { def: def.rows[0], roles: roles.rows, acl: pub.rows[0]?.acl ?? [] };
+      return { def: def.rows[0], roles, acl: pub.rows[0]?.acl ?? [] };
     });
     expect(rows.def).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'] });
-    expect(rows.roles.filter((r) => r.can).map((r) => r.role)).toEqual(['crove_app']);
+    expect(rows.roles.rows.length).toBeGreaterThan(0);
+    expect(
+      rows.roles.rows.some((r) => r.rolname === rows.roles.activeAllowed[0] && r.ok),
+      `active role ${rows.roles.activeAllowed[0]} execute ${FN}`,
+    ).toBe(true);
+    for (const { rolname, ok, expected } of rows.roles.rows) {
+      expect(ok, `${rolname} execute ${FN}`).toBe(expected);
+    }
     // No grant to PUBLIC (an ACL entry with an empty grantee).
     expect(rows.acl.some((entry) => entry.startsWith('='))).toBe(false);
     const workerUrl = new URL(adminUrl);

@@ -36,7 +36,7 @@ import { financeCommands, financeQueries } from "@ludy/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -476,11 +476,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_app"], "brand");
       expect(logins.length).toBeGreaterThan(0);
-      for (const { rolname } of logins) {
-        const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
-        expect(ok, `${rolname} execute the draft entry`).toBe(rolname === "crove_app");
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the draft entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the draft entry`).toBe(expected);
       }
       expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
       const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
@@ -526,11 +526,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_app"], "brand");
       expect(logins.length).toBeGreaterThan(0);
-      for (const { rolname } of logins) {
-        const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
-        expect(ok, `${rolname} execute the proposal entry`).toBe(rolname === "crove_app");
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the proposal entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the proposal entry`).toBe(expected);
       }
       expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
       const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
@@ -646,18 +646,26 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "functions that call ctx_acting_user_id (a wrapper, or a definer that gates on it)",
     ).toEqual([]);
     expect(
-      found.sealReaders,
+      [...found.sealReaders].sort(),
       "functions that read the sealed member directly",
-    ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper]);
+    ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper].sort());
     // The named policies of Meetings, when they exist, read the sealed kind through the one allowed comparison, once each, as restrictive read policies.
     for (const p of found.policies.filter((x) => COMPANY_READ_POLICIES.some(([t, n]) => t === x.t && n === x.n))) {
       expect([...p.text.matchAll(KIND_COMPARE)].length, `${p.t}.${p.n}: one comparison of the sealed kind`).toBe(1);
       expect([p.cmd, p.perm], `${p.t}.${p.n}: a restrictive read policy`).toEqual(["r", false]);
     }
+    const byTablePolicy = (a: readonly (string | boolean)[], b: readonly (string | boolean)[]) => {
+      const ta = String(a[0]);
+      const tb = String(b[0]);
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      const pa = String(a[1]);
+      const pb = String(b[1]);
+      return pa < pb ? -1 : pa > pb ? 1 : 0;
+    };
     expect(
-      found.policies.filter((p) => readsSealedMember([p]).length > 0).map((p) => [p.t, p.n, p.cmd, p.perm]),
+      found.policies.filter((p) => readsSealedMember([p]).length > 0).map((p) => [p.t, p.n, p.cmd, p.perm]).sort(byTablePolicy),
       "policies that read the helper: (table, policy, command, permissive)",
-    ).toEqual(POLICIES);
+    ).toEqual([...POLICIES].sort(byTablePolicy));
   });
 
   it("sets aside only the one comparison of the sealed kind in meeting_read, and flags every other match (planted texts)", () => {
@@ -701,7 +709,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           "SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1",
         ),
       )
-    ).rows;
+    ).rows.map((r) => ({ ...r, table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name }));
     // A subset of the explicit list: no meeting table, no task, proposal or notification, whatever policy comes with it.
     for (const row of catalog)
       expect(CATALOG[row.table_name], `catalog row ${row.table_name}`).toBe(

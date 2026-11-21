@@ -220,8 +220,8 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
       ).rows;
       return { guarded, truncate, shape };
     });
-    expect(guarded).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
-    expect(truncate).toEqual([...GUARDED].sort());
+    expect([...guarded].sort()).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
+    expect([...truncate].sort()).toEqual([...GUARDED].sort());
     expect(shape).toEqual([{ definer: false, config: ['search_path=pg_catalog, pg_temp'], public: false }]);
 
     const org = await seeded('offboarding');

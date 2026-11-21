@@ -18,7 +18,7 @@ import { Runtime, memberVyRuntime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries, setTranscribeEnabled, encodeTranscriptResult } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -174,22 +174,48 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect(info.rows[0]).toMatchObject({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
     const trigger = await admin((c) => c.query<{ definer: boolean; config: string[] }>(`SELECT prosecdef AS definer, proconfig AS config FROM pg_proc WHERE oid = '${TRIGGER_FN}'::regprocedure`));
     expect(trigger.rows[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
-    const roles = (await admin((c) => c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper ORDER BY 1`))).rows.map((r) => r.rolname);
-    expect(roles, 'the matrix covers the roles of the stack').toEqual(expect.arrayContaining(['crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant']));
-    for (const role of ['public', ...roles]) {
-      const privilege = await admin((c) => c.query<{ door: boolean; trig: boolean }>(`SELECT has_function_privilege($1, '${FN}', 'EXECUTE') AS door, has_function_privilege($1, '${TRIGGER_FN}', 'EXECUTE') AS trig`, [role]));
-      expect(privilege.rows[0], `privileges of ${role}`).toEqual({ door: role === 'crove_worker', trig: false });
+    const activeWorker = dbIds ? dbIds.role('worker') : 'crove_worker';
+    const activeFn = dbIds ? dbIds.rewriteSql(FN) : FN;
+    const activeTriggerFn = dbIds ? dbIds.rewriteSql(TRIGGER_FN) : TRIGGER_FN;
+    const roles = (
+      await admin((c) =>
+        rawQuery<{ rolname: string; door: boolean; trig: boolean; is_worker_allowed: boolean }>(
+          c,
+          `SELECT r.rolname,
+                  pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS door,
+                  pg_catalog.has_function_privilege(r.oid, $2::regprocedure, 'EXECUTE') AS trig,
+                  (r.rolname = $3 OR (r.rolname = 'crove_worker' AND pg_catalog.pg_has_role(r.oid, $3, 'MEMBER'))) AS is_worker_allowed
+           FROM pg_catalog.pg_roles r
+           WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
+           ORDER BY r.rolname`,
+          [activeFn, activeTriggerFn, activeWorker],
+        ),
+      )
+    ).rows;
+    const expectedStackRoles = ['crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant'].map((r) => (dbIds ? dbIds.roleName(r) : r));
+    expect(roles.map((r) => r.rolname), 'the matrix covers the roles of the stack').toEqual(expect.arrayContaining(expectedStackRoles));
+    const publicPrivilege = await admin((c) =>
+      rawQuery<{ door: boolean; trig: boolean }>(
+        c,
+        `SELECT pg_catalog.has_function_privilege('public', $1::regprocedure, 'EXECUTE') AS door,
+                pg_catalog.has_function_privilege('public', $2::regprocedure, 'EXECUTE') AS trig`,
+        [activeFn, activeTriggerFn],
+      ),
+    );
+    expect(publicPrivilege.rows[0], 'privileges of public').toEqual({ door: false, trig: false });
+    for (const row of roles) {
+      expect({ door: row.door, trig: row.trig }, `privileges of ${row.rolname}`).toEqual({ door: row.is_worker_allowed, trig: false });
     }
     // A real call as every role: the connection is the superuser's, SET ROLE makes the role the one that is asked for EXECUTE.
-    for (const role of roles) {
-      const c = createDbClient({ connectionString: adminUrl }, dbIds);
+    for (const { rolname: role, is_worker_allowed: workerAllowed } of roles) {
+      const c = new pg.Client({ connectionString: adminUrl });
       await c.connect();
       try {
         const attempt = async (text: string, params: unknown[] = []) => {
           await c.query('BEGIN');
           await c.query(`SET LOCAL ROLE ${role}`);
           try {
-            await c.query(text, params);
+            await c.query(dbIds ? dbIds.rewriteSql(text) : text, params);
             return null;
           } catch (error) {
             return (error as pg.DatabaseError).code;
@@ -198,7 +224,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
           }
         };
         expect(await attempt(`SELECT crove_meetings.meeting_discard_transcribe()`), `${role} calls the trigger function`).toBe('42501');
-        if (role !== 'crove_worker') expect(await attempt(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine]), `${role} calls the audio door`).toBe('42501');
+        if (!workerAllowed) expect(await attempt(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine]), `${role} calls the audio door`).toBe('42501');
       } finally {
         await c.end();
       }

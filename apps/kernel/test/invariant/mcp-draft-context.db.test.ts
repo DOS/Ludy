@@ -16,7 +16,7 @@ import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -129,12 +129,11 @@ suite('the write context of the MCP draft command (#3227)', () => {
 
   it('gives the entry to the API login alone, with a pinned search path, and lets only it name the kind of the seal', async () => {
     await admin(async (c) => {
-      // Every role that is not a superuser or a built-in one: the `crove_` logins, and any other a platform adds (`authenticated`, `anon`, `service_role`).
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      expect(logins.map((r) => r.rolname)).toContain('crove_app');
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute the draft entry`).toBe(rolname === 'crove_app');
+      // Every role that is not a superuser or a built-in one: the `crove_`/`ludy_` logins, and any other a platform adds (`authenticated`, `anon`, `service_role`).
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, ENTRY, ['crove_app'], 'non_system');
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the draft entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the draft entry`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       const cfg = (await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${ENTRY}'::regprocedure`)).rows[0].proconfig as string[] | null;

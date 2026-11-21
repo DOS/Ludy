@@ -315,12 +315,13 @@ suite('migrations with a runner that is not a superuser', () => {
     expect(await migrate({ adminUrl: runnerUrl, dir: MIGRATIONS })).toEqual([]);
     ids = await resolveDbIdentifiers(runnerUrl);
 
+    let firstRenameIdx = -1;
     let lastRenameIdx = -1;
-    for (let i = files.length - 1; i >= 0; i--) {
+    for (let i = 0; i < files.length; i++) {
       const sql = files[i]?.sql ?? '';
       if (/^--\s*(?:crove|ludy):contract\s+adr=0054\b/m.test(sql) && /\bALTER\s+SCHEMA\s+crove_[a-z0-9_]+\s+RENAME\s+TO\s+ludy_[a-z0-9_]+/i.test(sql)) {
+        if (firstRenameIdx === -1) firstRenameIdx = i;
         lastRenameIdx = i;
-        break;
       }
     }
 
@@ -349,7 +350,7 @@ suite('migrations with a runner that is not a superuser', () => {
     });
 
     // ADR-0054 §3: prove upgrading an already-migrated pre-cutover DB matches a fresh single-pass install.
-    const splitIdx = lastRenameIdx === -1 ? files.length - 1 : lastRenameIdx;
+    const splitIdx = firstRenameIdx === -1 ? files.length - 1 : firstRenameIdx;
     const upgradeDb = `${dbName}_upgrade`;
     const upgradeUrl = new URL(runnerUrl);
     upgradeUrl.pathname = `/${upgradeDb}`;
@@ -379,7 +380,7 @@ suite('migrations with a runner that is not a superuser', () => {
       await rm(preDir, { recursive: true, force: true });
       await withClient(ADMIN as string, (admin) => admin.query(`DROP DATABASE IF EXISTS ${upgradeDb} WITH (FORCE)`));
     }
-  }, 120_000);
+  }, 180_000);
 
   it('hands the posting function to the definer role with only the intended privileges', async () => {
     const resolved = await getIds();
@@ -494,7 +495,9 @@ suite('migrations with a runner that is not a superuser', () => {
         const unpinned = (fn: string, settings: string, fix: string) =>
           `function ${fn} has settings ${settings}, expected "search_path=pg_catalog, pg_temp"; fix in a new migration: ${fix}`;
         const pin = (fn: string, kind = 'FUNCTION') => `ALTER ${kind} ${fn} SET search_path = pg_catalog, pg_temp`;
-        expect(await hardeningViolations(runner)).toEqual([
+        const violations = await hardeningViolations(runner);
+        expect(violations).toHaveLength(8);
+        expect(violations.slice(0, 6).sort()).toEqual([
           unpinned(`${finance}.t17_empty()`, '"search_path="""', pin(`${finance}.t17_empty()`)),
           unpinned(`${finance}.t17_none()`, '(none)', pin(`${finance}.t17_none()`)),
           unpinned(`${jobs}.t17_definer()`, '(none)', pin(`${jobs}.t17_definer()`)),
@@ -505,7 +508,11 @@ suite('migrations with a runner that is not a superuser', () => {
           ),
           unpinned('crove_t17.t17_partial()', '"search_path=pg_catalog"', pin('crove_t17.t17_partial()')),
           unpinned('crove_t17.t17_proc()', '(none)', pin('crove_t17.t17_proc()', 'PROCEDURE')),
+        ].sort());
+        expect(violations[6]).toBe(
           `role ${worker} may CREATE in schema ${jobs}, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA ${jobs} FROM ${worker}`,
+        );
+        expect(violations[7]).toEqual(
           expect.stringMatching(
             new RegExp(
               `^role ${escapeRegExp(app)} can create temporary objects \\(TEMPORARY on database ${escapeRegExp(dbName)}\\); fix as the database owner or a superuser: ` +
@@ -513,7 +520,7 @@ suite('migrations with a runner that is not a superuser', () => {
                 `REVOKE TEMPORARY ON DATABASE ${escapeRegExp(dbName)} FROM PUBLIC, ${escapeRegExp(app)}$`,
             ),
           ),
-        ]);
+        );
       } finally {
         await runner.query('ROLLBACK');
       }

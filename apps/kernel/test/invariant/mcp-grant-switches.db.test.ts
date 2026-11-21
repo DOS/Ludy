@@ -20,7 +20,7 @@ import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -244,11 +244,10 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
 
   it('gives the switch check to the API login alone, with a pinned search path, and refuses a name that is not a module', async () => {
     const fn = 'crove_kernel.mcp_switch_check(uuid,uuid,text)';
-    const logins = (await q<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows.map((r) => r.rolname);
-    expect(logins).toContain('crove_app');
-    for (const rolname of logins) {
-      const ok = (await q<{ ok: boolean }>(`SELECT has_function_privilege($1, '${fn}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
-      expect(ok, `${rolname} executes the switch check`).toBe(rolname === 'crove_app');
+    const { rows: logins, activeAllowed } = await admin((c) => auditRoleFunctionExecute(c, dbIds, fn, ['crove_app'], 'non_system'));
+    expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} executes the switch check`).toBe(true);
+    for (const { rolname, ok, expected } of logins) {
+      expect(ok, `${rolname} executes the switch check`).toBe(expected);
     }
     expect((await q<{ ok: boolean }>(`SELECT has_function_privilege('public', '${fn}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
     expect((await q(`SELECT proconfig FROM pg_proc WHERE oid = '${fn}'::regprocedure`)).rows[0]).toEqual({ proconfig: ['search_path=pg_catalog, pg_temp'] });

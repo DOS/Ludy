@@ -18,7 +18,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, auditRoleTablePrivileges, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -120,12 +120,17 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
 
   it('is reachable by no login role: not the tables, and the functions only by the delivery worker', async () => {
     await admin(async (c) => {
-      const roles = (await c.query(`SELECT rolname FROM pg_catalog.pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test')`)).rows.map((r: { rolname: string }) => r.rolname);
       for (const table of ['crove_kernel.agent_wake_delivery', 'crove_kernel.agent_wake_signal_seen']) {
-        for (const role of roles) {
-          for (const right of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
-            expect((await c.query(`SELECT has_table_privilege($1, $2, $3) AS ok`, [role, table, right])).rows[0].ok, `${role} ${right} on ${table}`).toBe(false);
-          }
+        const privs = await auditRoleTablePrivileges(
+          c,
+          dbIds,
+          table,
+          ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'],
+          'brand',
+        );
+        expect(privs.length, `${table} role privileges audited`).toBeGreaterThan(0);
+        for (const { rolname, privilege, ok } of privs) {
+          expect(ok, `${rolname} ${privilege} on ${table}`).toBe(false);
         }
         expect((await c.query(`SELECT has_table_privilege('public', $1, 'SELECT') AS ok`, [table])).rows[0].ok).toBe(false);
         expect((await c.query(`SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid = $1::regclass`, [table])).rows[0].relrowsecurity, `${table} row-level security`).toBe(true);
@@ -148,8 +153,13 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         ...nobody.map((f): [string, string[]] => [f, []]),
       ];
       for (const [fn, allowed] of grants) {
-        for (const role of roles) {
-          expect((await c.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, fn])).rows[0].ok, `${role} execute ${fn}`).toBe(allowed.includes(role));
+        const { rows: roles, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, fn, allowed, 'brand');
+        expect(roles.length, `${fn} roles audited`).toBeGreaterThan(0);
+        for (const role of activeAllowed) {
+          expect(roles.some((r) => r.rolname === role && r.ok), `active role ${role} execute ${fn}`).toBe(true);
+        }
+        for (const { rolname, ok, expected } of roles) {
+          expect(ok, `${rolname} execute ${fn}`).toBe(expected);
         }
         expect((await c.query(`SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok`, [fn])).rows[0].ok, `public ${fn}`).toBe(false);
         const meta = (await c.query(`SELECT proconfig FROM pg_catalog.pg_proc WHERE oid = $1::regprocedure`, [fn])).rows[0];

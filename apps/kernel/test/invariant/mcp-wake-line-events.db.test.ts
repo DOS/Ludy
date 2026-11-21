@@ -17,7 +17,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { LINE_WAKE_EVENTS, lineTypeProblem, wakeBody, wakeEvent, type LineWakeRegistry } from '../../src/mcp-wake-body.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleTablePrivileges, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -202,11 +202,16 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
     const rows = (await q<{ type: string; scope: string; fields: unknown }>(`SELECT type, scope, fields FROM crove_kernel.mcp_wake_event_type ORDER BY type`)).rows;
     expect(rows.map((r) => [r.type, r.scope, r.fields])).toEqual(Object.keys(LINE_WAKE_EVENTS).sort().map((type) => [type, LINE_WAKE_EVENTS[type]?.scope, LINE_WAKE_EVENTS[type]?.fields]));
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
-      for (const { rolname } of logins) {
-        for (const right of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) {
-          expect((await c.query(`SELECT has_table_privilege($1, 'crove_kernel.mcp_wake_event_type', $2) AS ok`, [rolname, right])).rows[0]?.ok, `${rolname} ${right}`).toBe(false);
-        }
+      const privs = await auditRoleTablePrivileges(
+        c,
+        dbIds,
+        'crove_kernel.mcp_wake_event_type',
+        ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'],
+        'brand',
+      );
+      expect(privs.length).toBeGreaterThan(0);
+      for (const { rolname, privilege, ok } of privs) {
+        expect(ok, `${rolname} ${privilege}`).toBe(false);
       }
       expect((await c.query(`SELECT has_table_privilege('crove_tenant', 'crove_kernel.mcp_wake_event_type', 'SELECT') AS ok`)).rows[0]?.ok).toBe(true);
       expect((await c.query(`SELECT has_table_privilege('public', 'crove_kernel.mcp_wake_event_type', 'SELECT') AS ok`)).rows[0]?.ok).toBe(false);

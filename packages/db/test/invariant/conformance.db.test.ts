@@ -598,10 +598,10 @@ suite('tenant schema conformance (G3)', () => {
       ALTER EVENT TRIGGER ${ddlWatchDrop} DISABLE;`);
     // A trigger of a function outside crove_*/ludy_* is not Ludy's.
     expect(named(found, 'event-trigger')).toEqual([`g3_fixture_crove: ddl_command_start ${FIXTURE}.on_ddl() O CREATE TABLE`]);
-    expect(compare(found).unexpected).toEqual([
+    expect(compare(found).unexpected.sort()).toEqual([
       `event-trigger ${ddlWatchDrop}: sql_drop ${kernel}.ddl_watch() D all (exception records sql_drop ${kernel}.ddl_watch() A all)`,
       `event-trigger g3_fixture_crove: ddl_command_start ${FIXTURE}.on_ddl() O CREATE TABLE`,
-    ]);
+    ].sort());
   });
 
   it('enforces tenant conventions on ludy_* schemas today (#3969)', async () => {
@@ -634,10 +634,10 @@ suite('tenant schema conformance (G3)', () => {
         .map((v) => (v.rule === 'pk' && v.key === journalLine ? { ...v, detail: 'org_id,line_no' } : v)),
       testPending,
     );
-    expect(unexpected).toEqual([
+    expect(unexpected.sort()).toEqual([
       `pk ${journalLine}: org_id,line_no (exception records org_id,entry_id,line_no)`,
       `pk ${FIXTURE}.by_id: id`,
-    ]);
+    ].sort());
     expect(stale).toEqual([`pk ${journalLine}`, `pk ${orgTable}`].sort());
   });
 

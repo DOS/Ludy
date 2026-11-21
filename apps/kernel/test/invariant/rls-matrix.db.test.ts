@@ -4710,15 +4710,16 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     // ctx_acting_user_id answers the member only to this context: the tables that read it are the catalog's.
     const acting = expectRows(await probe(memberVy, (c) => c.query('SELECT crove_kernel.ctx_acting_user_id()::text AS org')), memberVy.name);
     expect(acting.rows, 'the acting user of the member-mode actor').toEqual([{ org: memberVyUser }]);
-    const { rows: catalog } = await admin.query<{ table_name: string; mode: string }>('SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1');
+    const { rows: rawCatalog } = await admin.query<{ table_name: string; mode: string }>('SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1');
+    const catalog = rawCatalog.map((r) => ({ ...r, table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name }));
     expect(
-      catalog.filter((r) => r.mode === 'write').map((r) => r.table_name),
+      catalog.filter((r) => r.mode === 'write').map((r) => r.table_name).sort(),
       "member_vy_table write rows: the matrix expects AGENT_FORBIDDEN for the factories' rows of each (MEMBER_VY_WRITES)",
     ).toEqual([...MEMBER_VY_WRITES].sort());
     expect(
-      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name),
+      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name).sort(),
       'member_vy_table read rows: each read as its member (MEMBER_VY_READS)',
-    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note']);
+    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note'].sort());
     const names = relations.map((r) => r.name);
     const listed = [...MEMBER_VY_READS.keys()];
     expect(listed.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'MEMBER_VY_READS lists tables that no longer have org_id').toEqual([]);

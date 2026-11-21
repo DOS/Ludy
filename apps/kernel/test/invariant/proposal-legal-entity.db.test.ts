@@ -240,6 +240,9 @@ suite('proposals per legal entity and agent position scopes on PostgreSQL (#1538
 
     await migrate({ adminUrl, dir: MIGRATIONS });
     dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    appUrl = login('crove_app', 'test-app-pw');
+    workerUrl = login('crove_worker', 'test-worker-pw');
     // Connections opened before the migration may hold plans of the tables as they were.
     for (const pool of pools.splice(0)) await pool.end();
     connect(true);

@@ -23,7 +23,7 @@ import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -413,11 +413,23 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
   it('keeps the member function to the tenant role and its members, a definer with a pinned search path, answering false to every context but a member grant\'s and reading no kind by name', async () => {
     const fn = 'crove_kernel.conversation_access_mcp_member(text, uuid)';
     await admin(async (c) => {
-      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') AND NOT rolsuper`)).rows;
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${fn}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
+      const activeFn = dbIds ? dbIds.rewriteSql(fn) : fn;
+      const activeTenant = dbIds ? dbIds.role('tenant') : 'crove_tenant';
+      const logins = (
+        await rawQuery<{ rolname: string; ok: boolean; tenant: boolean }>(
+          c,
+          `SELECT r.rolname,
+                  pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS ok,
+                  pg_catalog.pg_has_role(r.oid, $2, 'MEMBER') AS tenant
+           FROM pg_catalog.pg_roles r
+           WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
+           ORDER BY r.rolname`,
+          [activeFn, activeTenant],
+        )
+      ).rows;
+      expect(logins.length).toBeGreaterThan(0);
+      for (const { rolname, ok, tenant } of logins) {
         // The tenant role and the logins that are members of it (the API runs its queries as crove_tenant) hold it; no other role and not the public.
-        const tenant = (await c.query(`SELECT pg_has_role($1, 'crove_tenant', 'MEMBER') AS ok`, [rolname])).rows[0].ok as boolean;
         expect(ok, `${rolname} execute ${fn}`).toBe(tenant);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${fn}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);

@@ -59,8 +59,9 @@ const ALL_KNOWN_ROLES = new Set<string>([
   ...DB_ROLE_NAMES.map((r) => `ludy_${r}`),
 ]);
 const IS_CATALOG_QUERY_RE =
-  /(?:\b(?:pg_catalog|pg_roles|pg_proc|pg_class|pg_namespace|pg_attribute|pg_trigger|pg_policies|pg_indexes|pg_tables|pg_event_trigger|pg_constraint|pg_auth_members|pg_get_functiondef|pg_get_userbyid|pg_get_expr|information_schema|has_function_privilege|has_table_privilege|has_schema_privilege|has_column_privilege|pg_has_role|to_regprocedure|to_regclass|to_regnamespace|current_user|session_user|set_config|current_setting)\b|::reg(?:procedure|class)\b|^\s*EXPLAIN\b)/i;
+  /(?:\b(?:pg_catalog|pg_roles|pg_proc|pg_class|pg_namespace|pg_attribute|pg_trigger|pg_policy|pg_policies|pg_indexes|pg_tables|pg_event_trigger|pg_constraint|pg_auth_members|pg_get_functiondef|pg_get_userbyid|pg_get_expr|information_schema|has_function_privilege|has_table_privilege|has_schema_privilege|has_column_privilege|pg_has_role|to_regprocedure|to_regclass|to_regnamespace|current_user|session_user|set_config|current_setting)\b|::reg(?:procedure|class)\b|^\s*EXPLAIN\b)/i;
 const WRAPPED = new WeakSet<object>();
+const RAW_QUERY = new WeakMap<object, (...args: unknown[]) => unknown>();
 
 export interface WrapOptions {
   readonly canonicalizeCatalog?: boolean;
@@ -253,7 +254,7 @@ export async function setActiveRolePasswords(
   ids: DbIdentifiers,
   options: { sharedDatabase?: boolean } = {},
 ): Promise<void> {
-  const shared = options.sharedDatabase ?? process.env['CROVE_SHARED_DATABASE'] === 'true';
+  const shared = options.sharedDatabase ?? (process.env['LUDY_SHARED_DATABASE'] ?? process.env['CROVE_SHARED_DATABASE']) === 'true';
   const client = new pg.Client({ connectionString: adminUrl });
   await client.connect();
   try {
@@ -377,11 +378,79 @@ function invokeWrappedQuery(
   return res;
 }
 
+export function rawQuery<R extends pg.QueryResultRow = pg.QueryResultRow>(
+  client: pg.ClientBase,
+  text: string,
+  values?: unknown[],
+): Promise<pg.QueryResult<R>> {
+  const orig = RAW_QUERY.get(client) ?? (client.query.bind(client) as (...args: unknown[]) => unknown);
+  return (values !== undefined ? orig(text, values) : orig(text)) as Promise<pg.QueryResult<R>>;
+}
+
+function roleFilterSql(scope: 'brand' | 'non_system'): string {
+  return scope === 'brand'
+    ? "((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper"
+    : "r.rolname !~ '^pg_' AND NOT r.rolsuper";
+}
+
+export async function auditRoleFunctionExecute(
+  client: pg.ClientBase,
+  ids: DbIdentifiers | undefined,
+  fn: string,
+  allowedLegacyRoles: readonly string[],
+  scope: 'brand' | 'non_system' = 'brand',
+): Promise<{ rows: Array<{ rolname: string; ok: boolean; expected: boolean }>; activeAllowed: string[] }> {
+  const activeFn = ids ? ids.rewriteSql(fn) : fn;
+  const activeAllowed = allowedLegacyRoles.map((r) => (ids ? ids.roleName(r) : r));
+  const res = await rawQuery<{ rolname: string; ok: boolean; expected: boolean }>(
+    client,
+    `SELECT r.rolname,
+            pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS ok,
+            (
+              r.rolname = ANY($2::text[])
+              OR EXISTS (
+                SELECT 1
+                FROM pg_catalog.generate_subscripts($2::text[], 1) AS i
+                WHERE r.rolname = ($3::text[])[i]
+                  AND pg_catalog.pg_has_role(r.oid, ($2::text[])[i], 'MEMBER')
+              )
+            ) AS expected
+     FROM pg_catalog.pg_roles r
+     WHERE ${roleFilterSql(scope)}
+     ORDER BY r.rolname`,
+    [activeFn, activeAllowed, [...allowedLegacyRoles]],
+  );
+  return { rows: res.rows, activeAllowed };
+}
+
+export async function auditRoleTablePrivileges(
+  client: pg.ClientBase,
+  ids: DbIdentifiers | undefined,
+  table: string,
+  rights: readonly string[],
+  scope: 'brand' | 'non_system' = 'brand',
+): Promise<Array<{ rolname: string; privilege: string; ok: boolean }>> {
+  const activeTable = ids ? ids.table(table) : table;
+  const res = await rawQuery<{ rolname: string; privilege: string; ok: boolean }>(
+    client,
+    `SELECT r.rolname,
+            p AS privilege,
+            pg_catalog.has_table_privilege(r.oid, $1::regclass, p) AS ok
+     FROM pg_catalog.pg_roles r
+     CROSS JOIN pg_catalog.unnest($2::text[]) AS p
+     WHERE ${roleFilterSql(scope)}
+     ORDER BY r.rolname, p`,
+    [activeTable, [...rights]],
+  );
+  return res.rows;
+}
+
 export function wrapClient<T extends pg.ClientBase>(client: T, ids: DbIdentifiers, options?: WrapOptions): T {
   if (WRAPPED.has(client)) return client;
   WRAPPED.add(client);
   const canonicalizeCatalog = options?.canonicalizeCatalog ?? true;
   const origQuery = client.query.bind(client) as (...args: unknown[]) => unknown;
+  RAW_QUERY.set(client, origQuery);
   (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) =>
     invokeWrappedQuery(client, origQuery, args, ids, canonicalizeCatalog);
   return client;
@@ -392,6 +461,7 @@ export function wrapPool(pool: pg.Pool, ids: DbIdentifiers, options?: WrapOption
   WRAPPED.add(pool);
   const canonicalizeCatalog = options?.canonicalizeCatalog ?? true;
   const origQuery = pool.query.bind(pool) as (...args: unknown[]) => unknown;
+  RAW_QUERY.set(pool, origQuery);
   (pool as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) =>
     invokeWrappedQuery(pool, origQuery, args, ids, canonicalizeCatalog);
   const origConnect = pool.connect.bind(pool) as (...args: unknown[]) => unknown;

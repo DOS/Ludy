@@ -211,7 +211,7 @@ export async function setActiveRolePasswords(
   ids: DbIdentifiers,
   options: { sharedDatabase?: boolean } = {},
 ): Promise<void> {
-  const shared = options.sharedDatabase ?? process.env['CROVE_SHARED_DATABASE'] === 'true';
+  const shared = options.sharedDatabase ?? (process.env['LUDY_SHARED_DATABASE'] ?? process.env['CROVE_SHARED_DATABASE']) === 'true';
   const pool = createPool({ connectionString: adminUrl, max: 1 });
   try {
     for (const [rawRole, password] of Object.entries(passwords)) {

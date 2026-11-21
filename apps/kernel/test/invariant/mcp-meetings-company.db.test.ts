@@ -270,7 +270,11 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
       for (const t of tables) expect(await visible(ctx, t), `${who} ${t}`).toEqual([]);
     }
     const catalog = (await sqlAdmin<{ table_name: string }>(`SELECT table_name FROM crove_kernel.mcp_member_table`).catch(() => ({ rows: [] as Array<{ table_name: string }> }))).rows;
-    expect(catalog.filter((r) => r.table_name.startsWith('crove_meetings.'))).toEqual([]);
+    expect(
+      catalog
+        .map((r) => (dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name))
+        .filter((t) => t.startsWith('crove_meetings.') || t.startsWith('ludy_meetings.')),
+    ).toEqual([]);
   });
 
   it('reads no row of another org in a company context, whatever its visibility', async () => {

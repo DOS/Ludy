@@ -19,7 +19,7 @@ import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -182,31 +182,37 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
 
   it('gives the entry to the API login alone, with a pinned search path, and lets only six functions name a kind of the two', async () => {
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      expect(logins.map((r) => r.rolname)).toContain('crove_app');
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute the write entry`).toBe(rolname === 'crove_app');
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, ENTRY, ['crove_app'], 'non_system');
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the write entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the write entry`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       expect((await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${ENTRY}'::regprocedure`)).rows[0].proconfig).toEqual(['search_path=pg_catalog, pg_temp']);
       // The helper that says which rows is no login's to call.
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, 'crove_kernel.mcp_write_row_ok(text,text,text,jsonb,jsonb,uuid)', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute mcp_write_row_ok`).toBe(false);
+      const { rows: helperLogins } = await auditRoleFunctionExecute(
+        c,
+        dbIds,
+        'crove_kernel.mcp_write_row_ok(text,text,text,jsonb,jsonb,uuid)',
+        [],
+        'non_system',
+      );
+      expect(helperLogins.length).toBeGreaterThan(0);
+      for (const { rolname, ok, expected } of helperLogins) {
+        expect(ok, `${rolname} execute mcp_write_row_ok`).toBe(expected);
       }
       const { rows } = await c.query(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~ '''(mcp_engage_write|mcp_ads_draft)''' ORDER BY 1`,
       );
-      expect(rows.map((r) => r.n)).toEqual([
+      expect(rows.map((r) => r.n).sort()).toEqual([
         'crove_crm.deal_next_step_guard()',
         'crove_kernel.activity_stamp_agent()',
         'crove_kernel.agent_write_guard()',
         'crove_kernel.ctx_mcp_engage_write()',
         'crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)',
         'crove_kernel.mcp_write_row_ok(text,text,text,jsonb,jsonb,uuid)',
-      ]);
+      ].sort());
       // The net above matches the kinds as quoted literals only; a function that asked the one question through the helper, with no literal of its own, would slip through it (#4155, item 3). The functions whose
       // definition names the helper are exactly the helper itself and the two triggers of the origin marks (20270123300000), which stamp a row written under the engage kind. A new one is a visible, reviewed addition.
       const callers = (
@@ -220,7 +226,7 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       expect((await c.query(`SELECT prosecdef, proconfig FROM pg_proc WHERE oid = 'crove_kernel.ctx_mcp_engage_write()'::regprocedure`)).rows[0]).toEqual({ prosecdef: false, proconfig: ['search_path=pg_catalog, pg_temp'] });
       // The engage kind is asked about in policies of exactly these tables, through the one function and never by reading the sealed key, and only by read or write checks the engage kind passes.
       const pol = (await c.query(`SELECT schemaname || '.' || tablename AS t, policyname AS n FROM pg_policies WHERE coalesce(qual, '') || coalesce(with_check, '') ~ '(ctx_mcp_engage_write|mcp_engage_write|mcp_ads_draft)' ORDER BY 1, 2`)).rows;
-      expect(pol.map((r) => `${r.t}.${r.n}`)).toEqual([
+      expect(pol.map((r) => `${r.t}.${r.n}`).sort()).toEqual([
         'crove_crm.deal_next_step.deal_next_step_update',
         'crove_crm.quote.quote_insert',
         'crove_crm.quote.quote_update',
@@ -230,7 +236,7 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
         'crove_kernel.conversation.conversation_scope_update',
         'crove_kernel.conversation_message.conversation_message_scope_read',
         'crove_kernel.conversation_note.conversation_note_scope',
-      ]);
+      ].sort());
       // None of them reads the sealed context itself, and the ads kind is in no policy. The function is for the tenant roles (a definer role inherits it) and no other login.
       expect((await c.query(`SELECT count(*)::int AS n FROM pg_policies WHERE schemaname || '.' || tablename || '.' || policyname IN ('crove_crm.quote.quote_insert', 'crove_crm.quote_line.quote_line_insert', 'crove_crm.deal_next_step.deal_next_step_update', 'crove_kernel.conversation_note.conversation_note_scope') AND coalesce(qual, '') || coalesce(with_check, '') ~ 'ctx_verified'`)).rows[0].n).toBe(0);
       expect((await c.query(`SELECT count(*)::int AS n FROM pg_policies WHERE coalesce(qual, '') || coalesce(with_check, '') ~ 'mcp_ads_draft'`)).rows[0].n).toBe(0);

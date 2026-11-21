@@ -358,7 +358,8 @@ describe('the minutes webhook tables', () => {
       ['ALTER TABLE crove_meetings.hook_delivery ADD CONSTRAINT x CHECK (true);', []],
       ['ALTER TABLE crove_meetings.hook_delivery ADD PRIMARY KEY (org_id, id);', []],
       ['ALTER TABLE crove_meetings.hook_delivery RENAME TO other;', []],
-      ['crove_meetings.member_hook ADD COLUMN audio_key text;', []],
+      ['ALTER TABLE crove_meetings.member_hook ADD COLUMN audio_key text;', []],
+      ['ALTER TABLE ludy_meetings.member_hook ADD COLUMN audio_key text;', []],
     ];
     for (const [sql, want] of cases) expect(columnsIn(sql, t), sql).toEqual(want);
   });

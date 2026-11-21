@@ -19,7 +19,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { contextToken } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
-import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -238,7 +238,14 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       try {
-        for (const file of files) await c.query(readFileSync(join(MIGRATIONS, file), 'utf8'));
+        for (const file of files) {
+          const sql = readFileSync(join(MIGRATIONS, file), 'utf8');
+          if (/\bludy_meetings\./.test(sql) || /\bALTER\s+SCHEMA\b/i.test(sql)) {
+            await rawQuery(c, sql);
+          } else {
+            await c.query(sql);
+          }
+        }
         await c.query('COMMIT');
       } catch (error) {
         await c.query('ROLLBACK');
