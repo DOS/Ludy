@@ -55,6 +55,7 @@ interface Seed {
   connections?: Array<{ id: string; provider: string; displayName: string; status: 'active' | 'expired' | 'revoked' | 'error'; connectedAt: string }>;
   listed?: Array<{ externalAccountId: string; displayName: string; listedAt: string }>;
   mapped?: BankFeedAccountView[];
+  hook?: { exists: boolean; createdAt: string | null; rotatedAt: string | null; lastSeenAt: string | null; rejectedCount: number; stopped: boolean };
   entities?: LegalEntity[];
   locale?: 'en' | 'vi';
 }
@@ -68,6 +69,7 @@ function card(role: Role, seed: Seed = {}, offers?: { sandbox: boolean; tingee: 
   const qc = client.current;
   qc.setQueryData(['bankFeeds', 'accounts'], seed.mapped ?? []);
   qc.setQueryData(['bankFeeds', 'connections'], seed.connections ?? [connection()]);
+  if (seed.hook) qc.setQueryData(['bankFeeds', 'hook'], seed.hook);
   qc.setQueryData(['bankFeeds', 'listed'], seed.listed ?? listedAccounts);
   qc.setQueryData(['accounts', 'list'], [chartAccount('111', 'Tiền mặt', '111'), chartAccount('1121', 'Tiền Việt Nam', '1121'), chartAccount('1121.VCB', 'Vietcombank', '1121')]);
   qc.setQueryData(['legalEntities', 'list'], seed.entities ?? [entity('e1', 'Công ty TNHH Mẫu', true)]);
@@ -224,5 +226,86 @@ describe('BankFeedsCard Tingee connect form', () => {
 
   it('shows no Tingee form to a member or viewer', () => {
     expect(card('member', { mapped: [account('m1', 'SBX-001')] }, { sandbox: false, tingee: true })).not.toContain(en.bankFeeds.tingee.title);
+  });
+});
+
+describe('BankFeedsCard Tingee webhook block (#4204)', () => {
+  beforeEach(() => client.current.clear());
+  const tingee = (status: 'active' | 'expired' = 'active') => [{ id: 'c1', provider: 'bank_tingee', displayName: 'Tingee của tôi', status, connectedAt: at }];
+  const fresh = { exists: true, createdAt: at, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
+  const hookLabel = `aria-label="${en.bankFeeds.hook.title}"`;
+
+  it.each<Role>(['owner', 'admin'])('as %s: shows the block for an active Tingee connection', (role) => {
+    const html = card(role, { connections: tingee(), hook: fresh });
+    expect(html).toContain(hookLabel);
+    expect(html).toContain(en.bankFeeds.hook.intro);
+  });
+
+  it('is not shown for the test feed, for an inactive Tingee connection, or to a member or viewer', () => {
+    expect(card('owner', { hook: fresh })).not.toContain(hookLabel);
+    expect(card('owner', { connections: tingee('expired'), hook: fresh })).not.toContain(hookLabel);
+    for (const role of ['member', 'viewer'] as const) {
+      expect(card(role, { connections: tingee(), hook: fresh, mapped: [account('m1', 'T-1', { provider: 'bank_tingee' })] })).not.toContain(en.bankFeeds.hook.title);
+    }
+  });
+
+  it('offers to create the address when there is none, and to replace it when there is one', () => {
+    const none = card('owner', { connections: tingee(), hook: { ...fresh, exists: false, createdAt: null } });
+    expect(none).toContain(en.bankFeeds.hook.none);
+    expect(none).toContain(`>${en.bankFeeds.hook.create}<`);
+    expect(none).not.toContain(`>${en.bankFeeds.hook.rotate}<`);
+    const has = card('owner', { connections: tingee(), hook: fresh });
+    expect(has).toContain(`>${en.bankFeeds.hook.rotate}<`);
+    expect(has).not.toContain(`>${en.bankFeeds.hook.create}<`);
+    // Replacing asks a second click first, so the warning and the confirm button are not drawn yet.
+    expect(has).not.toContain(en.bankFeeds.hook.warnRotate);
+    expect(has).not.toContain(en.bankFeeds.hook.confirmRotate);
+  });
+
+  it('says when the last notice came, how many were refused and when the last pull was', () => {
+    const quiet = card('owner', { connections: tingee(), hook: fresh });
+    expect(quiet).toContain(en.bankFeeds.hook.noNotice);
+    expect(quiet).toContain('Notices refused this hour: 0');
+    expect(quiet).toContain(en.bankFeeds.hook.noPull);
+    const seen = card('owner', { connections: tingee(), hook: { ...fresh, lastSeenAt: '2026-10-31T01:00:00.000Z', rejectedCount: 3 }, mapped: [account('m1', 'T-1', { provider: 'bank_tingee', lastSyncedAt: '2026-10-30T08:00:00.000Z' })] });
+    expect(seen).toContain('Last notice from Tingee: ');
+    expect(seen).not.toContain(en.bankFeeds.hook.noNotice);
+    expect(seen).toContain('Notices refused this hour: 3');
+    expect(seen).toContain('Last pull of transactions: ');
+    expect(seen).not.toContain(en.bankFeeds.hook.stopped);
+  });
+
+  it('warns when the address stopped, and asks for a replacement', () => {
+    const html = card('owner', { connections: tingee(), hook: { ...fresh, rejectedCount: 10, stopped: true } });
+    expect(html).toContain(en.bankFeeds.hook.stopped);
+    expect(html).toContain('role="alert"');
+  });
+
+  it('draws no key or address before one is made, and the 44 px button', () => {
+    const html = card('owner', { connections: tingee(), hook: fresh });
+    expect(html).not.toContain('/api/bank-feed/');
+    expect(html).not.toContain(en.bankFeeds.hook.shownOnce);
+    expect(html).not.toContain('readonly');
+    expect(html.match(new RegExp(`<button[^>]*min-h-11[^>]*>${en.bankFeeds.hook.rotate}<`))).not.toBeNull();
+  });
+
+  it('always draws the status regions, empty until a copy or an address, so a screen reader announces them', () => {
+    const html = card('owner', { connections: tingee(), hook: fresh });
+    const statuses = html.match(/<p[^>]*role="status"[^>]*><\/p>/g) ?? [];
+    expect(statuses.length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain(en.bankFeeds.hook.copied);
+    expect(html).not.toContain(en.bankFeeds.hook.replacedExisting);
+  });
+
+  it('has the words in both languages', () => {
+    for (const key of ['replacedExisting', 'rotateFailed'] as const) {
+      expect(en.bankFeeds.hook[key].length).toBeGreaterThan(10);
+      expect(viMessages.bankFeeds.hook[key].length).toBeGreaterThan(10);
+    }
+    const html = card('owner', { locale: 'vi', connections: tingee(), hook: { ...fresh, stopped: true } });
+    expect(html).toContain(viMessages.bankFeeds.hook.title);
+    expect(html).toContain(viMessages.bankFeeds.hook.stopped);
+    expect(html).toContain(`>${viMessages.bankFeeds.hook.rotate}<`);
+    expect(Object.keys(viMessages.bankFeeds.hook).sort()).toEqual(Object.keys(en.bankFeeds.hook).sort());
   });
 });
