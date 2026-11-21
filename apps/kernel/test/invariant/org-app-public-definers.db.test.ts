@@ -43,6 +43,7 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_sign.public_verify_otp(text,text,text,text)', 'sign'],
   ['crove_sign.public_submit(text,boolean,text,text,jsonb,text,text,text)', 'sign'],
   ['crove_sign.public_decline(text,text,text,text)', 'sign'],
+  ['crove_sign.public_delegate(text,text,text,text,text,text,text)', 'sign'],
   ['crove_sign.public_direct_resolve(text,text)', 'sign'],
   ['crove_sign.public_direct_pdf_source(text,text)', 'sign'],
   ['crove_sign.public_direct_request_otp(text,text,text)', 'sign'],

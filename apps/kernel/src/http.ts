@@ -208,11 +208,13 @@ import {
   runSignDirectView,
 } from './sign-direct-link.ts';
 import {
+  SIGN_DELEGATES_PER_MINUTE,
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
   SIGN_PDF_READS_MAX,
   SIGN_PDFS_PER_MINUTE,
   SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_DELEGATES_PER_MINUTE,
   SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
   SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
   SIGN_TOKEN_PDFS_PER_MINUTE,
@@ -223,6 +225,7 @@ import {
   readPublicPdfBytes,
   resolvePublicPdf,
   runSignDecline,
+  runSignDelegate,
   runSignOtpRequest,
   runSignOtpVerify,
   runSignSubmit,
@@ -397,6 +400,8 @@ export interface HttpDeps {
     tokenOtpVerify: RateLimiter;
     submit: RateLimiter;
     tokenSubmit: RateLimiter;
+    delegate: RateLimiter;
+    tokenDelegate: RateLimiter;
     verify: RateLimiter;
   }>;
   // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
@@ -1537,6 +1542,8 @@ export function createHttpApp(deps: HttpDeps) {
     const signTokenOtpVerifyLimit = deps.signLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE });
     const signSubmitLimit = deps.signLimits?.submit ?? new RateLimiter({ perMinute: SIGN_SUBMITS_PER_MINUTE });
     const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
+    const signDelegateLimit = deps.signLimits?.delegate ?? new RateLimiter({ perMinute: SIGN_DELEGATES_PER_MINUTE });
+    const signTokenDelegateLimit = deps.signLimits?.tokenDelegate ?? new RateLimiter({ perMinute: SIGN_TOKEN_DELEGATES_PER_MINUTE });
     const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
 
     const setSignSecurityHeaders = (c: Context) => {
@@ -1661,6 +1668,19 @@ export function createHttpApp(deps: HttpDeps) {
     app.post('/api/sign/decline', signEdgeGuard(signSubmitLimit), signBodyLimit(8 * 1024), async (c) => {
       try {
         const res = await runSignDecline(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/delegate', signEdgeGuard(signDelegateLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const res = await runSignDelegate(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenDelegateLimit.take(hash));
         if (res.status === 'not_found') return signOpaqueNotFound(c);
         if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
         if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
