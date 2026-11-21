@@ -59,6 +59,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_meetings.meeting_chapter': "the meeting's recorder, or its readers once published: the system context is refused by the row policy (a user context only), so it is not exported; the titles are derived from the transcript, which is not exported either",
   'crove_meetings.live_chunk': "the meeting's recorder only: a live transcript in progress",
   'crove_meetings.live_line': "the meeting's recorder only: a live transcript in progress",
+  'crove_meetings.capture_session': "the meeting's recorder only: the record that a call is being captured (the kind of client and times; no content, no address)",
   'crove_meetings.meeting_note': "the meeting's recorder only",
   'crove_meetings.meeting_reader': "who may read a meeting: readable through is_meeting_reader only, which refuses the system context",
   'crove_meetings.meeting_result': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",

@@ -112,6 +112,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.leave_request',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -168,6 +169,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.job_opening', () => 'false'], // HR, as above.
+  ['crove_hr.leave_request', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
@@ -282,6 +284,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.candidate', 'false'],
   ['crove_hr.department', 'false'],
   ['crove_hr.job_opening', 'false'],
+  ['crove_hr.leave_request', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
@@ -2161,6 +2164,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.job_opening': {
     update: { set: 'title = title' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix opening' } }),
+  },
+  // #4300: employee leave request with multi-level approval (owner/admin, linked employee, and L1 department manager in a user context; system and agent contexts read and write none).
+  'crove_hr.leave_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const month = payrollMonth();
+      const day = `${month}-02`;
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, month, start_on: day, end_on: day, kind: 'annual_leave', days: '1' },
+      };
+    },
   },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {

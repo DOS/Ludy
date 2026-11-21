@@ -540,6 +540,8 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_SETTINGS_INVALID',
   // A strict org accepts only a written consent method (A2, #3160).
   'CONSENT_METHOD_NOT_ALLOWED',
+  // A second capture of a call that is already being recorded (ADR-0055 slice 1, #4123); the recorder words it with the kind and time in its details.
+  'CAPTURE_ALREADY_RUNNING',
   // A member's own to-dos (#1673, #3558).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
