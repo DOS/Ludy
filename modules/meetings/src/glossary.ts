@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The glossary an organization keeps (#4043, step 2). The contract is packages/kernel-contract/src/meeting-glossary.ts.
 //
-// meetings.glossary.add      an owner or admin adds a term (at most 60 terms an org, one row per term whatever the case)
-// meetings.glossary.update   rewrites a term (same rules); the identity and the author stay
-// meetings.glossary.remove   deletes a term (nothing copies a term into a meeting, so a removed term changes no published result)
-// meetings.glossary.list     the terms, for an owner or admin only; a member gets 403 (the database policy says the same: nobody else reads the table)
+// meetings.glossary.add          an owner or admin adds a term (at most 60 terms an org, one row per term whatever the case)
+// meetings.glossary.update       rewrites a term (same rules); the identity and the author stay
+// meetings.glossary.remove       deletes a term (nothing copies a term into a meeting, so a removed term changes no published result)
+// meetings.glossary.list         the terms, for an owner or admin only; a member gets 403 (the database policy says the same: nobody else reads the table)
+// meetings.glossary.for_meeting  the terms for the recorder's own Vy run only, sensitive (audited), reading only `term text` through crove_meetings.glossary_for_recorder
 //
-// The audit row of a command carries the term's id and the number of terms, never the text (a term can be a customer's or a product's name). Step 3 reads the terms for the recorder's
-// own run through a definer; nothing here is exposed through MCP.
+// The audit row of a command carries the term's id and the number of terms, never the text (a term can be a customer's or a product's name). Step 3b reads the terms for the recorder's
+// own run through a narrow definer; nothing here is exposed through MCP or HTTP for member runs.
 import { sql } from 'kysely';
 import {
   GLOSSARY_TERMS_MAX,
@@ -17,10 +18,11 @@ import {
   zGlossaryRemove,
   zGlossaryTerms,
   zGlossaryUpdate,
+  zMeetingRef,
   type GlossaryTerms,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { userOf } from './transcript.ts';
+import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];
 
@@ -136,5 +138,20 @@ export const glossaryList = defineQuery({
   },
 });
 
+export const glossaryForMeeting = defineQuery({
+  name: 'meetings.glossary.for_meeting',
+  input: zMeetingRef,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<{ meetingId: string; terms: string[] }> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read the glossary for this meeting');
+    const { rows } = await sql<{ term: string }>`SELECT term FROM crove_meetings.glossary_for_recorder(${input.meetingId}::uuid)`.execute(ctx.trx);
+    return { meetingId: input.meetingId, terms: rows.map((r) => r.term) };
+  },
+});
+
 export const glossaryCommands = [glossaryAdd, glossaryUpdate, glossaryRemove];
-export const glossaryQueries = [glossaryList];
+export const glossaryQueries = [glossaryList, glossaryForMeeting];

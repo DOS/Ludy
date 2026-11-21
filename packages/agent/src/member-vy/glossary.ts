@@ -19,6 +19,9 @@ export const GLOSSARY_LIMITS = {
   chars: 1200,
 } as const;
 
+// Filler, format combiners, and unassigned operator/tag code points from #4192 outside \p{Cf}/\p{Cc} that normalizeTerms leaves behind.
+const EXTRA_INVISIBLE = /[\u115f\u1160\u180b-\u180e\u2065\u2800\u3164\uffa0\u{e0000}\u{e0002}-\u{e001f}]|\u034f/gu;
+
 /** The terms one call may carry, from whatever the caller read: cleaned, each once, in the given order, within the limits. Anything that is not a string is skipped. */
 export function glossaryTerms(raw: readonly unknown[] | null | undefined): string[] {
   const out: string[] = [];
@@ -26,7 +29,8 @@ export function glossaryTerms(raw: readonly unknown[] | null | undefined): strin
   let total = 0;
   for (const item of raw ?? []) {
     // One at a time, so a term past a limit of normalizeTerms' own list is judged here, by this list's limits.
-    const [term] = normalizeTerms([item]);
+    const cleaned = typeof item === 'string' ? item.replace(EXTRA_INVISIBLE, '') : item;
+    const [term] = normalizeTerms([cleaned]);
     if (term === undefined) continue;
     const key = term.toLocaleLowerCase('vi');
     if (seen.has(key)) continue;
@@ -68,6 +72,7 @@ const letterCount = (term: string): number => (term.match(/\p{L}/gu) ?? []).leng
 export function spellGlossary(text: string, terms: readonly string[]): string {
   let out = text.normalize('NFC');
   for (const term of terms) {
+    if (term.trim() === '') continue;
     const short = letterCount(term) <= 3 && term !== term.toLocaleLowerCase('vi');
     out = out.replace(termPattern(term, 'giu'), (found) => {
       if (found === term) return found;
@@ -94,5 +99,6 @@ export function termsInSource(source: string, terms: readonly string[]): string[
 
 /** Whether a text writes a term as the glossary does (exactly, as a whole word run, spaces aside). */
 export function writesTerm(text: string, term: string): boolean {
+  if (term.trim() === '') return false;
   return termPattern(term, 'u').test(text.normalize('NFC'));
 }

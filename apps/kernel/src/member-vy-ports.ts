@@ -280,13 +280,15 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       // The people of the meeting, by display name, as the recorder reads them: the summary may suggest which of them a speaker is (#3502). Only the summary asks; the notes run does not.
       const attendees = kind === 'summary' ? (await deps.runtime.query<{ names: string[] }>('meetings.summary.attendees', { meetingId }, as)).names : [];
+      // The organization's glossary (#4043): recorder-only read for summary runs (notes enhance does not take a glossary).
+      const glossary = kind === 'summary' ? (await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as)).terms : [];
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
       const result = await withDeadline(
         // Both kinds answer one checked body (as private text); the rest of each result is not used here.
         withAiScope({ orgId, memberRunId: runId, meter }, async () => ({
-          body: (kind === 'notes' ? await enhanceNotes({ segments, language: meeting.language, template, notes }, bound) : await summarizeMeeting({ segments, language: meeting.language, template, attendees }, bound)).body,
+          body: (kind === 'notes' ? await enhanceNotes({ segments, language: meeting.language, template, notes }, bound) : await summarizeMeeting({ segments, language: meeting.language, template, attendees, glossary }, bound)).body,
         })),
         timeoutMs,
       );
@@ -360,9 +362,10 @@ async function runChapters(deps: MeetingSummaryDeps, orgId: string, actor: UserA
     try {
       const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
       const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const { terms: glossary } = await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as);
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
-      const result = await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, async () => ({ body: (await chapterMeeting({ segments, language: meeting.language }, bound)).body })), timeoutMs);
+      const result = await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, async () => ({ body: (await chapterMeeting({ segments, language: meeting.language, glossary }, bound)).body })), timeoutMs);
       body = revealPrivateText(result.body);
     } catch (error: unknown) {
       return await fail(chaptersCodeOf(error));
@@ -435,9 +438,10 @@ export async function runMeetingTitle(deps: MeetingSummaryDeps, orgId: string, a
     try {
       const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
       const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const { terms: glossary } = await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as);
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
-      answer = (await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, () => suggestMeetingTitles({ segments, language: meeting.language }, bound)), timeoutMs)).answer;
+      answer = (await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, () => suggestMeetingTitles({ segments, language: meeting.language, glossary }, bound)), timeoutMs)).answer;
     } catch (error: unknown) {
       // An answer with no candidate left, or none that could be read, is "no suggestion", not a failure of the service; the run's result still says which.
       if (error instanceof TitleError && error.code === 'TITLE_UNPARSABLE') {
@@ -709,13 +713,15 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
     };
     let body: string;
     try {
-      // 2. The text the member reads, in their own context.
+      // 2. The text the member reads, in their own context. Only the meeting's recorder receives the organization's glossary; non-recorder attendees stay strictly free of glossary terms.
       const source = await deps.runtime.query<TranslationSource>('meetings.translation.source', { meetingId, stage, ...target }, as);
+      const meeting = await deps.runtime.query<{ isRecorder: boolean }>('meetings.meeting.get', { meetingId }, as);
+      const glossary = meeting.isRecorder ? (await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as)).terms : undefined;
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const result = await withDeadline(
         withAiScope({ orgId, memberRunId: runId, meter }, () =>
-          translateSummary({ segments: source.segments, from: source.from, to: source.to, stage: source.stage, hash: source.hash }, bindPorts({ orgId, memberUserId: actor.userId }, ports)),
+          translateSummary({ segments: source.segments, from: source.from, to: source.to, stage: source.stage, hash: source.hash, ...(glossary ? { glossary } : {}) }, bindPorts({ orgId, memberUserId: actor.userId }, ports)),
         ),
         timeoutMs,
       );
@@ -1356,16 +1362,18 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
     };
     const parts: Array<{ k: string; h: string; t: string; s: 'ok' | 'warn' | 'refused'; c: Array<'MISSING' | 'EMPTY' | 'TOO_LONG' | 'UNCHANGED' | 'INVENTED_NUMBER' | 'CONTACT_ADDED' | 'NUMBER_DROPPED' | 'NAME_ADDED'> }> = [];
     try {
-      // 2. The text the member reads, in their own context.
+      // 2. The text the member reads, in their own context. Only the meeting's recorder receives the organization's glossary; non-recorder attendees stay strictly free of glossary terms.
       const source = await deps.runtime.query<TranscriptSource>('meetings.translation.transcript_source', { meetingId, lineIds: started.lineIds }, as);
       if (source.lines.length === 0) return await fail('TRANSLATION_STALE');
+      const meeting = await deps.runtime.query<{ isRecorder: boolean }>('meetings.meeting.get', { meetingId }, as);
+      const glossary = meeting.isRecorder ? (await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as)).terms : undefined;
       // 3. Each chunk behind the meter, in the scope of this run; a refused or failed chunk after the first keeps the ones finished.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
       for (const lines of planTranscriptChunks(source.lines)) {
         try {
           const done = await withDeadline(
-            withAiScope({ orgId, memberRunId: runId, meter }, () => translateTranscriptChunk({ lines, from: started.from, to: started.to }, bound)),
+            withAiScope({ orgId, memberRunId: runId, meter }, () => translateTranscriptChunk({ lines, from: started.from, to: started.to, ...(glossary ? { glossary } : {}) }, bound)),
             timeoutMs,
           );
           parts.push(...done.parts);

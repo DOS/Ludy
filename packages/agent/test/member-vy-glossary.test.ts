@@ -8,7 +8,13 @@ const ZWSP = String.fromCodePoint(0x200b);
 
 describe('glossaryTerms', () => {
   it('cleans each term, keeps each once whatever its case, in order, and skips what is not a term', () => {
-    expect(glossaryTerms([' Crove ', 'crove', `MISA${ZWSP} AMIS`, '', 5, null, 'an@example.com', 'https://x.vn', '12345', 'Q4 26'])).toEqual(['Crove', 'MISA AMIS', 'Q4 26']);
+    expect(glossaryTerms([' Crove ', 'crove', `MISA${ZWSP} AMIS`, 'Lu\u180b\u206a\uffa0\u{1d173}\u034f\u2065\u{e0000}\u{e0002}dy', '', 5, null, 'an@example.com', 'https://x.vn', '12345', 'Q4 26'])).toEqual([
+      'Crove',
+      'MISA AMIS',
+      'Ludy',
+      'Q4 26',
+    ]);
+    expect(glossaryTerms(['\uffa0\u180b\u034f'])).toEqual([]);
     expect(glossaryTerms(undefined)).toEqual([]);
     expect(glossaryTerms(null)).toEqual([]);
   });
@@ -56,7 +62,7 @@ describe('spellGlossary', () => {
   it('returns Unicode form C and the text itself when there is nothing to do', () => {
     const decomposed = ['a', String.fromCodePoint(0x302), String.fromCodePoint(0x301)].join('');
     expect(spellGlossary(decomposed, [])).toBe(decomposed.normalize('NFC'));
-    expect(spellGlossary('không có gì', ['Crove'])).toBe('không có gì');
+    expect(spellGlossary('không có gì', ['Crove', '', '   '])).toBe('không có gì');
   });
 });
 
@@ -72,5 +78,7 @@ describe('termsInSource and writesTerm', () => {
     expect(writesTerm('Working with MISA  AMIS today', 'MISA AMIS')).toBe(true);
     expect(writesTerm('Working with misa amis today', 'MISA AMIS')).toBe(false);
     expect(writesTerm('Crovey', 'Crove')).toBe(false);
+    expect(writesTerm('anything', '')).toBe(false);
+    expect(writesTerm('anything', '   ')).toBe(false);
   });
 });
