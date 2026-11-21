@@ -17,6 +17,7 @@ import type { MemberRole } from '@crove/db';
 import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSuggestInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
+import { readWithSavedColumns } from './marketplace-column-apply.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { pickCandidates } from './domain/stock-low.ts';
@@ -581,9 +582,15 @@ export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: stri
     if (limitHit && attempt < EXTRACT_LIMIT_RETRIES) throw new Error(`crove-extract stopped at a limit: ${read.code}`);
     return { handled: false };
   }
-  const orders = read.orders;
+  let orders = read.orders;
   // Not an order report: the same call says whether it is an income report, so the caller can skip that reader (and its sandbox parse) for any other sheet (#2753).
-  if (!orders.recognized || orders.platform === null || orders.profile === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+  if (!orders.recognized || orders.platform === null || orders.profile === null) {
+    // No built-in profile fits: a mapping a person saved for a file with this very header row reads it (#4037), and its lines are staged like any report's for a person to approve.
+    const applied = await readWithSavedColumns(deps, orgId, bytes, attempt);
+    if (applied === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+    orders = applied;
+  }
+  if (orders.platform === null || orders.profile === null) return { handled: false };
   if (orders.tooMany) {
     await record('failed', { error: TOO_MANY_LINES });
     return { handled: true };

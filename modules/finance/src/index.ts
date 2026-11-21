@@ -55,6 +55,7 @@ import { marketplaceWorklistQueries } from './marketplace-worklist.ts';
 import { marketplaceIncomeCommands, marketplaceIncomeQueries } from './marketplace-income.ts';
 import { marketplaceRetentionCommands, marketplaceRetentionQueries } from './marketplace-retention.ts';
 import { marketplaceColumnProfileCommands, marketplaceColumnProfileQueries } from './marketplace-column-profile.ts';
+import { marketplaceColumnApplyQueries } from './marketplace-column-apply.ts';
 import { marketplaceCommands, marketplaceQueries } from './marketplace-orders.ts';
 import { einvoiceCorrectionCommands, einvoiceCorrectionQueries } from './einvoice-correction.ts';
 import { einvoiceNoticeCommands, einvoiceNoticeQueries } from './einvoice-notice.ts';
@@ -151,6 +152,7 @@ export {
 export { MARKETPLACE_COLUMN_CHECK_REQUESTED, type MarketplaceColumnsTarget } from './marketplace-columns.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
+export { readWithSavedColumns, type SavedColumns } from './marketplace-column-apply.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 export { createMarketplacePayoutCommands } from './marketplace-payout-record.ts';
 export { createMarketplaceFeeClearingCommands } from './marketplace-fee-clearing-record.ts';
@@ -369,6 +371,7 @@ export const financeQueries = [
   ...stockCloseQueries,
   ...marketplaceQueries,
   ...marketplaceColumnProfileQueries,
+  ...marketplaceColumnApplyQueries,
   ...marketplaceIncomeQueries,
   ...marketplaceBalanceQueries,
   ...marketplaceFactsQueries,
