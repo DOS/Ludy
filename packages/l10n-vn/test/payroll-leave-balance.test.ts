@@ -675,4 +675,129 @@ describe('calculateLeaveBalance (#3348)', () => {
     ).toBe('invalid_input');
     expect(refusal(() => calculateLeaveBalance({ year: '2026', hireDate: '2025-01-01', standardAnnualDays: '367' })).code).toBe('invalid_input');
   });
+
+  it('tracks sickness_bhxh and maternity_bhxh separately without consuming annual leave and honors Decree 145 Art. 65(5)-(6) accrual', () => {
+    // 2 months sickness leave (26 + 26 = 52 days) does not consume annual leave and counts toward all 12 accrual months.
+    const twoMonthsSick = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: [
+        { kind: 'sickness_bhxh', month: '2026-03', days: '26' },
+        { kind: 'sickness_bhxh', month: '2026-04', days: '26' },
+        { kind: 'annual_leave', month: '2026-06', days: '2' },
+      ],
+    });
+    expect(twoMonthsSick).toMatchObject({
+      eligibleMonths: 12,
+      entitlementDays: '12',
+      takenAnnualDays: '2',
+      remainingAnnualDays: '10',
+      unpaidDaysByMonth: {},
+      sicknessBhxhDays: '52',
+      maternityBhxhDays: '0',
+      sicknessBhxhDaysByMonth: { '2026-03': '26', '2026-04': '26' },
+      maternityBhxhDaysByMonth: {},
+    });
+
+    // Sickness leave exceeding 2 months: 14 extra days in May drops May below 50% (12/26 < 0.5 -> 11 eligible months),
+    // while 13 extra days in May keeps May at exactly 50% (13/26 = 0.5 -> 12 eligible months).
+    const sickOverflow = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: [
+        { kind: 'sickness_bhxh', month: '2026-03', days: '26' },
+        { kind: 'sickness_bhxh', month: '2026-04', days: '26' },
+        { kind: 'sickness_bhxh', month: '2026-05', days: '14' },
+      ],
+    });
+    expect(sickOverflow).toMatchObject({ eligibleMonths: 11, entitlementDays: '11', sicknessBhxhDays: '66' });
+
+    const sickHalfMonthEdge = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: [
+        { kind: 'sickness_bhxh', month: '2026-03', days: '26' },
+        { kind: 'sickness_bhxh', month: '2026-04', days: '26' },
+        { kind: 'sickness_bhxh', month: '2026-05', days: '13' },
+      ],
+    });
+    expect(sickHalfMonthEdge).toMatchObject({ eligibleMonths: 12, entitlementDays: '12', sicknessBhxhDays: '65' });
+
+    // 6 months consecutive maternity_bhxh counts toward annual leave accrual; 7th consecutive month overflows the 6-month event cap.
+    const sixMonthsMaternity = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: ['01', '02', '03', '04', '05', '06'].map((mm) => ({
+        kind: 'maternity_bhxh' as const,
+        month: `2026-${mm}`,
+        days: '26',
+      })),
+    });
+    expect(sixMonthsMaternity).toMatchObject({
+      eligibleMonths: 12,
+      entitlementDays: '12',
+      takenAnnualDays: '0',
+      maternityBhxhDays: '156',
+      unpaidDaysByMonth: {},
+    });
+
+    const sevenMonthsMaternity = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: ['01', '02', '03', '04', '05', '06', '07'].map((mm) => ({
+        kind: 'maternity_bhxh' as const,
+        month: `2026-${mm}`,
+        days: '26',
+      })),
+    });
+    expect(sevenMonthsMaternity).toMatchObject({
+      eligibleMonths: 11,
+      entitlementDays: '11',
+      maternityBhxhDays: '182',
+    });
+
+    // Two separate maternity events separated by active work (Jan-Feb = 2m, worked Mar-Jun, Jul-Dec = 6m) each get up to 6 months.
+    const twoEvents = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: ['01', '02', '07', '08', '09', '10', '11', '12'].map((mm) => ({
+        kind: 'maternity_bhxh' as const,
+        month: `2026-${mm}`,
+        days: '26',
+      })),
+    });
+    expect(twoEvents).toMatchObject({
+      eligibleMonths: 12,
+      entitlementDays: '12',
+      maternityBhxhDays: '208',
+    });
+
+    // Works consistently with workedDaysByMonth and independent approved unpaid_leave allowance.
+    const withWorkedAndApprovedUnpaid = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      workedDaysByMonth: { '2026-05': '12' },
+      entries: [
+        { kind: 'unpaid_leave', month: '2026-01', days: '26', approved: true },
+        { kind: 'sickness_bhxh', month: '2026-05', days: '14' },
+        { kind: 'maternity_bhxh', month: '2026-08', days: '26' },
+      ],
+    });
+    expect(withWorkedAndApprovedUnpaid).toMatchObject({
+      eligibleMonths: 12,
+      entitlementDays: '12',
+      sicknessBhxhDays: '14',
+      maternityBhxhDays: '26',
+      unpaidDaysByMonth: { '2026-01': '26' },
+      sicknessBhxhDaysByMonth: { '2026-05': '14' },
+      maternityBhxhDaysByMonth: { '2026-08': '26' },
+    });
+  });
 });

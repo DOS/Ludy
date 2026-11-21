@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
+import type {
+  SignContractDraftVariables,
+  SignDiffCompareInput,
+  SignDiffCompareResult,
+  SignDrafterProposeInput,
+  SignDrafterProposeResult,
+  SignDrafterRenderPdfResult,
+  SignSharedKeyTerm,
+  SignSharedSummary,
+} from '@crove/kernel-contract';
 import { client, fetchFile, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
 import type {
@@ -13,6 +23,17 @@ import type {
   SignSignerRole,
   SignSignerStatus,
 } from './sign-fields.ts';
+
+export type {
+  SignContractDraftVariables,
+  SignDiffCompareInput,
+  SignDiffCompareResult,
+  SignDrafterProposeInput,
+  SignDrafterProposeResult,
+  SignDrafterRenderPdfResult,
+  SignSharedKeyTerm,
+  SignSharedSummary,
+};
 
 export interface SignEnvelopeSummary {
   id: string;
@@ -263,6 +284,7 @@ export type PublicSignViewState =
       requireEmailOtp?: boolean;
       otpVerified?: boolean;
       fields: readonly PublicSignField[];
+      sharedSummary?: SignSharedSummary | null;
     }
   | {
       state: 'otp_required';
@@ -341,6 +363,12 @@ export const signApi = {
     expiresAt?: string | null;
     autoRemindBeforeExpiry?: boolean;
   }) => client.sign.envelope.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  setEnvelopeSharedSummary: (input: {
+    envelopeId: string;
+    shareSummaryWithSigners: boolean;
+    sharedSummary: SignSharedSummary | null;
+    expectedVersion?: number;
+  }) => client.sign.envelope.shared_summary_set({ ...input, idempotencyKey: crypto.randomUUID() }),
   sendEnvelope: (envelopeId: string) => client.sign.envelope.send({ envelopeId }),
   remindEnvelope: (envelopeId: string, signerId?: string) =>
     client.sign.envelope.remind({ envelopeId, ...(signerId ? { signerId } : {}), idempotencyKey: crypto.randomUUID() }),
@@ -394,6 +422,12 @@ export const signApi = {
   getAiAnalysis: async (envelopeId: string): Promise<SignAiAnalysis | null> => {
     return normalizeAiAnalysis(await client.sign.ai.get({ envelopeId }));
   },
+  comparePdfVersions: (input: SignDiffCompareInput): Promise<SignDiffCompareResult> =>
+    client.sign.diff.compare(input),
+  proposeContractClauses: (input: SignDrafterProposeInput): Promise<SignDrafterProposeResult> =>
+    client.sign.drafter.proposeClauses(input),
+  renderStarterContractPdf: (input: SignContractDraftVariables): Promise<SignDrafterRenderPdfResult> =>
+    client.sign.drafter.renderPdf(input),
   listTemplates: (input: { status?: SignTemplateStatus; query?: string; limit?: number } = {}) =>
     client.sign.template.list(input),
   getTemplate: (templateId: string) => client.sign.template.get({ templateId }),
@@ -419,6 +453,11 @@ export const signApi = {
     expiresInHours?: number | null;
     status?: 'draft' | 'active';
   }) => client.sign.template.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  setTemplateSharedSummary: (input: {
+    templateId: string;
+    shareSummaryWithSigners: boolean;
+    sharedSummary: SignSharedSummary | null;
+  }) => client.sign.template.shared_summary_set({ ...input, idempotencyKey: crypto.randomUUID() }),
   setTemplateRoles: (
     templateId: string,
     roles: Array<{
@@ -567,6 +606,8 @@ export interface SignTemplateDetail {
     pageCount: number | null;
     pageDimensions: Array<{ page: number; widthPt: number; heightPt: number; rotation: number }> | null;
     detectedTags?: SignDetectedTag[];
+    shareSummaryWithSigners?: boolean;
+    sharedSummary?: SignSharedSummary | null;
     version: number;
     archivedAt: string | null;
     createdBy: string;
@@ -623,6 +664,29 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
   };
 }
 
+function normalizePublicSharedSummary(raw: unknown): SignSharedSummary | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const summaryText = typeof obj.summaryText === 'string' && obj.summaryText.trim().length > 0 ? obj.summaryText.trim() : null;
+  const rawTerms = Array.isArray(obj.keyTerms) ? obj.keyTerms : [];
+  const keyTerms: SignSharedKeyTerm[] = rawTerms.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const item = entry as Record<string, unknown>;
+    const label = typeof item.label === 'string' ? item.label.trim() : '';
+    const value = typeof item.value === 'string' ? item.value.trim() : '';
+    if (!label || !value) return [];
+    const pageNumber =
+      typeof item.pageNumber === 'number' && Number.isInteger(item.pageNumber) && item.pageNumber >= 1
+        ? item.pageNumber
+        : null;
+    const quoteExcerpt =
+      typeof item.quoteExcerpt === 'string' && item.quoteExcerpt.trim().length > 0 ? item.quoteExcerpt.trim() : null;
+    return [{ label, value, pageNumber, quoteExcerpt }];
+  });
+  if (summaryText === null && keyTerms.length === 0) return null;
+  return { summaryText, keyTerms };
+}
+
 // Public signing ceremony endpoints: token sits exclusively inside JSON POST bodies.
 export const publicSignApi = {
   view: async (token: string): Promise<PublicSignViewState> => {
@@ -630,6 +694,7 @@ export const publicSignApi = {
     if (raw.state === 'ready') {
       const legacySigner = (raw.signer && typeof raw.signer === 'object' ? raw.signer : null) as Record<string, unknown> | null;
       const rawFields = Array.isArray(raw.fields) ? (raw.fields as Array<Record<string, unknown>>) : [];
+      const sharedSummary = normalizePublicSharedSummary(raw.sharedSummary);
       return {
         state: 'ready',
         orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
@@ -644,6 +709,7 @@ export const publicSignApi = {
         ...(typeof raw.requireEmailOtp === 'boolean' ? { requireEmailOtp: raw.requireEmailOtp } : {}),
         ...(typeof raw.otpVerified === 'boolean' ? { otpVerified: raw.otpVerified } : {}),
         fields: rawFields.map(normalizePublicField),
+        ...(sharedSummary ? { sharedSummary } : {}),
       };
     }
     return raw as unknown as PublicSignViewState;
@@ -732,6 +798,7 @@ export type PublicDirectSignViewState =
       pageCount: number;
       pageDimensions?: Array<{ pageNumber: number; widthPt: number; heightPt: number }>;
       fieldCount: number;
+      sharedSummary?: SignSharedSummary | null;
     };
 
 export interface PublicDirectOtpRequestResult {
@@ -792,6 +859,9 @@ export const publicDirectSignApi = {
         ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> }
         : {}),
       fieldCount: Number(raw.fieldCount ?? 0),
+      ...(normalizePublicSharedSummary(raw.sharedSummary)
+        ? { sharedSummary: normalizePublicSharedSummary(raw.sharedSummary) }
+        : {}),
     };
   },
 

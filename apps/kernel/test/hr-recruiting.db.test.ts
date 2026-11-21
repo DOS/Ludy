@@ -13,11 +13,13 @@ import {
   HR_ERASED_NAME,
   type HrCandidateEraseResult,
   type HrCandidateHireResult,
+  type HrCandidateInterviewCancelled,
   type HrCandidateInterviewScheduled,
   type HrCandidateView,
   type HrCandidateWritten,
   type HrDepartmentWritten,
   type HrEmployee,
+  type HrInterviewerOption,
   type HrInterviewSlotsResult,
   type HrOpeningView,
   type HrOpeningWritten,
@@ -66,9 +68,15 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     }
   }
 
-  async function org() {
+  async function org(names?: Partial<Record<'owner' | 'admin' | 'member' | 'viewer', string | null>>) {
     const tag = randomUUID().slice(0, 8);
-    const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'hrrec', subject: `${name}-${tag}`, email: `${name}-${tag}@hr.test`, name: null });
+    const person = (roleName: 'owner' | 'admin' | 'member' | 'viewer') =>
+      upsertIdentity(createDb(pool), {
+        issuer: 'hrrec',
+        subject: `${roleName}-${tag}`,
+        email: `${roleName}-${tag}@hr.test`,
+        name: names?.[roleName] ?? null,
+      });
     const owner = await person('owner');
     const admin = await person('admin');
     const member = await person('member');
@@ -340,6 +348,8 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const compAfterCancel = await o.query<HrCandidateView>(o.admin, 'hr.recruiting.candidate.get', { candidateId: competitor.candidateId });
     expect(compAfterCancel.interviewEventId).toBeNull();
     expect(compAfterCancel.interviewStartsAt).toBeNull();
+    expect(compAfterCancel.interviewerUserId).toBeNull();
+    expect(compAfterCancel.interviewerName).toBeNull();
     const compBriefRead = await o.query<{ input: { hasScheduledInterview: boolean } }>(o.admin, 'hr.recruiting.brief.read', {
       candidateId: competitor.candidateId,
       lang: 'vi',
@@ -756,6 +766,8 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     expect(cand2AfterReject.interviewEventId).toBeNull();
     expect(cand2AfterReject.interviewStartsAt).toBeNull();
     expect(cand2AfterReject.interviewEndsAt).toBeNull();
+    expect(cand2AfterReject.interviewerUserId).toBeNull();
+    expect(cand2AfterReject.interviewerName).toBeNull();
 
     // Case C (Item 3): Candidate #3 has an active future interview, is direct-hired, and then erased -> active calendar event auto-cancels on erase!
     const cand3 = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
@@ -904,6 +916,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     await expect(o.query(o.owner, 'hr.recruiting.opening.list', {})).rejects.toMatchObject(moduleOff);
     await expect(o.query(o.owner, 'hr.recruiting.candidate.list', {})).rejects.toMatchObject(moduleOff);
     await expect(o.query(o.owner, 'hr.recruiting.candidate.get', { candidateId: rejectedCand.candidateId })).rejects.toMatchObject(moduleOff);
+    await expect(o.query(o.owner, 'hr.recruiting.interviewers.list', {})).rejects.toMatchObject(moduleOff);
     await expect(o.query(o.owner, 'hr.recruiting.interview_slots', { from: fromIso, to: toIso })).rejects.toMatchObject(moduleOff);
     await expect(o.query(o.owner, 'hr.recruiting.brief.read', { candidateId: rejectedCand.candidateId, lang: 'vi' })).rejects.toMatchObject(moduleOff);
     const { postBrief } = makeHttp(o);
@@ -924,6 +937,9 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
         startsAt: slots.slots[0]!.startIso,
         endsAt: slots.slots[0]!.endIso,
       }),
+    ).rejects.toMatchObject(moduleOff);
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.cancel_interview', { candidateId: activePipelineCand.candidateId }),
     ).rejects.toMatchObject(moduleOff);
     await expect(
       o.exec(o.owner, 'hr.recruiting.candidate.hire', {
@@ -1031,6 +1047,331 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     expect(restoredView.phone).toBeNull();
     expect(restoredView.notes).toBeNull();
     expect(restoredView.interviewEventId).toBeNull();
+    expect(restoredView.interviewerUserId).toBeNull();
+    expect(restoredView.interviewerName).toBeNull();
     expect(restoredView.erasedAt).not.toBeNull();
+  });
+
+  it('lists eligible interviewers (excluding viewers), checks target interviewer availability/double-booking, switches interviewers on reschedule, and cancels interview without changing stage (#4299)', async () => {
+    const o = await org({
+      owner: 'Chủ Doanh Nghiệp',
+      admin: 'Quản Lý Nhân Sự',
+      member: 'Trưởng Nhóm Kỹ Thuật',
+      viewer: 'Người Chỉ Xem',
+    });
+    const other = await org({ owner: 'Chủ Công Ty Khác' });
+
+    // Also add a second member with `name: null` to verify email fallback in crove_kernel.member_profiles enrichment.
+    const memberEmailFallback = await upsertIdentity(createDb(pool), {
+      issuer: 'hrrec',
+      subject: `member-noname-${randomUUID().slice(0, 8)}`,
+      email: 'no-name-member@hr.test',
+      name: null,
+    });
+    await withAdmin((c) =>
+      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, memberEmailFallback]),
+    );
+
+    // 1. `hr.recruiting.interviewers.list`: managers-only, returns owner/admin/member with profile names, excludes viewer and other org.
+    await expect(o.query(o.member, 'hr.recruiting.interviewers.list', {})).rejects.toMatchObject({ status: 403 });
+    await expect(o.query(o.viewer, 'hr.recruiting.interviewers.list', {})).rejects.toMatchObject({ status: 403 });
+
+    const interviewers = await o.query<HrInterviewerOption[]>(o.admin, 'hr.recruiting.interviewers.list', {});
+    expect(interviewers).toEqual(
+      expect.arrayContaining([
+        { userId: o.owner, displayName: 'Chủ Doanh Nghiệp', role: 'owner' },
+        { userId: o.admin, displayName: 'Quản Lý Nhân Sự', role: 'admin' },
+        { userId: o.member, displayName: 'Trưởng Nhóm Kỹ Thuật', role: 'member' },
+        { userId: memberEmailFallback, displayName: 'no-name-member@hr.test', role: 'member' },
+      ]),
+    );
+    expect(interviewers.some((i) => i.userId === o.viewer)).toBe(false);
+    expect(interviewers.some((i) => i.userId === other.owner)).toBe(false);
+
+    // 2. Rejects viewer and cross-org member on both `interview_slots` and `schedule_interview` with 422 HR_INTERVIEWER_INVALID.
+    const opening = await o.exec<HrOpeningWritten>(o.owner, 'hr.recruiting.opening.add', {
+      title: 'Kỹ sư Backend',
+      contractType: 'indefinite',
+      region: 'I',
+    });
+    const cand1 = await o.exec<HrCandidateWritten>(o.admin, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Nguyễn Hữu Phước',
+      email: 'phuoc@example.com',
+      phone: '0900000003',
+    });
+    const cand2 = await o.exec<HrCandidateWritten>(o.admin, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Đào Ngọc Ánh',
+    });
+
+    const fromIso = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const toIso = new Date(Date.now() + 14 * 86_400_000).toISOString();
+    const baseMemberSlots = await o.query<HrInterviewSlotsResult>(o.admin, 'hr.recruiting.interview_slots', {
+      interviewerUserId: o.member,
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 8,
+    });
+    expect(baseMemberSlots.slots.length).toBeGreaterThanOrEqual(4);
+    const slot0 = baseMemberSlots.slots[0]!;
+    const slot1 = baseMemberSlots.slots[1]!;
+    const slot2 = baseMemberSlots.slots[2]!;
+
+    await expect(
+      o.query(o.admin, 'hr.recruiting.interview_slots', { interviewerUserId: o.viewer, from: fromIso, to: toIso }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEWER_INVALID', status: 422 });
+    await expect(
+      o.query(o.admin, 'hr.recruiting.interview_slots', { interviewerUserId: other.owner, from: fromIso, to: toIso }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEWER_INVALID', status: 422 });
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+        candidateId: cand1.candidateId,
+        interviewerUserId: o.viewer,
+        startsAt: slot0.startIso,
+        endsAt: slot0.endIso,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEWER_INVALID', status: 422 });
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+        candidateId: cand1.candidateId,
+        interviewerUserId: other.owner,
+        startsAt: slot0.startIso,
+        endsAt: slot0.endIso,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEWER_INVALID', status: 422 });
+
+    // 3. Checks target interviewer's OWN working hours and busy events (not caller's).
+    // Save custom working hours for member while admin keeps default unsaved hours, then put a busy event on
+    // owner's calendar at slot0 and on member's calendar at slot1; querying member's slots reads member's saved
+    // hours and skips slot1 while still offering slot0.
+    await o.exec(o.member, 'kernel.calendar.hours.save', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      windows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: 8 * 60, end: 17 * 60 })),
+    });
+    const adminDefaultSlots = await o.query<HrInterviewSlotsResult>(o.admin, 'hr.recruiting.interview_slots', {
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 8,
+    });
+    expect(adminDefaultSlots.hoursSaved).toBe(false);
+
+    await o.exec(o.owner, 'kernel.calendar.event.add', {
+      startsAt: slot0.startIso,
+      endsAt: slot0.endIso,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      title: 'Họp riêng chủ doanh nghiệp',
+      kind: 'manual',
+    });
+    await o.exec(o.member, 'kernel.calendar.event.add', {
+      startsAt: slot1.startIso,
+      endsAt: slot1.endIso,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      title: 'Việc bận kỹ thuật',
+      kind: 'manual',
+    });
+
+    const memberSlotsWithBusy = await o.query<HrInterviewSlotsResult>(o.admin, 'hr.recruiting.interview_slots', {
+      interviewerUserId: o.member,
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 8,
+    });
+    expect(memberSlotsWithBusy.hoursSaved).toBe(true);
+    expect(memberSlotsWithBusy.slots.some((s) => s.startIso === slot0.startIso)).toBe(true);
+    expect(memberSlotsWithBusy.slots.some((s) => s.startIso === slot1.startIso)).toBe(false);
+
+    // Book cand1 on member's calendar at slot0 (even though owner is busy at slot0).
+    const bookedMember = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand1.candidateId,
+      interviewerUserId: o.member,
+      startsAt: slot0.startIso,
+      endsAt: slot0.endIso,
+    });
+    expect(bookedMember.interviewerUserId).toBe(o.member);
+    expect(bookedMember.stage).toBe('interview');
+
+    const memberEventRow = await withAdmin(async (c) =>
+      (
+        await c.query<{ user_id: string; created_by: string; title: string | null; status: string }>(
+          `SELECT user_id, created_by, title, status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, bookedMember.eventId],
+        )
+      ).rows[0],
+    );
+    expect(memberEventRow).toEqual({
+      user_id: o.member,
+      created_by: o.admin,
+      title: 'Phỏng vấn: Kỹ sư Backend',
+      status: 'active',
+    });
+    expect(memberEventRow?.title).not.toContain('Nguyễn Hữu Phước');
+
+    const cand1View = await o.query<HrCandidateView>(o.owner, 'hr.recruiting.candidate.get', { candidateId: cand1.candidateId });
+    expect(cand1View.interviewerUserId).toBe(o.member);
+    expect(cand1View.interviewerName).toBe('Trưởng Nhóm Kỹ Thuật');
+
+    const candList = await o.query<HrCandidateView[]>(o.owner, 'hr.recruiting.candidate.list', { openingId: opening.openingId });
+    const cand1Listed = candList.find((c) => c.id === cand1.candidateId);
+    expect(cand1Listed?.interviewerUserId).toBe(o.member);
+    expect(cand1Listed?.interviewerName).toBe('Trưởng Nhóm Kỹ Thuật');
+
+    // Double-booking the same member at slot0 fails 409, while booking admin at slot0 succeeds.
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+        candidateId: cand2.candidateId,
+        interviewerUserId: o.member,
+        startsAt: slot0.startIso,
+        endsAt: slot0.endIso,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEW_SLOT_TAKEN', status: 409 });
+
+    // Also verify booking member at member's own busy slot1 fails 409.
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+        candidateId: cand2.candidateId,
+        interviewerUserId: o.member,
+        startsAt: slot1.startIso,
+        endsAt: slot1.endIso,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_INTERVIEW_SLOT_TAKEN', status: 409 });
+
+    const bookedAdminSameTime = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand2.candidateId,
+      interviewerUserId: o.admin,
+      startsAt: slot0.startIso,
+      endsAt: slot0.endIso,
+    });
+    expect(bookedAdminSameTime.interviewerUserId).toBe(o.admin);
+
+    // 4. Switching interviewer on reschedule cancels old interviewer's event and frees old interviewer's slot.
+    const switchedToAdmin = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand1.candidateId,
+      interviewerUserId: o.admin,
+      startsAt: slot2.startIso,
+      endsAt: slot2.endIso,
+    });
+    expect(switchedToAdmin.interviewerUserId).toBe(o.admin);
+    expect(switchedToAdmin.eventId).not.toBe(bookedMember.eventId);
+
+    const oldMemberEvent = await withAdmin(async (c) =>
+      (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, bookedMember.eventId],
+        )
+      ).rows[0],
+    );
+    expect(oldMemberEvent).toEqual({ status: 'cancelled', cancelled_by: o.admin });
+
+    const memberSlotsAfterSwitch = await o.query<HrInterviewSlotsResult>(o.admin, 'hr.recruiting.interview_slots', {
+      interviewerUserId: o.member,
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 8,
+    });
+    expect(memberSlotsAfterSwitch.slots.some((s) => s.startIso === slot0.startIso)).toBe(true);
+
+    // Rescheduling on the SAME interviewer (admin) overlapping slot2 works via exceptEventId.
+    const shiftedStart = new Date(Date.parse(slot2.startIso) + 15 * 60_000).toISOString();
+    const shiftedEnd = new Date(Date.parse(slot2.endIso) + 15 * 60_000).toISOString();
+    const sameInterviewerOverlap = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand1.candidateId,
+      interviewerUserId: o.admin,
+      startsAt: shiftedStart,
+      endsAt: shiftedEnd,
+    });
+    expect(sameInterviewerOverlap.interviewerUserId).toBe(o.admin);
+    expect(sameInterviewerOverlap.eventId).not.toBe(switchedToAdmin.eventId);
+
+    // 5. Standalone cancel (`hr.recruiting.candidate.cancel_interview`): RBAC/cross-org checks, frees slot, preserves 'interview' stage.
+    await expect(
+      o.exec(o.member, 'hr.recruiting.candidate.cancel_interview', { candidateId: cand1.candidateId }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      o.exec(o.viewer, 'hr.recruiting.candidate.cancel_interview', { candidateId: cand1.candidateId }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      other.exec(other.owner, 'hr.recruiting.candidate.cancel_interview', { candidateId: cand1.candidateId }),
+    ).rejects.toMatchObject({ code: 'HR_CANDIDATE_NOT_FOUND', status: 404 });
+
+    const cancelled = await o.exec<HrCandidateInterviewCancelled>(o.owner, 'hr.recruiting.candidate.cancel_interview', {
+      candidateId: cand1.candidateId,
+    });
+    expect(cancelled).toEqual({
+      candidateId: cand1.candidateId,
+      cancelledEventId: sameInterviewerOverlap.eventId,
+      stage: 'interview',
+    });
+
+    const cancelledEventRow = await withAdmin(async (c) =>
+      (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, sameInterviewerOverlap.eventId],
+        )
+      ).rows[0],
+    );
+    expect(cancelledEventRow).toEqual({ status: 'cancelled', cancelled_by: o.owner });
+
+    const cand1AfterCancel = await o.query<HrCandidateView>(o.owner, 'hr.recruiting.candidate.get', { candidateId: cand1.candidateId });
+    expect(cand1AfterCancel.stage).toBe('interview');
+    expect(cand1AfterCancel.interviewEventId).toBeNull();
+    expect(cand1AfterCancel.interviewStartsAt).toBeNull();
+    expect(cand1AfterCancel.interviewEndsAt).toBeNull();
+    expect(cand1AfterCancel.interviewerUserId).toBeNull();
+    expect(cand1AfterCancel.interviewerName).toBeNull();
+
+    const briefAfterCancel = await o.query<{ input: { hasScheduledInterview: boolean } }>(o.owner, 'hr.recruiting.brief.read', {
+      candidateId: cand1.candidateId,
+      lang: 'vi',
+    });
+    expect(briefAfterCancel.input.hasScheduledInterview).toBe(false);
+
+    // Repeating cancel_interview is idempotent and audit keeps IDs only without PII.
+    const repeatedCancel = await o.exec<HrCandidateInterviewCancelled>(o.owner, 'hr.recruiting.candidate.cancel_interview', {
+      candidateId: cand1.candidateId,
+    });
+    expect(repeatedCancel).toEqual({
+      candidateId: cand1.candidateId,
+      cancelledEventId: null,
+      stage: 'interview',
+    });
+
+    const cancelAudit = await withAdmin(async (c) =>
+      (
+        await c.query<{ outcome: string; detail: Record<string, unknown>; row: string }>(
+          `SELECT outcome, detail, audit_event::text AS row
+           FROM crove_kernel.audit_event
+           WHERE org_id = $1 AND command = 'hr.recruiting.candidate.cancel_interview' AND target_id = $2
+             AND outcome = 'ok'
+           ORDER BY id ASC`,
+          [o.orgId, cand1.candidateId],
+        )
+      ).rows,
+    );
+    expect(cancelAudit.length).toBe(2);
+    expect(cancelAudit[0]?.detail).toMatchObject({
+      candidateId: cand1.candidateId,
+      stage: 'interview',
+      cancelledEventId: sameInterviewerOverlap.eventId,
+      interviewerUserId: o.admin,
+    });
+    for (const row of cancelAudit) {
+      expect(row.row).not.toContain('Nguyễn Hữu Phước');
+      expect(row.row).not.toContain('phuoc@example.com');
+      expect(row.row).not.toContain('0900000003');
+    }
+
+    // Erased candidate rejects cancel_interview cleanly with 409 HR_CANDIDATE_ERASED.
+    await o.exec(o.owner, 'hr.recruiting.candidate.move_stage', { candidateId: cand1.candidateId, toStage: 'rejected' });
+    await o.exec(o.owner, 'hr.recruiting.candidate.erase', { candidateId: cand1.candidateId }, asMfa(o.owner));
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.cancel_interview', { candidateId: cand1.candidateId }),
+    ).rejects.toMatchObject({ code: 'HR_CANDIDATE_ERASED', status: 409 });
   });
 });

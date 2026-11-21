@@ -22,6 +22,7 @@ import {
   zHrCandidateMoveStage,
   zHrCandidateRef,
   zHrCandidateScheduleInterview,
+  zHrInterviewerList,
   zHrInterviewSlotsAsk,
   zHrOpeningAdd,
   zHrOpeningClose,
@@ -33,11 +34,13 @@ import {
   zonedInstant,
   type HrCandidateEraseResult,
   type HrCandidateHireResult,
+  type HrCandidateInterviewCancelled,
   type HrCandidateInterviewScheduled,
   type HrCandidateStage,
   type HrCandidateView,
   type HrCandidateWritten,
   type HrContractType,
+  type HrInterviewerOption,
   type HrInterviewSlotsResult,
   type HrJobOpeningStatus,
   type HrOpeningView,
@@ -46,7 +49,7 @@ import {
   type HrRegion,
   type WorkingHours,
 } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import {
   INTERVIEW_DURATION_MAX_MINUTES,
   INTERVIEW_DURATION_MIN_MINUTES,
@@ -191,6 +194,50 @@ function assertBudgetOrder(minWage: string | null, maxWage: string | null): void
 const openingNotFound = () => new DomainError('HR_OPENING_NOT_FOUND', 404, 'Không tìm thấy vị trí tuyển dụng này');
 const candidateNotFound = () => new DomainError('HR_CANDIDATE_NOT_FOUND', 404, 'Không tìm thấy ứng viên này');
 const candidateErased = () => new DomainError('HR_CANDIDATE_ERASED', 409, 'Hồ sơ ứng viên này đã được xóa theo yêu cầu');
+
+const INTERVIEWER_ROLES = ['owner', 'admin', 'member'] as const;
+type InterviewerRole = (typeof INTERVIEWER_ROLES)[number];
+const INTERVIEWER_ROLE_ORDER: Record<InterviewerRole, number> = { owner: 0, admin: 1, member: 2 };
+
+async function resolveInterviewerUserId(
+  ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor'>,
+  requestedUserId?: string,
+): Promise<string> {
+  if (requestedUserId === undefined) return userOf(ctx.actor);
+  const member = await ctx.trx
+    .selectFrom('crove_kernel.tenant_member')
+    .select(['user_id', 'role'])
+    .where('org_id', '=', ctx.orgId)
+    .where('user_id', '=', requestedUserId)
+    .where('role', 'in', [...INTERVIEWER_ROLES])
+    .executeTakeFirst();
+  if (!member) {
+    throw new DomainError(
+      'HR_INTERVIEWER_INVALID',
+      422,
+      'Người phỏng vấn phải là thành viên hoạt động của tổ chức (không phải người chỉ xem)',
+    );
+  }
+  return member.user_id;
+}
+
+async function loadInterviewerNames(
+  ctx: Pick<QueryContext, 'trx'>,
+  userIds: readonly (string | null | undefined)[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  const names = new Map<string, string>();
+  if (unique.length === 0) return names;
+  // Member names/emails come from the control plane solely through crove_kernel.member_profiles(uuid[]).
+  const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
+    SELECT user_id, email, display_name
+      FROM crove_kernel.member_profiles(${unique}::uuid[])`.execute(ctx.trx);
+  for (const r of rows) {
+    const label = r.display_name?.trim() || r.email?.trim() || r.user_id;
+    names.set(r.user_id, label);
+  }
+  return names;
+}
 
 async function hasActiveInterview(ctx: Pick<CommandContext, 'trx' | 'orgId'>, interviewEventId: string | null): Promise<boolean> {
   if (!interviewEventId) return false;
@@ -404,33 +451,38 @@ export const openingList = defineQuery({
   },
 });
 
-function toCandidateView(r: {
-  id: string;
-  legal_entity_id: string;
-  opening_id: string | null;
-  opening_title: string | null;
-  opening_department_id: string | null;
-  opening_department_name: string | null;
-  display_name: string;
-  email: string | null;
-  phone: string | null;
-  stage: HrCandidateStage;
-  years_experience: number | null;
-  matched_skills: string[];
-  expected_wage: string | null;
-  agreed_wage: string | null;
-  planned_start_on: Date | string | null;
-  notes: string | null;
-  active_interview_event_id: string | null;
-  interview_starts_at: Date | string | null;
-  interview_ends_at: Date | string | null;
-  hired_employee_id: string | null;
-  erased_at: Date | string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
-}): HrCandidateView {
+function toCandidateView(
+  r: {
+    id: string;
+    legal_entity_id: string;
+    opening_id: string | null;
+    opening_title: string | null;
+    opening_department_id: string | null;
+    opening_department_name: string | null;
+    display_name: string;
+    email: string | null;
+    phone: string | null;
+    stage: HrCandidateStage;
+    years_experience: number | null;
+    matched_skills: string[];
+    expected_wage: string | null;
+    agreed_wage: string | null;
+    planned_start_on: Date | string | null;
+    notes: string | null;
+    active_interview_event_id: string | null;
+    interviewer_user_id: string | null;
+    interview_starts_at: Date | string | null;
+    interview_ends_at: Date | string | null;
+    hired_employee_id: string | null;
+    erased_at: Date | string | null;
+    created_at: Date | string;
+    updated_at: Date | string;
+  },
+  interviewerNames: ReadonlyMap<string, string>,
+): HrCandidateView {
   const erased = r.erased_at !== null;
   const hasActive = r.active_interview_event_id !== null;
+  const interviewerUserId = hasActive ? r.interviewer_user_id : null;
   return {
     id: r.id,
     legalEntityId: r.legal_entity_id,
@@ -451,6 +503,8 @@ function toCandidateView(r: {
     interviewEventId: r.active_interview_event_id,
     interviewStartsAt: hasActive ? isoInstantNullable(r.interview_starts_at) : null,
     interviewEndsAt: hasActive ? isoInstantNullable(r.interview_ends_at) : null,
+    interviewerUserId,
+    interviewerName: interviewerUserId ? (interviewerNames.get(interviewerUserId) ?? null) : null,
     hiredEmployeeId: r.hired_employee_id,
     erasedAt: isoInstantNullable(r.erased_at),
     createdAt: isoInstant(r.created_at),
@@ -488,6 +542,7 @@ export const candidateList = defineQuery({
         'c.planned_start_on',
         'c.notes',
         'e.id as active_interview_event_id',
+        'e.user_id as interviewer_user_id',
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
@@ -506,7 +561,11 @@ export const candidateList = defineQuery({
       );
     }
     const rows = await q.orderBy('c.updated_at', 'desc').orderBy('c.id', 'desc').limit(input.limit).execute();
-    return rows.map(toCandidateView);
+    const interviewerNames = await loadInterviewerNames(
+      ctx,
+      rows.map((r) => (r.active_interview_event_id !== null ? r.interviewer_user_id : null)),
+    );
+    return rows.map((r) => toCandidateView(r, interviewerNames));
   },
 });
 
@@ -541,6 +600,7 @@ export const candidateGet = defineQuery({
         'c.planned_start_on',
         'c.notes',
         'e.id as active_interview_event_id',
+        'e.user_id as interviewer_user_id',
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
@@ -552,7 +612,43 @@ export const candidateGet = defineQuery({
       .where('c.id', '=', input.candidateId)
       .executeTakeFirst();
     if (!row) throw candidateNotFound();
-    return toCandidateView(row);
+    const interviewerNames = await loadInterviewerNames(
+      ctx,
+      row.active_interview_event_id !== null ? [row.interviewer_user_id] : [],
+    );
+    return toCandidateView(row, interviewerNames);
+  },
+});
+
+export const interviewersList = defineQuery({
+  name: 'hr.recruiting.interviewers.list',
+  input: zHrInterviewerList,
+  access: MANAGERS,
+  handler: async (ctx): Promise<HrInterviewerOption[]> => {
+    const memberRows = await ctx.trx
+      .selectFrom('crove_kernel.tenant_member')
+      .select(['user_id', 'role'])
+      .where('org_id', '=', ctx.orgId)
+      .where('role', 'in', [...INTERVIEWER_ROLES])
+      .orderBy('created_at', 'asc')
+      .orderBy('user_id', 'asc')
+      .execute();
+    const names = await loadInterviewerNames(
+      ctx,
+      memberRows.map((m) => m.user_id),
+    );
+    return memberRows
+      .map((m) => ({
+        userId: m.user_id,
+        displayName: names.get(m.user_id) ?? m.user_id,
+        role: m.role as InterviewerRole,
+      }))
+      .sort(
+        (a, b) =>
+          INTERVIEWER_ROLE_ORDER[a.role] - INTERVIEWER_ROLE_ORDER[b.role] ||
+          a.displayName.localeCompare(b.displayName, 'vi') ||
+          a.userId.localeCompare(b.userId),
+      );
   },
 });
 
@@ -561,15 +657,15 @@ export const interviewSlotsQuery = defineQuery({
   input: zHrInterviewSlotsAsk,
   access: MANAGERS,
   handler: async (ctx, input): Promise<HrInterviewSlotsResult> => {
-    const userId = userOf(ctx.actor);
+    const targetUserId = await resolveInterviewerUserId(ctx, input.interviewerUserId);
     const nowMs = Date.now();
     const fromMs = input.from ? Date.parse(input.from) : nowMs;
     const toMs = input.to ? Date.parse(input.to) : fromMs + 14 * DAY_MS;
     if (toMs <= fromMs || toMs - fromMs > 31 * DAY_MS) {
       throw new DomainError('VALIDATION', 422, 'Khoảng tìm lịch phỏng vấn tối đa 31 ngày');
     }
-    const { hours, saved } = await workingHoursOf(ctx, userId);
-    const busy = await busyOf(ctx, userId, new Date(fromMs - DAY_MS), new Date(toMs + DAY_MS), input.exceptEventId);
+    const { hours, saved } = await workingHoursOf(ctx, targetUserId);
+    const busy = await busyOf(ctx, targetUserId, new Date(fromMs - DAY_MS), new Date(toMs + DAY_MS), input.exceptEventId);
     const workingWindows = workingWindowsInRange(hours, fromMs, toMs);
     const busyIntervals: InterviewInterval[] = busy.map((b) => ({
       startIso: new Date(b.start).toISOString(),
@@ -1064,7 +1160,7 @@ export const candidateScheduleInterview = defineCommand({
     tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['interview_event_id', 'interview_starts_at', 'interview_ends_at', 'stage', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrCandidateInterviewScheduled> => {
-    const userId = userOf(ctx.actor);
+    const actorUserId = userOf(ctx.actor);
     const startMs = Date.parse(input.startsAt);
     const endMs = Date.parse(input.endsAt);
     const durationMin = (endMs - startMs) / 60_000;
@@ -1086,21 +1182,23 @@ export const candidateScheduleInterview = defineCommand({
       throw new DomainError('HR_CANDIDATE_STAGE_FINAL', 409, 'Không thể đặt lịch phỏng vấn cho ứng viên đã nhận việc hoặc đã từ chối');
     }
 
+    const interviewerUserId = await resolveInterviewerUserId(ctx, input.interviewerUserId);
+
     // Serialize concurrent HR interview bookings on this interviewer's calendar inside this org (modules stay isolated per ADR-0031).
-    await acquireAdvisoryXactLock(ctx.trx, advisoryLockKey('crove_hr.interview', ctx.orgId, userId));
+    await acquireAdvisoryXactLock(ctx.trx, advisoryLockKey('crove_hr.interview', ctx.orgId, interviewerUserId));
 
     const prevEvent = await lockLinkedInterviewEvent(ctx, existing.interview_event_id);
 
     const startsAt = new Date(startMs);
     const endsAt = new Date(endMs);
-    const exceptEventId = prevEvent && prevEvent.user_id === userId ? prevEvent.id : undefined;
-    const { hours } = await workingHoursOf(ctx, userId);
-    const busy = await busyOf(ctx, userId, startsAt, endsAt, exceptEventId);
+    const exceptEventId = prevEvent && prevEvent.user_id === interviewerUserId ? prevEvent.id : undefined;
+    const { hours } = await workingHoursOf(ctx, interviewerUserId);
+    const busy = await busyOf(ctx, interviewerUserId, startsAt, endsAt, exceptEventId);
     if (busy.some((b) => b.start < endMs && b.end > startMs)) {
       throw new DomainError('HR_INTERVIEW_SLOT_TAKEN', 409, 'Khung giờ này đã có lịch bận, hãy chọn giờ khác');
     }
 
-    const cancelledPreviousEventId = await cancelLockedInterviewEvent(ctx, userId, prevEvent);
+    const cancelledPreviousEventId = await cancelLockedInterviewEvent(ctx, actorUserId, prevEvent);
 
     let openingTitle: string | null = null;
     if (existing.opening_id) {
@@ -1121,13 +1219,13 @@ export const candidateScheduleInterview = defineCommand({
         .insertInto('crove_kernel.calendar_event')
         .values({
           org_id: ctx.orgId,
-          user_id: userId,
+          user_id: interviewerUserId,
           starts_at: startsAt,
           ends_at: endsAt,
           time_zone: hours.timeZone,
           title: calendarTitle,
           kind: 'manual',
-          created_by: userId,
+          created_by: actorUserId,
           created_at: ctx.now,
         })
         .returning('id')
@@ -1158,6 +1256,7 @@ export const candidateScheduleInterview = defineCommand({
       candidateId: existing.id,
       legalEntityId: existing.legal_entity_id,
       eventId,
+      interviewerUserId,
       cancelledPreviousEventId,
       fromStage: existing.stage,
       toStage: nextStage,
@@ -1167,9 +1266,67 @@ export const candidateScheduleInterview = defineCommand({
     return {
       candidateId: existing.id,
       eventId,
+      interviewerUserId,
       startsAt: startsAt.toISOString(),
       endsAt: endsAt.toISOString(),
       stage: nextStage,
+    };
+  },
+});
+
+export const candidateCancelInterview = defineCommand({
+  name: 'hr.recruiting.candidate.cancel_interview',
+  input: zHrCandidateRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
+  writes: [
+    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+      'interview_event_id',
+      'interview_starts_at',
+      'interview_ends_at',
+      'updated_at',
+    ]),
+  ],
+  handler: async (ctx, input): Promise<HrCandidateInterviewCancelled> => {
+    const actorUserId = userOf(ctx.actor);
+    const existing = await lockCandidate(ctx, input.candidateId);
+    if (existing.erased_at !== null) throw candidateErased();
+
+    const prevEvent = await lockLinkedInterviewEvent(ctx, existing.interview_event_id);
+    const cancelledEventId = await cancelLockedInterviewEvent(ctx, actorUserId, prevEvent);
+
+    if (
+      existing.interview_event_id !== null ||
+      existing.interview_starts_at !== null ||
+      existing.interview_ends_at !== null
+    ) {
+      await ctx.trx
+        .updateTable('crove_hr.candidate')
+        .set({
+          interview_event_id: null,
+          interview_starts_at: null,
+          interview_ends_at: null,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', existing.id)
+        .execute();
+    }
+
+    ctx.audit({
+      candidateId: existing.id,
+      legalEntityId: existing.legal_entity_id,
+      stage: existing.stage,
+      cancelledEventId,
+      interviewerUserId: prevEvent?.user_id ?? null,
+    });
+    return {
+      candidateId: existing.id,
+      cancelledEventId,
+      stage: existing.stage,
     };
   },
 });
@@ -1405,6 +1562,7 @@ export const hrRecruitingCommands = [
   candidateEdit,
   candidateMoveStage,
   candidateScheduleInterview,
+  candidateCancelInterview,
   candidateHire,
   candidateErase,
   recruitingBriefAudit,
@@ -1414,6 +1572,7 @@ export const hrRecruitingQueries = [
   openingList,
   candidateList,
   candidateGet,
+  interviewersList,
   interviewSlotsQuery,
   recruitingBriefRead,
 ];

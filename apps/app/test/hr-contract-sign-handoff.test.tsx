@@ -474,6 +474,8 @@ describe('Ludy Nhan su -> Ludy eSign labor contract handoff (#3553)', () => {
         interviewEventId: null,
         interviewStartsAt: null,
         interviewEndsAt: null,
+        interviewerUserId: null,
+        interviewerName: null,
         hiredEmployeeId: EMP_ID,
         erasedAt: null,
         createdAt: '2026-10-20T04:00:00.000Z',

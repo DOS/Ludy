@@ -11,6 +11,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { cn } from '@crove/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { ErrorText, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import { publicSignApi, PublicSignError, type PublicFieldSubmission, type PublicSignField, type PublicSignViewState } from '../lib/sign-api.ts';
@@ -701,6 +702,14 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
           <p className="text-xs font-medium text-muted-foreground">{t('senderMessageLabel')}</p>
           <p className="mt-0.5 whitespace-pre-wrap break-words">{viewState.message}</p>
         </div>
+      ) : null}
+
+      {viewState.sharedSummary ? (
+        <CounterpartySummaryBanner
+          sharedSummary={viewState.sharedSummary}
+          pageCount={viewState.pageCount}
+          onJumpToPage={props.onPageChange}
+        />
       ) : null}
 
       {props.loadingPdf ? <ListSkeleton rows={3} /> : null}
