@@ -115,7 +115,7 @@ const sharedNotePrivateNotebook = () =>
 // so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
 // lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
 // re-reads under the lock, and rejects shared notes in private notebooks.
-async function resolveNotebookForNote(
+export async function resolveNotebookForNote(
   ctx: CommandContext,
   notebookId: string,
   noteAuthorUserId: string,

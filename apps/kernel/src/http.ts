@@ -260,6 +260,7 @@ import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize }
 import { safeFilename, sniffType } from './sniff.ts';
 import { sniffConversationImage } from './conversation-media.ts';
 import { handleNoteAttachmentDownload, handleNoteAttachmentUpload } from './note-attachments.ts';
+import { handleEnexImportUpload, handleTodoistImportUpload } from './note-imports.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -2824,6 +2825,59 @@ export function createHttpApp(deps: HttpDeps) {
         orgId,
         attachmentId: c.req.param('id'),
       });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // 1-step Evernote (.enex) and Todoist (.csv) importers (#3564, docs/plan/notes-v2.md V2-9, ADR-0037):
+  // refuses extension tokens (403), enforces Origin check, notes app gate, bounded streaming, and BlobStore rollback.
+  app.post('/api/notes/import/enex', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleEnexImportUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.post('/api/notes/import/todoist', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleTodoistImportUpload({
+        runtime,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
     } catch (error) {
       return problem(c, error);
     }
