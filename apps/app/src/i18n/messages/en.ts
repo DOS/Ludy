@@ -5652,6 +5652,7 @@ export const en = {
     connect: 'Connect',
     test: 'Test connection',
     pollNow: 'Pull orders now',
+    testQueued: 'The test was requested. The result will show here in a few seconds.',
     pollQueued: 'Orders were requested. New ones will wait for you to confirm them in the Inbox.',
     disconnect: 'Disconnect',
     disconnectConfirm: 'Disconnect this? The saved login is deleted; orders already imported and orders waiting for confirmation stay.',
@@ -5662,7 +5663,7 @@ export const en = {
     neverPolled: 'No orders pulled yet',
     polledAt: 'Orders last pulled {when}',
     ordersWaiting: '{count, plural, one {# order} other {# orders}} waiting in the Inbox to confirm.',
-    fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
+    fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appKey: 'App Key', appSecret: 'App Secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
     status: {
       active: 'Connected',
       expired: 'Expired, connect again',
@@ -5676,6 +5677,11 @@ export const en = {
       ip_not_allowed: 'The marketplace has not allowed this system access. Ask your system administrator for the IP address to allow, then send it to the marketplace.',
       unreachable: 'Could not reach the marketplace',
     },
+    testStatesLazada: {
+      wrong_credentials: 'Lazada refused the key, the secret or the access token. Check the App Key and App Secret, then connect again.',
+      api_not_enabled: 'The app is not authorized on Lazada yet, so no orders can be read. The authorize step comes in a later build.',
+    },
+    pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {
       ok: 'Orders pulled',
       unreachable: 'Could not reach the marketplace',
@@ -15103,6 +15109,7 @@ export const en = {
         record_poll: 'Record the result of pulling orders from a marketplace',
         record_test: 'Record the result of a marketplace connection test',
         request_poll: 'Ask for a marketplace\'s orders now',
+        request_test: 'Ask for a marketplace connection to be tested',
         target: 'Check the legal entity of a marketplace connection',
         unlink: 'Remove a marketplace connection',
       },

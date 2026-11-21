@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LegalEntity, MarketplaceConnection, MarketplaceProviders } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown } from '../src/lib/marketplace-connections.ts';
+import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown, pollStateKey, testStateKey } from '../src/lib/marketplace-connections.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -203,6 +203,31 @@ describe('MarketplaceConnectionsCard', () => {
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
   });
 
+  it('tells a Lazada seller who has not authorized the app apart from one whose key was refused, and shows the App Key as text and the App Secret hidden', () => {
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
+    const notYet = card('owner', { providers: lazada, connections: [mine({ lastTestState: 'api_not_enabled', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(notYet).toContain(esc(en.marketplaceConnections.testStatesLazada.api_not_enabled));
+    expect(notYet).toContain(esc(en.marketplaceConnections.pollStatesLazada.not_authorized));
+    expect(notYet).not.toContain(esc(en.marketplaceConnections.pollStates.credentials));
+    const refused = card('owner', { providers: lazada, connections: [mine({ lastTestState: 'wrong_credentials', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
+    expect(refused).toContain(esc(en.marketplaceConnections.testStatesLazada.wrong_credentials));
+    expect(refused).toContain(esc(en.marketplaceConnections.pollStates.credentials));
+    expect(refused).not.toContain(esc(en.marketplaceConnections.pollStatesLazada.not_authorized));
+    // The sandbox keeps the generic words, and a Lazada state with no words of its own does too.
+    expect(testStateKey('sandbox', 'api_not_enabled')).toBe('testStates.api_not_enabled');
+    expect(testStateKey('lazada', 'unreachable')).toBe('testStates.unreachable');
+    expect(pollStateKey(mine({ lastTestState: null }), 'credentials')).toBe('pollStates.credentials');
+    expect(pollStateKey(connection({ lastTestState: 'api_not_enabled' }), 'credentials')).toBe('pollStates.credentials');
+    expect(pollStateKey(mine({ lastTestState: 'api_not_enabled' }), 'ok')).toBe('pollStates.ok');
+    // The form: the App Key is an identifier shown as typed, the App Secret is hidden, both in words.
+    const form = card('owner', { providers: lazada, connections: [] });
+    expect(form).toMatch(/type="text"[^>]*aria-label="App Key"|aria-label="App Key"[^>]*type="text"/);
+    expect(form).toMatch(/type="password"[^>]*aria-label="App Secret"|aria-label="App Secret"[^>]*type="password"/);
+    // Vietnamese words exist for both.
+    expect(card('owner', { providers: lazada, connections: [], locale: 'vi' })).toContain('Mã bí mật ứng dụng (App Secret)');
+  });
+
   it('is in Vietnamese with the same keys', () => {
     const html = card('owner', { locale: 'vi', connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
     expect(html).toContain('Kết nối dùng được');
@@ -228,8 +253,8 @@ describe('the helpers of the card', () => {
     expect(connectablePlatforms(partial.platforms).map((p) => p.platform)).toEqual(['shopee']);
   });
   it('hides what is typed unless the field is a plain identifier', () => {
-    for (const name of ['user', 'username', 'appId', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
-    for (const name of ['password', 'secret', 'partnerKey', 'token']) expect(fieldIsSecret(name)).toBe(true);
+    for (const name of ['user', 'username', 'appId', 'appKey', 'shopId']) expect(fieldIsSecret(name)).toBe(false);
+    for (const name of ['password', 'secret', 'appSecret', 'partnerKey', 'token']) expect(fieldIsSecret(name)).toBe(true);
   });
 });
 

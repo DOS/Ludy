@@ -75,7 +75,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
-import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { marketplaceJobKind, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMarketplaceColumns, type MarketplaceColumnsJob } from './marketplace-columns-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
@@ -1658,8 +1658,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         }
         return;
       }
-      const done = await runMarketplacePoll({ runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders }, job.data);
-      console.log(`[marketplace] ${job.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
+      // The payload is closed (ids and a known kind): anything else is refused without a retry and without a side effect, and its content is not logged.
+      const parsed = zMarketplaceJob.safeParse(job.data);
+      if (!parsed.success) {
+        console.error('[marketplace] job refused: the payload is not one this worker knows');
+        return;
+      }
+      const marketplaceDeps = { runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders };
+      // A test only asks the provider's one cheap read and records its state: no page, no file, no cursor.
+      if (marketplaceJobKind(parsed.data) === 'test') {
+        const tested = await runMarketplaceTest(marketplaceDeps, parsed.data);
+        console.log(`[marketplace] test ${parsed.data.connectionId.slice(0, 8)}: ${tested.state}`);
+        return;
+      }
+      const done = await runMarketplacePoll(marketplaceDeps, parsed.data);
+      console.log(`[marketplace] ${parsed.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
     });
     await boss.schedule(QUEUES.marketplacePoll, MARKETPLACE_POLL_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
@@ -2965,6 +2978,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
+                });
+              }
+              // An owner or admin asked for a marketplace connection's test (#4238): the same queue as the poll, a `kind` in the job, its own singleton key so a repeated click queues one test, and no
+              // retry (the owner presses the button again). Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_test_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId, kind: 'test' } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, `test:${connectionId}`),
+                  retryLimit: 0,
                 });
               }
               // An owner or admin asked for a MISA AMIS connection's test (#3885): its job asks AMIS for a token and the company's information. Ids only in the job.

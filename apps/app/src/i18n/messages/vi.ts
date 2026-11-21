@@ -5649,6 +5649,7 @@ export const vi = {
     connect: 'Kết nối',
     test: 'Kiểm tra kết nối',
     pollNow: 'Lấy đơn ngay',
+    testQueued: 'Đã yêu cầu kiểm tra. Kết quả sẽ hiện ở đây sau ít giây.',
     pollQueued: 'Đã yêu cầu lấy đơn. Đơn mới sẽ chờ bạn xác nhận ở Hộp thư.',
     disconnect: 'Ngắt kết nối',
     disconnectConfirm: 'Ngắt kết nối này? Thông tin đăng nhập đã lưu sẽ bị xóa; đơn hàng đã nhập và đơn đang chờ xác nhận vẫn còn.',
@@ -5659,7 +5660,7 @@ export const vi = {
     neverPolled: 'Chưa lấy đơn lần nào',
     polledAt: 'Lấy đơn lần cuối {when}',
     ordersWaiting: 'Có {count, plural, other {# đơn}} đang chờ xác nhận ở Hộp thư.',
-    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
+    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy kết nối lại',
@@ -5673,6 +5674,11 @@ export const vi = {
       ip_not_allowed: 'Sàn chưa cho phép hệ thống này truy cập. Nhờ người quản trị hệ thống cho biết địa chỉ IP cần cho phép, rồi gửi cho sàn.',
       unreachable: 'Không kết nối được tới sàn',
     },
+    testStatesLazada: {
+      wrong_credentials: 'Lazada từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key và App Secret rồi kết nối lại.',
+      api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn. Bước cấp quyền sẽ có ở bản sau.',
+    },
+    pollStatesLazada: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn' },
     pollStates: {
       ok: 'Lấy đơn thành công',
       unreachable: 'Không kết nối được tới sàn',
@@ -15102,6 +15108,7 @@ export const vi = {
         record_poll: 'Ghi kết quả lấy đơn từ sàn',
         record_test: 'Ghi kết quả kiểm tra kết nối sàn',
         request_poll: 'Yêu cầu lấy đơn từ sàn ngay',
+        request_test: 'Yêu cầu kiểm tra kết nối sàn',
         target: 'Kiểm tra pháp nhân của kết nối sàn',
         unlink: 'Ngắt kết nối sàn thương mại điện tử',
       },

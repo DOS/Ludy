@@ -5,6 +5,7 @@
 // - finance.marketplace_connection.record_test (same; R1): records the state the connection test came back with. The test itself is the API's for the offline provider and the worker's
 //   for a real one; this command takes only a state.
 // - finance.marketplace_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
+// - finance.marketplace_connection.request_test (same; R2 external): asks the worker to test a connection whose adapter reaches a host (#4238); the worker records the state with record_test.
 // - finance.marketplace_connection.request_poll (same; R2 external): asks the worker to pull the platform's orders now (the outbox event queues the poll job).
 // - finance.marketplace_connection.record_poll (system; R1): what the worker records after a poll: how it ended, the cursor the next one resumes from (moved only after the page was
 //   ingested) (the orders still waiting are counted by the list from the staged files the connection's polls ingested). The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
@@ -194,6 +195,34 @@ export const marketplaceConnectionRequestPoll = defineCommand({
   },
 });
 
+// The test the worker runs is queued by this event (apps/kernel/src/worker.ts): the same queue as the poll, a `kind` in the job. Ids only.
+export const MARKETPLACE_TEST_REQUESTED = 'finance.marketplace_test_requested';
+
+export const marketplaceConnectionRequestTest = defineCommand({
+  name: 'finance.marketplace_connection.request_test',
+  input: z.strictObject({ id: zId }),
+  // The event it emits starts a job that calls the platform's API with the org's sealed credential (one read that changes nothing there): R2 external, like a poll.
+  risk: 'R2',
+  sideEffect: 'external',
+  access: MANAGERS,
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ queued: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select(['c.provider', 'ch.status'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
+    if (!marketplaceAdapterOf(row.provider)) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Kết nối này không phải của một bộ kết nối sàn mà phiên bản này hỗ trợ');
+    await ctx.emit(MARKETPLACE_TEST_REQUESTED, { connection_id: input.id });
+    ctx.audit({ requested: true });
+    return { queued: true };
+  },
+});
+
 // What the worker needs to poll one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 export type MarketplacePollTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'unknown_adapter' }
@@ -316,6 +345,7 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionRecordTest,
   marketplaceConnectionUnlink,
   marketplaceConnectionRequestPoll,
+  marketplaceConnectionRequestTest,
   marketplaceConnectionRecordPoll,
 ];
 export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget];

@@ -58,6 +58,9 @@ export type MarketplaceConnect = z.infer<typeof zMarketplaceConnect>;
 export const zMarketplaceConnectionRecordTest = z.strictObject({ id: zId, state: zMarketplaceConnectionState });
 export const zMarketplaceConnectionTested = z.object({ state: zMarketplaceConnectionState });
 export type MarketplaceConnectionTested = z.infer<typeof zMarketplaceConnectionTested>;
+// What the test button gets back: the state at once for the offline adapter (tested at the API), or `queued` for an adapter that reaches the platform (the worker tests it and records the state, which the list shows).
+export const zMarketplaceConnectionTestAnswer = z.union([zMarketplaceConnectionTested, z.strictObject({ queued: z.literal(true) })]);
+export type MarketplaceConnectionTestAnswer = z.infer<typeof zMarketplaceConnectionTestAnswer>;
 
 // The command that records a poll: the cursor the next poll resumes from (moved only after the page was ingested) and how it ended. What waits in the Inbox is counted when the list is read.
 export const zMarketplaceConnectionRecordPoll = z.strictObject({

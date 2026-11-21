@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceOrdersCsv, parseMarketplaceOrderPage } from '@crove/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
-import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
+import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, isAwaitingAuthorization, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
 import { fakeLazada, fakeOrder, type FakeOrder } from './fake-lazada.ts';
 
 const KEY = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
@@ -151,6 +151,23 @@ describe('listOrders', () => {
     // Only the second order is inside the overlap, and the cursor does not move back or forward.
     expect(again.orders.map((o) => o.orderNo)).toEqual(['9101000004', '9101000004']);
     expect(again.nextCursor).toBe(first.nextCursor);
+    // A short page does not say more waits: the poll job reads one page and the sweep comes back in fifteen minutes.
+    expect(first.more).toBe(false);
+  });
+
+  it('says more waits behind a full page (the job reads the next page in the same run) and not behind a short one', async () => {
+    const many = Array.from({ length: 130 }, (_, i) =>
+      fakeOrder({ id: String(5000000000000000 + i), number: `91030${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [{ id: String(6000000000000000 + i) }]),
+    );
+    const { provider } = setup(many);
+    const first = await provider.listOrders(SECRET, 'lazada', null);
+    expect(first.orders).toHaveLength(100);
+    expect(first.more).toBe(true);
+    const second = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
+    expect(second.more).toBe(false);
+    // The field is part of the port's page, so the page check takes it and refuses anything else.
+    expect(parseMarketplaceOrderPage(first)).not.toBeNull();
+    expect(parseMarketplaceOrderPage({ ...first, extra: 1 })).toBeNull();
   });
 
   it('pages a full window by moving it forward, never by an offset: every read is offset 0, a full page resumes a second before its newest order, a short page ten minutes before it', async () => {
@@ -522,6 +539,23 @@ describe('testConnection', () => {
     expect(await setup([]).provider.testConnection(JSON.stringify({ ...KEY, accessToken: 'bad-token' }))).toBe('wrong_credentials');
     expect(await setup([]).provider.testConnection('garbage')).toBe('wrong_credentials');
     expect(await setup([], { intercept: () => new Response('down', { status: 503 }) }).provider.testConnection(SECRET)).toBe('unreachable');
+  });
+
+  it('tells a seller who has not authorized the app yet (a key and a secret, no token) from a refused token, without calling Lazada', async () => {
+    const { provider, fake } = setup([]);
+    expect(await provider.testConnection(JSON.stringify({ appKey: KEY.appKey, appSecret: KEY.appSecret }))).toBe('api_not_enabled');
+    expect(fake.calls).toHaveLength(0);
+    // A refused token is a different state; a malformed secret (or a key with a space) is refused, not "not authorized yet".
+    expect(await setup([]).provider.testConnection(JSON.stringify({ ...KEY, accessToken: 'bad-token' }))).toBe('wrong_credentials');
+    expect(await setup([]).provider.testConnection(JSON.stringify({ appKey: 'a b', appSecret: KEY.appSecret }))).toBe('wrong_credentials');
+    expect(await setup([]).provider.testConnection(JSON.stringify({ appKey: KEY.appKey }))).toBe('wrong_credentials');
+    expect(isAwaitingAuthorization(JSON.stringify({ appKey: KEY.appKey, appSecret: KEY.appSecret }))).toBe(true);
+    expect(isAwaitingAuthorization(SECRET)).toBe(false);
+    expect(isAwaitingAuthorization('garbage')).toBe(false);
+    expect(isAwaitingAuthorization(JSON.stringify({ appKey: KEY.appKey, appSecret: KEY.appSecret, accessToken: '' }))).toBe(false);
+    // A poll before authorization is refused as `credentials` (the job records the poll state), never sent.
+    await expect(provider.listOrders(JSON.stringify({ appKey: KEY.appKey, appSecret: KEY.appSecret }), 'lazada', null)).rejects.toMatchObject({ kind: 'credentials' });
+    expect(fake.calls).toHaveLength(0);
   });
 
   it('asks for one order from the last day, and nothing else', async () => {

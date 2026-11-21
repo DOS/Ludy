@@ -18,7 +18,7 @@ import { MarketplaceProviderError, createSandboxMarketplaceProvider, financeComm
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { runMarketplacePoll } from '../src/marketplace-poll-job.ts';
+import { runMarketplacePoll, runMarketplaceTest } from '../src/marketplace-poll-job.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -482,8 +482,12 @@ suite('marketplace connections (#2519)', () => {
     expect(connected.status).toBe(200);
     expect(connected.text).not.toContain(PLANTED);
     for (const text of [(await call('connections/list', owner, undefined, realApp)).text, (await call('providers', owner, undefined, realApp)).text]) expect(text).not.toContain(PLANTED);
-    // The test of an adapter reached over the network is the worker's, so the screen refuses it in words: the API never opens a credential; the same for pulling from a button.
-    expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'MARKETPLACE_PROVIDER_NOT_READY' });
+    // The test of an adapter reached over the network is the worker's (#4238): the API never opens a credential, so it only queues the test (an event with ids) and answers `queued`; pulling from a button
+    // is still refused in words.
+    expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toEqual({ queued: true });
+    const testEvents = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_test_requested'", [orgId]);
+    expect(testEvents.map((e) => e.payload)).toEqual([{ connection_id: connected.body.id }]);
+    for (const who of [member, viewer]) expect((await call('connections/test', who, { id: connected.body.id }, realApp)).status).toBe(403);
     expect((await call('connections/pollNow', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'MARKETPLACE_PROVIDER_NOT_READY' });
     // The worker opens the credential and hands it to the adapter alone; nothing is logged.
     const seen: string[] = [];
@@ -499,6 +503,20 @@ suite('marketplace connections (#2519)', () => {
     const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
+      // The worker's test opens the credential, hands it to the adapter's test alone, and records only the state and the time: no cursor, no file, no poll state.
+      const tested: string[] = [];
+      const tester: MarketplaceProvider = {
+        ...real,
+        async testConnection(secret) {
+          tested.push(secret);
+          return 'api_not_enabled';
+        },
+      };
+      expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: { sandbox: tester } }, { orgId, connectionId: String(connected.body.id), kind: 'test' })).toEqual({ state: 'api_not_enabled' });
+      expect(tested.map((s) => JSON.parse(s))).toEqual([{ user: 'ban-hang@ludy.test', password: PLANTED }]);
+      const after = (await call('connections/list', owner, undefined, realApp)).body as Array<{ id: string; lastTestState: string | null; lastTestedAt: string | null; lastPollState: string | null; lastPolledAt: string | null }>;
+      expect(after.find((c) => c.id === connected.body.id)).toMatchObject({ lastTestState: 'api_not_enabled', lastPollState: null, lastPolledAt: null });
+      expect(after.find((c) => c.id === connected.body.id)?.lastTestedAt).not.toBeNull();
       expect(await poll(String(connected.body.id), { sandbox: real })).toEqual({ state: 'ok', orders: 0, staged: false });
       expect(JSON.stringify([logs.mock.calls, warns.mock.calls])).not.toContain(PLANTED);
     } finally {
@@ -506,6 +524,9 @@ suite('marketplace connections (#2519)', () => {
       warns.mockRestore();
     }
     expect(seen.map((s) => JSON.parse(s))).toEqual([{ user: 'ban-hang@ludy.test', password: PLANTED }]);
+    // An adapter this deployment turned off, and a connection that is gone, are left alone by a test too: nothing is asked and nothing is recorded.
+    expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: {} }, { orgId, connectionId: String(connected.body.id) })).toEqual({ state: 'skipped', reason: 'provider_off' });
+    expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: { sandbox: real } }, { orgId, connectionId: randomUUID() })).toEqual({ state: 'skipped', reason: 'not_found' });
     const dump = JSON.stringify({
       audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]),
       outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),

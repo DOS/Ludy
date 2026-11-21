@@ -5,7 +5,7 @@
 // the card writes no order and moves no stock. A platform no adapter serves stays on the report file ("nhập file báo cáo"), with no connect button.
 // The server enforces every rule; the screen offers only what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import type { LegalEntity, MarketplaceAdapterInfo, MarketplaceConnection, MarketplacePlatformInfo } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -16,12 +16,16 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, POLL_STATE_KEYS, TEST_STATE_KEYS } from '../lib/marketplace-connections.ts';
+import { adapterIdOf, canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
   await queryClient.invalidateQueries({ queryKey: orpc.marketplace.connections.list.key() });
 };
+
+// A test the worker runs answers `queued`; its state reaches the list a moment later, so the card reads the list again every few seconds for up to this long.
+const TEST_WATCH_MS = 3000;
+const TEST_WATCH_TIMES = 10;
 
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
 
@@ -29,7 +33,31 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
   const t = useTranslations('marketplaceConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
-  const test = useMutation(orpc.marketplace.connections.test.mutationOptions({ onSuccess: refresh }));
+  const [watching, setWatching] = useState(false);
+  const test = useMutation(
+    orpc.marketplace.connections.test.mutationOptions({
+      onSuccess: async (answer) => {
+        // `queued`: the worker tests it and records the state; the answer of the offline adapter is the state itself.
+        setWatching('queued' in answer);
+        await refresh();
+      },
+    }),
+  );
+  useEffect(() => {
+    if (!watching) return undefined;
+    let times = 0;
+    const timer = setInterval(() => {
+      times += 1;
+      void refresh();
+      if (times >= TEST_WATCH_TIMES) setWatching(false);
+    }, TEST_WATCH_MS);
+    return () => clearInterval(timer);
+  }, [watching]);
+  const testedAtStart = connection.lastTestedAt;
+  useEffect(() => {
+    // A new test time on the row is the worker's answer: stop reading.
+    setWatching(false);
+  }, [testedAtStart]);
   const pull = useMutation(orpc.marketplace.connections.pollNow.mutationOptions({ onSuccess: refresh }));
   const disconnect = useMutation(orpc.marketplace.connections.disconnect.mutationOptions({ onSuccess: refresh }));
   const entity = entities.length > 1 ? entities.find((e) => e.id === connection.legalEntityId) : undefined;
@@ -43,10 +71,10 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
         <span className="text-xs text-muted-foreground">{connection.displayName}</span>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        {connection.lastTestState ? `${t(TEST_STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
+        {connection.lastTestState ? `${t(testStateKey(adapterIdOf(connection), connection.lastTestState) as never)}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
       </p>
       <p className="mt-1 text-sm text-muted-foreground">
-        {connection.lastPolledAt ? `${t('polledAt', { when: f.dateTime(connection.lastPolledAt) })}${connection.lastPollState ? ` · ${t(POLL_STATE_KEYS[connection.lastPollState])}` : ''}` : t('neverPolled')}
+        {connection.lastPolledAt ? `${t('polledAt', { when: f.dateTime(connection.lastPolledAt) })}${connection.lastPollState ? ` · ${t(pollStateKey(connection, connection.lastPollState) as never)}` : ''}` : t('neverPolled')}
       </p>
       {connection.ordersWaiting > 0 && <p className="mt-1 text-sm text-muted-foreground">{t('ordersWaiting', { count: connection.ordersWaiting })}</p>}
       {canManage && (
@@ -77,6 +105,11 @@ function ConnectionItem({ connection, adapters, entities, canManage }: { connect
             </Button>
           )}
         </div>
+      )}
+      {watching && (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          {t('testQueued')}
+        </p>
       )}
       {pull.isSuccess && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">

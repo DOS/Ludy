@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Lazada marketplace adapter (#2524, S1 = #4237; ADR-0045 point 7; design note https://github.com/DOS/Ludy/issues/2524#issuecomment-7056731894), DORMANT: nothing wires it into the worker or the
-// configuration yet. Built from Lazada Open Platform's documentation as mirrored on open.alitrip.com (articleIds 108068 signature, 108065 hosts, 108260 and 121098 tokens and apps, 108297 masking,
+// The Lazada marketplace adapter (#2524, S1 = #4237; ADR-0045 point 7; design note https://github.com/DOS/Ludy/issues/2524#issuecomment-7056731894). S2a (#4238) wires it: MARKETPLACE_PROVIDERS=lazada
+// builds it in kernel.ts for the API and the worker, and the worker tests and polls a connection with it; the authorize step that adds the access token is S2b. Built from Lazada Open Platform's documentation as mirrored on open.alitrip.com (articleIds 108068 signature, 108065 hosts, 108260 and 121098 tokens and apps, 108297 masking,
 // 121327 order paging) and the GitHub mirror of the API reference (xKeNcHii/lazada-sdk, docs/api/order-api.md), read 2026-11-21. open.lazada.com itself could not be read, so every name below is a
 // pointer for the live check (#2522), not a verified one.
 //
@@ -22,7 +22,7 @@ import {
 import { cleanLabel, isoDay, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const LAZADA_API_HOST = 'api.lazada.vn';
-// The hosts the adapter's fetch is bound to. Authorization (auth.lazada.com) joins in the token slice (S3): nothing here calls it.
+// The hosts the adapter's fetch is bound to. Authorization (auth.lazada.com) joins in the authorize slice (S2b): nothing here calls it.
 export const LAZADA_HOSTS: readonly string[] = [LAZADA_API_HOST];
 
 // The only two paths this adapter calls, both GET: the orders changed since a time, and the items of up to 50 orders.
@@ -93,6 +93,19 @@ export function parseLazadaSecret(secret: string): LazadaCredential {
   const fine = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 400 && v === v.trim() && /^[\x21-\x7e]+$/.test(v);
   if (!picked || !fine(picked.appKey) || !fine(picked.appSecret) || !fine(picked.accessToken)) throw new MarketplaceProviderError('credentials');
   return { appKey: picked.appKey, appSecret: picked.appSecret, accessToken: picked.accessToken };
+}
+
+// Whether a sealed secret holds a well-formed App Key and App Secret and NO access token: the connection the seller typed and has not authorized. (A malformed secret is not this: it is refused.)
+export function isAwaitingAuthorization(secret: string): boolean {
+  try {
+    const value: unknown = JSON.parse(secret);
+    const picked = pickAllowed(value, ['appKey', 'appSecret', 'accessToken'] as const);
+    if (!picked || picked.accessToken !== undefined) return false;
+    parseLazadaSecret(JSON.stringify({ ...picked, accessToken: 'x' }));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // How Lazada signs a request (article 108068, the sample code): sort the parameters by key, put the API path first, then each non-empty key followed by its value, no separators, a body last (none
@@ -289,6 +302,9 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
 
     // One call: a page of one order from the last day. It proves the key, the secret and the token sign and are accepted, and nothing more.
     async testConnection(secret: string): Promise<MarketplaceTestResult> {
+      // A key and secret with no access token yet: the seller has not authorized the app. It is told apart from a refused token by its own state (`api_not_enabled`: the app is not enabled for this seller's
+      // shop yet), so the card can offer "Authorize" instead of "check your key".
+      if (isAwaitingAuthorization(secret)) return 'api_not_enabled';
       try {
         const credential = parseLazadaSecret(secret);
         await readOrders(credential, { created_after: lazadaStamp(now().getTime() - DAY_MS), limit: '1', offset: '0' });
@@ -345,7 +361,7 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
         // The window is read to its end: the next one starts a little before the newest order, and never earlier than this one.
         next = writeCursor(Math.max(start, newest - OVERLAP_MS));
       }
-      return { orders, nextCursor: next };
+      return { orders, nextCursor: next, more: raw.length >= PAGE_SIZE };
     },
 
     // Not in this slice: the order's money lines come with the finance reads (S5); a poll never asks for them today.

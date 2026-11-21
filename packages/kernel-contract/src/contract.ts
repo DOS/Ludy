@@ -194,7 +194,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
@@ -2681,8 +2681,8 @@ export const contract = {
       // MARKETPLACE_DISABLED (404) for an adapter this deployment does not offer, MARKETPLACE_PLATFORM (422) for a platform the adapter does not serve, MARKETPLACE_FIELDS (422) when the
       // fields are not the adapter's, MARKETPLACE_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
       connect: oc.input(zMarketplaceConnect).output(z.object({ id: zId })),
-      // MARKETPLACE_PROVIDER_NOT_READY (503) for an adapter that is reached through the worker.
-      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTested),
+      // The offline adapter answers the state at once; an adapter that reaches the platform answers `{queued: true}` and the worker records the state (the list shows it). CHANNEL_NOT_ACTIVE (409), MARKETPLACE_DISABLED (404).
+      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTestAnswer),
       disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
       // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
       // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
