@@ -17,5 +17,7 @@ export * from './meeting-commitments.ts';
 export * from './tasks-from-note.ts';
 export * from './tasks-from-source.ts';
 export * from './note-ai.ts';
+export * from './todo-plan.ts';
+export * from './note-organize.ts';
 export * from './ports.ts';
 export * from './run-feature.ts';

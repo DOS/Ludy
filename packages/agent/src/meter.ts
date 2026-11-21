@@ -138,6 +138,10 @@ export const AI_FEATURES = {
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.
   'notes.todo_suggest': 'notes',
+  // Member-scoped Vy daily focus planner & overdue reschedule suggestions on My Work (notes v2 T4b, #3563, ADR-0049): stores counts only; caller confirms every reschedule.
+  'notes.todo_plan': 'notes',
+  // Member-scoped Vy inbox organizer proposing notebooks & #tags for unfiled notes (notes v2 E5b, #3563, ADR-0049): stores counts only; caller confirms every move/tag update.
+  'notes.organize': 'notes',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

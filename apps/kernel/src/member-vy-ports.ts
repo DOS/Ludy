@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError } from '@crove/agent';
-import { AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments } from '@crove/agent/member-vy';
-import { ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer } from '@crove/kernel-contract';
+import { ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteOrganizeText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoPlanText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError } from '@crove/agent';
+import { AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, NoteOrganizeError, TodoPlanError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, organizeUnfiledNotes, planTodosForToday, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type NoteOrganizeInputNote, type NoteOrganizeInputNotebook, type Ports, type TaskSourceKind, type TodoPlanInputItem, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments } from '@crove/agent/member-vy';
+import { ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteOrganizeInput, type NoteOrganizeResult, type NoteOrganizeSuggestion, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type TodoPlanFocusItem, type TodoPlanInput, type TodoPlanRescheduleItem, type TodoPlanResult, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -137,7 +137,11 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
                 ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteSummaryText(config, safePrompt, signal), timeoutMs)
                 : prompt.feature === 'notes.todo_suggest'
                   ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoSuggestText(config, safePrompt, signal), timeoutMs)
-                  : generateMeetingSummaryText(config, prompt, timeoutMs),
+                  : prompt.feature === 'notes.todo_plan'
+                    ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoPlanText(config, safePrompt, signal), timeoutMs)
+                    : prompt.feature === 'notes.organize'
+                      ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteOrganizeText(config, safePrompt, signal), timeoutMs)
+                      : generateMeetingSummaryText(config, prompt, timeoutMs),
   };
 }
 
@@ -161,6 +165,8 @@ function codeOf(error: unknown): string {
   if (error instanceof TasksFromSourceError) return error.code;
   if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
   if (error instanceof NoteAiError) return error.code;
+  if (error instanceof TodoPlanError) return error.code;
+  if (error instanceof NoteOrganizeError) return error.code;
   if (error instanceof NoteAiModelError) return error.kind === 'timeout' ? 'NOTE_AI_TIMEOUT' : 'NOTE_AI_FAILED';
   return 'SUMMARY_FAILED';
 }
@@ -1866,16 +1872,14 @@ export async function notesVyStatusOf(
   return status;
 }
 
-async function preflightNotesVy(
+async function preflightNotesVyGate(
   deps: MeetingSummaryDeps,
   orgId: string,
   actor: UserActor,
-  noteId: string,
 ): Promise<{
   as: { actor: UserActor; orgId: string };
   model: ModelPort;
   meter: AiMeter;
-  note: Note;
   release: () => void;
 }> {
   const as = { actor, orgId };
@@ -1902,8 +1906,24 @@ async function preflightNotesVy(
     });
   }
 
+  return { as, model, meter, release: ticket.release };
+}
+
+async function preflightNotesVy(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  noteId: string,
+): Promise<{
+  as: { actor: UserActor; orgId: string };
+  model: ModelPort;
+  meter: AiMeter;
+  note: Note;
+  release: () => void;
+}> {
+  const gate = await preflightNotesVyGate(deps, orgId, actor);
   try {
-    const note = await deps.runtime.query<Note>('notes.note.get', { noteId }, as);
+    const note = await deps.runtime.query<Note>('notes.note.get', { noteId }, gate.as);
     if (note.deletedAt !== null) {
       throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
     }
@@ -1914,9 +1934,9 @@ async function preflightNotesVy(
     if (text.length > NOTE_AI_LIMITS.maxNoteChars) {
       throw new DomainError('NOTE_TOO_LONG', 422, 'Ghi chú quá dài cho một lượt chạy của Vy');
     }
-    return { as, model, meter, note, release: ticket.release };
+    return { ...gate, note };
   } catch (error) {
-    ticket.release();
+    gate.release();
     throw error;
   }
 }
@@ -1970,6 +1990,312 @@ async function storeNotesVyReady(
     return 'AI_STOPPED';
   }
   return null;
+}
+
+// Member-scoped Vy daily focus planner & overdue reschedule proposals for My Work (Notes v2 T4b, #3563, ADR-0049):
+// reads only caller's own open to-dos via notes.vy.plan_inputs, runs pure model outside transaction, stores counts
+// only in member_vy_result, re-verifies items before returning, and never mutates crove_notes.todo during generation.
+export async function runNotesTodoPlan(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: TodoPlanInput,
+): Promise<TodoPlanResult> {
+  const timeoutMs = deps.timeoutMs ?? NOTE_AI_TIMEOUT_MS;
+  const ctx = await preflightNotesVyGate(deps, orgId, actor);
+  try {
+    const planQuery = input.timeZone ? { timeZone: input.timeZone } : {};
+    const initial = await deps.runtime.query<{ today: string; todos: TodoPlanInputItem[] }>('notes.vy.plan_inputs', planQuery, ctx.as);
+    const failed = (runId: string | null, errorCode: string): TodoPlanResult => ({
+      state: 'failed',
+      runId,
+      today: initial.today,
+      focus: [],
+      reschedules: [],
+      dropped: 0,
+      errorCode,
+    });
+    if (initial.todos.length === 0) {
+      return {
+        state: 'ready',
+        runId: null,
+        today: initial.today,
+        focus: [],
+        reschedules: [],
+        dropped: 0,
+        errorCode: null,
+      };
+    }
+
+    let runId: string;
+    try {
+      const started = await deps.runtime.execute<{ runId: string }>(
+        'kernel.member_vy.run.start',
+        { feature: 'notes.todo_plan', subjectType: 'member', subjectId: actor.userId },
+        ctx.as,
+      );
+      runId = started.runId;
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'AI_BUSY' : error.code;
+        console.error(`[notes-todo-plan] run not started: ${errorCode}`);
+        return failed(null, errorCode);
+      }
+      throw error;
+    }
+
+    const ports = bindPorts(
+      { orgId, memberUserId: actor.userId },
+      { model: ctx.model, memory: nothingToRemember, knowledge: noKnowledge },
+    );
+    let plan: Awaited<ReturnType<typeof planTodosForToday>>;
+    try {
+      plan = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter: ctx.meter }, () =>
+          planTodosForToday(
+            { todos: initial.todos, today: initial.today, language: input.language ?? 'vi' },
+            ports,
+          ),
+        ),
+        timeoutMs,
+      );
+    } catch (error: unknown) {
+      const errorCode = notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-todo-plan] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      console.error(`[notes-todo-plan] run failed: ${errorCode}`);
+      return failed(runId, errorCode);
+    }
+
+    // Re-verify caller's open to-dos and revisions before returning (guards TOCTOU deletes/completions mid-run).
+    let latest: { today: string; todos: TodoPlanInputItem[] };
+    try {
+      latest = await deps.runtime.query<{ today: string; todos: TodoPlanInputItem[] }>('notes.vy.plan_inputs', planQuery, ctx.as);
+    } catch (error: unknown) {
+      const errorCode = error instanceof DomainError ? error.code : notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-todo-plan] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      throw error;
+    }
+    const latestById = new Map(latest.todos.map((t) => [t.id, t]));
+    let extraDropped = 0;
+
+    const focus: TodoPlanFocusItem[] = [];
+    for (const item of plan.focus) {
+      const live = latestById.get(item.todoId);
+      if (!live) {
+        extraDropped += 1;
+        continue;
+      }
+      focus.push({
+        todoId: live.id,
+        title: live.title,
+        priority: live.priority,
+        dueOn: live.dueOn,
+        dueTime: live.dueTime,
+        overdue: live.overdue,
+        reason: item.reason,
+        revision: live.revision,
+      });
+    }
+
+    const reschedules: TodoPlanRescheduleItem[] = [];
+    for (const item of plan.reschedules) {
+      const live = latestById.get(item.todoId);
+      if (!live || (!live.overdue && live.group !== 'overdue' && (live.dueOn === null || live.dueOn >= latest.today)) || item.dueOn < latest.today || item.dueOn === live.dueOn) {
+        extraDropped += 1;
+        continue;
+      }
+      reschedules.push({
+        todoId: live.id,
+        title: live.title,
+        currentDueOn: live.dueOn,
+        dueOn: item.dueOn,
+        reason: item.reason,
+        revision: live.revision,
+      });
+    }
+
+    const totalDropped = plan.dropped + extraDropped;
+    // Store counts only in member_vy_result (never plaintext titles or details).
+    const bodyJson = JSON.stringify({
+      v: 1,
+      inputTodos: initial.todos.length,
+      focus: focus.length,
+      reschedules: reschedules.length,
+      dropped: totalDropped,
+    });
+    const stoppedCode = await storeNotesVyReady(deps, ctx.as, 'notes-todo-plan', runId, bodyJson, 1);
+    if (stoppedCode !== null) return failed(runId, stoppedCode);
+
+    return {
+      state: 'ready',
+      runId,
+      today: latest.today,
+      focus,
+      reschedules,
+      dropped: totalDropped,
+      errorCode: null,
+    };
+  } finally {
+    ctx.release();
+  }
+}
+
+// Member-scoped Vy inbox organizer proposing notebooks & #tags for unfiled notes (Notes v2 E5b, #3563, ADR-0049):
+// reads only caller-editable unfiled notes & readable notebooks, checks org-note/private-notebook constraint,
+// stores counts only in member_vy_result, re-verifies items before returning, and never mutates notes during generation.
+export async function runNotesOrganize(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: NoteOrganizeInput,
+): Promise<NoteOrganizeResult> {
+  const timeoutMs = deps.timeoutMs ?? NOTE_AI_TIMEOUT_MS;
+  const ctx = await preflightNotesVyGate(deps, orgId, actor);
+  try {
+    const initial = await deps.runtime.query<{
+      notes: NoteOrganizeInputNote[];
+      notebooks: NoteOrganizeInputNotebook[];
+    }>('notes.vy.organize_inputs', {}, ctx.as);
+    const failed = (runId: string | null, errorCode: string): NoteOrganizeResult => ({
+      state: 'failed',
+      runId,
+      suggestions: [],
+      dropped: 0,
+      errorCode,
+    });
+    if (initial.notes.length === 0) {
+      return { state: 'ready', runId: null, suggestions: [], dropped: 0, errorCode: null };
+    }
+
+    let runId: string;
+    try {
+      const started = await deps.runtime.execute<{ runId: string }>(
+        'kernel.member_vy.run.start',
+        { feature: 'notes.organize', subjectType: 'member', subjectId: actor.userId },
+        ctx.as,
+      );
+      runId = started.runId;
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'AI_BUSY' : error.code;
+        console.error(`[notes-organize] run not started: ${errorCode}`);
+        return failed(null, errorCode);
+      }
+      throw error;
+    }
+
+    const ports = bindPorts(
+      { orgId, memberUserId: actor.userId },
+      { model: ctx.model, memory: nothingToRemember, knowledge: noKnowledge },
+    );
+    let organized: Awaited<ReturnType<typeof organizeUnfiledNotes>>;
+    try {
+      organized = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter: ctx.meter }, () =>
+          organizeUnfiledNotes(
+            { notes: initial.notes, notebooks: initial.notebooks, language: input.language ?? 'vi' },
+            ports,
+          ),
+        ),
+        timeoutMs,
+      );
+    } catch (error: unknown) {
+      const errorCode = notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-organize] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      console.error(`[notes-organize] run failed: ${errorCode}`);
+      return failed(runId, errorCode);
+    }
+
+    let latest: { notes: NoteOrganizeInputNote[]; notebooks: NoteOrganizeInputNotebook[] };
+    try {
+      latest = await deps.runtime.query<{
+        notes: NoteOrganizeInputNote[];
+        notebooks: NoteOrganizeInputNotebook[];
+      }>('notes.vy.organize_inputs', {}, ctx.as);
+    } catch (error: unknown) {
+      const errorCode = error instanceof DomainError ? error.code : notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-organize] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      throw error;
+    }
+
+    const noteById = new Map(latest.notes.map((n) => [n.id, n]));
+    const notebookById = new Map(latest.notebooks.map((b) => [b.id, b]));
+    let extraDropped = 0;
+
+    const suggestions: NoteOrganizeSuggestion[] = [];
+    for (const item of organized.suggestions) {
+      const liveNote = noteById.get(item.noteId);
+      if (!liveNote) {
+        extraDropped += 1;
+        continue;
+      }
+      const liveNb = item.notebookId ? notebookById.get(item.notebookId) : undefined;
+      const validNotebook =
+        liveNb && !(liveNote.visibility === 'org' && liveNb.visibility !== 'org') ? liveNb : null;
+      if (item.notebookId && !validNotebook) extraDropped += 1;
+
+      const existingSet = new Set(liveNote.tags.map((t) => t.trim().toLowerCase()));
+      const tags = liveNote.canEditTags
+        ? item.tags.filter((tag) => !existingSet.has(tag.trim().toLowerCase())).slice(0, Math.max(0, 20 - existingSet.size))
+        : [];
+      if (item.tags.length > tags.length) extraDropped += item.tags.length - tags.length;
+
+      if (!validNotebook && tags.length === 0) {
+        extraDropped += 1;
+        continue;
+      }
+
+      suggestions.push({
+        noteId: liveNote.id,
+        title: liveNote.title,
+        visibility: liveNote.visibility,
+        revision: liveNote.revision,
+        existingTags: [...liveNote.tags],
+        notebookId: validNotebook?.id ?? null,
+        notebookName: validNotebook?.name ?? null,
+        tags,
+        reason: item.reason,
+        canEditTags: liveNote.canEditTags,
+      });
+    }
+
+    const totalDropped = organized.dropped + extraDropped;
+    // Store counts only in member_vy_result (never note titles, bodies, or tags).
+    const bodyJson = JSON.stringify({
+      v: 1,
+      inputNotes: initial.notes.length,
+      suggestions: suggestions.length,
+      dropped: totalDropped,
+    });
+    const stoppedCode = await storeNotesVyReady(deps, ctx.as, 'notes-organize', runId, bodyJson, 1);
+    if (stoppedCode !== null) return failed(runId, stoppedCode);
+
+    return {
+      state: 'ready',
+      runId,
+      suggestions,
+      dropped: totalDropped,
+      errorCode: null,
+    };
+  } finally {
+    ctx.release();
+  }
 }
 
 export async function runNotesSummarize(

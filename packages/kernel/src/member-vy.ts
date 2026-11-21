@@ -29,6 +29,8 @@ const STORE_WRITES = [
 export const MEMBER_VY_FEATURES = {
   'notes.summary': { module: 'notes', expiryMinutes: 30 },
   'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+  'notes.todo_plan': { module: 'notes', expiryMinutes: 30 },
+  'notes.organize': { module: 'notes', expiryMinutes: 30 },
   // The recorder's Vy transcribing one meeting in the background (#2578, M4b): the longest run, so the 4 hour cap of the kernel.
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
   // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
