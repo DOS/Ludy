@@ -12,6 +12,8 @@ export interface NotesExportWords {
   stack?: string;
   todos: string;
   todoLists: string;
+  templates?: string | undefined;
+  templateTitle?: string | undefined;
   private: string;
   shared: string;
   tags: string;
@@ -96,6 +98,17 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
       if (l.sections.length > 0) out.push(line(w.sections, l.sections.map((s) => flat(s.name)).join(', ')));
       if (l.deletedAt) out.push(line(w.trashed, l.deletedAt));
       out.push(line(w.created, l.createdAt), line(w.updated, l.updatedAt));
+    }
+  }
+  const templates = data.templates ?? [];
+  if (templates.length > 0) {
+    out.push('', `## ${w.templates ?? 'Templates'} (${templates.length})`);
+    for (const tpl of templates) {
+      out.push('', `### ${flat(tpl.name)}`, '', line(tpl.visibility === 'org' ? w.shared : w.private, tpl.id));
+      if (tpl.title.trim()) out.push(line(w.templateTitle ?? 'Title', flat(tpl.title)));
+      if (tpl.tags.length > 0) out.push(line(w.tags, tpl.tags.join(', ')));
+      out.push(line(w.created, tpl.createdAt), line(w.updated, tpl.updatedAt));
+      if (tpl.body.trim()) out.push('', tpl.body.trimEnd());
     }
   }
   return `${out.join('\n')}\n`;

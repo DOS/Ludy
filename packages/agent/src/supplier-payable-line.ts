@@ -172,3 +172,6 @@ export function checkSupplierPayableLineSentence(facts: SupplierPayableLineFacts
   if (bindingProblem(facts, text)) return { kind: 'none', code: 'BINDING' };
   return { kind: 'sentence', text };
 }
+
+// The same refusals, for the other one-sentence lines of the finance coworker that must not claim a step was done or advise one (bank-candidates-line.ts), under names that cannot clash in the package index.
+export { claimsDone as sentenceClaimsDone, ADVICE as SENTENCE_ADVICE, fold as foldSentence, sentencesIn as sentenceCount, COUNT_WORDS_VI as SENTENCE_COUNT_WORDS_VI };

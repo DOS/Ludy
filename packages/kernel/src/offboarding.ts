@@ -184,15 +184,17 @@ export const EXPORT_TABLES = {
   'ads.ad_account': { from: 'crove_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
   'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
   'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
-  // Notes (#1671, #3559, ADR-0037 §6): the shared notes, shared notebooks and links, which the system context's row
-  // policies let the snapshot read, without their folded search words; private notes and private notebooks stay out,
-  // and private_count / private_notebook_count record how many each author had (counts only).
+  // Notes (#1671, #3559, #3561, #3562, ADR-0037 §6): the shared notes, attachments, shared notebooks, shared templates and links, which the system context's row
+  // policies let the snapshot read, without their folded search words; private items stay out,
+  // and private_count / private_notebook_count / private_template_count record how many each author had (counts only).
   'notes.note': { from: 'crove_notes.note', omit: ['search'] },
   'notes.attachment': { from: 'crove_notes.attachment', omit: ['search'] },
   'notes.notebook': { from: 'crove_notes.notebook', omit: [] },
   'notes.link': { from: 'crove_notes.link', omit: [] },
+  'notes.note_template': { from: 'crove_notes.note_template', omit: [] },
   'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },
   'notes.private_notebook_count': { from: 'crove_notes.private_notebook_counts()', omit: [] },
+  'notes.private_template_count': { from: 'crove_notes.private_template_counts()', omit: [] },
   // Members' own to-dos (#1673) are private by nature, so none is exported; todo_count records how many each member
   // had (crove_notes.todo_counts(), counts only).
   'notes.todo_count': { from: 'crove_notes.todo_counts()', omit: [] },

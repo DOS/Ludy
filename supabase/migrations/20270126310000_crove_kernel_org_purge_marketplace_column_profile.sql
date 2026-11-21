@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes the confirmed column mappings of the org too (#4037, slice 2 of #3850): crove_finance.marketplace_column_profile is a tenant table of Finance, the header texts and standard fields a
 -- person confirmed for a marketplace report. It refers to the org's members only, so its place in the list is free. This replaces crove_kernel.org_purge with the previous version (the latest on main when this
--- was written, 20270126200000, which adds crove_notes.attachment and keeps crove_notes.notebook and crove_finance.marketplace_column_check) plus that one table in the first list; nothing else changes.
+-- was written, 20270126220000, which adds the notes templates and versions tables and keeps every earlier table) plus that one table in the first list; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -42,7 +42,7 @@ DECLARE
     'crove_meetings.glossary_term', 'crove_meetings.minutes_template', 'crove_meetings.chat_post_body', 'crove_meetings.chat_post', 'crove_meetings.chat_channel_target', 'crove_meetings.chat_channel', 'crove_meetings.morning_notice', 'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
-    'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note', 'crove_notes.notebook',
+    'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note_version', 'crove_notes.note', 'crove_notes.notebook', 'crove_notes.note_template',
     'crove_projects.project_task', 'crove_projects.project_member', 'crove_projects.project',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
