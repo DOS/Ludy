@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The module and coworker switches at the write and proposal entries of an MCP grant (#4155), as product flows. The refusals themselves, each audited as the grant's, and the EXECUTE matrix of the check are the
 // security line and live in test/invariant/mcp-grant-switches.db.test.ts. This file pins what a person sees around them: a released switch lets the very next call of each entry through (a module's switch and
-// an agent switch naming the grant), a switch of another module does not touch a call, a Hộp thư proposal is judged on the kernel and not on another module, and a person's own command is untouched.
+// an agent switch naming the grant), and so does an app the org switched back on, a switch of another module does not touch a call, a Hộp thư proposal is judged on the kernel and not on another module, and a person's own command is untouched.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -74,6 +74,8 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
         await call(e, g);
         expect(await e.count()).toBe(before + 1);
         const id = await stopModule(e.module);
+        // The refused call is what the count check watches: it writes nothing while the switch is engaged.
+        await expect(call(e, g)).rejects.toMatchObject({ code: 'KILL_SWITCH_ON' });
         expect(await e.count()).toBe(before + 1);
         await release(id);
         await call(e, g);
@@ -83,6 +85,23 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
       }
       expect(other).toBeTruthy();
     });
+
+    // The kernel cannot be switched off (the app gate never refuses a kernel command), so only the apps have this case.
+    if (e.module !== 'kernel') {
+      it(`runs ${e.label} again as soon as the org switches the app back on`, async () => {
+        const g = await h.grant([e.scope]);
+        const before = await e.count();
+        await setApp(e.module, false);
+        try {
+          await expect(call(e, g)).rejects.toMatchObject({ code: 'MODULE_OFF' });
+          expect(await e.count()).toBe(before);
+        } finally {
+          await setApp(e.module, true);
+        }
+        await call(e, g);
+        expect(await e.count()).toBe(before + 1);
+      });
+    }
 
     it(`runs ${e.label} again as soon as the agent switch naming the grant is released`, async () => {
       const g = await h.grant([e.scope]);

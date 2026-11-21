@@ -96,6 +96,9 @@ export const zBankImportPreview = z.object({
   to: zLocalDate.nullable(),
   // No row has an error: the import can go ahead.
   ok: z.boolean(),
+  // Set when the account is fed from a cut-over day on (#4218): the file's lines on or after `from` are skipped (shown as
+  // duplicates), `leftOut` of them.
+  feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).optional(),
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 
@@ -339,6 +342,11 @@ export function statementAmountText(cell: { kind: string; value: string } | unde
 // A bank feed provider's id as its channel connections name it (ADR-0039): `bank_` and the adapter (`bank_sandbox`),
 // under the channel layer's provider pattern. The Social screens leave these connections out.
 const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;
+// How many days back a provider's first pull reaches (the adapters' own windows: packages/bank-feed tingee.ts FIRST_PULL_DAYS, the
+// sandbox's SANDBOX_FIRST_DAYS). A cut-over day (#4218) earlier than that would skip file lines the feed never fetches, so the
+// earliest day an owner may name is today (Vietnam) minus these days.
+export const BANK_FEED_FIRST_PULL_DAYS: Readonly<Record<string, number>> = { bank_sandbox: 7, bank_tingee: 31 };
+
 export const isBankFeedProviderId = (provider: string): boolean => BANK_FEED_PROVIDER_ID.test(provider);
 
 // Connects a Tingee account (#2045): the Client ID and Secret Token the org made in its own Tingee portal. The secret is sealed by the API and opened only by the worker; it is never returned, logged or
@@ -376,6 +384,9 @@ export const zBankFeedMap = z.strictObject({
   externalAccountId: z.string().trim().min(1).max(200),
   bankAccount: zAccountCode,
   legalEntityId: zId.optional(),
+  // The day the feed takes over from statement files for this account (#4218): a file's lines on or after it are
+  // skipped. Absent leaves the date as it is on a remap; null clears it.
+  feedFrom: zLocalDate.nullable().optional(),
 });
 export type BankFeedMap = z.infer<typeof zBankFeedMap>;
 
@@ -389,6 +400,11 @@ export const zBankFeedAccountView = z.object({
   bankAccount: z.string(),
   legalEntityId: zId,
   lastSyncedAt: z.string().nullable(),
+  // The cut-over day (#4218), or null when statement files and the feed are only deduplicated.
+  feedFrom: zLocalDate.nullable(),
+  // The earliest day the cut-over may be set to now (#4218): what the date field takes as its minimum; the server refuses an earlier one.
+  // Null when the account's cursor cannot be read: no day can be set then.
+  feedFromEarliest: zLocalDate.nullable(),
 });
 export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
 
