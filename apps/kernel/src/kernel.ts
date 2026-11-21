@@ -128,6 +128,8 @@ const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@crove/bank-feed';
+import { hostBoundFetch } from './marketplace-adapter-kit.ts';
+import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -366,7 +368,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
-type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
+type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET' | 'MARKETPLACE_PROVIDERS'> &
   Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET' | 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
@@ -659,6 +661,9 @@ export function channelRefreshers(config: ChannelConfig): Record<string, Refresh
   if (x) refreshers.x = new XRefresher(x);
   const pinterest = pinterestApp(config);
   if (pinterest) refreshers.pinterest = new PinterestRefresher(pinterest);
+  // A Lazada connection's tokens (#2524, S3a): the refresher acts only on `marketplace_lazada` connections, which exist only where MARKETPLACE_PROVIDERS names the adapter. It holds no app
+  // credential of its own (the seller's App Key and Secret are in each connection's sealed secret) and reaches only the one host its fetch is bound to.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'lazada')) refreshers.marketplace_lazada = new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
   return refreshers;
 }
 

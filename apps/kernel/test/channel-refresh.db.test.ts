@@ -12,6 +12,9 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type SealedChannelCredential } from '@crove/kernel';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { refreshChannels } from '../src/channel-refresh.ts';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from '../src/marketplace-lazada-token.ts';
+import { fakeLazadaToken } from './fake-lazada-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -169,6 +172,88 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     const flaky = await connect(o, HOUR);
     expect((await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: fakeRefresher('failed') } })).failed).toBeGreaterThanOrEqual(1);
     expect((await row(flaky))?.status).toBe('active');
+  });
+
+  // The Lazada refresher (#2524, S3a = #4240) through the real sweep: its provider is the marketplace connection's (`marketplace_lazada`), its secret holds the seller's own app and the OAuth result.
+  describe('a Lazada connection', () => {
+    const DAY = 24 * HOUR;
+    const APP = { appKey: '123456', appSecret: 'test-only-app-secret' };
+    const lazadaSecret = (refreshExpiresAt: number) =>
+      JSON.stringify({ ...APP, accessToken: 'access-token-0', refreshToken: 'refresh-token-0', accessExpiresAt: new Date(Date.now() + 2 * DAY).toISOString(), refreshExpiresAt: new Date(refreshExpiresAt).toISOString(), sellerId: '1000100', country: 'vn' });
+    const lazada = (refreshExpiresAtMs: number, intercept?: Parameters<typeof fakeLazadaToken>[0]['intercept']) => {
+      const fake = fakeLazadaToken({ ...APP, refreshToken: 'refresh-token-0', refreshExpiresAtMs, ...(intercept ? { intercept } : {}) });
+      return { fake, refreshers: { marketplace_lazada: new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS, fake.fetch) }) } };
+    };
+    const sweep = (refreshers: Record<string, Refresher>) => refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers });
+
+    it('renews a token with under five days left, keeps the rotated pair whole, and never extends the refresh life', async () => {
+      const o = await org();
+      const end = Date.now() + 150 * DAY;
+      const due = await connect(o, 2 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const quiet = await connect(o, 20 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const { fake, refreshers } = lazada(end);
+      expect(await sweep(refreshers)).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
+      const next = JSON.parse(await secretOf(o.orgId, due)) as Record<string, string>;
+      expect(next).toMatchObject({ accessToken: 'access-token-1', refreshToken: 'refresh-token-1', sellerId: '1000100', ...APP });
+      // Not extended: it is the date it was, or a moment sooner (Lazada's countdown is in whole seconds and the clock is the real one), never later.
+      const kept = Date.parse(next.refreshExpiresAt ?? '');
+      expect(kept).toBeLessThanOrEqual(end);
+      expect(end - kept).toBeLessThan(5000);
+      expect((await row(due))?.expires_at.getTime()).toBeGreaterThan(Date.now() + 29 * DAY);
+      expect((await row(due))?.status).toBe('active');
+      // The one outside the window is untouched, and the renewed one is no longer due.
+      expect(JSON.parse(await secretOf(o.orgId, quiet)).accessToken).toBe('access-token-0');
+      expect((await sweep(refreshers)).refreshed).toBe(0);
+      expect(fake.calls).toHaveLength(1);
+      // No token or secret of it is in an audit row or an event.
+      const dump = await admin(async (c) => {
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
+      });
+      for (const word of ['access-token-1', 'refresh-token-1', 'refresh-token-0', APP.appSecret]) expect(dump).not.toContain(word);
+    });
+
+    it('does not lose the rotated refresh token when two sweeps run at once: one call is made and the stored pair is the new one', async () => {
+      const o = await org();
+      const end = Date.now() + 150 * DAY;
+      const id = await connect(o, 2 * DAY, lazadaSecret(end), 'marketplace_lazada');
+      const { fake, refreshers } = lazada(end);
+      const [a, b] = await Promise.all([sweep(refreshers), sweep(refreshers)]);
+      expect(a.refreshed + b.refreshed).toBe(1);
+      expect(fake.calls).toHaveLength(1);
+      expect(JSON.parse(await secretOf(o.orgId, id))).toMatchObject({ accessToken: 'access-token-1', refreshToken: 'refresh-token-1' });
+      expect(fake.currentRefreshToken()).toBe('refresh-token-1');
+    });
+
+    it('marks the connection expired when its refresh token is past its end (no call is made), or when Lazada refuses it, and never tries again', async () => {
+      const o = await org();
+      const past = await connect(o, 2 * DAY, lazadaSecret(Date.now() - DAY), 'marketplace_lazada');
+      const dead = lazada(Date.now() - DAY);
+      expect(await sweep(dead.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(past))?.status).toBe('expired');
+      expect(dead.fake.calls).toHaveLength(0);
+      // Lazada's own refusal of a token that looked alive: expired as well.
+      const refused = await connect(o, 2 * DAY, lazadaSecret(Date.now() + 150 * DAY), 'marketplace_lazada');
+      const no = lazada(Date.now() + 150 * DAY, () => new Response(JSON.stringify({ code: 'IllegalRefreshToken', message: 'The refresh token is invalid' }), { status: 200 }));
+      expect(await sweep(no.refreshers)).toMatchObject({ refreshed: 0, expired: 1 });
+      expect((await row(refused))?.status).toBe('expired');
+      expect(no.fake.calls).toHaveLength(1);
+      // An expired connection is not picked again: no loop, no second call.
+      expect(await sweep(no.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      expect(no.fake.calls).toHaveLength(1);
+    });
+
+    it('keeps the connection active and tries again on the next sweep after an outage', async () => {
+      const o = await org();
+      const id = await connect(o, 2 * DAY, lazadaSecret(Date.now() + 150 * DAY), 'marketplace_lazada');
+      const down = lazada(Date.now() + 150 * DAY, () => new Response('upstream', { status: 503 }));
+      expect(await sweep(down.refreshers)).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect((await row(id))?.status).toBe('active');
+      expect(JSON.parse(await secretOf(o.orgId, id)).refreshToken).toBe('refresh-token-0');
+      const up = lazada(Date.now() + 150 * DAY);
+      expect(await sweep(up.refreshers)).toMatchObject({ refreshed: 1 });
+    });
   });
 
   it('drops tokens for a connection that changed during the refresh', async () => {
