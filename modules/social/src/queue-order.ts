@@ -15,9 +15,9 @@
 // run one after the other. Each move is written only while the variant still holds the time read under those locks
 // (the expected-time guard of #956, for these commands): anything else refuses the whole command with STALE_REVISION.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { removeAtFit } from './domain/channels.ts';
 import { moveToFront, shuffleTimes, slotLabel, type Holder } from './domain/queue.ts';
 import { labelsOfPosts } from './labels.ts';

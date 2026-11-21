@@ -7,9 +7,9 @@
 // - finance.einvoice.notice_open (owners, admins, members; R1): records an error on an issued invoice with the text that is right.
 // - finance.einvoice.notice_step (same roles; R1): ticks one step, once; ticking again changes nothing.
 // - finance.einvoice.notice_list: the notices of an invoice and what the notice text names (read only).
-import { zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep, type EInvoiceNotice, type EInvoiceNoticeList } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep, type EInvoiceNotice, type EInvoiceNoticeList } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];

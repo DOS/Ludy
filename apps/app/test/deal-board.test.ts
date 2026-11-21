@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The board's optimistic move (#2226): where a card sits once it is dropped, before the server answers.
 import { describe, expect, it } from 'vitest';
-import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
+import type { Board, Deal, PipelineStage } from '@ludy/kernel-contract';
 import { dealFilterToAst } from '../src/lib/deal-filter.ts';
-import { vietnamToday } from '@crove/kernel-contract';
+import { vietnamToday } from '@ludy/kernel-contract';
 import { isDealOverdue, isEmptyBoard, moveCard, readDealView, showAllClosed, withDealView } from '../src/lib/deal-board.ts';
 
 const stage = (id: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name: id, kind, position });

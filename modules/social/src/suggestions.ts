@@ -19,9 +19,9 @@
 // - Skipping closes it without a change: 'skipped', or 'outdated' when its quote was no longer in the text then.
 // - A closed suggestion is resolved; social.post_comment.resolve and .reopen do not apply to suggestions.
 import { z } from 'zod';
-import { zId, zSocialSuggestion } from '@crove/kernel-contract';
-import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialSuggestion } from '@ludy/kernel-contract';
+import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { mentionedMembers } from './activity.ts';
 import { refuseChannels, refusePostOutside } from './channel-access.ts';
 import { channelFrozen, locateSuggestion, postFrozen, replaceRange, textHash, wholeCharacters } from './domain/suggestion.ts';

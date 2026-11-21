@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, vi } from 'vitest';
-import { zHrDepartmentEdit } from '@crove/kernel-contract';
-import type { CommandContext } from '@crove/kernel-runtime';
+import { zHrDepartmentEdit } from '@ludy/kernel-contract';
+import type { CommandContext } from '@ludy/kernel-runtime';
 import { departmentEdit } from '../src/departments.ts';
 
 const ORG_ID = '00000000-0000-7000-8000-000000000001';

@@ -24,10 +24,10 @@ import {
   restoreAliases,
   type InboxReader,
   type PayrollSheetLine,
-} from '@crove/agent';
-import { Decimal } from '@crove/l10n-vn';
-import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/agent';
+import { Decimal } from '@ludy/l10n-vn';
+import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface PayrollAi {

@@ -28,7 +28,7 @@
 
 import { foldMathAlphanumerics, isFoldable } from './text-styles.ts';
 
-// The level of a word; the table's CHECK and SOCIAL_BANNED_WORD_LEVELS in @crove/db hold the same two (this module
+// The level of a word; the table's CHECK and SOCIAL_BANNED_WORD_LEVELS in @ludy/db hold the same two (this module
 // stays free of the database package, as the app imports it; banned-words.ts checks the two agree at compile time).
 export const BANNED_WORD_LEVELS = ['warn', 'block'] as const;
 export type BannedWordLevel = (typeof BANNED_WORD_LEVELS)[number];

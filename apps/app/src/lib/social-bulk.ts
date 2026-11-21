@@ -2,9 +2,9 @@
 // what the list shows: one refused post does not stop the others, and the result says what was done and what was
 // refused, with the reason. Sending drafts to review (#1178) and copying posts moved by days or weeks (#1192) work the
 // same way, post by post.
-import { SOCIAL_BULK_EDIT_MAX, SOCIAL_BULK_REPLACE_MAX, SOCIAL_REPLACE_FIND_MAX, SOCIAL_REPLACE_WITH_MAX, type SocialBulkSkipReason, type SocialReplaceField } from '@crove/kernel-contract';
-import type { IssueCode } from '@crove/mod-social/contract';
-import { localTime, zonedToEpoch } from '@crove/mod-social/contract';
+import { SOCIAL_BULK_EDIT_MAX, SOCIAL_BULK_REPLACE_MAX, SOCIAL_REPLACE_FIND_MAX, SOCIAL_REPLACE_WITH_MAX, type SocialBulkSkipReason, type SocialReplaceField } from '@ludy/kernel-contract';
+import type { IssueCode } from '@ludy/mod-social/contract';
+import { localTime, zonedToEpoch } from '@ludy/mod-social/contract';
 import { CANCELLABLE } from './social.ts';
 import { MAX_LABELS_PER_POST } from './social-labels.ts';
 

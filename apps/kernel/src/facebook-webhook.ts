@@ -19,8 +19,8 @@ import {
   parseThreadsNotices,
   threadsSignatureOk,
   type InboundConversationEvent,
-} from '@crove/channel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/channel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const FACEBOOK_WEBHOOK_PATH = '/api/channels/facebook/webhook';
 export { FACEBOOK_SIGNATURE_HEADER };

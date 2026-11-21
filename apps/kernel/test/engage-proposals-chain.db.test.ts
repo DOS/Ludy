@@ -4,8 +4,8 @@
 // (a member, a viewer, an owner demoted after the ask) is refused and nothing runs. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS, type ConversationEvent } from '@crove/kernel-contract';
-import { upsertIdentity } from '@crove/kernel';
+import { ENGAGE_PROPOSALS, type ConversationEvent } from '@ludy/kernel-contract';
+import { upsertIdentity } from '@ludy/kernel';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
 const suite = ADMIN ? describe : describe.skip;

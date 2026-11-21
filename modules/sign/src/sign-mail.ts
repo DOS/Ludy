@@ -3,9 +3,9 @@
 // Raw signing tokens and 6-digit OTP codes NEVER persist in crove_kernel.mail_message.payload:
 // tokens and OTP codes are generated/minted in memory at send time via system mail_data commands.
 import { z } from 'zod';
-import { createMailMessage } from '@crove/kernel';
-import { SIGN_OTP_CODE_PATTERN, SIGN_PAGE_PATH, SIGN_TOKEN_PATTERN, zId } from '@crove/kernel-contract';
-import type { CommandContext } from '@crove/kernel-runtime';
+import { createMailMessage } from '@ludy/kernel';
+import { SIGN_OTP_CODE_PATTERN, SIGN_PAGE_PATH, SIGN_TOKEN_PATTERN, zId } from '@ludy/kernel-contract';
+import type { CommandContext } from '@ludy/kernel-runtime';
 
 export const SIGN_INVITE_MAIL_TEMPLATE = 'sign.invite';
 export const SIGN_OTP_MAIL_TEMPLATE = 'sign.otp';

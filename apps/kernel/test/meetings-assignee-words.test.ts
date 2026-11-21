@@ -3,8 +3,8 @@
 // in packages/agent (which cannot import a module). Only a comment kept them in sync; this test pins that they are the same words, so a word added on one side fails here until the other side has it. It lives in the
 // kernel app because that is the one package that sees both.
 import { describe, expect, it } from 'vitest';
-import { ASSIGNEE_TITLES as AGENT_TITLES, ASSIGNEE_CONNECTORS as AGENT_CONNECTORS } from '@crove/agent/member-vy';
-import { ASSIGNEE_CONNECTORS as MODULE_CONNECTORS, ASSIGNEE_HONORIFICS, plainName } from '@crove/mod-meetings';
+import { ASSIGNEE_TITLES as AGENT_TITLES, ASSIGNEE_CONNECTORS as AGENT_CONNECTORS } from '@ludy/agent/member-vy';
+import { ASSIGNEE_CONNECTORS as MODULE_CONNECTORS, ASSIGNEE_HONORIFICS, plainName } from '@ludy/mod-meetings';
 
 const sorted = (words: readonly string[]) => [...words].sort();
 

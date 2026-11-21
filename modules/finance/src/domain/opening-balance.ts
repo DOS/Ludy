@@ -2,8 +2,8 @@
 // row by row and as a whole, and turned into the lines of one opening entry. The command (../opening-balance.ts)
 // supplies the chart of accounts and the facts of the ledger; it never posts what this refuses.
 // Amounts are whole VND (no decimals), parsed with decimal.js, never JS numbers.
-import type { OpeningBalanceImport, OpeningBalancePreview, OpeningEntryError, OpeningRowError } from '@crove/kernel-contract';
-import { Decimal, parseTaxCode, type DecimalValue, type Money } from '@crove/l10n-vn';
+import type { OpeningBalanceImport, OpeningBalancePreview, OpeningEntryError, OpeningRowError } from '@ludy/kernel-contract';
+import { Decimal, parseTaxCode, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { AMOUNT_LIMIT, canonical, checkAmount, MoneyError } from './money.ts';
 
 export const OPENING_BALANCE_SOURCE = 'finance.opening_balance';

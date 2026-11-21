@@ -2,7 +2,7 @@
 // the click. It runs the migration's definer on the control plane as the API login role; the code is all it takes,
 // the target comes from the database and never from the request, and nothing of the visitor is kept.
 import { sql } from 'kysely';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 export const SHORT_LINK_HITS_PER_MINUTE = 120;
 const CODE = /^[A-Za-z0-9]{10,16}$/;

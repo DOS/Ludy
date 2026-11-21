@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { QUOTE_SUGGEST_STATES } from '@crove/kernel-contract';
+import { QUOTE_SUGGEST_STATES } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 

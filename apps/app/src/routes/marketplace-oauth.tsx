@@ -6,7 +6,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts';
 import { takeOAuthAttempt } from '../lib/oauth.ts';

@@ -3,7 +3,7 @@
 // server reads them in the org as the member, so a member limited to some channels (#1081) sees their channels' only.
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { daysSince, socialFigures, type SocialFigure, type SocialFigures } from '../lib/clients.ts';
 
 const TONE = { urgent: 'font-medium text-destructive', waiting: 'font-medium text-link', plain: 'text-muted-foreground' } as const;

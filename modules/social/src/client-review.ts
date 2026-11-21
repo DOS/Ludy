@@ -4,8 +4,8 @@
 // records an outbox event; the worker then runs this command, which settles the post's waiting variants. An answer for
 // content that changed since, or a comment, settles nothing.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { approvalsRequired, clientApprovalOn, clientVerdict, decisionsOf } from './policy.ts';
 import { CLEAR_ERROR, POLICY_RAISED, approvedValues, base, lockPost, lockVariants, refreshPostStatus, setVariant, step } from './variants.ts';
 import { bannedCheckerOf, isBlocked } from './banned-words.ts';

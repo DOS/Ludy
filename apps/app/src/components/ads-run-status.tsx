@@ -4,7 +4,7 @@
 // it loads or if it fails, since the setting's own screen shows the failure and the line is only a pointer.
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
+import { Badge } from '@ludy/ui/components/badge';
 import { useWriteState } from './ads-write.tsx';
 
 export function AdsRunStatus({ slug, canManage, variant = 'status' }: { slug: string; canManage: boolean; variant?: 'status' | 'campaigns' }) {

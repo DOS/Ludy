@@ -1,5 +1,5 @@
 {
-  "name": "@crove/kernel-runtime",
+  "name": "@ludy/kernel-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "@aws-sdk/client-s3": "catalog:",
     "@aws-sdk/s3-presigned-post": "catalog:",
     "@aws-sdk/s3-request-presigner": "catalog:",
-    "@crove/db": "workspace:*",
+    "@ludy/db": "workspace:*",
     "kysely": "catalog:",
     "uuid": "catalog:",
     "zod": "catalog:"

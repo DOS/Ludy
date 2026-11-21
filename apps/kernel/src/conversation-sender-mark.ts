@@ -3,7 +3,7 @@
 // no sender is ever verified, every email thread is unverified, and a warning on all of them would mean nothing. The database keeps the truth either way (contact linking and
 // the address book still treat such a sender as untrusted); only what the Inbox is told to draw changes. The fact travels in the field itself, over the authenticated read the
 // Inbox already calls: without a verifier the field is left out, so nothing public says whether this deployment checks senders.
-import type { ConversationDetail, ConversationListed, ConversationSummary } from '@crove/kernel-contract';
+import type { ConversationDetail, ConversationListed, ConversationSummary } from '@ludy/kernel-contract';
 
 export function markableSummary(summary: ConversationSummary, canVerifySenders: boolean): ConversationSummary {
   if (canVerifySenders || summary.senderUnverified === undefined) return summary;

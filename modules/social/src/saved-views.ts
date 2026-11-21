@@ -8,9 +8,9 @@
 // naming a member who left lists nothing but says so (MEMBER_NOT_FOUND).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialSavedViewSave, zSocialViewFilters } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialSavedViewSave, zSocialViewFilters } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { membersOutside } from './post-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

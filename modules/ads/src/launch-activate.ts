@@ -18,9 +18,9 @@
 // The activation touches only the launch's OWN recorded objects (the ids in `ad_object`), never one found by a tag.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { planHash } from './campaign-plan.ts';
 import { draftPlanOf } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';

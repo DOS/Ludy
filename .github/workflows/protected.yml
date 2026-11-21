@@ -146,7 +146,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.detect.outputs.protected == 'true'
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       # PR code still runs after the swap (#1647): the root lifecycle scripts of pnpm install, and the code under
       # test the suite loads. So the base suite is checked again, here and after the run (the same script, kept in

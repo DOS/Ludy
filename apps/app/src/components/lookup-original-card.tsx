@@ -5,10 +5,10 @@
 // uploads the file here, where it goes the ordinary way (an upload, the sandbox, the signature check, a proposal).
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LookupHint } from '@crove/kernel-contract';
-import { LOOKUP_PROVIDER_TABLE, safeLookupUrl } from '@crove/l10n-vn';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { LookupHint } from '@ludy/kernel-contract';
+import { LOOKUP_PROVIDER_TABLE, safeLookupUrl } from '@ludy/l10n-vn';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { errorMessage } from '../lib/api.ts';
 import { useIntake } from './intake.tsx';
 

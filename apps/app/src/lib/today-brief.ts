@@ -2,7 +2,7 @@
 // Vy's daily brief on Home (issue #2383), the parts that need no screen. The brief is written by the server from the member's
 // own list and stored nowhere there; so that Home does not call the model on every visit, this tab keeps the last brief of
 // the day for the same list in sessionStorage (gone when the tab closes), keyed by day, language and a fingerprint of the list.
-import type { TodayBrief, TodayItem } from '@crove/kernel-contract';
+import type { TodayBrief, TodayItem } from '@ludy/kernel-contract';
 
 // A short fingerprint of the list: what the brief is written from (kinds, counts, amounts, due times, severities), not its
 // titles. The same list gives the same key, so a refresh of an unchanged Home reuses the brief. Two 32-bit hashes of the same

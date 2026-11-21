@@ -3,8 +3,8 @@
 // spells it; a name it does not know is refused. pg_timezone_names reads the zone files on every query, so the names
 // are read once per process and kept.
 import { sql, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
-import { DomainError } from '@crove/kernel-runtime';
+import type { Database } from '@ludy/db';
+import { DomainError } from '@ludy/kernel-runtime';
 
 let names: Promise<ReadonlyMap<string, readonly string[]>> | null = null;
 

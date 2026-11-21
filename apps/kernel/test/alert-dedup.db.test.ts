@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { pgAlertGate } from '../src/alert-gate.ts';
 import { EXIT, probeOnce, type HealthSnapshot, type ProberConfig } from '../src/prober.ts';
 

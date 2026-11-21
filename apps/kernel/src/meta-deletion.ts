@@ -9,8 +9,8 @@
 // person reads both sides by the code.
 import { randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
-import { platformUserHash } from '@crove/ad-platform';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { platformUserHash } from '@ludy/ad-platform';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { verifySignedRequest, type AdsDeletionOutcome } from './ads-deletion.ts';
 
 export interface MetaDeletionApps {

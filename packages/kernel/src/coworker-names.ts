@@ -6,8 +6,8 @@
 // agents of one coworker (two finance templates), the oldest one that is not retired speaks for it, so the name is stable.
 // Read in the member's own transaction (the agent table's own policy); nothing is written and no model is called.
 import { sql } from 'kysely';
-import { COWORKER_BY_MODULE, COWORKER_ROSTER, type CoworkerKey, type TodayCoworkers } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { COWORKER_BY_MODULE, COWORKER_ROSTER, type CoworkerKey, type TodayCoworkers } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 // The roster's names, for an org with no agent of the coworker (and for Vy).
 export function defaultCoworkers(): TodayCoworkers {

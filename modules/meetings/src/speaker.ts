@@ -4,8 +4,8 @@
 // (the recorder and the readers they added, by display name) and the label must still be on a draft line. This file never reads a member's private Vy result. The helpers
 // below are shared with the suggestions query.
 import { sql } from 'kysely';
-import { TRANSCRIPT_SPEAKER_MAX, zSpeakerName, zSpeakerNamed } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { TRANSCRIPT_SPEAKER_MAX, zSpeakerName, zSpeakerNamed } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { plainName } from './plain-name.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 

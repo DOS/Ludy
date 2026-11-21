@@ -4,7 +4,7 @@
 // connection drops its token from Ludy at once, but the platform still holds the permission until the owner removes it in the
 // platform's own settings, so every place that closes one says so (the owner's switch-off of running ads, the withdrawal of
 // one account, and the disconnect of an account), in the reader's language.
-import { ADS_SPEND_SCOPES, type AdAccountView } from '@crove/kernel-contract';
+import { ADS_SPEND_SCOPES, type AdAccountView } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { isSandboxProvider } from './ads.ts';
 

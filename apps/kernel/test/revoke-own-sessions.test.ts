@@ -2,8 +2,8 @@
 // audited command, when an org is skipped, and when the org-less definer runs. The database side is covered by
 // test/invariant/sessions-orgless.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { revokeOwnSessionsWithoutOrg } from '@crove/kernel';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { revokeOwnSessionsWithoutOrg } from '@ludy/kernel';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 
 const USER = '0198a3a0-0000-7000-8000-000000000001';
 const SESSION = '0198a3a0-0000-7000-8000-0000000000aa';

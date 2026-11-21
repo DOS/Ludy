@@ -3,7 +3,7 @@
 // read from the database, never from the request), and its images come from /b/<slug>/img/<file> (only the avatar
 // and the images of the posts the page shows). Each runs a definer on the control plane as the API login role.
 import { sql } from 'kysely';
-import { readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 
 export const BIO_HITS_PER_MINUTE = 120;

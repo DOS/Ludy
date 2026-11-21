@@ -5,7 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { AuditEntry } from '@crove/kernel-contract';
+import type { AuditEntry } from '@ludy/kernel-contract';
 import { AuditDetailBody } from '../src/components/audit-detail.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
 

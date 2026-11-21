@@ -4,8 +4,8 @@
 // SECURITY DEFINER resolution (returning an identical opaque 404 across invalid/expired/waiting/MODULE_OFF),
 // and enforces per-IP + per-token-hash rate limits plus bounded PDF read concurrency without CAPTCHA (#203).
 import { sql } from 'kysely';
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { DEFAULT_MESSAGE_ID_DOMAIN } from '@crove/kernel';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { DEFAULT_MESSAGE_ID_DOMAIN } from '@ludy/kernel';
 import {
   zSignPublicDeclineInput,
   zSignPublicDelegateInput,
@@ -23,14 +23,14 @@ import {
   type SignPublicSubmitResult,
   type SignPublicVerifyResult,
   type SignPublicView,
-} from '@crove/kernel-contract';
-import { DomainError, entitledTo, readVerified, sha256Hex, type BlobStore, type ErrorStatus, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, entitledTo, readVerified, sha256Hex, type BlobStore, type ErrorStatus, type Runtime } from '@ludy/kernel-runtime';
 import {
   normalizeSignPageDimensions,
   parseSharedSummary,
   sanitizeSignUserAgent,
   validateSignaturePngBase64,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 
 export const SIGN_VIEWS_PER_MINUTE = 60;
 export const SIGN_TOKEN_VIEWS_PER_MINUTE = 30;

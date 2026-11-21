@@ -4,17 +4,17 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { PAYROLL_RULES } from '@crove/l10n-vn';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { HrRunSheet, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { PAYROLL_RULES } from '@ludy/l10n-vn';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
 const setRuleStatus = (status: 'confirmed' | 'commentary') => {

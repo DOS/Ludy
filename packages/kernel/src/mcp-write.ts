@@ -6,7 +6,7 @@
 // rows its step writes (crove_kernel.mcp_write_row_ok) and nothing else. It reaches the same audit trail as a person's click, which also names the grant, the client and the agent.
 // Not here: `kernel.conversation.follow_up` (a task for the team): its task is an event (an outbox row) and wakes the assignee's agent, which the sealed context does not allow. A reply, a hide and
 // anything that leaves Ludy is R2 or R3 and becomes a proposal (E4).
-import { defineCommand, type CommandDef } from '@crove/kernel-runtime';
+import { defineCommand, type CommandDef } from '@ludy/kernel-runtime';
 import {
   conversationAssign,
   conversationLinkContact,
@@ -15,7 +15,7 @@ import {
   conversationResolve,
 } from './conversations.ts';
 import { createPartyAs } from './parties.ts';
-import { zPartyCreate } from '@crove/kernel-contract';
+import { zPartyCreate } from '@ludy/kernel-contract';
 
 const ADMINS = ['owner', 'admin'] as const;
 const SCOPE = 'ludy.engage.write' as const;

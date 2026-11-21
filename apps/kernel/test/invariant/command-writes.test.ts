@@ -14,16 +14,15 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { CellResolver } from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
-import { DATA_CLASSES, defineModule, tableWrite, type ModuleManifest } from '@crove/kernel-contract';
-import { P04_CLEAN_EVENTS, Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@crove/kernel-runtime';
-import { financeManifest } from '@crove/mod-finance';
+import type { CellResolver } from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
+import { DATA_CLASSES, defineModule, tableWrite, type ModuleManifest } from '@ludy/kernel-contract';
+import { P04_CLEAN_EVENTS, Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@ludy/kernel-runtime';
+import { financeManifest } from '@ludy/mod-finance';
 import { loadConfig } from '../../src/config.ts';
 import { moduleDefinitions, moduleManifests, serverRuntime } from '../../src/kernel.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
 import { numberReseedCommand } from '../../src/restore-report.ts';
-import { pkgImportMatches } from './fixtures/ad-platform-imports.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const noDatabase = (): never => {
@@ -352,12 +351,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     expect(kernel.slice(start, end)).toMatch(/new Runtime\(/);
-    const runtimePkg = (JSON.parse(readFileSync(join(ROOT, 'packages/kernel-runtime/package.json'), 'utf8')) as { name: string }).name;
-    expect(['@crove/kernel-runtime', '@ludy/kernel-runtime']).toContain(runtimePkg);
-    const otherRuntimePkg = runtimePkg === '@crove/kernel-runtime' ? '@ludy/kernel-runtime' : '@crove/kernel-runtime';
-    expect(pkgImportMatches(importers[0]?.text ?? '', otherRuntimePkg)).toEqual([]);
-    const escapedPkg = runtimePkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const runtimeImport = [...kernel.matchAll(new RegExp(`\\bimport\\b[^;]*?\\bfrom\\s*'${escapedPkg}';`, 'g'))];
+    const runtimeImport = [...kernel.matchAll(/\bimport\b[^;]*?\bfrom\s*'@ludy\/kernel-runtime';/g)];
     expect(runtimeImport).toHaveLength(1);
     const outside = [kernel.slice(0, runtimeImport[0]?.index), kernel.slice((runtimeImport[0]?.index ?? 0) + (runtimeImport[0]?.[0].length ?? 0), start), kernel.slice(end)]
       .join('\n')
@@ -368,8 +362,8 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
 
   it('finds every way the scan names to reach the Runtime class, and nothing in comments', () => {
     const scan = (source: string) => runtimeImports(source);
-    expect(scan(`import { DomainError, type Runtime } from '@crove/kernel-runtime';`)).toEqual({ names: [], problems: [] });
-    expect(scan(`import type { Runtime } from '@crove/kernel-runtime';`)).toEqual({ names: [], problems: [] });
+    expect(scan(`import { DomainError, type Runtime } from '@ludy/kernel-runtime';`)).toEqual({ names: [], problems: [] });
+    expect(scan(`import type { Runtime } from '@ludy/kernel-runtime';`)).toEqual({ names: [], problems: [] });
     expect(scan(`// an import (#465) of a .constructor, Reflect.construct\nconst a = 1;`)).toEqual({ names: [], problems: [] });
     expect(scan(`class A {\n  constructor(a: string) {}\n}`)).toEqual({ names: [], problems: [] });
     expect(scan('const out = Object.create(null) as Record<string, unknown>;')).toEqual({ names: [], problems: [] });
@@ -377,20 +371,18 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(scan('const d = Object.getOwnPropertyDescriptor(value, key);')).toEqual({ names: [], problems: [] });
     // A quote or backtick in a regular expression does not hide the code after it.
     expect(scan("const re = /[`'*]/g;\nconst k = require('x');").problems).toEqual(['require()']);
-    expect(scan(`import { 'Runtime' as R } from '@crove/kernel-runtime';`).names).toEqual(['R']);
-    expect(scan(`import { Runtime } from '@crove/kernel-runtime';`).names).toEqual(['Runtime']);
+    expect(scan(`import { 'Runtime' as R } from '@ludy/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime } from '@ludy/kernel-runtime';`).names).toEqual(['Runtime']);
-    expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@crove/kernel-runtime';`).names).toEqual(['R']);
+    expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@ludy/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime as R } from '../../packages/kernel-runtime/src/runtime.ts';`).names).toEqual(['R']);
     for (const source of [
-      `import * as K from '@crove/kernel-runtime';`,
       `import * as K from '@ludy/kernel-runtime';`,
-      `export * from '@crove/kernel-runtime';`,
-      `export { Runtime } from '@crove/kernel-runtime';`,
-      `import K from '@crove/kernel-runtime';`,
-      `const k = await import('@crove/kernel-runtime');`,
+      `export * from '@ludy/kernel-runtime';`,
+      `export { Runtime } from '@ludy/kernel-runtime';`,
+      `import K from '@ludy/kernel-runtime';`,
+      `const k = await import('@ludy/kernel-runtime');`,
       'const k = await import (name);',
-      `const k = require('@crove/kernel-runtime');`,
+      `const k = require('@ludy/kernel-runtime');`,
       `const r = createRequire(import.meta.url);`,
       'const R = runtime.constructor;',
       `const R = Object.getPrototypeOf(runtime)['constructor'];`,
@@ -404,7 +396,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
       'eval(code);',
       // The module loader and code built past the import graph (#1772).
       `const mod = process.getBuiltinModule('module');`,
-      `const k = Module._load('@crove/kernel-runtime');`,
+      `const k = Module._load('@ludy/kernel-runtime');`,
       `const r = Module.prototype.require.call(m, 'x');`,
       'const all = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(runtime));',
       `import vm from 'node:vm';`,

@@ -3,7 +3,7 @@
 // with the books as exact decimals, what the settings form sends, the search params, and the words for what the server
 // refuses and for how an update failed, in both languages. And the connection that can run ads (ADR-0043, W0b): which OAuth
 // providers read and which run ads, what a deployment offers the owner, and what the screen says when such a connection is closed.
-import { ADS_ERROR_KINDS, ADS_SANDBOX_CURRENCIES, ADS_SUMMARY_MAX_DAYS, type AdAccountView } from '@crove/kernel-contract';
+import { ADS_ERROR_KINDS, ADS_SANDBOX_CURRENCIES, ADS_SUMMARY_MAX_DAYS, type AdAccountView } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';

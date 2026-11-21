@@ -4,10 +4,10 @@
 // mapping the member picked (if any), and records what came back: the masked sheet (shapes, never a value) and the check's verdict, a refusal code or a preview of at most 20 parsed lines for the screen.
 // The file's bytes live in this function's variables and nowhere else. The job carries ids only; the log carries the file's first eight characters, a state and a code, never a header, a sample or a line; a
 // failure is recorded as a fixed code of ours, never the sandbox's text.
-import { EXTRACT_LIMITS, encodeMarketplaceColumnsInput, type ExtractClient } from '@crove/extract-contract';
-import { MARKETPLACE_COLUMN_PREVIEW_LINES, type MarketplaceColumnsRecord } from '@crove/kernel-contract';
-import type { MarketplaceColumnsTarget } from '@crove/mod-finance';
-import { BlobTooLargeError, readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS, encodeMarketplaceColumnsInput, type ExtractClient } from '@ludy/extract-contract';
+import { MARKETPLACE_COLUMN_PREVIEW_LINES, type MarketplaceColumnsRecord } from '@ludy/kernel-contract';
+import type { MarketplaceColumnsTarget } from '@ludy/mod-finance';
+import { BlobTooLargeError, readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace_columns' };
 

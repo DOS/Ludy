@@ -2,7 +2,7 @@
 // The matching of a connection's vouchers against the firm's own MISA catalogue (#4112, S3a of #4103), pure: no database, no network. A party is looked up by its tax code ONLY (never by name), an item by its
 // exact code; one active catalogue entry is `matched`, none is `unknown`, several are `ambiguous` and nothing picks one. The catalogue's names, addresses and tax codes are read here and go no further: what a
 // caller keeps is the matched entry's code and id. The check itself (request, record, results) is misa-amis-match.ts.
-import { MISA_AMIS_CANDIDATE_NAME_MAX, type MisaAmisMatchResult } from '@crove/kernel-contract';
+import { MISA_AMIS_CANDIDATE_NAME_MAX, type MisaAmisMatchResult } from '@ludy/kernel-contract';
 
 /** A party's tax code as the catalogue and the vouchers compare it: digits only, 10 (a business) or 13 (a branch) of them; anything else cannot be matched. */
 export function normalizeTaxCode(raw: string | null | undefined): string | null {

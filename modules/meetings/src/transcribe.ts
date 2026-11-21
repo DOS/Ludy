@@ -12,8 +12,8 @@
 // Transcription is off unless the deployment turns it on (MEETINGS_TRANSCRIBE, with a provider): the module works with it off, and `start` refuses
 // with TRANSCRIBE_OFF. A kill switch or a spent budget refuses with the kernel's AI_BUDGET_EXHAUSTED, as for every use of Vy. The audit rows and the
 // event carry ids and counts, never text.
-import { zTranscriptCopy, zTranscriptResult, zTranscriptSegmentInput, type TranscriptSegmentInput } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zTranscriptCopy, zTranscriptResult, zTranscriptSegmentInput, type TranscriptSegmentInput } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { TRANSCRIBE_FEATURE as FEATURE } from './transcribe-run.ts';
 import { ROLES, openMeeting, replaceDraft, userOf } from './transcript.ts';
 

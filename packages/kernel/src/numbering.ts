@@ -14,8 +14,8 @@
 // - kernel.number.allocations: the numbers of one series, newest first, each with its record and its void, if any.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NUMBER_RESETS, type MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { NUMBER_RESETS, type MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

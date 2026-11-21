@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for notes.my_work project lookup bounds (#2593).
 import { describe, expect, it } from 'vitest';
-import { PROJECT_TASK_MAP_LIMIT, zProjectTaskProjectsInput } from '@crove/kernel-contract';
-import type { Lookup, QueryContext } from '@crove/kernel-runtime';
+import { PROJECT_TASK_MAP_LIMIT, zProjectTaskProjectsInput } from '@ludy/kernel-contract';
+import type { Lookup, QueryContext } from '@ludy/kernel-runtime';
 import { myWork } from '../src/todos.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { CONSENT_METHODS, LIVE_CONSENT_METHODS, WRITTEN_CONSENT_METHODS, consentMethodAllowed } from '@crove/kernel-contract';
+import { CONSENT_METHODS, LIVE_CONSENT_METHODS, WRITTEN_CONSENT_METHODS, consentMethodAllowed } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';

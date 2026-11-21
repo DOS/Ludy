@@ -5,9 +5,9 @@
 // calendar of their own to connect.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { CalendarConnectionView, CalendarOAuthProvider } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import type { CalendarConnectionView, CalendarOAuthProvider } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ErrorText } from '../components/ui.tsx';

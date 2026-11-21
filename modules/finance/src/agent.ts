@@ -4,7 +4,7 @@
 // deterministic checks found, and escalates the approval to the nearest human up the chart (the owner at the root).
 // It never posts or approves: posting approval (P09) and signing stay with a qualified human (ADR-0029 section 9).
 // Phase 1 uses no language model here; the built-in model runner is a follow-up.
-import { DomainError, type AgentProgram } from '@crove/kernel-runtime';
+import { DomainError, type AgentProgram } from '@ludy/kernel-runtime';
 
 export const CHIEF_ACCOUNTANT_TEMPLATE = 'finance.chief_accountant';
 // Tasks one run reviews at most; the rest wait for the next run.

@@ -5,11 +5,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { kernelCommands } from '@crove/kernel';
-import type { CommandDef } from '@crove/kernel-runtime';
-import { crmCommands } from '@crove/mod-crm';
-import { financeCommands } from '@crove/mod-finance';
-import { socialCommands } from '@crove/mod-social';
+import { kernelCommands } from '@ludy/kernel';
+import type { CommandDef } from '@ludy/kernel-runtime';
+import { crmCommands } from '@ludy/mod-crm';
+import { financeCommands } from '@ludy/mod-finance';
+import { socialCommands } from '@ludy/mod-social';
 import { orgPurgeCommand } from '../src/org-purge.ts';
 import { numberReseedCommand } from '../src/restore-report.ts';
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { NavIconName } from '@crove/ui/components/nav-icon';
+import type { NavIconName } from '@ludy/ui/components/nav-icon';
 import type { AppId, NavLabel } from './apps.ts';
 
 export const APP_ICON: Record<AppId, NavIconName> = { teamwork: 'appTeamwork', finance: 'appAccounting', engage: 'appSocial', hr: 'appHr', sign: 'journal', ai: 'appAi' };

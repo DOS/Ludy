@@ -20,7 +20,7 @@ describe('alias keys', () => {
 
 describe('the factor of a name', () => {
   it('is any positive decimal with up to six places, trailing zeros included, and never zero', async () => {
-    const { zStockFactor } = await import('@crove/kernel-contract');
+    const { zStockFactor } = await import('@ludy/kernel-contract');
     for (const ok of ['1', '12', '0.5', '0.50', '0.250', '0.000001', '12.500000', '100000000000']) expect(zStockFactor.safeParse(ok).success, ok).toBe(true);
     for (const bad of ['0', '0.0', '0.000000', '-1', '1e3', '.5', '1.1234567', '', '01', 'abc']) expect(zStockFactor.safeParse(bad).success, bad).toBe(false);
   });

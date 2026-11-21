@@ -2,7 +2,7 @@
 // The close of a month of stock (#2513): the cost per item to the last dong, the entry that posts it and why it balances, a negative item blocking the close, the cost coming back
 // into stock, several stock accounts, and a month that opens with the balance of a closed one. Pure; the moves are made in code.
 import { describe, expect, it } from 'vitest';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { closeDescription, closeMonth, monthEnd, type CloseItem } from '../src/domain/stock-close.ts';
 
 const item = (code: string, moves: CloseItem['moves'], extra: Partial<CloseItem> = {}): CloseItem => ({ itemId: `id-${code}`, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', moves, ...extra });

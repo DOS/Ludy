@@ -2,7 +2,7 @@
 // the dedupe keys (the "+X, -X, +X" day the ADR left open), the classification against stored lines and the running
 // balance check. The import itself is tested on PostgreSQL in apps/kernel/test/finance-bank.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { normalizeStatementAmount, type BankStatementRow } from '@crove/kernel-contract';
+import { normalizeStatementAmount, type BankStatementRow } from '@ludy/kernel-contract';
 import { balanceBreaks, checkLines, checkStatement, classify, dedupeKeys, judge, parseStatementAmount, parseStatementDate, readFeedLines, readStatement, skipFedLines } from '../src/domain/bank-statement.ts';
 
 let rowNo = 1;

@@ -3,8 +3,8 @@
 // against its sha256) and records the size once. It walks the files by id after a cursor kept in memory, so a header
 // that cannot be read is tried again only on the next round, a day later, never holding the others.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { BlobIntegrityError, BlobNotFoundError, BlobTooLargeError, readVerified, type BlobStore, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { BlobIntegrityError, BlobNotFoundError, BlobTooLargeError, readVerified, type BlobStore, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { imageSize } from './media-probe.ts';
 
 export const IMAGE_SIZE_SWEEP_MS = 10 * 60_000;

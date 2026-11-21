@@ -8,7 +8,7 @@ import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { RECORDING_NOTICE } from '@crove/meeting-recorder';
+import { RECORDING_NOTICE } from '@ludy/meeting-recorder';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 

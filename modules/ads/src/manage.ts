@@ -21,7 +21,7 @@
 // is cancelled by begin, never made. The database's guard (crove_ads.manage_change_guard) holds all of this whatever path writes.
 import { z } from 'zod';
 import { Decimal } from 'decimal.js';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   ADS_BUDGET_RAISE_COMMAND,
   ADS_BUDGET_RAISE_KIND,
@@ -40,8 +40,8 @@ import {
   type AdsManageSlot,
   type AdsManageStateView,
   type AdsManageSuggestion,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { contextBase } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';
 import { committedLaunches, lockedLaunch, ownCommitments } from './launch-ledger.ts';

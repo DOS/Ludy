@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Entry point for @crove/sign: exports the CA signing port, SSRF-safe URL helpers,
+// Entry point for @ludy/sign: exports the CA signing port, SSRF-safe URL helpers,
 // offline sandbox adapter, VNPT SmartCA / Viettel MySign / MISA WeSign adapters, and getCaAdapter factory.
 import { createMisaWeSignAdapter } from './misa-wesign.ts';
 import {

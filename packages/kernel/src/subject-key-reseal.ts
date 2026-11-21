@@ -5,8 +5,8 @@
 // no sealed value and no data key. The audit fact carries counts and key ids.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { tableWrite } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const zKeyId = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);

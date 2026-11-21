@@ -5,9 +5,9 @@
 // it), the extractor's fromText for the PDF text and fromImage for a photo.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import type { InvoiceLine, ParsedInvoice } from '@crove/l10n-vn';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import type { InvoiceLine, ParsedInvoice } from '@ludy/l10n-vn';
 import { classifyAiError, documentType, scoreExtraction, zExtractionFixture, type DocumentKind, type DocumentScore, type ExpectedInvoice, type InvoiceReader } from '../src/index.ts';
 
 export const SYNTHETIC_DOCUMENTS = join(import.meta.dirname, 'fixtures', 'documents');

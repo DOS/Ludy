@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared database loaders and permission checks for the projects module.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import type { ProjectStatus } from '@crove/kernel-contract';
-import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { ProjectStatus } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 export const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

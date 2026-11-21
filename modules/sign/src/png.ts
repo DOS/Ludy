@@ -8,8 +8,8 @@ import {
   SIGN_SIGNATURE_PNG_MAX_BYTES,
   SIGN_SIGNATURE_PNG_MAX_HEIGHT,
   SIGN_SIGNATURE_PNG_MAX_WIDTH,
-} from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 const PNG_MAGIC = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;

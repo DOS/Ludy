@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { HR_DECLARATION_KINDS, zHrDeclarationDocument, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, hrDeclarationPeriodOk, type HrDeclarationDocument } from '@crove/kernel-contract';
+import { HR_DECLARATION_KINDS, zHrDeclarationDocument, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, hrDeclarationPeriodOk, type HrDeclarationDocument } from '@ludy/kernel-contract';
 import { DECLARATION_KINDS, DECLARATION_LAYOUTS, buildQuarterly } from '../src/declarations.ts';
 import { LABOR_REGISTER_KINDS } from '../src/labor-register.ts';
 import { amountCell, buildDeclarationWorkbook } from '../src/declaration-xlsx.ts';

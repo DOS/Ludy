@@ -7,7 +7,7 @@
 // What each rule compares with is the vendor's own history, read by finance.extraction.lookup from the books: the totals
 // of its last invoices, the unit prices of their lines, and the bank accounts its earlier proposals carried. A vendor
 // with too little history raises nothing: the first account, the first few invoices and the first price are never odd.
-import { bankAccountRuns, Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@crove/l10n-vn';
+import { bankAccountRuns, Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@ludy/l10n-vn';
 
 // What the books remember of a vendor.
 export interface VendorHistory {

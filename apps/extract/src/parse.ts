@@ -3,7 +3,7 @@
 // leaves, so the worker never sees a shape it does not expect.
 import PostalMime from 'postal-mime';
 import type { Address } from 'postal-mime';
-import { EXTRACT_LIMITS, MarketplaceColumnsInputError, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, MarketplaceColumnsInputError, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@ludy/extract-contract';
 import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
 import { DocxError, readDocxText } from './docx-text.ts';

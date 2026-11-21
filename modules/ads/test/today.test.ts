@@ -2,7 +2,7 @@
 // The Ads line of Home's "Hôm nay cần bạn" (#2378 slice 2): the flags as the shared items, in the order a member should read them, every
 // item valid for the shared schema, and the campaigns grouped past the limit.
 import { describe, expect, it } from 'vitest';
-import { zTodayItems, type AdsFlag } from '@crove/kernel-contract';
+import { zTodayItems, type AdsFlag } from '@ludy/kernel-contract';
 import { TODAY_ADS_CAMPAIGNS, todayItemsOf } from '../src/today.ts';
 
 const accountId = '0190c4a1-0000-7000-8000-000000000001';

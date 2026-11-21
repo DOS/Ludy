@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pure IANA time zone wall-clock and offset helpers shared across @crove/l10n-vn modules.
+// Pure IANA time zone wall-clock and offset helpers shared across @ludy/l10n-vn modules.
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;

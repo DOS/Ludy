@@ -3,8 +3,8 @@
 // apps/kernel/test/finance-opening-balance.db.test.ts.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { normalizeAmountText, type OpeningBalanceImport, type OpeningBalanceRow } from '@crove/kernel-contract';
-import { money, sum } from '@crove/l10n-vn';
+import { normalizeAmountText, type OpeningBalanceImport, type OpeningBalanceRow } from '@ludy/kernel-contract';
+import { money, sum } from '@ludy/l10n-vn';
 import { checkOpeningBalance, parseOpeningAmount, type OpeningChartAccount, type LedgerFacts } from '../src/index.ts';
 
 const CHART: ReadonlyMap<string, OpeningChartAccount> = new Map(

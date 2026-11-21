@@ -14,15 +14,15 @@ import pg from 'pg';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createDb, createPool, type Db } from '@crove/db';
+import { createDb, createPool, type Db } from '@ludy/db';
 
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 
-import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
 
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 
-import { CredentialVault, parseVaultKey, Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { CredentialVault, parseVaultKey, Runtime, type BlobStore } from '@ludy/kernel-runtime';
 
 import { createAuthenticator } from '../src/auth.ts';
 
@@ -32,7 +32,7 @@ import { createHttpApp } from '../src/http.ts';
 
 import type { SocialDrafter } from '../src/rpc.ts';
 
-import { SocialWriter, type DraftRequest, type DraftResult, type RewriteGenerator } from '@crove/agent';
+import { SocialWriter, type DraftRequest, type DraftResult, type RewriteGenerator } from '@ludy/agent';
 
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';

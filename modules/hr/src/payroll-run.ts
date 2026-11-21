@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The monthly pay run (issue #2531; payroll plan docs/plan/payroll.md §6.2 and §6.3, ADR-0046). A run is one month of one legal entity; a line is one person's month. Opening a month copies
-// the employments in force and last month's recurring inputs, the calculator of @crove/l10n-vn computes every line from stored terms, inputs and dated rules, and the figures and the
+// the employments in force and last month's recurring inputs, the calculator of @ludy/l10n-vn computes every line from stored terms, inputs and dated rules, and the figures and the
 // breakdown are stored as facts: the payslip is a view of them, never a recomputation. A draft changes; approving is R3 (a fresh second factor, a person, never an agent), is refused
 // while a rule a line used is still `commentary`, and freezes the run and its lines (the database's guard, not only this code). A correction of an approved month is an adjustment line
 // in a later run. Owners and admins only, in the commands and in the database's policies. Every read is a sensitive query, and the pay run reads the people tables in the user's context,
@@ -12,8 +12,8 @@
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
+import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
   HR_RECURRING_INPUTS,
@@ -45,8 +45,8 @@ import {
   type HrRunWritten,
   type HrThirteenthMonthPreviewResult,
   type HrThirteenthMonthPreviewRow,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { computeAnnualLeaveBalance } from './leave.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, monthStart, previousMonth, termsInForceForMonth } from './payroll-dates.ts';

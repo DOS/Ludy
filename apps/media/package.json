@@ -1,5 +1,5 @@
 {
-  "name": "@crove/media",
+  "name": "@ludy/media",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/media-contract": "workspace:*",
+    "@ludy/media-contract": "workspace:*",
     "@hono/node-server": "catalog:",
     "hono": "catalog:",
     "zod": "catalog:"

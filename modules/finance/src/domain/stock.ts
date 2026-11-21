@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure side of stock (#2512, ADR-0045): how a name is normalized into an alias key, and how a quantity is written. Quantities are decimal strings and the arithmetic is
 // made with decimal.js through the money helpers, never with numbers; an item's on hand is summed in SQL as a numeric.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 
 // The longest alias key the table holds.
 export const ALIAS_KEY_MAX = 300;

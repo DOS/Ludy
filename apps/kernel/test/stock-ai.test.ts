@@ -2,8 +2,8 @@
 // The finance coworker on stock on the API side (#2514) with stand-ins for the reader: the model is asked once with the lines and the items it may see and nothing else, a suggestion
 // names an item that was offered, and every state of `ai` is an answer with no suggestion (and, for a reorder, the fixed template), never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type ReorderRequest, type ReorderResult, type StockMatchAnswer, type StockMatchItem, type StockMatchLine } from '@crove/agent';
-import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type ReorderRequest, type ReorderResult, type StockMatchAnswer, type StockMatchItem, type StockMatchLine } from '@ludy/agent';
+import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@ludy/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems, STOCK_KEEP_MS, STOCK_KEEP_NONE_MS, type StockAi } from '../src/stock-ai.ts';
 

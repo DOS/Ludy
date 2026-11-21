@@ -1,6 +1,6 @@
 // Bulk intake state (issue #314): what the Inbox shows for each file of an upload batch, and when it stops polling.
 import { describe, expect, it } from 'vitest';
-import type { BatchFile, FileStatus } from '@crove/kernel-contract';
+import type { BatchFile, FileStatus } from '@ludy/kernel-contract';
 import {
   ARCHIVES_PER_POLL,
   MAX_INTAKE_FILES,

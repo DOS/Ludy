@@ -11,10 +11,10 @@
 // - Scheduling needs the variant's latest decision to be an approval of its current revision and hash.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zApprovedCall, zId, zSocialMemberFilter } from '@crove/kernel-contract';
-import { requireApprover } from '@crove/kernel';
-import type { MemberRole, SocialDecision, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zApprovedCall, zId, zSocialMemberFilter } from '@ludy/kernel-contract';
+import { requireApprover } from '@ludy/kernel';
+import type { MemberRole, SocialDecision, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { approvalCovers, approvalsInRound, effectiveContent, type BaseContent, type PostMedia } from './domain/approval.ts';
 import { COMMENT_RULES, coverOf, firstCommentOf, isProvider, linkCardThumbOf, threadPartsOf } from './domain/channels.ts';
 import { IMPORT_MEDIA_MAX } from './domain/plan-csv.ts';

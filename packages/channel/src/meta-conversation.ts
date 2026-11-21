@@ -36,7 +36,7 @@ export const INSTAGRAM_DIRECT_TEXT_MAX = 1000;
 const STANDARD_WINDOW_MS = 24 * 3_600_000;
 const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 3_600_000;
 
-// Keyed hash of the Meta user who granted a connection, with the same domain separation as @crove/ad-platform so one Meta data-deletion
+// Keyed hash of the Meta user who granted a connection, with the same domain separation as @ludy/ad-platform so one Meta data-deletion
 // callback (`/api/ads/meta/data-deletion`) matches both Ads and Page connections granted by that person (#2305, #2307).
 export function platformUserHash(appSecret: string, userId: string): string {
   return createHmac('sha256', appSecret).update(`ludy.ads.meta_ads.user:${userId}`).digest('hex');

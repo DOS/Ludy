@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, type UserActor } from '@crove/kernel-runtime';
-import { createLogProvider, type MailProvider, type OutboundMail, type SendResult } from '@crove/mail';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, type UserActor } from '@ludy/kernel-runtime';
+import { createLogProvider, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import { MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, purgeMail, runMailJob, sweepMail, type MailJob, type MailTemplates } from '../src/mail-queue.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

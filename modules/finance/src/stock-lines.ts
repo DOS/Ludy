@@ -6,11 +6,11 @@
 // A line matches an item of the document's entity by a fixed chain: the item's code (the line's text is the code, in the item's unit), else an alias a person taught (the
 // normalized text, with its factor to the item's unit). Nothing is guessed. A voided document reverses the moves it made (reverseDocumentStock).
 import { sql } from 'kysely';
-import { ORDER_SOURCE_KIND, zStockAssign, zStockUnassignedInput, type StockUnassignedLine } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { ORDER_SOURCE_KIND, zStockAssign, zStockUnassignedInput, type StockUnassignedLine } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { STOCK_GOODS_ACCOUNT, STOCK_SALE_DEFAULT_ACCOUNT, moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, sameUnit } from './domain/stock.ts';
 import { latestRevision } from './source-entry.ts';
 import { loadItem, reverseLiveReturns, writeStockMove } from './stock.ts';

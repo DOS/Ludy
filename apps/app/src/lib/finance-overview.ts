@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure parts of the Kế toán Tổng quan screen (#2631): how a card's change reads (its direction and whether it is good news), and the sizes of the bars of
 // the six-month chart. Amounts are decimal strings; the bars use the exact ledger units (bigint), and only the final ratio is a number, for a CSS height.
-import type { FinanceOverview, OverviewFigure } from '@crove/kernel-contract';
+import type { FinanceOverview, OverviewFigure } from '@ludy/kernel-contract';
 import { toUnits } from './decimal.ts';
 
 export type OverviewCard = 'cash' | 'profit' | 'receivables' | 'payables';

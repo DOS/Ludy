@@ -2,7 +2,7 @@
 // The pure side of the finance coworker on stock (#2514, plan stock-and-marketplaces.md section 8.6): when an item is running low and how much to ask for, the fixed words of a reorder
 // message, and which items are offered to the model for a line. No clock and no database here: the query reads the figures and calls these.
 // Quantities are decimal strings and the arithmetic is decimal.js through the money helpers, never numbers.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { plainQuantity } from './stock.ts';
 
 // The pace of sales is read over the last eight weeks, or over the days since the item's first move when that is younger, but never over fewer than seven days: one sale on the

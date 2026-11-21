@@ -2,8 +2,8 @@
 // The MISA adapter is built and off (#2503): EINVOICE_PROVIDERS=misa is refused, at start and where the providers are built, until the issues of MISA_GATES are done and written
 // in the issue; and its transport reaches nothing but MISA's own host over https, through the egress guard.
 import { describe, expect, it, vi } from 'vitest';
-import { EInvoiceProviderError, MISA_GATES, misaBlockers } from '@crove/einvoice';
-import { EgressError, type EgressResponse, type guardedRequest } from '@crove/kernel-runtime';
+import { EInvoiceProviderError, MISA_GATES, misaBlockers } from '@ludy/einvoice';
+import { EgressError, type EgressResponse, type guardedRequest } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { einvoiceProvidersOf } from '../src/kernel.ts';
 import { misaTransport } from '../src/einvoice-transport.ts';

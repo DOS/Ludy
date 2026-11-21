@@ -12,8 +12,8 @@
 // (a later revision posted, or the entry reversed) is refused (POSTING_SUPERSEDED): a retried old request never takes
 // a reversed entry for the one on the books.
 import { sql } from 'kysely';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
-import type { Money } from '@crove/l10n-vn';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
+import type { Money } from '@ludy/l10n-vn';
 import { legalEntityError } from './legal-entity.ts';
 import { postingGuardError, type BeforeOpeningChoice } from './period-lock.ts';
 

@@ -4,7 +4,7 @@
 // first) is reported as not listed; and the source names no call of a writer but `findByTag` and `setStatus`, and no status but paused.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { AdPlatformError, MetaAdWriter, SandboxAdWriter, adPausers, pauserOf, sandboxWriteLogin } from '../src/index.ts';
 
 const ACCOUNT = 'sbxads-0123456789abcdef';

@@ -3,7 +3,7 @@
 // the ad account's own time zone, the comparison with the books as exact decimals, what the settings form changes, and
 // the few facts it reads from an account. The server decides every rule; these only choose what to show and what to send.
 // Money is a decimal string (AGENTS.md): the sums go through lib/decimal.ts, never through JS numbers.
-import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, isAdWriteProviderId, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
+import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, isAdWriteProviderId, normalizeAccountCode, zonedDate, type AdAccountView } from '@ludy/kernel-contract';
 import { fromUnits, isZeroAmount, toUnits } from './decimal.ts';
 
 // The periods of the range control, in the order the control lists them.

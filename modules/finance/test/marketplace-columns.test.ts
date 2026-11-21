@@ -2,7 +2,7 @@
 // Whether a stored column check request is for the mapping asked (#4036): compared field by field, since the database keeps a jsonb object's keys in its own order (length, then bytes), so the stored form
 // of `{ index, field }` is `{ field, index }` and the text of one is never the text of the other.
 import { describe, expect, it } from 'vitest';
-import type { MarketplaceColumnMapping } from '@crove/kernel-contract';
+import type { MarketplaceColumnMapping } from '@ludy/kernel-contract';
 import { sameMapping } from '../src/marketplace-columns.ts';
 
 const ASKED: MarketplaceColumnMapping = { platform: 'shopee', assignments: [{ index: 0, field: 'orderNo' }, { index: 2, field: 'quantity' }] };

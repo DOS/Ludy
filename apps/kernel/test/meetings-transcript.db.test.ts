@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import {
   BlobNotFoundError,
   BlobTooLargeError,
@@ -18,9 +18,9 @@ import {
   type BlobStore,
   type CredentialBroker,
   type DirectTransfers,
-} from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+} from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';

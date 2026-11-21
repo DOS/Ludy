@@ -11,20 +11,20 @@ import {
   type ProjectTaskCard,
   type ProjectTaskRecurrenceView,
   type TaskChecklistStep,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens use about recordings a meeting platform finished (meetings integrations C1, #3173): what a row offers, why it cannot be imported, how often to look again
 // and which words a failure code gets. Pure functions, so the screens and their tests share one reading of a row.
-import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView, type TranscriptionMaker } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView, type TranscriptionMaker } from '@ludy/kernel-contract';
 
 // The guide for the Microsoft 365 administrator of a Teams connection (the two steps in their own admin pages): the runbook of the repository, which is public.
 export const MEETINGS_TEAMS_GUIDE = 'https://github.com/DOS/Ludy/blob/main/docs/runbooks/meetings-teams.md';

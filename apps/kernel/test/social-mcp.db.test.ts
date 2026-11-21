@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
-import { MCP_TEXT_MAX, socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { MCP_TEXT_MAX, socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

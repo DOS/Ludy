@@ -4,7 +4,7 @@
 // first day, with no second approval (launch-activate.ts, ADR-0043 points 4 and 5). So no string on the approval path may say nothing is sent or that approving only
 // marks the plan, and the card, the button, the toast and the subtitles name the amount, the paused state and the automatic start, in both languages.
 import { describe, expect, it } from 'vitest';
-import type { AdsChange } from '@crove/kernel-contract';
+import type { AdsChange } from '@ludy/kernel-contract';
 import { adsChangeLine, adsChangeText, isAdsManageChange } from '../src/lib/ads-change.ts';
 import { catalog, translatorFor } from '../src/i18n/runtime.ts';
 

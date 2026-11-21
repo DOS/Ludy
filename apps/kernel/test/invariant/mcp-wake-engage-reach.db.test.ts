@@ -9,12 +9,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Deal, EngageWakeConversations, EngageWakeCrm } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey, type UserActor } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Deal, EngageWakeConversations, EngageWakeCrm } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 

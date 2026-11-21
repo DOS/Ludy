@@ -45,7 +45,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/extension" --filter "@crove/media..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/media..." --filter "ludy-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -95,7 +95,7 @@ jobs:
         run: pnpm exec vitest run --project unit
 
       - name: Build web app
-        run: pnpm --filter @crove/app build
+        run: pnpm --filter @ludy/app build
 
       # Kernel plan §9 (#1518): every browser downloads the SPA, so no kernel secret name used as code and no
       # secret-shaped value may be in the build.
@@ -157,7 +157,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "ludy-monorepo"
 
       - name: Start MinIO
         run: |
@@ -232,7 +232,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       - name: RLS matrix, EXECUTE matrix and search_path hijack test, shared mode
         run: >-
@@ -286,7 +286,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/web"
+        run: pnpm install --frozen-lockfile --filter "@ludy/web"
 
       - name: Build the apps/web image
         run: docker build -f apps/web/Dockerfile -t crove-web:ci .
@@ -297,18 +297,18 @@ jobs:
           curl --silent --fail --output /dev/null --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:3000/
 
       - name: Install Chromium
-        run: pnpm --filter @crove/web exec playwright install --with-deps chromium
+        run: pnpm --filter @ludy/web exec playwright install --with-deps chromium
 
       - name: axe and language checks
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
-        run: pnpm --filter @crove/web test:a11y
+        run: pnpm --filter @ludy/web test:a11y
 
       # After the axe run and with one worker, so nothing else competes for the CPU it measures.
       - name: Performance budget
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
-        run: pnpm --filter @crove/web test:perf
+        run: pnpm --filter @ludy/web test:perf
 
       - name: Server log
         if: failure()
@@ -344,19 +344,19 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/extension..."
+        run: pnpm install --frozen-lockfile --filter "@ludy/extension..."
 
       - name: Build the package
-        run: pnpm --filter @crove/extension build
+        run: pnpm --filter @ludy/extension build
 
       - name: Manifest permissions match the fixed list
-        run: pnpm --filter @crove/extension check:manifest
+        run: pnpm --filter @ludy/extension check:manifest
 
       - name: Install Chromium
-        run: pnpm --filter @crove/extension exec playwright install --with-deps chromium
+        run: pnpm --filter @ludy/extension exec playwright install --with-deps chromium
 
       - name: Load the unpacked extension in Chromium
-        run: pnpm --filter @crove/extension test:e2e -- --trace off
+        run: pnpm --filter @ludy/extension test:e2e -- --trace off
 
   # The required check: it passes only when the static job, knip, the marketing site, the extension, every database part, the shared-database
   # invariants, the Supabase image (T17), the kernel, extract and media images (T12), the split stack (T7) and the backup drill passed, so a
@@ -422,7 +422,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       - name: Migrate with the extensions enabled and run the guard (as postgres, not a superuser)
         env:

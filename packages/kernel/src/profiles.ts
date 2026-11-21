@@ -3,7 +3,7 @@
 // only members of the org in the sealed context. With a second cell that definer becomes a call to the control plane
 // and these callers stay as they are.
 import { sql, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
+import type { Database } from '@ludy/db';
 
 export interface MemberProfile {
   userId: string;

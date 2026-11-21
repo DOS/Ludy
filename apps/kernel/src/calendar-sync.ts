@@ -7,12 +7,12 @@
 // the member reconnects. A refusal of the access token alone is first answered by renewing it once. Any other failure
 // leaves the connection active with the reason noted, and the next sweep, 15 minutes later, tries again. The blocks of
 // a failing connection stay: a stale block withholds a slot, it never frees one that may be busy.
-import { CALENDAR_SYNC_DAYS, calendarBinding, type CalendarProvider } from '@crove/kernel-contract';
-import type { CalendarAdapter } from '@crove/channel';
+import { CALENDAR_SYNC_DAYS, calendarBinding, type CalendarProvider } from '@ludy/kernel-contract';
+import type { CalendarAdapter } from '@ludy/channel';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { CredentialError, DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import { busyPieces, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
+import type { Db } from '@ludy/db';
+import { CredentialError, DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
+import { busyPieces, type SealedCalendarCredential, type WriteBackAction } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.calendar.sync' };
 export const CALENDAR_SYNC_SWEEP_MS = 15 * 60_000;

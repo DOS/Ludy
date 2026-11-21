@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Ref } from 'react';
 import { useTranslations } from 'use-intl';
-import { NavIcon } from '@crove/ui/components/nav-icon';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { Logo } from './ui.tsx';
 
 // The phone's header (issue #1245): the menu button, the org's name and the search; the rest is in the drawer. Sticky, so a control the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Builds the extension into dist/ with no bundler and no dependency: Node strips the types of each module (the sources
 // are erasable TypeScript), the relative imports are rewritten from .ts to .js, and the one workspace package it uses,
-// @crove/meeting-recorder (pure code shared with the app's recorder), is copied to dist/shared/. The result is plain ES modules
+// @ludy/meeting-recorder (pure code shared with the app's recorder), is copied to dist/shared/. The result is plain ES modules
 // the browser loads from the package. `node scripts/build.mjs --version 1.2.3` stamps the manifest (a release tag).
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
@@ -17,7 +17,7 @@ const STATIC = ['popup.html', 'popup.css', 'offscreen.html', 'mic.html'];
 const ICONS = ['icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png'];
 
 // The only package import the sources may make, mapped to its file; any other bare import fails the build (no bundler, no node_modules in the package).
-const PACKAGES = { '@crove/meeting-recorder': join(root, '..', '..', 'packages', 'meeting-recorder', 'src', 'index.ts') };
+const PACKAGES = { '@ludy/meeting-recorder': join(root, '..', '..', 'packages', 'meeting-recorder', 'src', 'index.ts') };
 // A package's index.ts is dist/shared/<package>.js; any other file of the package is dist/shared/<package>-<name>.js, so a package of several files keeps one output each.
 const sharedName = (file) => {
   if (!file.includes('/packages/')) return basename(file);

@@ -1,6 +1,6 @@
 // Fiscal year archive packages (#922) on the ledger screen: which years an owner may ask for, and when a request the
 // worker has not recorded counts as stalled. The kernel decides (finance.archive.build); these only shape the screen.
-import type { YearArchive } from '@crove/kernel-contract';
+import type { YearArchive } from '@ludy/kernel-contract';
 
 // Only owners ask for, list, download and verify packages; the kernel checks again.
 export const canArchiveYears = (role: string | null | undefined) => role === 'owner';

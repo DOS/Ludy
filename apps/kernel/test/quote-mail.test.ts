@@ -2,7 +2,7 @@
 // The mail template of a sent quote (#2694, #2827): its Reply-To is the org's conversation address, so the customer's answer reaches the Inbox as a conversation. It is
 // never the document intake address (a reply there would be read as a document); with no conversation address the mail has no Reply-To.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
+import { renderQuotePdf, type QuoteDocumentData } from '@ludy/mod-crm';
 import { quoteMailTemplate, quotePdfFilename } from '../src/quote-mail.ts';
 import type { MailTemplateInput } from '../src/mail-queue.ts';
 

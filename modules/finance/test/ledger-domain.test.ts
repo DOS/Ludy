@@ -1,7 +1,7 @@
 // Property tests for the pure ledger model (ADR-0021 decisions 1 and 5, issue #154).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { Decimal, money } from '@crove/l10n-vn';
+import { Decimal, money } from '@ludy/l10n-vn';
 import {
   accountBalances,
   checkAmount,

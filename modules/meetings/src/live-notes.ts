@@ -22,8 +22,8 @@ import {
   type LiveNotesDone,
   type LiveTicked,
   type SummaryResult,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { matchAttendee, parseWhen } from './summary.ts';
 import { vnDay } from './retention.ts';

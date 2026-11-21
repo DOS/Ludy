@@ -21,9 +21,9 @@
 // retention purge deletes old messages, so neither leaves anything for a read to find. Row-level security and the `org_id` filters keep other orgs out.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { CONVERSATION_INTENTS, CONVERSATION_KINDS, CONVERSATION_STATUSES, plainLine, plainText, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { CONVERSATION_INTENTS, CONVERSATION_KINDS, CONVERSATION_STATUSES, plainLine, plainText, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 export const MCP_CONVERSATIONS_DEFAULT = 15;

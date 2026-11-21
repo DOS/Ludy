@@ -18,10 +18,10 @@ import {
   zSurplusResolutionRequest,
   type JournalVoucherProposal,
   type JournalVoucherRequest,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { journalIsBalanced } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { journalIsBalanced } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import {
   JOURNAL_VOUCHER_LABEL,

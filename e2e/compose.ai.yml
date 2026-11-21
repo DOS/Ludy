@@ -1,4 +1,4 @@
-# Added to ../docker-compose.yml and compose.e2e.yml for the AI end-to-end job only (#3805; `pnpm --filter @crove/e2e stack:up:ai`). It turns the recorder's Vy summary on and points the model at a fake service
+# Added to ../docker-compose.yml and compose.e2e.yml for the AI end-to-end job only (#3805; `pnpm --filter @ludy/e2e stack:up:ai`). It turns the recorder's Vy summary on and points the model at a fake service
 # on the stack's own network, so no spec ever reaches a real model. The default stack (compose.e2e.yml alone) has no model and MEETINGS_SUMMARY off, and the specs of e2e/tests rely on that: never add these
 # settings there. Paths are relative to the first compose file (the repository root).
 services:

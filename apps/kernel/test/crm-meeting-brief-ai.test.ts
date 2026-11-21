@@ -2,8 +2,8 @@
 // The API side of Dy's meeting brief (#3115) without a database: through InboxReader, metered() and the member's draft budget, a brief is exactly one metered model call; AI off and a member asking
 // too often make no call at all; a spent AI budget and a failing call give the facts alone; words with a figure the facts do not hold are refused. Nothing is stored.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, InboxReader, withAiScope, type AiCall, type AiMeter, type AiUsage } from '@crove/agent';
-import type { MeetingBriefSource } from '@crove/mod-crm';
+import { AiBudgetExhaustedError, InboxReader, withAiScope, type AiCall, type AiMeter, type AiUsage } from '@ludy/agent';
+import type { MeetingBriefSource } from '@ludy/mod-crm';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { meetingBriefAi, prepareMeetingBrief } from '../src/crm-meeting-brief-ai.ts';
 

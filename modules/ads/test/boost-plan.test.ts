@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, zAdsBoostDraft, zAdsCampaignPlan, type AdsBoostDraft } from '@crove/kernel-contract';
+import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, zAdsBoostDraft, zAdsCampaignPlan, type AdsBoostDraft } from '@ludy/kernel-contract';
 import { AUDIENCE_PRESETS, boostName, boostPlan, dailyBudgetOf } from '../src/boost-plan.ts';
 import { flightDays, maxSpendOf, validatePlan } from '../src/campaign-plan.ts';
 

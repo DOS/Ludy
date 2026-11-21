@@ -7,9 +7,9 @@
 // (crm.quote.create_link) when the draft is asked for, so its audit row says who made it; the model is asked outside any transaction, by the API.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DealNextStepReason } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId, type DealNextStepReason } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 

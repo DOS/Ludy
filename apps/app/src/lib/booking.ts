@@ -1,6 +1,6 @@
 // Helpers for the public booking page (issue #1318): the free slots grouped by day and shown in the visitor's own time
 // zone, the week the page reads, and the visitor's zone itself.
-import { BOOKING_MANAGE_TOKEN, zonedDate, zonedInstant, type BookingPage } from '@crove/kernel-contract';
+import { BOOKING_MANAGE_TOKEN, zonedDate, zonedInstant, type BookingPage } from '@ludy/kernel-contract';
 import type { Locale } from '../i18n/locale.ts';
 
 export type Slot = BookingPage['slots'][number];

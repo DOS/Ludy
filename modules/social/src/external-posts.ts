@@ -18,10 +18,10 @@
 // (and external_post_is_crove drops it) or the asking has ended.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { METRIC_NAMES, RECENT_POSTS_MAX, RECENT_POSTS_MAX_DAYS, type Publisher, type RecentPost, type RecentPostsResult } from '@crove/channel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { METRIC_NAMES, RECENT_POSTS_MAX, RECENT_POSTS_MAX_DAYS, type Publisher, type RecentPost, type RecentPostsResult } from '@ludy/channel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { eachBounded } from './metrics.ts';
 import { channelScope, connectionInScope } from './channel-access.ts';
 import { tiktokModeOf } from './domain/channels.ts';

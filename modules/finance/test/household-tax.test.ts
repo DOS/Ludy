@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The arithmetic the percentage-method household papers share (#2517 S2a, #2518 01/CNKD): tax on revenue rounded to a whole dong, and one entry's amount shared between trades so the parts always tie.
 import { describe, expect, it } from 'vitest';
-import { sum } from '@crove/l10n-vn';
+import { sum } from '@ludy/l10n-vn';
 import { splitAmount, taxOn } from '../src/domain/household-tax.ts';
 
 describe('taxOn', () => {

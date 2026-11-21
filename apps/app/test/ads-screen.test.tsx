@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdAccountView, AdsChange, AdsCommitted, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsCommitted, AdsSummary, AdsWriteState, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';

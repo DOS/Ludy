@@ -12,8 +12,8 @@ import {
   type Transaction,
 } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { Database, MemberRole } from '@crove/db';
-import type { CommandContext, QueryContext } from '@crove/kernel-runtime';
+import type { Database, MemberRole } from '@ludy/db';
+import type { CommandContext, QueryContext } from '@ludy/kernel-runtime';
 import { envelopeCreate } from '../src/commands.ts';
 import {
   applyEnvelopeVisibilityFilter,
@@ -103,7 +103,7 @@ function makeUserCommandCtx(trx: Transaction<Database>, userId: string, role: Me
   } as unknown as CommandContext;
 }
 
-describe('hr-visibility helpers and @crove/mod-sign HR contract guards (#3553)', () => {
+describe('hr-visibility helpers and @ludy/mod-sign HR contract guards (#3553)', () => {
   it('allows owner, admin, creator, and system for hr_contract rows while rejecting other members, viewers, and agents', () => {
     const hrRow = { source_kind: 'hr_contract' as const, created_by: CREATOR_ID };
     const quoteRow = { source_kind: 'crm_quote' as const, created_by: OWNER_ID };

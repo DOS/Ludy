@@ -11,7 +11,7 @@ import {
   THREADS_ALT_TEXT_MAX,
   WORDPRESS_ALT_TEXT_MAX,
   X_ALT_TEXT_MAX,
-} from '@crove/channel';
+} from '@ludy/channel';
 import { ALT_TEXT_LIMITS, PROVIDERS, strictestAltTextLimit } from '../src/contract.ts';
 
 describe('alt-text limits', () => {

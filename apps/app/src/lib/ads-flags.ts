@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the Ads screen says about a flag (issue #2378): the server decides which flags there are, from the stored figures with fixed rules and
 // no model; these only pick the words, in the reader's language, with the numbers each flag is based on. An amount keeps its own currency.
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 
 export interface FlagFormat {

@@ -8,7 +8,7 @@
 // The container is sniffed from the first bytes before anything is written, the size is capped while the bytes stream, and
 // the stored size is checked against the plaintext length before the caller records the file. Whatever fails leaves no
 // temporary file or object behind.
-import { detectMediaContainer } from '@crove/mod-meetings';
+import { detectMediaContainer } from '@ludy/mod-meetings';
 import {
   BlobTooLargeError,
   DomainError,
@@ -21,7 +21,7 @@ import {
   type BlobMediaBinding,
   type BlobStore,
   type StoredBlob,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 
 // The longest prefix the container check reads (detectMediaContainer looks at 12 bytes).
 const SNIFF_BYTES = 12;

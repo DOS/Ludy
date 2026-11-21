@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Ludy's vouchers as the "đề nghị sinh chứng từ" MISA AMIS Kế toán takes (#3901, S3a of #3854). It reads the same voucher models and
-// rows as the MISA SME export (misa.ts) and writes `AmisVoucher`s of @crove/misa-amis; nothing here sends anything, and nothing here
+// rows as the MISA SME export (misa.ts) and writes `AmisVoucher`s of @ludy/misa-amis; nothing here sends anything, and nothing here
 // calls MISA. Field names, required fields and enums are from the AMISKT v1.0.0 voucher structure tables (docs/integrations/misa-amis-api.md);
 // none of it has run against a MISA sandbox yet.
 //
@@ -13,12 +13,12 @@
 // is derived from its accounts (331 a supplier, 131 a customer). They are shown in the preview, nothing is pushed without a person approving it, and they are confirmed in the sandbox
 // check before the push (S3b, #3902) is enabled for any org.
 //
-// Amounts are decimal strings, written as exact JSON numbers (`amisNumber`); arithmetic goes through decimal.js (@crove/l10n-vn).
+// Amounts are decimal strings, written as exact JSON numbers (`amisNumber`); arithmetic goes through decimal.js (@ludy/l10n-vn).
 import { createHash } from 'node:crypto';
-import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
-import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
-import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+import { PAYABLE_ACCOUNT, money, sum } from '@ludy/l10n-vn';
+import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@ludy/misa-amis';
+import { isInflow, type AccountParents, type MisaGoodsCode } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import { hasNoTaxCode, normalizeTaxCode, normalizeUnitName } from './misa-amis-matching.ts';
 import { canonical } from './domain/money.ts';
 import {

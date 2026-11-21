@@ -2,10 +2,10 @@
 // Member-scoped Vy daily planner for My Work (Notes v2 T4b, #3563, ADR-0049): proposes top-3 focus to-dos and overdue
 // date reschedules on demand without automatic writes. Human edits or confirms every change before saving.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { TodoPlanResult, TodoPriority } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { NavIcon } from '@crove/ui/components/nav-icon';
+import type { TodoPlanResult, TodoPriority } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { useFormat } from '../i18n/provider.tsx';

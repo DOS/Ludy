@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMITS, zExtractedPage } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, zExtractedPage } from '@ludy/extract-contract';
 import { parse } from '../src/parse.ts';
 import { readHtmlMeta } from '../src/html-meta.ts';
 

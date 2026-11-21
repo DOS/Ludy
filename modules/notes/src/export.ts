@@ -8,9 +8,9 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NoteVisibility, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NoteVisibility, type NotesExport, type TodoPriority } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { listColorOf, parseSections } from './todos.ts';
 
 // Whoever has notes may take them: a member who became a viewer keeps what they wrote.

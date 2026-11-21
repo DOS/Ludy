@@ -12,7 +12,7 @@ import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
 import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
 import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
-import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
+import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
 
 const root = document.getElementById('root') as HTMLElement;

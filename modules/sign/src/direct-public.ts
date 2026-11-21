@@ -4,8 +4,8 @@
 // SECURITY DEFINER SQL procedures (matching #3432) because crove_app is blocked from calling crove_kernel.enter_system_context.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zId } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
+import { tableWrite, zId } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
 import { signManifest } from './manifest.ts';
 import { assertSystemCommand } from './shared.ts';
 

@@ -17,7 +17,7 @@
 // One call, to one host, never repeated: a call that was sent and whose answer was lost may already have spent the refresh token or the single-use code, so asking again could not help and a refusal would
 // then expire a connection that was fine. A lost answer ends as the seller authorizing again.
 import { createHash } from 'node:crypto';
-import type { Refresher } from '@crove/channel';
+import type { Refresher } from '@ludy/channel';
 import { readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const TIKTOK_AUTH_HOST = 'auth.tiktok-shops.com';

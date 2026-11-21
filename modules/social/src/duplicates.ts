@@ -4,7 +4,7 @@
 // use, learns nothing of the others. The read is bounded: at most DUPLICATE_SCAN_MAX rows per channel, newest first,
 // through post_variant_connection_idx (org_id, channel_connection_id, status).
 import { sql } from 'kysely';
-import type { SocialVariantStatus } from '@crove/db';
+import type { SocialVariantStatus } from '@ludy/db';
 import { DUPLICATE_SCAN_MAX, DUPLICATE_WINDOW_DAYS, duplicateText, newestDuplicate, type DuplicateCandidate, type DuplicateOf } from './domain/duplicate.ts';
 import { withSignature } from './domain/signature.ts';
 import { settingsOf, type Trx } from './variants.ts';

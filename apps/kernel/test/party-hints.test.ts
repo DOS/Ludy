@@ -1,6 +1,6 @@
 // Duplicate hints for parties (#887): which pairs look like one party, why, and which of the two to keep.
 import { describe, expect, it } from 'vitest';
-import { duplicateHints, nameCore, nameSimilarity, phoneKey, type HintParty } from '@crove/kernel';
+import { duplicateHints, nameCore, nameSimilarity, phoneKey, type HintParty } from '@ludy/kernel';
 
 let next = 0;
 const party = (name: string, folded: string, extra: Partial<HintParty> = {}): HintParty => {

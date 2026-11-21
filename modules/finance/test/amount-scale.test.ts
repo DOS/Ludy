@@ -3,7 +3,7 @@
 // rounding is the accountant's decision (#1308). The definer itself is tested on PostgreSQL in
 // apps/kernel/test/finance-currency-scale.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { amountScaleError } from '../src/ledger.ts';
 import { amountBelowDongError, belowOneDongBooked } from '../src/record.ts';
 

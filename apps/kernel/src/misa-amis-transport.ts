@@ -2,8 +2,8 @@
 // The MISA AMIS adapter's transport (#3885, S2b of #3854): every call goes through the egress guard (public addresses only, the connection pinned to the checked address, one deadline, a byte
 // limit, no redirect followed), to https and to AMIS_HOSTS only. A call to anything else is refused before a socket is opened. The adapter's `AmisError` kinds are the only thing that comes out
 // of a failure: no URL, header or message of the guard travels on.
-import { AMIS_HOSTS, AmisError, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import { EgressError, guardedRequest } from '@crove/kernel-runtime';
+import { AMIS_HOSTS, AmisError, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import { EgressError, guardedRequest } from '@ludy/kernel-runtime';
 
 // AMIS answers a save before it has made the voucher, and a page of the dictionary is at most a thousand rows: 30 s and 16 MB are generous for both.
 const TIMEOUT_MS = 30_000;
