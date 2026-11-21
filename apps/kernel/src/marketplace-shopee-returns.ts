@@ -123,30 +123,35 @@ async function readPage(call: ShopeeCaller, credential: ShopeeCredential, fromMs
 }
 
 // The returns whose update time is in [fromMs, toMs]: every page up to MAX_PAGES (the list is not promised in any order, so a window is read whole or not at all). Offset paging has no snapshot: a return
-// updated between two page reads leaves the window and shifts the rows behind it, so a later page could start after a return that was never read. After more than one page the first page is read again; when
-// its returns are not the ones read at first, the window changed while it was read and is NOT taken as whole (`more`: the caller cuts it narrower, and the changed return, now updated after the window's end,
-// falls in the next window).
+// updated between two page reads leaves the window and shifts the rows behind it, so a later page could start after a return that was never read, and the change can happen between ANY two pages. After more
+// than one page the whole window is therefore read a second time, page for page, and taken only when both reads agree return for return; otherwise it is NOT taken as whole (`more`: the caller cuts it
+// narrower, and the changed return, now updated after the window's end, falls in the next window). A window of one page needs no second read (one request is one answer).
 export async function readReturnList(call: ShopeeCaller, credential: ShopeeCredential, fromMs: number, toMs: number, nowMs: number): Promise<ReturnsWindow> {
   const out: ShopeeReturn[] = [];
   const seen = new Set<string>();
-  let firstPage: string[] = [];
+  let pages = 0;
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const read = await readPage(call, credential, fromMs, toMs, page, nowMs);
+    pages = page;
     for (const value of read.returns) {
       // A return number twice in the pages is not Shopee's.
       if (seen.has(value.returnSn)) throw notRecognized();
       seen.add(value.returnSn);
       out.push(value);
     }
-    if (page === 1) firstPage = read.returns.map((r) => r.returnSn);
-    if (!read.more) {
-      if (page === 1) return { returns: out, more: false };
-      const again = await readPage(call, credential, fromMs, toMs, 1, nowMs);
-      const changed = again.returns.length !== firstPage.length || again.returns.some((r, i) => r.returnSn !== firstPage[i]);
-      return { returns: out, more: changed };
-    }
+    if (!read.more) break;
+    if (page === MAX_PAGES) return { returns: out, more: true };
   }
-  return { returns: out, more: true };
+  if (pages === 1) return { returns: out, more: false };
+  const again: string[] = [];
+  for (let page = 1; page <= pages; page += 1) {
+    const read = await readPage(call, credential, fromMs, toMs, page, nowMs);
+    again.push(...read.returns.map((r) => r.returnSn));
+    // The second read must end where the first did: a page that says more beyond the last one read is a change.
+    if (page === pages && read.more) return { returns: out, more: true };
+  }
+  const agrees = again.length === out.length && again.every((sn, i) => sn === out[i]?.returnSn);
+  return { returns: out, more: !agrees };
 }
 
 // The facts of one return the stock rule needs and the list does not carry.

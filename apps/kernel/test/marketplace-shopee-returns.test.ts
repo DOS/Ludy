@@ -153,27 +153,42 @@ describe('line identity and paging', () => {
     expect(stagesOf(quiet.page, 'A1')).toEqual(['completed:AT-MAU-DL+MU-MAU']);
   });
 
-  it('does not take a window as whole when its first page changed while the later pages were read', async () => {
-    // 60 returns: two pages. The first call of page 1 answers the real page; the second call of page 1 (the re-read) answers a page with its first return gone (it was updated meanwhile).
-    const rets = Array.from({ length: 60 }, (_, i) => ret(`Q${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - HOUR - (60 - i) * 1000 }));
-    let firstReads = 0;
-    const fake = fakeShopee({ ...CRED, raws: [order('A1')], returns: rets, now: () => NOW, intercept: () => undefined });
-    const options = { fetch: hostBoundFetch(SHOPEE_HOSTS, async (url, init) => {
-      const u = new URL(url);
-      if (u.pathname === '/api/v2/returns/get_return_list' && u.searchParams.get('page_no') === '1') {
-        firstReads += 1;
-        if (firstReads === 2) {
-          const real = (await (await fake.fetch(url, init)).json()) as { response: { more: boolean; return: unknown[] } };
-          return new Response(JSON.stringify({ ...real, response: { ...real.response, return: real.response.return.slice(1) } }));
-        }
-      }
-      return fake.fetch(url, init);
-    }), now: () => new Date(NOW), spacingMs: 0 };
-    const provider = shopeeMarketplace(options, shopeeCaller(options));
-    // The window is read twice at every width (changed each time at the first width only): the poll still ends with a page, from a narrower window.
-    const page = await provider.listOrders(SECRET, 'shopee', null);
-    expect(firstReads).toBeGreaterThanOrEqual(3);
-    expect(page.nextCursor).toMatch(/^o:/);
+  it('does not take a window as whole when a page changed between two reads, whichever page it was', async () => {
+    // 120 returns: three pages. The second read of page 2 answers a page with its first return gone (it was updated meanwhile and left the window): the rows behind it shift up.
+    const rets = Array.from({ length: 120 }, (_, i) => ret(`Q${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - HOUR - (120 - i) * 1000 }));
+    for (const changedPage of ['1', '2', '3']) {
+      let reads = 0;
+      const fake = fakeShopee({ ...CRED, raws: [order('A1')], returns: rets, now: () => NOW });
+      const options = {
+        fetch: hostBoundFetch(SHOPEE_HOSTS, async (url: string, init?: RequestInit) => {
+          const u = new URL(url);
+          if (u.pathname === '/api/v2/returns/get_return_list' && u.searchParams.get('page_no') === changedPage) {
+            reads += 1;
+            if (reads === 2) {
+              const real = (await (await fake.fetch(url, init)).json()) as { response: { more: boolean; return: unknown[] } };
+              return new Response(JSON.stringify({ ...real, response: { ...real.response, return: real.response.return.slice(1) } }));
+            }
+          }
+          return fake.fetch(url, init);
+        }),
+        now: () => new Date(NOW),
+        spacingMs: 0,
+      };
+      const provider = shopeeMarketplace(options, shopeeCaller(options));
+      const page = await provider.listOrders(SECRET, 'shopee', null);
+      // The window was read twice and the reads disagreed: it was NOT taken as whole. The poll cut it to the 3 day width from the floor (an empty window there), so the cursor is twelve days back, not at the
+      // end of the full window where the 120 returns are.
+      expect(reads, `page ${changedPage}`).toBeGreaterThanOrEqual(2);
+      expect(page.nextCursor, `page ${changedPage}`).toBe(`o:${new Date(NOW - 12 * DAY).toISOString()}`);
+    }
+  });
+
+  it('takes a window of several pages whole when two reads agree', async () => {
+    const rets = Array.from({ length: 120 }, (_, i) => ret(`Q${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - 2 * HOUR - (120 - i) * 1000 }));
+    const s = setup([order('A1')], rets);
+    const page = await s.provider.listOrders(SECRET, 'shopee', `o:${new Date(NOW - 3 * HOUR).toISOString()}`);
+    expect(page.orders.length).toBeGreaterThan(0);
+    expect(s.fake.calls.filter((c) => c.path === '/api/v2/returns/get_return_list')).toHaveLength(6);
   });
 });
 
