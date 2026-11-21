@@ -14933,6 +14933,8 @@ export const vi = {
         connections: 'Xem các kết nối nguồn giao dịch ngân hàng',
         listed: 'Xem các tài khoản mà nguồn giao dịch ngân hàng có',
         pull_due: 'Xem các tài khoản nguồn giao dịch ngân hàng cần lấy',
+        hook: 'Xem trạng thái địa chỉ nhận thông báo của nguồn giao dịch ngân hàng',
+        hook_set: 'Tạo hoặc đổi địa chỉ nhận thông báo của nguồn giao dịch ngân hàng',
         record_accounts: 'Ghi các tài khoản mà nguồn giao dịch ngân hàng có',
         record_pull: 'Ghi một lần lấy giao dịch của tài khoản nguồn ngân hàng',
         map: 'Liên kết tài khoản của nguồn giao dịch ngân hàng',

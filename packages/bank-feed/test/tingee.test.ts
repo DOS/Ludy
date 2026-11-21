@@ -3,7 +3,7 @@
 // source scan that keeps the adapter to the two read endpoints.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { BANK_FEED_PROVIDERS, TINGEE_HOSTS, TINGEE_UAT_HOST, TingeeError, allowlistedFetch, bankFeedHostedProviders, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type BankFeedTransaction } from '../src/index.ts';
+import { BANK_FEED_PROVIDERS, TINGEE_HOSTS, minifyJson, TINGEE_UAT_HOST, TingeeError, allowlistedFetch, bankFeedHostedProviders, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type BankFeedTransaction } from '../src/index.ts';
 import { FakeTingee, type FakeAccount, type FakeTransaction } from './tingee-fake.ts';
 
 const CLIENT = 'client-id-for-tests';
@@ -412,5 +412,61 @@ describe('an answer without a total', () => {
     const adapter = tingeeBankFeed({ fetch: noTotal, now: () => clock.now, sleep: async (ms) => void (clock.now = new Date(clock.now.getTime() + ms)) });
     expect(await failure(() => adapter.pull(credential(), VA, null))).toMatchObject({ kind: 'upstream' });
     expect(await failure(() => adapter.accounts(credential()))).toMatchObject({ kind: 'upstream' });
+  });
+});
+
+// The webhook a customer's Tingee sends (ADR-0039 as amended by #4203): signed with the customer's own Secret Token, so the worker checks it with the connection's sealed secret. The API only checks the timestamp.
+describe('a signed webhook notice', () => {
+  const adapter = tingeeBankFeed({ fetch: allowlistedFetch(TINGEE_HOSTS, (async () => new Response('{}')) as never) });
+  const stamp = '20261120100000123';
+  const body = JSON.stringify({ clientId: CLIENT, transactionId: '1', amount: 100000 });
+  const notice = (over: { timestamp?: string; signature?: string; body?: string; secret?: string } = {}) => {
+    const text = over.body ?? body;
+    const timestamp = over.timestamp ?? stamp;
+    return { timestamp, signature: over.signature ?? signTingeeRequest(over.secret ?? SECRET, timestamp, text), body: text };
+  };
+
+  it('verifies the signature over the raw bytes, and over the minified form when the raw bytes do not match', () => {
+    expect(adapter.verifyHook?.(credential(), notice())).toBe('ok');
+    // Tingee signed its minified text, the body was delivered with whitespace.
+    const spaced = `{ "clientId": "${CLIENT}",\n  "transactionId": "1", "amount": 100000 }`;
+    const minified = minifyJson(spaced);
+    expect(minified).toBe(`{"clientId":"${CLIENT}","transactionId":"1","amount":100000}`);
+    expect(adapter.verifyHook?.(credential(), { timestamp: stamp, signature: signTingeeRequest(SECRET, stamp, minified), body: spaced })).toBe('ok');
+  });
+
+  it('refuses a wrong secret, a changed body, a changed timestamp and a signature that is not 128 hex digits', () => {
+    expect(adapter.verifyHook?.(credential(), notice({ secret: 'another-secret-token' }))).toBe('signature');
+    expect(adapter.verifyHook?.(credential(), { ...notice(), body: body.replace('100000', '900000') })).toBe('signature');
+    expect(adapter.verifyHook?.(credential(), { ...notice(), timestamp: '20261120100001123' })).toBe('signature');
+    for (const signature of ['', 'zz', 'a'.repeat(127), 'g'.repeat(128), `${notice().signature}00`]) expect(adapter.verifyHook?.(credential(), { ...notice(), signature })).toBe('signature');
+  });
+
+  it("checks that the body names the connection's own client and that it is a JSON object with one", () => {
+    expect(adapter.verifyHook?.(credential(), notice({ body: JSON.stringify({ clientId: 'someone-else', transactionId: '1' }) }))).toBe('client');
+    expect(adapter.verifyHook?.(credential(), notice({ body: JSON.stringify({ transactionId: '1' }) }))).toBe('malformed');
+    expect(adapter.verifyHook?.(credential(), notice({ body: '[1,2]' }))).toBe('malformed');
+    // A body that is not JSON but carries a good signature is malformed, not accepted.
+    expect(adapter.verifyHook?.(credential(), notice({ body: 'not json' }))).toBe('malformed');
+  });
+
+  it('throws only for a stored credential it cannot read', () => {
+    expect(() => adapter.verifyHook?.('not json', notice())).toThrow(TingeeError);
+  });
+
+  it('keeps the digits of a number when it minifies, and leaves a string with spaces and escapes alone', () => {
+    const text = '{ "amount" : 12345678901234567890.50, "memo" : "a  b \\" c ", "n": [ 1 , 2 ] }';
+    expect(minifyJson(text)).toBe('{"amount":12345678901234567890.50,"memo":"a  b \\" c ","n":[1,2]}');
+  });
+
+  it("accepts a timestamp of the provider's window only: at most 90 seconds ahead and 10 minutes behind", () => {
+    const at = Date.parse('2026-11-20T03:00:00.000Z'); // 10:00:00.000 in Vietnam
+    const fresh = (timestamp: string) => adapter.hookTimestampFresh?.(timestamp, at);
+    expect(fresh('20261120100000000')).toBe(true);
+    expect(fresh('20261120095000000')).toBe(true); // exactly 10 minutes behind
+    expect(fresh('20261120094959999')).toBe(false);
+    expect(fresh('20261120100130000')).toBe(true); // 90 seconds ahead
+    expect(fresh('20261120100130001')).toBe(false);
+    for (const bad of ['', '2026112010000012', '20261320100000000', '20261120250000000', 'abcdefghijklmnopq', '20261120100000000 ']) expect(fresh(bad)).toBe(false);
   });
 });

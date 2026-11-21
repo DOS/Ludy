@@ -14934,6 +14934,8 @@ export const en = {
         connections: 'List the bank feed connections',
         listed: 'List the accounts a bank feed reaches',
         pull_due: 'List the bank feed accounts a sync pulls',
+        hook: 'Read the status of the notice address of a bank feed connection',
+        hook_set: 'Make or replace the notice address of a bank feed connection',
         record_accounts: 'Record the accounts a bank feed reaches',
         record_pull: 'Record a pull of a bank feed account',
         map: 'Map a bank feed account',
