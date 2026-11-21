@@ -275,6 +275,9 @@ describe('the closed status table', () => {
     ['delivered', 'completed'],
     ['canceled', 'cancelled'], ['failed', 'cancelled'], ['lost', 'cancelled'],
     ['returned', 'returned'],
+    // The seven words the official GetOrders page adds (#2522, read 2026-11-21); the stages are the PO's to confirm.
+    ['failed_delivery', 'cancelled'], ['lost_by_3pl', 'cancelled'], ['damaged_by_3pl', 'cancelled'], ['package_scrapped', 'cancelled'],
+    ['shipped_back', 'shipped'], ['shipped_back_failed', 'shipped'], ['shipped_back_success', 'returned'],
   ];
 
   it('is exactly the expected table', () => {
@@ -289,7 +292,7 @@ describe('the closed status table', () => {
   it('is case-insensitive, and an unknown status makes the page not_recognized', async () => {
     const upper = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status: 'Delivered' }])]);
     expect((await upper.provider.listOrders(SECRET, 'lazada', null)).orders[0]?.stage).toBe('completed');
-    const odd = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status: 'package_scrapped' }])]);
+    const odd = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status: 'teleported' }])]);
     expect(await kind(() => odd.provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
   });
 });
@@ -499,6 +502,11 @@ describe('a call that fails', () => {
     await provider.testConnection(SECRET);
     await provider.testConnection(JSON.stringify(other));
     expect(waits).toEqual([1000]);
+  });
+
+  it('reads the seller-not-verified answer of the official GetOrders page as a refused credential, not an outage', async () => {
+    const answer = () => new Response(JSON.stringify({ code: 'SellerNotVerified', type: 'ISV', message: 'Seller not verified,please check seller status' }));
+    expect(await kind(() => setup(orders, { intercept: answer }).provider.listOrders(SECRET, 'lazada', null))).toBe('credentials');
   });
 
   it('does not carry Lazada\'s text or the credential in its error', async () => {

@@ -22,7 +22,7 @@ import {
 import { cleanLabel, isoDay, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const LAZADA_API_HOST = 'api.lazada.vn';
-// The hosts the adapter's fetch is bound to. Authorization (auth.lazada.com) joins in the token slice (S3): nothing here calls it.
+// The hosts the adapter's fetch is bound to. Token create and refresh (auth.lazada.com) are the token module's (marketplace-lazada-token.ts), with a fetch of its own: nothing here calls it.
 export const LAZADA_HOSTS: readonly string[] = [LAZADA_API_HOST];
 
 // The only two paths this adapter calls, both GET: the orders changed since a time, and the items of up to 50 orders.
@@ -73,6 +73,15 @@ export const LAZADA_ITEM_STAGE: Readonly<Record<string, MarketplaceOrderStage>> 
   failed: 'cancelled',
   lost: 'cancelled',
   returned: 'returned',
+  // The seven words the official page of GetOrders adds in its status filter (read 2026-11-21, #2522) that the mirror lacked. The stages are the PO's to confirm (they move stock): goods lost, damaged or
+  // scrapped, or a delivery that failed, are no sale; goods on their way back are still out until `shipped_back_success` says they are back.
+  failed_delivery: 'cancelled',
+  lost_by_3pl: 'cancelled',
+  damaged_by_3pl: 'cancelled',
+  package_scrapped: 'cancelled',
+  shipped_back: 'shipped',
+  shipped_back_failed: 'shipped',
+  shipped_back_success: 'returned',
 };
 
 // The sealed secret of a connection: {"appKey": "...", "appSecret": "...", "accessToken": "..."} (more fields join in the token slice and are ignored here). A malformed one is refused without echoing it.
@@ -142,9 +151,10 @@ export interface LazadaOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-// Lazada's own error codes that name a refused credential or a call limit. Anything else is `unreachable`. The official error table could not be read (open.lazada.com is script-rendered): these
+// Lazada's own error codes that name a refused credential or a call limit. Anything else is `unreachable`. `SellerNotVerified` is on the official GetOrders page ("the seller's store opening process has not
+// been completed"): the seller must act in Seller Center, which is what `credentials` tells the person. The official error table could not be read (open.lazada.com is script-rendered): these
 // come from the order API reference and from SDK sources, and the live check fills the list.
-const CREDENTIAL_CODES: ReadonlySet<string> = new Set(['IllegalAccessToken', 'IncompleteSignature']);
+const CREDENTIAL_CODES: ReadonlySet<string> = new Set(['IllegalAccessToken', 'IncompleteSignature', 'SellerNotVerified']);
 const RATE_CODES: ReadonlySet<string> = new Set(['ApiCallLimit', 'AppApiCallLimit', 'E1002']);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);

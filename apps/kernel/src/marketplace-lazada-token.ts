@@ -16,11 +16,11 @@ import type { Refresher } from '@crove/channel';
 import { readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 import { signLazadaRequest } from './marketplace-lazada.ts';
 
-// The host of the refresh sample in article 108260, and the one of token CREATE (article 121098 says it is the only address of that API). Which of the two a refresh needs is a live-check item, so each call
-// names exactly one and the caller's fetch is bound to both.
-export const LAZADA_TOKEN_HOST = 'api.lazada.com';
+// The one host of both token calls: the official pages (read 2026-11-21 in a headless browser, #2522) give `https://auth.lazada.com/rest` for GenerateAccessToken AND for RefreshAccessToken (the mirror's
+// sample had pointed the refresh at api.lazada.com, which the official page does not say). Both are `GET/POST` there; the official demo of a create puts the parameters in the address, this code sends them
+// as a form body so a token or a code is never in a URL.
 export const LAZADA_AUTH_HOST = 'auth.lazada.com';
-export const LAZADA_TOKEN_HOSTS: readonly string[] = [LAZADA_TOKEN_HOST, LAZADA_AUTH_HOST];
+export const LAZADA_TOKEN_HOSTS: readonly string[] = [LAZADA_AUTH_HOST];
 const REFRESH_PATH = '/auth/token/refresh';
 const CREATE_PATH = '/auth/token/create';
 
@@ -130,11 +130,11 @@ export interface LazadaGrant {
 
 // Trades the single-use authorization code the seller's consent returned for the token pair (token create, auth.lazada.com). `refused`: Lazada says the code is bad, used or expired, and the seller must
 // authorize again; `failed`: anything else. A code is single use, so a lost answer is never asked again either.
-export async function createLazadaToken(options: LazadaTokenOptions, input: { appKey: string; appSecret: string; code: string; uuid?: string }): Promise<LazadaGrant | { refused: string } | { failed: string }> {
+export async function createLazadaToken(options: LazadaTokenOptions, input: { appKey: string; appSecret: string; code: string }): Promise<LazadaGrant | { refused: string } | { failed: string }> {
   const now = (options.now ?? (() => new Date()))().getTime();
   if (!token(input.appKey) || !token(input.appSecret)) return { refused: 'BAD_SECRET' };
-  if (!token(input.code) || (input.uuid !== undefined && !/^[A-Za-z0-9_-]{1,100}$/.test(input.uuid))) return { refused: 'BAD_CODE' };
-  const called = await postToken(options.fetch, LAZADA_AUTH_HOST, CREATE_PATH, input.appKey, input.appSecret, { code: input.code, ...(input.uuid === undefined ? {} : { uuid: input.uuid }) }, now);
+  if (!token(input.code)) return { refused: 'BAD_CODE' };
+  const called = await postToken(options.fetch, LAZADA_AUTH_HOST, CREATE_PATH, input.appKey, input.appSecret, { code: input.code }, now);
   if ('failed' in called) return called;
   const code = called.answer.code === undefined ? '' : String(called.answer.code);
   if (code !== '0' && code !== '') return refusedBy(called.answer, code, CODE_REFUSED) ? { refused: refusalCode(code, CODE_REFUSED) } : { failed: safeCode(code, 'UNKNOWN') };
@@ -192,7 +192,7 @@ export class LazadaRefresher implements Refresher {
     const lastAt = typeof old.refreshedAt === 'string' ? Date.parse(old.refreshedAt) : Number.NaN;
     if (!Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
 
-    const called = await postToken(this.fetchImpl, LAZADA_TOKEN_HOST, REFRESH_PATH, old.appKey, old.appSecret, { refresh_token: old.refreshToken }, now);
+    const called = await postToken(this.fetchImpl, LAZADA_AUTH_HOST, REFRESH_PATH, old.appKey, old.appSecret, { refresh_token: old.refreshToken }, now);
     if ('failed' in called) return called;
     const code = called.answer.code === undefined ? '' : String(called.answer.code);
     if (code !== '0' && code !== '') return refusedBy(called.answer, code, REFRESH_REFUSED) ? { refused: refusalCode(code, REFRESH_REFUSED) } : { failed: safeCode(code, 'UNKNOWN') };
