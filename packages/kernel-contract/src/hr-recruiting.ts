@@ -173,6 +173,8 @@ export const zHrCandidateView = z.strictObject({
   interviewEventId: zId.nullable(),
   interviewStartsAt: zInstant.nullable(),
   interviewEndsAt: zInstant.nullable(),
+  interviewerUserId: zId.nullable(),
+  interviewerName: z.string().nullable(),
   hiredEmployeeId: zId.nullable(),
   erasedAt: zInstant.nullable(),
   createdAt: zInstant,
@@ -239,8 +241,18 @@ export const zHrCandidateWritten = z.strictObject({
 });
 export type HrCandidateWritten = z.infer<typeof zHrCandidateWritten>;
 
+export const zHrInterviewerList = z.strictObject({});
+
+export const zHrInterviewerOption = z.strictObject({
+  userId: zId,
+  displayName: z.string(),
+  role: z.enum(['owner', 'admin', 'member']),
+});
+export type HrInterviewerOption = z.infer<typeof zHrInterviewerOption>;
+
 export const zHrInterviewSlotsAsk = z
   .strictObject({
+    interviewerUserId: zId.optional(),
     from: zInstant.optional(),
     to: zInstant.optional(),
     durationMinutes: z.number().int().min(15).max(240).default(45),
@@ -271,6 +283,7 @@ export type HrInterviewSlotsResult = z.infer<typeof zHrInterviewSlotsResult>;
 export const zHrCandidateScheduleInterview = z
   .strictObject({
     candidateId: zId,
+    interviewerUserId: zId.optional(),
     startsAt: zInstant,
     endsAt: zInstant,
   })
@@ -283,11 +296,19 @@ export type HrCandidateScheduleInterview = z.infer<typeof zHrCandidateScheduleIn
 export const zHrCandidateInterviewScheduled = z.strictObject({
   candidateId: zId,
   eventId: zId,
+  interviewerUserId: zId,
   startsAt: zInstant,
   endsAt: zInstant,
   stage: z.enum(HR_CANDIDATE_STAGES),
 });
 export type HrCandidateInterviewScheduled = z.infer<typeof zHrCandidateInterviewScheduled>;
+
+export const zHrCandidateInterviewCancelled = z.strictObject({
+  candidateId: zId,
+  cancelledEventId: zId.nullable(),
+  stage: z.enum(HR_CANDIDATE_STAGES),
+});
+export type HrCandidateInterviewCancelled = z.infer<typeof zHrCandidateInterviewCancelled>;
 
 export const zHrCandidateHire = z.strictObject({
   candidateId: zId,

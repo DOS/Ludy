@@ -25,6 +25,7 @@ import {
 import { DomainError, entitledTo, readVerified, sha256Hex, type BlobStore, type ErrorStatus, type Runtime } from '@crove/kernel-runtime';
 import {
   normalizeSignPageDimensions,
+  parseSharedSummary,
   sanitizeSignUserAgent,
   validateSignaturePngBase64,
 } from '@crove/mod-sign';
@@ -266,16 +267,26 @@ export async function runSignView(
   });
   if (!view) return { status: 'not_found' };
   if (view.state === 'ready') {
+    const sharedSummary = parseSharedSummary(view.sharedSummary ?? null, view.pageCount);
     return {
       status: 'ok',
       view: {
         ...view,
         signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
         pageDimensions: normalizeSignPageDimensions(view.pageDimensions),
+        sharedSummary,
       },
     };
   }
-  return { status: 'ok', view };
+  return {
+    status: 'ok',
+    view: {
+      state: 'otp_required',
+      orgName: view.orgName,
+      title: view.title,
+      maskedEmail: view.maskedEmail,
+    },
+  };
 }
 
 export async function runSignOtpRequest(

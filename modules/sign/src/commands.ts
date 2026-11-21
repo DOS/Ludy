@@ -13,7 +13,7 @@ import {
   type MemberRole,
 } from '@crove/db';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { tableWrite, zId } from '@crove/kernel-contract';
+import { tableWrite, zId, zSignSharedSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
@@ -34,6 +34,7 @@ import {
   SIGNING_OTP_INVALIDATE_WRITE,
   SIGNING_TOKEN_WRITE,
   requireSignSourceFile,
+  sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
   zSignInspectDetectedTags,
   type IssuedSigningLink,
@@ -1588,10 +1589,98 @@ export const orgCleanup = defineCommand({
   },
 });
 
+export const envelopeSharedSummarySet = defineCommand({
+  name: 'sign.envelope.shared_summary_set',
+  input: z.strictObject({
+    envelopeId: zId,
+    shareSummaryWithSigners: z.boolean(),
+    sharedSummary: zSignSharedSummary.nullable(),
+    expectedVersion: z.number().int().positive().optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  writes: [
+    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+      'share_summary_with_signers',
+      'shared_summary_json',
+      'version',
+      'updated_at',
+    ]),
+    SIGNING_EVENT_WRITE,
+  ],
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx);
+    const row = await lockEnvelope(ctx, input.envelopeId);
+    if (ctx.role !== 'owner' && ctx.role !== 'admin' && row.created_by !== userId) {
+      throw new DomainError(
+        'SIGN_FORBIDDEN',
+        403,
+        'Only the envelope creator, organization owner, or admin can update the counterparty summary',
+      );
+    }
+    if (row.status !== 'draft' && row.status !== 'sent' && row.status !== 'in_progress') {
+      throw new DomainError('SIGN_ENVELOPE_TERMINAL', 409, 'Counterparty summary cannot be modified on a closed envelope');
+    }
+    if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
+      throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope version conflict');
+    }
+
+    const cleanSummary = sanitizeSharedSummaryForWrite(input.sharedSummary, row.page_count);
+    if (input.shareSummaryWithSigners && cleanSummary === null) {
+      throw new DomainError('VALIDATION', 422, 'sharedSummary is required when shareSummaryWithSigners is true');
+    }
+
+    const nextVersion = row.version + 1;
+    await ctx.trx
+      .updateTable('crove_sign.envelope')
+      .set({
+        share_summary_with_signers: input.shareSummaryWithSigners,
+        shared_summary_json: cleanSummary ? JSON.stringify(cleanSummary) : null,
+        version: nextVersion,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', row.id)
+      .execute();
+
+    await appendSigningEvent(ctx.trx, {
+      orgId: ctx.orgId,
+      envelopeId: row.id,
+      eventType: 'envelope_shared_summary_updated',
+      actorType: 'user',
+      actorId: userId,
+      actorLabel: actorLabelOf(ctx),
+      documentSha256: row.source_sha256,
+      payloadJson: {
+        shareSummaryWithSigners: input.shareSummaryWithSigners,
+        keyTermCount: cleanSummary?.keyTerms.length ?? 0,
+      },
+      occurredAt: ctx.now,
+    });
+
+    ctx.audit({
+      envelopeId: row.id,
+      shareSummaryWithSigners: input.shareSummaryWithSigners,
+      keyTermCount: cleanSummary?.keyTerms.length ?? 0,
+      version: nextVersion,
+    });
+
+    return {
+      envelopeId: row.id,
+      shareSummaryWithSigners: input.shareSummaryWithSigners,
+      sharedSummary: cleanSummary,
+      version: nextVersion,
+    };
+  },
+});
+
 export const signCommands = [
   envelopeCreate,
   envelopeInspectComplete,
   envelopeUpdate,
+  envelopeSharedSummarySet,
   signerAdd,
   signerRemove,
   signerReorder,
