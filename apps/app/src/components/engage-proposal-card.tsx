@@ -141,3 +141,22 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
     </Card>
   );
 }
+
+// What a member or a viewer sees where an owner or an admin sees the card (L4 of #4160): the kernel gives them no `engage` view (the text an AI app proposed may hold a customer's words and numbers), so the
+// page shows this plain card instead of falling back to the invoice layout. It says what it is, who asked, that only owners and admins see and decide it, and what is true now. It reads nothing of the payload.
+export function EngageProposalHiddenCard({ status, client }: { status: string; client: { client: string; host: string } | null }) {
+  const t = useTranslations('inboxDetail');
+  return (
+    <Card className="block space-y-3 p-4" data-testid="engage-change-hidden">
+      <p className="text-sm font-medium text-muted-foreground">{t('engageChange')}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="proposal">{t('engageBadge')}</Badge>
+      </div>
+      <p className="text-base text-foreground">{t('engageDetailsHidden')}</p>
+      {client && <p className="text-sm text-muted-foreground">{t('engageWhoAsked', { client: client.client, host: client.host })}</p>}
+      <p role="note" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
+        {status === 'pending' ? t('engageHiddenPending') : status === 'executed' ? t('engageHiddenDone') : status === 'rejected' ? t('engageRejected') : t('engageClosed')}
+      </p>
+    </Card>
+  );
+}
