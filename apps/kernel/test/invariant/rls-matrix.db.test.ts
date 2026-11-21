@@ -44,6 +44,10 @@ const MACHINERY = new Set([
   // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant.
   'crove_finance.bank_feed_hook',
   'crove_finance.bank_feed_webhook_notice',
+  // #4316 (S1 of the marketplace push receiver, #4315): a marketplace connection's push hook key (only the SHA-256 of 128 random bits) and the raw pushes waiting for the worker to verify (deleted when the worker
+  // claims them and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant.
+  'crove_finance.marketplace_hook',
+  'crove_finance.marketplace_hook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
   'crove_ads.ad_token_seal',
   // #2975: the grant an owner or admin gave an MCP client (ADR-0051, ADR-0032): one org, the consenting user, a client, the scope `ludy.read`, R0. Definer-only, no login role grant.
@@ -1676,6 +1680,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
+  },
+  // #4316: a marketplace connection's push hook key, one per connection: the SHA-256 (hex) of 128 random bits that the route's URL carries, the dates, and the count of refused pushes. Definer-only, in MACHINERY.
+  'crove_finance.marketplace_hook': {
+    make: (o) => {
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const channel = { ...channelConnectionRow(o), provider };
+      const connection = { org_id: o.id, id: randomUUID(), channel_connection_id: channel.id, provider, platform: 'shopee' };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.marketplace_connection', values: connection },
+        ],
+        row: { org_id: o.id, id: randomUUID(), marketplace_connection_id: connection.id, key_sha256: hex64() },
+      };
+    },
+  },
+  // #4316: a raw push waiting for the worker to verify: the header as sent, the dedupe key and the body as bytes. Definer-only, in MACHINERY; deleted when claimed and by the sweep after 10 minutes. It references a hook
+  // of the same org.
+  'crove_finance.marketplace_hook_notice': {
+    make: (o) => {
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const channel = { ...channelConnectionRow(o), provider };
+      const connection = { org_id: o.id, id: randomUUID(), channel_connection_id: channel.id, provider, platform: 'shopee' };
+      const hook = { org_id: o.id, id: randomUUID(), marketplace_connection_id: connection.id, key_sha256: hex64() };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.marketplace_connection', values: connection },
+          { table: 'crove_finance.marketplace_hook', values: hook },
+        ],
+        row: { org_id: o.id, id: randomUUID(), hook_id: hook.id, dedupe_key: hex64(), authorization_header: hex64(), body: `\\x${Buffer.from('{"shop_id":"rls-matrix"}').toString('hex')}` },
       };
     },
   },
