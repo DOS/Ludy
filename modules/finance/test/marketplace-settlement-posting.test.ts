@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DomainError } from '@crove/kernel-runtime';
 import { MARKETPLACE_PATH_ROWS, MARKETPLACE_POSTING_MAPS, requireConfirmedMarketplaceMap, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { money } from '@crove/l10n-vn';
-import { outputVatOf, settlementProposal, vatDatesOf, type SettlementProposalInput, type SettlementVatRates } from '../src/marketplace-settlement-posting.ts';
+import { entryIsEmpty, isEmptyEntry, outputVatOf, settlementProposal, vatDatesOf, type SettlementProposalInput, type SettlementVatRates } from '../src/marketplace-settlement-posting.ts';
 
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
@@ -433,5 +433,72 @@ describe('output VAT of a marketplace settlement entry', () => {
     expect(rows(p)).toEqual([['5111', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
     expect(p.outputVat).toBe('-8000');
     expect(balanced(p)).toBe(true);
+  });
+  it('keeps a month whose net is zero but whose VAT is not: pieces at different rates still post Dr revenue / Cr 33311 (TT133 and TT99)', () => {
+    // The month of 2027-01: a refund of a sale delivered at 8% (108000) and a sale at 10% (108000). Net 0; VAT of the sale 9818, of the refund 8000, so 1818 more output VAT, and the revenue 1818 less.
+    const lines = [
+      { sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' },
+      { sales: '108000', sellerDiscount: '0', refund: '0', rateDate: '2027-01-05' },
+    ];
+    const rates: SettlementVatRates = { '2026-12-28': { method: 'deduction', vatPercent: '8' }, '2027-01-05': { method: 'deduction', vatPercent: '10' } };
+    const p133 = settlementProposal(input(lines, { date: '2027-01-15', periodTo: '2027-01-15', month: '2027-01', vatRates: rates }), confirm133());
+    expect(rows(p133)).toEqual([['5111', '1818', '0'], ['33311', '0', '1818']]);
+    expect(p133.outputVat).toBe('1818');
+    expect(balanced(p133)).toBe(true);
+    // TT99: the refund is its own 521 line (VAT-free 100000) against 511 for the sale's VAT-free 98182; 131 has no line (net 0), 33311 is credited the net 1818.
+    const p99 = settlementProposal(input(lines, { regime: 'tt99', date: '2027-01-15', periodTo: '2027-01-15', month: '2027-01', vatRates: rates }), confirmedTt99());
+    expect(rows(p99)).toEqual([['521', '100000', '0'], ['511', '0', '98182'], ['33311', '0', '1818']]);
+    expect(balanced(p99)).toBe(true);
+  });
+
+  it('tells an entry with nothing to post from one with a VAT difference, and the typed refusal of the empty one is the one a caller skips', () => {
+    const rates: SettlementVatRates = { '2026-12-28': { method: 'deduction', vatPercent: '8' }, '2027-01-05': { method: 'deduction', vatPercent: '10' }, [D]: { method: 'none' } };
+    const same = [{ sales: '108000', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' }];
+    // Same sale and refund at one rate: nothing to post under TT133, the refund's own line under TT99.
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, false, false)).toBe(true);
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, true, false)).toBe(false);
+    // Withheld tax keeps it; pieces at two rates keep it.
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, false, true)).toBe(false);
+    const split = [{ sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' }, { sales: '108000', sellerDiscount: '0', refund: '0', rateDate: '2027-01-05' }];
+    expect(entryIsEmpty({ lines: split, date: D, vatRates: rates }, false, false)).toBe(false);
+    const refusal = (() => { try { settlementProposal(input(same, { vatRates: rates }), confirm133()); } catch (e) { return e; } return null; })();
+    expect(isEmptyEntry(refusal)).toBe(true);
+    // Any other refusal is not the empty one.
+    expect(isEmptyEntry((() => { try { settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: {} }), confirm133()); } catch (e) { return e; } return null; })())).toBe(false);
+  });
+
+  it('asks for the same days it uses: a line whose sale after the discount is zero needs no day (vatDatesOf and outputVatOf share the test)', () => {
+    const lines = [{ sales: '5000', sellerDiscount: '5000', refund: '0', rateDate: '2026-09-01' }, { sales: '100000', sellerDiscount: '0', refund: '0' }];
+    expect(vatDatesOf(input(lines))).toEqual([D]);
+    // No row for the unused day: the entry still posts, with the row of the used one.
+    expect(rows(settlementProposal(input(lines, { vatRates: at('8') }), confirm133()))).toEqual([['131', '100000', '0'], ['5111', '0', '92593'], ['33311', '0', '7407']]);
+  });
+
+  it('posts a TT99 month of refunds only, and a line refunded as much as it sold, with their VAT', () => {
+    const refundOnly = [{ sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-10-10' }];
+    const rates: SettlementVatRates = { '2026-10-10': { method: 'deduction', vatPercent: '8' } };
+    const p = settlementProposal(input(refundOnly, { regime: 'tt99', vatRates: rates }), confirmedTt99());
+    // Dr 521 (VAT-free 100000), Dr 33311 8000 / Cr 131 108000.
+    expect(rows(p)).toEqual([['521', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
+    expect(balanced(p)).toBe(true);
+    // A line refunded exactly as much as it sold, at 8%, under TT99: 131 nets to zero, Dr 521 100000 / Cr 511 100000 and the VAT cancels.
+    const whole = [{ sales: '108000', sellerDiscount: '0', refund: '108000', rateDate: '2026-10-10' }];
+    const q = settlementProposal(input(whole, { regime: 'tt99', vatRates: rates }), confirmedTt99());
+    expect(rows(q)).toEqual([['521', '100000', '0'], ['511', '0', '100000']]);
+    // And under TT133 the whole line nets to nothing: an empty entry, which the caller skips.
+    expect(isEmptyEntry((() => { try { settlementProposal(input(whole, { vatRates: rates }), confirm133()); } catch (e) { return e; } return null; })())).toBe(true);
+    // A refund above the sale, at the sale's rate (TT133): Dr 5111, Dr 33311 / Cr 131.
+    const over = [{ sales: '108000', sellerDiscount: '0', refund: '216000', rateDate: '2026-10-10' }];
+    expect(rows(settlementProposal(input(over, { vatRates: rates }), confirm133()))).toEqual([['5111', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
+  });
+
+  it('keeps the output VAT account apart from the withheld-tax accounts: its code is not a prefix of theirs, so the payout\'s skip of 33311 cannot hide a withheld amount', () => {
+    for (const regime of ['tt133', 'tt99']) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      expect(map.vatPayable.code.startsWith(map.outputVat.code), regime).toBe(false);
+      expect(map.pitPayable.code.startsWith(map.outputVat.code), regime).toBe(false);
+      // It is a sub-account of the withheld-VAT account by prefix, which is exactly why the payout skips it.
+      expect(map.outputVat.code.startsWith(map.vatPayable.code), regime).toBe(true);
+    }
   });
 });

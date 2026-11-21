@@ -23,7 +23,7 @@ import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 import type { SettlementVatRate } from './marketplace-settlement-posting.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
-import { vatRateGaps } from './marketplace-settlement-vat.ts';
+import { offeredMonths, separateReturnOn } from './marketplace-settlement-vat.ts';
 import { booksOn } from './payroll-posting.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -56,7 +56,7 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
   return true;
 }
 
-// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
+// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (the sales path is confirmed, #4303 S3b, but the payout and fee accrual rows are still `commentary`, so the gate that reads all three stays closed).
 // `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
 // lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
 export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
@@ -85,10 +85,13 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       // The VAT rate of each delivery day, asked of the rate table once per entity and day for the whole list.
       const vatMemo = new Map<string, SettlementVatRate | null>();
       for (const s of standingRows) {
-        const m = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        const stored = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        // The months with something to post, known with the VAT rates (a month of pieces at different rates can net to zero while 33311 is not); a settlement whose sales have a delivery day but no VAT rate row for
+        // it waits too (#4303 S3b): the months it waits for, nothing to ask for.
+        const offered = stored.waiting > 0 ? { months: [], gaps: [] } : await offeredMonths(ctx, s.legal_entity_id, stored.months, await separateReturnOn(ctx, s.legal_entity_id, s.period_end, options.maps ?? MARKETPLACE_POSTING_MAPS), vatMemo);
+        const m = { months: offered.months, waiting: stored.waiting };
+        const vatGaps = offered.gaps;
         if (m.months.length === 0 && m.waiting === 0) continue;
-        // A settlement whose sales have a delivery day but no VAT rate row for it waits too (#4303 S3b): the months it waits for, nothing to ask for.
-        const vatGaps = m.waiting > 0 ? [] : await vatRateGaps(ctx, s.legal_entity_id, m.months, vatMemo);
         settlements.push({
           id: s.id,
           legalEntityId: s.legal_entity_id,

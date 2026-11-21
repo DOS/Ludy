@@ -1771,6 +1771,7 @@ export const vi = {
     waitingDelivery: 'Chờ ngày giao hàng',
     waitingVatRate: 'Chờ thuế suất GTGT của {months}.',
     setVatRate: 'Nhập thuế suất GTGT',
+    askVatRate: 'Hãy nhờ chủ sở hữu hoặc quản trị viên nhập.',
     net: 'Doanh thu ròng',
     received: 'Tiền về',
     invoice: 'Hóa đơn phí',

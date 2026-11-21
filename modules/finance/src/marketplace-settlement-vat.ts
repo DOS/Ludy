@@ -4,7 +4,9 @@
 // a day gives null, which holds the settlement back with words (MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE) instead of posting a guessed rate; method `none` gives no VAT line. No rate is a constant here.
 import type { QueryContext } from '@crove/kernel-runtime';
 import type { SettlementMonth } from './marketplace-settlement-months.ts';
-import { vatDatesOf, type SettlementVatRate, type SettlementVatRates } from './marketplace-settlement-posting.ts';
+import { entryIsEmpty, vatDatesOf, type SettlementVatRate, type SettlementVatRates } from './marketplace-settlement-posting.ts';
+import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { booksOn } from './payroll-posting.ts';
 import { marketplaceVatRateAt } from './marketplace-vat-rate.ts';
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
@@ -35,4 +37,36 @@ export async function vatRateGaps(ctx: Ctx, entityId: string, months: readonly S
     if (Object.values(rates).some((rate) => rate === null)) gaps.push(m.month);
   }
   return gaps;
+}
+
+// Whether the entity's chart on `date` books a refund on its own account (TT99: 521), read from the regime's map; false for a regime with no map (the gate refuses it elsewhere).
+export async function separateReturnOn(ctx: QueryContext, entityId: string, date: string, maps: Readonly<Record<string, MarketplacePostingMap>> = MARKETPLACE_POSTING_MAPS): Promise<boolean> {
+  const regime = (await booksOn(ctx, entityId, date)).regime;
+  const map = Object.hasOwn(maps, regime) ? maps[regime] : undefined;
+  return map ? map.salesReturn.code !== map.revenue.code : false;
+}
+
+// The months of a settlement a person can be offered, with the months that wait for a VAT rate: a month with a piece whose day has no rate row waits (kept, with its gap); the others are kept only when their
+// entry has something to post, which is known with the rates (a month of pieces at different rates can net to zero while 33311 is not). `separateReturn`: the regime's refund account differs from its revenue
+// account (TT99), so a refund is its own debit line even at a zero net.
+export async function offeredMonths(
+  ctx: Ctx,
+  entityId: string,
+  months: readonly SettlementMonth[],
+  separateReturn: boolean,
+  memo?: Map<string, SettlementVatRate | null>,
+): Promise<{ months: SettlementMonth[]; gaps: string[] }> {
+  const kept: SettlementMonth[] = [];
+  const gaps: string[] = [];
+  for (const m of months) {
+    const vatRates = await vatRatesOfMonth(ctx, entityId, m, memo);
+    if (Object.values(vatRates).some((rate) => rate === null)) {
+      gaps.push(m.month);
+      kept.push(m);
+      continue;
+    }
+    const withheld = m.lines.some((l) => /[1-9]/.test(l.taxWithheld ?? '0'));
+    if (!entryIsEmpty({ lines: m.lines, date: m.date, vatRates }, separateReturn, withheld)) kept.push(m);
+  }
+  return { months: kept, gaps };
 }

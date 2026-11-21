@@ -1773,6 +1773,7 @@ export const en = {
     waitingDelivery: 'Waiting for the delivery day',
     waitingVatRate: 'Waiting for the VAT rate of {months}.',
     setVatRate: 'Enter the VAT rate',
+    askVatRate: 'Ask an owner or admin to enter it.',
     net: 'Net sales',
     received: 'Money received',
     invoice: 'Fee invoice',

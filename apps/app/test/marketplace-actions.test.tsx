@@ -153,10 +153,22 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     const html = render(waiting);
     expect(html).toContain('data-testid="marketplace-post-waiting-vat"');
     expect(html).toContain('Waiting for the VAT rate of 2026-10.');
-    expect(html).toContain('/settings/accounting');
+    // Without a role read yet (a member, or the read pending) the link is not offered: the person is told whom to ask.
+    expect(html).not.toContain('/settings/accounting');
+    expect(html).toContain('marketplace-vat-ask');
+    expect(html).toContain('Ask an owner or admin to enter it.');
     expect(html).toContain('2026-09, 2026-10');
     expect(html).not.toContain('data-testid="marketplace-post"');
     expect(render(waiting, 'vi')).toContain('Chờ thuế suất GTGT của 2026-10.');
+    // An owner or admin gets the link, as a 44 px target.
+    cache.current.setQueryData(['org', 'get'], { role: 'admin' });
+    const owner = render(waiting);
+    expect(owner).toContain('/settings/accounting');
+    expect(owner).toContain('min-h-11');
+    expect(owner).not.toContain('marketplace-vat-ask');
+    cache.current.setQueryData(['org', 'get'], { role: 'member' });
+    expect(render(waiting)).toContain('marketplace-vat-ask');
+    cache.current.removeQueries({ queryKey: ['org', 'get'] });
     // The same settlement with every day covered has its button again.
     expect(render({ ...base, settlements: [{ ...one, months: ['2026-09', '2026-10'] }] })).toContain('data-testid="marketplace-post"');
   });

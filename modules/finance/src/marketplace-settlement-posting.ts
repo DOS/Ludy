@@ -16,6 +16,9 @@ import { money, sum, toMoney, type DecimalValue } from '@crove/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePath, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 
+// A refusal that only says a month has nothing to post (zero net, zero VAT, nothing withheld): the caller skips such a month and refuses the settlement only when no month is left.
+export const isEmptyEntry = (e: unknown): boolean => e instanceof DomainError && e.code === 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE' && (e.details as { empty?: boolean } | undefined)?.empty === true;
+
 export interface SettlementPostingLine {
   sales: string;
   sellerDiscount: string;
@@ -93,10 +96,22 @@ export interface SettlementProposal {
 
 // The lines of the entry, from the map's accounts. Nothing is checked about the status here: settlementProposal is the gated entry point.
 // The days whose VAT rate the pieces of an entry need: each piece's `rateDate`, or the entry's date. Only pieces that carry a sale or a refund need one.
+// A piece carries something to post when its sale after the seller's discount, or its refund, is not zero: the one test vatDatesOf and outputVatOf share, so a day is asked for exactly when it is used.
+const carriesAmount = (l: SettlementPostingLine): boolean => !money(l.sales).minus(money(l.sellerDiscount)).isZero() || !money(l.refund).isZero();
+
 export function vatDatesOf(input: Pick<SettlementProposalInput, 'lines' | 'date'>): string[] {
   const dates = new Set<string>();
-  for (const l of input.lines) if (!money(l.sales).isZero() || !money(l.refund).isZero()) dates.add(l.rateDate ?? input.date);
+  for (const l of input.lines) if (carriesAmount(l)) dates.add(l.rateDate ?? input.date);
   return [...dates].sort();
+}
+
+// Whether the entry of a month has nothing to post: no net, no VAT difference between its sales and its refunds (pieces at different rates can net to zero while 33311 is not), no tax the platform withheld
+// (`withheld`, true when any line carries some) and, under a map with a separate refund account, no refund (it is its own debit line there). The rates of the days it needs must be in `vatRates`.
+export function entryIsEmpty(input: Pick<SettlementProposalInput, 'lines' | 'date' | 'vatRates'>, separateReturn: boolean, withheld: boolean): boolean {
+  const sales = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount)))));
+  const refunds = money(toMoney(sum(input.lines.map((l) => l.refund))));
+  const vat = outputVatOf(input);
+  return sales.minus(refunds).isZero() && vat.sales.minus(vat.refunds).isZero() && !withheld && !(separateReturn && !refunds.isZero());
 }
 
 // The output VAT of an entry: for each piece the VAT inside its base at the rate of its day, summed per rate and rounded half up to whole dong once per rate (sales and refunds apart). Refuses (the settlement
@@ -108,7 +123,7 @@ export function outputVatOf(input: Pick<SettlementProposalInput, 'lines' | 'date
   for (const l of input.lines) {
     const sale = money(l.sales).minus(money(l.sellerDiscount));
     const refund = money(l.refund);
-    if (sale.isZero() && refund.isZero()) continue;
+    if (!carriesAmount(l)) continue;
     const day = l.rateDate ?? input.date;
     const rate = Object.hasOwn(input.vatRates, day) ? input.vatRates[day] : null;
     if (!rate) {
@@ -152,7 +167,7 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
   const vat = outputVatOf(input);
   const vatNet = vat.sales.minus(vat.refunds);
   // Nothing to post: no tax, no VAT difference and nothing on any of the lines of the entry (a zero net with a separate refund line still has that line, so it is posted).
-  if (net.isZero() && vatNet.isZero() && !tax && !(separateReturn && !refunds.isZero())) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: toMoney(net.abs()) });
+  if (net.isZero() && vatNet.isZero() && !tax && !(separateReturn && !refunds.isZero())) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: toMoney(net.abs()), empty: true });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`;
   // Dr 131 for what the platform owes (net of discounts and refunds); Cr 33311 for the output VAT in the sales less the VAT of the refunds; and the revenue for the rest. A map whose refund account differs from its
   // revenue account (TT99: 521) books the refund, less its VAT, as its own debit line there; one whose refund account is the revenue account (TT133) nets it into 5111. The entry balances in either case (131 + 521 =

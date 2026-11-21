@@ -547,6 +547,45 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect((await payloadOf(other, (await ask(other, again)).proposalId))?.lines.map((l) => [l.account, l.credit])).toEqual([['131', '0'], ['5111', '1000000'], ['33311', '80000']]);
   });
 
+  it('refuses the approval of a proposal whose rate was corrected after it was made (MARKETPLACE_SETTLEMENT_MISMATCH), writes nothing, and asking again gives the new split', async () => {
+    const o = await org();
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }], true);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1080000', discount: '0', delivered: '2026-10-05' }]);
+    const { proposalId } = await ask(o, settlement);
+    // The person finds the rate wrong and enters the date again: the later entry is in force from now on.
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '10' }]);
+    await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_MISMATCH', status: 422 });
+    expect(await vouchersOf(o, settlement)).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    // A new request is built with the corrected rate: 1080000 x 10 / 110 = 98182 of VAT.
+    const again = await ask(o, settlement, o.owner);
+    expect((await payloadOf(o, again.proposalId))?.lines.map((l) => [l.account, l.credit])).toEqual([['131', '0'], ['5111', '981818'], ['33311', '98182']]);
+  });
+
+  it('posts a month whose net is zero but whose VAT is not (pieces at different rates), and lists no settlement that has nothing to post', async () => {
+    const o = await org();
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }, { from: '2027-01-01', method: 'deduction', percent: '10' }], true);
+    // A sale of 1080000 delivered in 2026-12 at 8% with 108000 of it refunded (the refund falls in 2027-01 and takes the 8% of its sale), and a sale of 108000 delivered in 2027-01 at 10%.
+    const settlement = await seed(o, 'shopee', '2026-12-20', '2027-01-15', [
+      { sales: '1080000', discount: '0', refund: '108000', delivered: '2026-12-28' },
+      { sales: '108000', discount: '0', delivered: '2027-01-05' },
+    ]);
+    const { proposalId } = await ask(o, settlement);
+    const stored = await payloadOf(o, proposalId);
+    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([
+      ['131', '1080000', '0'], ['5111', '0', '1000000'], ['33311', '0', '80000'],
+      ['5111', '1818', '0'], ['33311', '0', '1818'],
+    ]);
+    await approve(o, proposalId);
+    expect(await vouchersOf(o, settlement)).toHaveLength(2);
+    // A settlement that sold and refunded the same amount at one rate (method none) has nothing to post: it is not listed and is refused with the net-zero reason.
+    const quiet = await org();
+    const cancelled = await seed(quiet, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '10000', discount: '0', refund: '10000', delivered: '2026-10-05' }]);
+    await expect(ask(quiet, cancelled)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    const list = await rt.query<{ settlements: unknown[] }>('finance.marketplace.worklist', {}, { actor: asUser(quiet.owner), orgId: quiet.orgId });
+    expect(list.settlements).toEqual([]);
+  });
+
   it('takes a refund of the sale at the sale\'s rate: Dr 131 net, Cr 5111 and 33311 net of the refund (TT133)', async () => {
     const o = await org();
     await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }], true);

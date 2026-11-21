@@ -67,6 +67,9 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
   const { slug } = useParams({ strict: false }) as { slug: string };
   // Its sales have a delivery day but no VAT rate row for it (#4303 S3b): nothing to ask for until the rate is entered in Settings.
   const waitingVat = s.months.length > 0 && s.waitingVatMonths.length > 0;
+  // The rate is entered in Settings by an owner or admin: they get the link, everyone else is told whom to ask.
+  const org = useQuery(orpc.org.get.queryOptions());
+  const canSetRate = org.data?.role === 'owner' || org.data?.role === 'admin';
   return (
     <TableRow data-testid="marketplace-action-settlement">
       <TableCell className="px-4 py-3">{s.platformName}</TableCell>
@@ -79,9 +82,13 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
         ) : waitingVat ? (
           <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting-vat">
             {t('waitingVatRate', { months: s.waitingVatMonths.join(', ') })}{' '}
-            <Link to="/o/$slug/settings/accounting" params={{ slug }} className="font-medium text-foreground underline">
-              {t('setVatRate')}
-            </Link>
+            {canSetRate ? (
+              <Link to="/o/$slug/settings/accounting" params={{ slug }} className="inline-flex min-h-11 items-center font-medium text-foreground underline">
+                {t('setVatRate')}
+              </Link>
+            ) : (
+              <span data-testid="marketplace-vat-ask">{t('askVatRate')}</span>
+            )}
           </span>
         ) : (
           <AskButton
