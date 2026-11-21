@@ -99,7 +99,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
          l.file_id,
          f.storage_key,
          l.marketplace_connection_id,
-         pg_catalog.coalesce(l.disconnected_at, CASE WHEN ch.status = 'revoked' THEN ch.updated_at END, ch.updated_at)
+         COALESCE(l.disconnected_at, CASE WHEN ch.status = 'revoked' THEN ch.updated_at END, ch.updated_at)
   FROM crove_finance.marketplace_connection_file l
   JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
   LEFT JOIN crove_finance.marketplace_connection c ON c.org_id = l.org_id AND c.id = l.marketplace_connection_id
