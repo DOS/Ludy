@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { jobKey } from '../src/job-keys.ts';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, socialPublishQueue } from '../src/jobs-schema.ts';
 

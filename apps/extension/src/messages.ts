@@ -3,7 +3,7 @@
 // read storage (the popup calls /api/extension/me and the upload retry with the token); the offscreen document cannot, so
 // the worker hands it the token of the one org and the address for the one recording. Every receiver checks who sent a
 // message and the shape of what it carries (`parseStartRequest`, `parseCaptureStart`) before acting on it.
-import { isRecordingStopReason, type RecordingStopReason } from '@crove/meeting-recorder';
+import { isRecordingStopReason, type RecordingStopReason } from '@ludy/meeting-recorder';
 import { CONSENT_METHODS, type ConsentMethod } from './consent.ts';
 
 export interface StartRequest {

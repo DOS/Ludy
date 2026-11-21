@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The marketplace connection card in Settings (#2519, ADR-0045 point 7): what the screen works out from the API's answers. The server decides every rule; these only choose what to show.
-import type { MarketplaceAdapterInfo, MarketplaceConnection, MarketplaceConnectionState, MarketplacePlatformInfo, MarketplacePollState } from '@crove/kernel-contract';
+import type { MarketplaceAdapterInfo, MarketplaceConnection, MarketplaceConnectionState, MarketplacePlatformInfo, MarketplacePollState } from '@ludy/kernel-contract';
 
 // The words for a test state and for how a poll ended, as message keys.
 export const TEST_STATE_KEYS = {

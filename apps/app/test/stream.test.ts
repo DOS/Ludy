@@ -6,7 +6,7 @@ import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { QueryClient, type QueryKey } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import type { contract } from '@crove/kernel-contract';
+import type { contract } from '@ludy/kernel-contract';
 import {
   ACCESS_RETRY_MS,
   RECONNECT_MIN_MS,

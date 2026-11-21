@@ -18,9 +18,9 @@
 // tax code, an owner's personal number, to 'household' (defaultKindForTaxCode), unless an owner or an admin set it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { LEGAL_ENTITY_NAME_MAX, auditValue, normalizeTaxCode, zLegalEntityInput, type LegalEntity, type LegalEntityKind } from '@crove/kernel-contract';
-import type { LegalEntityKind as StoredKind, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { LEGAL_ENTITY_NAME_MAX, auditValue, normalizeTaxCode, zLegalEntityInput, type LegalEntity, type LegalEntityKind } from '@ludy/kernel-contract';
+import type { LegalEntityKind as StoredKind, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];

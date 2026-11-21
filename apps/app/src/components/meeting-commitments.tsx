@@ -4,9 +4,9 @@
 // transcript's own label. Absent when AI is off (the status says so), for a person who is not the recorder, and for a meeting with no transcript.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { CommitmentsAnswer } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
+import type { CommitmentsAnswer } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
 import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';

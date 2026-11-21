@@ -26,11 +26,11 @@ import {
   zFinanceSupplierPaymentsWaitingSignals,
   type FinanceSupplierPaymentsWaitingSignal,
   type SupplierPayment,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

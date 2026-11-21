@@ -2,8 +2,8 @@
 // The check before a MISA export, on the API side (#3848): for each of the seven formats it asks for the same vouchers the export route of that format asks for (the same query, range and limit), reads the org's
 // chart, and refuses a range too large to export with the export's own error. A fake query stands in for the runtime, so this needs no database.
 import { describe, expect, it } from 'vitest';
-import { MISA_CHECK_FORMATS, type MisaCheckAsk } from '@crove/kernel-contract';
-import { JOURNAL_EXPORT_LIMIT } from '@crove/mod-finance';
+import { MISA_CHECK_FORMATS, type MisaCheckAsk } from '@ludy/kernel-contract';
+import { JOURNAL_EXPORT_LIMIT } from '@ludy/mod-finance';
 import { misaCheck, type MisaCheckQuery } from '../src/misa-check.ts';
 
 const CHART = [

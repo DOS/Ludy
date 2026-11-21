@@ -1,4 +1,4 @@
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useTranslations } from 'use-intl';
 import { THEMES, type ThemeSetting } from '../lib/theme.ts';
 import { useThemeSetting } from '../lib/theme-runtime.ts';

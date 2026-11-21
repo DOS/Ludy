@@ -5,11 +5,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { vnDateOf, type SeriesOpenItem } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { vnDateOf, type SeriesOpenItem } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { appendNoteLine, noteLineFor } from '../lib/series-notes.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { memberLabel } from './meeting-results.tsx';

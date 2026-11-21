@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Zoom OAuth app of the recording import (Meetings C3, #3175): off by default, both settings or neither, and the adapter exists only with both.
 import { describe, expect, it } from 'vitest';
-import { ZoomMeetingPlatform } from '@crove/channel';
-import { MEETING_PLATFORM_OAUTH_NAME } from '@crove/kernel-contract';
+import { ZoomMeetingPlatform } from '@ludy/channel';
+import { MEETING_PLATFORM_OAUTH_NAME } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { meetingPlatformsOf } from '../src/kernel.ts';
 

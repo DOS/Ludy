@@ -11,9 +11,9 @@
 // the link is a person's click on kernel.party.set_company. A person who already has a company and a company have no candidate; a merged party, or one the member
 // cannot read, is not found (PARTY_NOT_FOUND). Twelve digits is a citizen ID, not a company's tax code, and is never looked for.
 import { sql } from 'kysely';
-import { normalizeTaxCode, zCompanySuggest, type CompanyCandidates } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { normalizeTaxCode, zCompanySuggest, type CompanyCandidates } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 

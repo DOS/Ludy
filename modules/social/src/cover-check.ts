@@ -1,7 +1,7 @@
 // The cover and link card checks a channel's settings edit runs (social.post.create, social.variant.update), shared
 // with social.post.bulk_replace, which leaves a post out instead of refusing the whole command.
-import { zId } from '@crove/kernel-contract';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { COVER_IMAGE_MAX_BYTES, COVER_IMAGE_TYPES, LINK_CARD_DESCRIPTION_MAX, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_THUMB_TYPES, LINK_CARD_TITLE_MAX, coverOf, isProvider, linkCardOf } from './domain/channels.ts';
 
 // What checkCover would refuse, without throwing: social.post.bulk_replace leaves such a post out before it edits

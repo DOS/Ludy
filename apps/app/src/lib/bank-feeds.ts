@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The bank feed card in Settings (ADR-0039, #2099): what the screen works out from the API's answers. The server
 // decides every rule; these only choose what to show.
-import { BANK_FEED_FIRST_PULL_DAYS, vietnamToday, type BankFeedAccountView } from '@crove/kernel-contract';
+import { BANK_FEED_FIRST_PULL_DAYS, vietnamToday, type BankFeedAccountView } from '@ludy/kernel-contract';
 import type { ChartAccount } from './accounts.ts';
 
 // A bank feed adapter this deployment offers (`/api/config` bankFeeds): none, and the card is not drawn at all, so

@@ -4,9 +4,9 @@
 // to review at once: a person approves it before it goes out again.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialPostDuplicate, type zSocialPostDuplicateResult } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId, zSocialPostDuplicate, type zSocialPostDuplicateResult } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { effectiveContent, inheritedContent } from './domain/approval.ts';
 import { refusesDuplicates } from './domain/duplicate.ts';
 import { duplicatesOf } from './duplicates.ts';

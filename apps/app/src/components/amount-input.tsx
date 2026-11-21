@@ -1,7 +1,7 @@
 // An amount field (#1391): as typed while it has the focus, grouped as the reader's language groups digits otherwise.
 // The value the form keeps is what was typed; normalizeAmount reads either back as the same digits.
 import { useState, type ComponentProps } from 'react';
-import { Input } from '@crove/ui/components/input';
+import { Input } from '@ludy/ui/components/input';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { groupAmount } from '../lib/amount-input.ts';
 

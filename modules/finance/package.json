@@ -1,5 +1,5 @@
 {
-  "name": "@crove/mod-finance",
+  "name": "@ludy/mod-finance",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,15 +12,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/agent": "workspace:*",
-    "@crove/db": "workspace:*",
-    "@crove/einvoice": "workspace:*",
-    "@crove/extract-contract": "workspace:*",
-    "@crove/kernel": "workspace:*",
-    "@crove/kernel-contract": "workspace:*",
-    "@crove/kernel-runtime": "workspace:*",
-    "@crove/l10n-vn": "workspace:*",
-    "@crove/misa-amis": "workspace:*",
+    "@ludy/agent": "workspace:*",
+    "@ludy/db": "workspace:*",
+    "@ludy/einvoice": "workspace:*",
+    "@ludy/extract-contract": "workspace:*",
+    "@ludy/kernel": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
+    "@ludy/misa-amis": "workspace:*",
     "exceljs": "catalog:",
     "kysely": "catalog:",
     "zod": "catalog:"

@@ -4,7 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from '@crove/ui/components/native-select';
+import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from '@ludy/ui/components/native-select';
 import { orpc } from '../lib/api.ts';
 import { insertAt } from '../lib/social-snippets.ts';
 

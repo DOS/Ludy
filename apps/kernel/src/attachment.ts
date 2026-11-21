@@ -1,4 +1,4 @@
-import { zSlug } from '@crove/kernel-contract';
+import { zSlug } from '@ludy/kernel-contract';
 
 /** Marks where the org slug goes in an attachment filename. */
 export const ORG_SLUG = Symbol('org-slug');

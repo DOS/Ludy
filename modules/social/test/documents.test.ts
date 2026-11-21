@@ -1,8 +1,8 @@
 // LinkedIn document posts (#1119): a PDF is a document, posted alone on LinkedIn and refused everywhere else before
 // anything goes out; its title rule matches the adapter's.
 import { describe, expect, it } from 'vitest';
-import { LINKEDIN_DOCUMENT_MAX_BYTES, LINKEDIN_DOCUMENT_TITLE_MAX, linkedinDocumentTitleOf } from '@crove/channel';
-import { SOCIAL_DOCUMENT_TYPES, SOCIAL_IMAGE_TYPES, SOCIAL_PHOTO_TYPES, zSocialMedia } from '@crove/kernel-contract';
+import { LINKEDIN_DOCUMENT_MAX_BYTES, LINKEDIN_DOCUMENT_TITLE_MAX, linkedinDocumentTitleOf } from '@ludy/channel';
+import { SOCIAL_DOCUMENT_TYPES, SOCIAL_IMAGE_TYPES, SOCIAL_PHOTO_TYPES, zSocialMedia } from '@ludy/kernel-contract';
 import { CAPABILITIES, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, PROVIDERS, documentTitleOf, mediaKindOf, validateVariant, type MediaItem, type Provider } from '../src/index.ts';
 import { formatOf } from '../src/contract.ts';
 import { mediaKind } from '../src/variants.ts';

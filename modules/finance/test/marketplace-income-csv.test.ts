@@ -2,7 +2,7 @@
 // The income CSV the poll leg writes (#4302): each platform's layout is read back by the SAME profile reader the intake uses (findIncomeColumns + incomeLines over the CSV grid), giving the same
 // lines, the same net and `other`; the writer is deterministic; and the page check refuses what the identity or the shapes refuse.
 import { describe, expect, it } from 'vitest';
-import { findIncomeColumns, incomeLines, parseCsv } from '@crove/l10n-vn';
+import { findIncomeColumns, incomeLines, parseCsv } from '@ludy/l10n-vn';
 import { MARKETPLACE_ADAPTER_PLATFORMS, marketplaceIncomeCsv, parseMarketplaceIncomePage, type MarketplaceIncomeLine, type MarketplacePlatformKey } from '../src/index.ts';
 
 const CONNECTION = '5b0f6f1e-0000-4000-8000-000000000001';

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, vi } from 'vitest';
-import { InboxReader, type RecruitingBriefAiReason, type RecruitingBriefResult } from '@crove/agent';
-import { DomainError } from '@crove/kernel-runtime';
-import type { HrRecruitingBriefSnapshot } from '@crove/mod-hr';
+import { InboxReader, type RecruitingBriefAiReason, type RecruitingBriefResult } from '@ludy/agent';
+import { DomainError } from '@ludy/kernel-runtime';
+import type { HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { generateRecruitingBrief, type RecruitingBriefPorts } from '../src/recruiting-coworker-ai.ts';
 

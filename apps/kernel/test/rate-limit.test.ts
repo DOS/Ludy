@@ -1,8 +1,8 @@
 // The per-user request limit at the HTTP edge (issue #162): the token bucket, its configuration and the 429 answer.
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
-import { DEFAULT_REFUSAL_AUDIT_LIMITS, DomainError, Runtime, type BlobStore } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DEFAULT_REFUSAL_AUDIT_LIMITS, DomainError, Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

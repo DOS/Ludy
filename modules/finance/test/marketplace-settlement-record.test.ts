@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import type { MarketplaceSettlementProposal } from '@crove/kernel-contract';
+import type { MarketplaceSettlementProposal } from '@ludy/kernel-contract';
 import { createMarketplaceSettlementCommands, platformPartyName, settlementProposalMismatch } from '../src/marketplace-settlement-record.ts';
-import { zMarketplaceSettlementProposal, zMarketplaceSettlementRequest } from '@crove/kernel-contract';
+import { zMarketplaceSettlementProposal, zMarketplaceSettlementRequest } from '@ludy/kernel-contract';
 
 const ID = '0192a000-0000-7000-8000-000000000001';
 const ENTITY = '0192a000-0000-7000-8000-000000000002';

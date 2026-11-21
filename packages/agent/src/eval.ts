@@ -12,7 +12,7 @@ import {
   parseTaxCode,
   type InvoiceLine,
   type ParsedInvoice,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 
 const zAmount = z.string().regex(/^-?\d+(\.\d+)?$/, 'plain decimal string');
 

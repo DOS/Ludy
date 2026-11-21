@@ -1,6 +1,6 @@
 // Vietnamese occasions on the Social calendar (#702): when a post for one is planned, and whether this browser shows
 // them (a per-viewer choice, kept in the browser; the calendar shows them unless turned off).
-import { OCCASIONS } from '@crove/mod-social/contract';
+import { OCCASIONS } from '@ludy/mod-social/contract';
 
 export const OCCASION_IDS: ReadonlySet<string> = new Set(OCCASIONS.map((o) => o.id));
 // A post for an occasion is planned this many days before it, at 09:00.

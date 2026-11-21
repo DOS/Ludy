@@ -7,8 +7,8 @@
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime';
+import { ORG_HEADER } from '@ludy/kernel-contract';
+import { S3BlobStore, parseVaultKey, type S3Sender } from '@ludy/kernel-runtime';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';

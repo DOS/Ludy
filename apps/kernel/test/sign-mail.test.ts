@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BlobTooLargeError, type BlobStore } from '@crove/kernel-runtime';
+import { BlobTooLargeError, type BlobStore } from '@ludy/kernel-runtime';
 import type { MailTemplateInput } from '../src/mail-queue.ts';
 import { configureOpsAlerts, flushOpsAlerts } from '../src/ops-alert.ts';
 import { signMailTemplates } from '../src/sign-mail.ts';
@@ -10,7 +10,7 @@ import {
   SIGN_DELEGATED_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_REMIND_MAIL_TEMPLATE,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');

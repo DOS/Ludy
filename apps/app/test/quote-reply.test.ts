@@ -2,7 +2,7 @@
 // Where a quote link may be put into a reply (#2827): only in a conversation that is one customer's own (a direct message, an email thread), never in a comment thread,
 // whose reply is public: the link is the address of a private document.
 import { describe, expect, it } from 'vitest';
-import { CONVERSATION_KINDS } from '@crove/kernel-contract';
+import { CONVERSATION_KINDS } from '@ludy/kernel-contract';
 import { appendQuoteMessage, canInsertQuoteLink } from '../src/lib/quote-reply.ts';
 
 describe('canInsertQuoteLink', () => {

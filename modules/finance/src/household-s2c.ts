@@ -8,10 +8,10 @@
 // - While the S2c layout row or a map row in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen and the
 //   Excel file label the expense and income figures "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import { HOUSEHOLD_EXPENSE_GROUPS, zHouseholdS2c, zHouseholdS2cGet, type HouseholdS2c, type HouseholdS2cExpenseRow } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { HOUSEHOLD_EXPENSE_GROUPS, zHouseholdS2c, zHouseholdS2cGet, type HouseholdS2c, type HouseholdS2cExpenseRow } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { groupRowFor, isExpenseAccount } from './domain/household-expense.ts';
 import { pickInForce } from './domain/household-rules.ts';
 import { HOUSEHOLD_S1A_ROW_LIMIT, householdBookWindow, householdSalesRows } from './household-books.ts';

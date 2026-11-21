@@ -5,11 +5,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

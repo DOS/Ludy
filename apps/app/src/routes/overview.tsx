@@ -3,14 +3,14 @@
 // then the tax obligations due in the next 30 days or overdue, which a member marks done here as on the multi-client
 // home screen (#921). The org's figures are the ones /clients reads for it (org.overview).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { TaxDueView } from '@crove/kernel-contract';
+import type { TaxDueView } from '@ludy/kernel-contract';
 import { Link, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
-import { TableCell, TableRow } from '@crove/ui/components/table';
-import { cn } from '@crove/ui/lib/utils';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NavIcon, type NavIconName } from '@ludy/ui/components/nav-icon';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { cn } from '@ludy/ui/lib/utils';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { SinceYesterday } from '../components/since-yesterday.tsx';

@@ -9,7 +9,7 @@ import type {
   SignContractCurrency,
   SignContractDraftVariables,
   SignStarterTemplateKind,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { signContractFonts, type SignPdfFontSet, type SignPdfFontWeight } from './pdf/fonts.ts';
 import {
   SIGN_PDF_A4_HEIGHT,

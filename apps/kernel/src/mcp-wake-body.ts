@@ -5,7 +5,7 @@
 // this function returns, the sweep stores what it checks, and the database holds the same shapes (crove_kernel.mcp_wake_body_ok). The invariant suite
 // (test/invariant/mcp-wake.test.ts) feeds this function hostile input.
 import { z } from 'zod';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@crove/kernel';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@ludy/kernel';
 
 // The rules the kernel runs: a new rule is a change here, in the database function and in the invariant test.
 export const WAKE_RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ] as const;

@@ -3,8 +3,8 @@
 // are stored create-only under org/<org_id>/<sha256> as uploads are, and the file row is described for
 // kernel.file.ingest with the image's size as shown (#636). The caller fetches through the egress guard and records the
 // row.
-import { SOCIAL_PHOTO_TYPES } from '@crove/kernel-contract';
-import { fileKey, putFile, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { SOCIAL_PHOTO_TYPES } from '@ludy/kernel-contract';
+import { fileKey, putFile, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { imageSize } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
 

@@ -15,11 +15,11 @@
 // No audit fact, ledger row or error carries a credential, the buyer's data or a provider's own text: ids, codes and counts only.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db } from '@crove/db';
-import type { EInvoiceRequest } from '@crove/einvoice';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { buyerNameOnInvoice, money } from '@crove/l10n-vn';
+import type { Db } from '@ludy/db';
+import type { EInvoiceRequest } from '@ludy/einvoice';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand, type CommandContext } from '@ludy/kernel-runtime';
+import { buyerNameOnInvoice, money } from '@ludy/l10n-vn';
 import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, FILES_RETRY_SECONDS, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
 import { computeDraft } from './domain/einvoice-draft.ts';
 

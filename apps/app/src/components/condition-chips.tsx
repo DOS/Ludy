@@ -4,8 +4,8 @@
 // A chip can be removed, as before.
 import { useMemo } from 'react';
 import { useTranslations } from 'use-intl';
-import type { FilterCondition } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import type { FilterCondition } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { conditionChips, type ChipTranslate, type ConditionScope } from '../lib/condition-label.ts';
 

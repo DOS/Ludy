@@ -3,8 +3,8 @@
 // every chosen channel has slots), or a draft with no time yet. The person chooses; the default is a time, so the first
 // post of a new channel never meets an empty queue.
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
-import { cn } from '@crove/ui/lib/utils';
+import { Card } from '@ludy/ui/components/card';
+import { cn } from '@ludy/ui/lib/utils';
 import { DateTimeInput } from './date-time-input.tsx';
 import type { WhenMode } from '../lib/social-when.ts';
 

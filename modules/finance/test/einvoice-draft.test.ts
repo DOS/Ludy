@@ -2,7 +2,7 @@
 // The amounts and the checks of a sales e-invoice draft (#2500): decimal arithmetic to the whole dong, the VAT rates a provider accepts, and the issue codes on their
 // fields.
 import { describe, expect, it } from 'vitest';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
 import { checkDraft, computeDraft, isBuyerIdentity, isLateSale, isNationalityCode, maskBuyerIdentity, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
 
 // A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.

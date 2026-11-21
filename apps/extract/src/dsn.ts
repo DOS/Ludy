@@ -3,7 +3,7 @@
 // action and status code of each recipient and the Message-ID of the bounced mail; never an address, a diagnostic
 // text or a body.
 import type { Email } from 'postal-mime';
-import { DSN_ACTIONS, EXTRACT_LIMITS, type ExtractedDsn } from '@crove/extract-contract';
+import { DSN_ACTIONS, EXTRACT_LIMITS, type ExtractedDsn } from '@ludy/extract-contract';
 
 export class DsnError extends Error {
   constructor(message: string) {

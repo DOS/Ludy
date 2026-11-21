@@ -4,7 +4,7 @@
 // auto-send envelopes, target CC signers, forge proposedByAi: false, inject invalid pages/types/bounds,
 // or smuggle fabricated risk clauses, numbers, or external URLs fail closed inside modules/sign.
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import {
   aiAnalysisGet,
   aiAnalysisRecord,

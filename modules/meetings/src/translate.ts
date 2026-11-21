@@ -6,8 +6,8 @@
 // each segment shows (a refused segment holds no text); here the answer is read back strictly and held to the text the member reads now.
 import { sql } from 'kysely';
 import { createHash } from 'node:crypto';
-import { zTranscriptTranslationResult, zTranslationCopy, zTranslationCopied, zTranslationResult, type TranscriptPart } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zTranscriptTranslationResult, zTranslationCopy, zTranslationCopied, zTranslationResult, type TranscriptPart } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { TRANSCRIPT_ROW_BYTES_MAX, TRANSLATE_FEATURE, keptParts, lineHash, lockTranslation, readTranscriptLines, readTranslationSource } from './translate-run.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';

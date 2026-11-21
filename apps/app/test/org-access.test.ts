@@ -1,7 +1,7 @@
 // What a refused session does in the SPA (issue #247): a session revoked in one org leaves that org and keeps the
 // device signed in; any other dead session signs out; the sign-out revoke goes without the org header.
 import { describe, expect, it, vi } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_HEADER } from '@ludy/kernel-contract';
 import { ApiError, isOrgAccessRevoked, isUnauthenticated } from '../src/lib/errors.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from '../src/lib/org-access.ts';
 

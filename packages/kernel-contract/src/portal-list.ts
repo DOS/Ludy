@@ -1,6 +1,6 @@
 // The tax portal's purchase-invoice list (issue #465): an .xlsx the accountant exports from hoadondientu.gdt.gov.vn,
 // imported per VAT period and reconciled with the purchase documents and pending proposals Crove holds. The rules
-// are in @crove/mod-finance (domain/portal-reconcile.ts); these are the shapes the API and the SPA share.
+// are in @ludy/mod-finance (domain/portal-reconcile.ts); these are the shapes the API and the SPA share.
 import { z } from 'zod';
 import { zId, zLocalDate, zMoney, zVatPeriod } from './schemas.ts';
 
@@ -24,7 +24,7 @@ export type ReconcileOutcome = (typeof RECONCILE_OUTCOMES)[number];
 export const RECONCILE_DIFFERENCES = ['total', 'vat', 'currency'] as const;
 export type ReconcileDifference = (typeof RECONCILE_DIFFERENCES)[number];
 
-// Why a row of the sheet that names an invoice was not read (the same reasons as @crove/extract-contract's
+// Why a row of the sheet that names an invoice was not read (the same reasons as @ludy/extract-contract's
 // PORTAL_LIST_SKIP_REASONS; modules/finance/test/portal-reconcile.test.ts checks they agree).
 export const PORTAL_LIST_SKIP_REASONS = ['no_tax_code', 'bad_tax_code', 'no_number', 'no_series', 'bad_date', 'bad_amount', 'too_long'] as const;
 export type PortalListSkipReason = (typeof PORTAL_LIST_SKIP_REASONS)[number];

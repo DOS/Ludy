@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A video file chosen in the audio field of the meeting form (a local Zoom or Teams MP4) keeps only its audio (#3337): the upload asks the server to
 // extract it with `extract=audio`, and the video is never stored. Pure helpers, so the rule and the request's query are tested without a browser.
-import type { RecordingStopReason } from '@crove/meeting-recorder';
+import type { RecordingStopReason } from '@ludy/meeting-recorder';
 
 const VIDEO_NAME = /\.(?:mp4|mov|m4v)$/i;
 // The video types of a local Zoom, Teams or phone recording. Not every video/* type: a browser may type an Ogg or WebM audio file as video/ogg or

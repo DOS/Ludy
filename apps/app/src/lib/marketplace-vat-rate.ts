@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The VAT rate card of marketplace sales in Settings (#4303 S3a): what the screen works out from the rows the API returns. The server decides every rule (order, locked periods, all-or-none rows); these only
 // choose what to offer. A rate is data the person confirms, so the suggested schedule is applied only by one explicit click and never on its own.
-import type { MarketplaceVatRateRow } from '@crove/kernel-contract';
+import type { MarketplaceVatRateRow } from '@ludy/kernel-contract';
 
 // The schedule the law sets today, offered once for an entity with no row yet (Resolution 204/2025/QH15: 8% for goods and services in 2026, back to 10% from 2027). It is a suggestion shown to a person, not a
 // rule the posting reads: the posting reads only rows a person saved.

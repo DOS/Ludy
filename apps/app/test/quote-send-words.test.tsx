@@ -5,7 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Quote, QuoteLinkCreated } from '@crove/kernel-contract';
+import type { Quote, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';

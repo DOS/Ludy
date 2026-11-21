@@ -16,9 +16,9 @@
 // deployment's hour, and the deployment stays under Pexels' hour, in this process's memory like the AI drafting
 // budget (ai-draft-limit.ts): one busy org never leaves the others without stock photos. Pexels' own refusal (429)
 // is passed on as "busy", never worked around.
-import { MAX_UPLOAD_BYTES, STOCK_PHOTO_SIZES } from '@crove/kernel-contract';
-import { DomainError, EgressError, guardedFetch, guardedRequest, type BlobStore, type Runtime, type UserActor } from '@crove/kernel-runtime';
-import { PEXELS_IMAGE_HOST, STOCK_ALT_MAX, STOCK_NAME_MAX, pexelsImageUrl, pexelsPageUrl, stockText, type StockCredit } from '@crove/mod-social';
+import { MAX_UPLOAD_BYTES, STOCK_PHOTO_SIZES } from '@ludy/kernel-contract';
+import { DomainError, EgressError, guardedFetch, guardedRequest, type BlobStore, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { PEXELS_IMAGE_HOST, STOCK_ALT_MAX, STOCK_NAME_MAX, pexelsImageUrl, pexelsPageUrl, stockText, type StockCredit } from '@ludy/mod-social';
 import { photoType, storePhoto } from './image-ingest.ts';
 import { RateLimiter } from './rate-limit.ts';
 

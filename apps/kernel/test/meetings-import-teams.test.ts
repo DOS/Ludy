@@ -8,9 +8,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { minimalMp4, TeamsMeetingPlatform, type MeetingPlatformAdapter } from '@crove/channel';
-import { LocalDiskStore } from '@crove/kernel-runtime';
-import type { MediaExtractClient } from '@crove/media-contract/extract';
+import { minimalMp4, TeamsMeetingPlatform, type MeetingPlatformAdapter } from '@ludy/channel';
+import { LocalDiskStore } from '@ludy/kernel-runtime';
+import type { MediaExtractClient } from '@ludy/media-contract/extract';
 import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
 import { runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 

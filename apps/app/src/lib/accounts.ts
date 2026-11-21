@@ -1,6 +1,6 @@
 // The org's chart of accounts on screen (issue #319): TT133 accounts plus the org's sub-accounts, as
 // finance.accounts.list returns them (inactive sub-accounts included).
-import { isRevenueAccount, isTaggedCode, type DocumentDirection } from '@crove/kernel-contract';
+import { isRevenueAccount, isTaggedCode, type DocumentDirection } from '@ludy/kernel-contract';
 
 export interface ChartAccount {
   code: string;

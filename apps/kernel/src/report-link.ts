@@ -3,7 +3,7 @@
 // credential, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 export const REPORT_VIEWS_PER_MINUTE = 60;
 

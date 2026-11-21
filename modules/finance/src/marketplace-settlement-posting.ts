@@ -11,8 +11,8 @@
 // half up to whole dong once per rate and entry (decimal.js, never JS numbers); the revenue is the remainder, so the entry balances exactly. A refund takes the rate of the sale it reverses and reduces 33311 and the
 // revenue (521 under Circular 99) by its VAT-free part. Method `none` adds no VAT line. A date with NO row is not guessed: the proposal is refused (MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE) and the settlement waits.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap). The platform's party link is a later slice: the caller fills `partyId`.
-import { DomainError } from '@crove/kernel-runtime';
-import { money, sum, toMoney, type DecimalValue } from '@crove/l10n-vn';
+import { DomainError } from '@ludy/kernel-runtime';
+import { money, sum, toMoney, type DecimalValue } from '@ludy/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePath, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 

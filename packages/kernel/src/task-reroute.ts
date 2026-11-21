@@ -10,7 +10,7 @@
 // never waits on how many tasks there are. One event per new holder and entity (kernel.task.rerouted) becomes one
 // notice for whoever has them now (kernel.notification.dispatch).
 import { sql } from 'kysely';
-import type { CommandContext } from '@crove/kernel-runtime';
+import type { CommandContext } from '@ludy/kernel-runtime';
 
 export interface ReroutedTask {
   taskId: string;

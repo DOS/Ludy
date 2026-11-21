@@ -4,7 +4,7 @@
 // when that provider serves other people too. The provider here is a made-up issuer; no real address or key appears.
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWK } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import { createAuthenticator, createTokenVerifier } from '../src/auth.ts';
 import { createAccountEmailAccess, createEmailAccess, parseAllowedEmails } from '../src/auth-access.ts';
 import { loadConfig } from '../src/config.ts';

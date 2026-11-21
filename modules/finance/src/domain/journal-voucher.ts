@@ -1,8 +1,8 @@
 // General journal vouchers (issue #888) as pure functions: the problems of a voucher, its total and its TT133 journal
 // entry. Each voucher line is one journal line, in the order entered, debit or credit as entered; lines on the accounts
 // kept per party (131, 331) name their party, so receivables and payables per party follow the voucher.
-import { needsParty, type JournalVoucherProposal } from '@crove/kernel-contract';
-import { money, sum, toMoney, type JournalLineDraft } from '@crove/l10n-vn';
+import { needsParty, type JournalVoucherProposal } from '@ludy/kernel-contract';
+import { money, sum, toMoney, type JournalLineDraft } from '@ludy/l10n-vn';
 
 export const JOURNAL_VOUCHER_SOURCE = 'finance.journal_voucher';
 export const JOURNAL_VOUCHER_LABEL = 'Phiếu kế toán';

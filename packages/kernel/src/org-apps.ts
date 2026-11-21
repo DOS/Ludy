@@ -7,9 +7,9 @@
 // yet: slices b (the runtime), c (worker and routes), e (Vy, Home, MCP) and d (the Settings screen) build on it.
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import type { Database } from '@crove/db';
-import { zOrgApps, zOrgAppSet } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, entitledTo } from '@crove/kernel-runtime';
+import type { Database } from '@ludy/db';
+import { zOrgApps, zOrgAppSet } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, entitledTo } from '@ludy/kernel-runtime';
 
 // The modules the build ships that an org may switch (kernel is never one of them).
 export function switchableApps(shipped: readonly string[]): string[] {

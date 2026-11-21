@@ -3,7 +3,7 @@
 // spreadsheet of the VAT return, which are Accounting items.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
+import { NavIcon, type NavIconName } from '@ludy/ui/components/nav-icon';
 
 const svg = (name: NavIconName) => renderToStaticMarkup(<NavIcon name={name} />);
 

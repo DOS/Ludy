@@ -4,8 +4,8 @@
 // what is new in this file is the ad set's budget and end time (`POST <ad set id>` with `daily_budget` in Meta's minor unit, or `end_time`) and a read of an object's status,
 // budget and end time (`GET <object id>`). The job never reaches it but through the frozen view of managers.ts. [U] Meta's exact answers are written from its documentation;
 // the live check (the W2 live check, then W4's) records what it really sends.
-import type { Fetch } from '@crove/channel';
-import { Graph, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
+import { Graph, META_DEFAULT_GRAPH_VERSION } from '@ludy/channel';
 import { AdPlatformError } from './index.ts';
 import type { AdActivator, PlatformObjectStatus } from './activators.ts';
 import type { AdManager, ManageStatus, ManageTarget, ManagedRead } from './managers.ts';

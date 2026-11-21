@@ -10,10 +10,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 

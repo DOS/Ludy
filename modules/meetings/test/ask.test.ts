@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which lines go to the model for a question (Meetings A3, #3161): the lines holding most of the question's words first, one line once, at most 40 lines from at most 8 meetings.
 import { describe, expect, it } from 'vitest';
-import { ASK_LINES_MAX, ASK_MEETINGS_MAX, type MeetingSearchHit } from '@crove/kernel-contract';
+import { ASK_LINES_MAX, ASK_MEETINGS_MAX, type MeetingSearchHit } from '@ludy/kernel-contract';
 import { pickLines } from '../src/ask.ts';
 
 const hit = (n: number, meeting: number, text: string): MeetingSearchHit => ({

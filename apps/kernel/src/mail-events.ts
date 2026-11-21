@@ -8,10 +8,10 @@
 // never from the payload) and records the event with kernel.mail.event.record in that org's system context. An event
 // for a mail Crove does not know is dropped.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { MailEvent, MailProvider, WebhookRequest } from '@crove/mail';
-import { WebhookRejected } from '@crove/mail';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import type { MailEvent, MailProvider, WebhookRequest } from '@ludy/mail';
+import { WebhookRejected } from '@ludy/mail';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 // A webhook delivery carries one event; this bounds what the API reads before checking its signature.
 export const MAX_MAIL_WEBHOOK_BYTES = 256 * 1024;

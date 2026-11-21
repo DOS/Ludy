@@ -8,9 +8,9 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
 import { isArchiveType } from './files.ts';
 

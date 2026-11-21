@@ -3,10 +3,10 @@
 // their totals over the last 30, 90 or 365 days (by the day each quote was made) or ever. Read only, counts and decimal strings, no customer, number or text; the
 // member sees what row-level security shows them, which is every quote of the org. `sent` is the quotes that left draft and were not replaced by a revision.
 import { sql } from 'kysely';
-import { QUOTE_STATUSES, zQuoteReportQuery, type QuoteReport, type QuoteStatus } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { money } from '@crove/l10n-vn';
-import { defineQuery } from '@crove/kernel-runtime';
+import { QUOTE_STATUSES, zQuoteReportQuery, type QuoteReport, type QuoteStatus } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { money } from '@ludy/l10n-vn';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const DEFAULT_DAYS = 90;

@@ -3,12 +3,12 @@ import { useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { brandName } from '../i18n/brand.ts';
 import { auth, authErrorText, authFailure, type AuthFailure, verifySecondFactor } from '../lib/auth.ts';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { CardSkeleton, ErrorText, fieldControl, fieldErrorId, Notice, Spinner } from './ui.tsx';
 

@@ -2,7 +2,7 @@
 // The VAT rates a marketplace settlement's entries need (#4303 S3b, parent #2520, plan docs/plan/stock-and-marketplaces.md section 8.4). The rate of a piece is the one in force on its delivery day for the entity,
 // read ONLY through marketplaceVatRateAt (the one function of the rate table: the greatest effective date on or before the day, the latest entry of that date), once per distinct day and request. No row for
 // a day gives null, which holds the settlement back with words (MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE) instead of posting a guessed rate; method `none` gives no VAT line. No rate is a constant here.
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import type { SettlementMonth } from './marketplace-settlement-months.ts';
 import { entryIsEmpty, vatDatesOf, type SettlementVatRate, type SettlementVatRates } from './marketplace-settlement-posting.ts';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';

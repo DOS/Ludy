@@ -6,9 +6,9 @@
 // (periodSummaryInput); nothing is saved here.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { channelScope, refuseOutside } from './channel-access.ts';
 import { GOAL_DEFAULT_TIME_ZONE, GOAL_ENGAGEMENT_COUNTS } from './domain/goals.ts';
 import type { PeriodSummaryData, SummaryTotals } from './domain/period-summary.ts';

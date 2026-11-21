@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The words of Settings (#3590, ST-2, ST-4, ST-5, ST-7): the apps and modules it lists carry the names the shell shows, and no string an owner reads in Settings
 // speaks of "the server" or a "sandbox", because an owner cannot act on either. Both catalogs are held to the same rules.
-import { APP_IDS, MODULE_SCREENS, modulesOfApp, type AppId } from '@crove/kernel-contract';
+import { APP_IDS, MODULE_SCREENS, modulesOfApp, type AppId } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';

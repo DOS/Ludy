@@ -4,8 +4,8 @@
 // for each it runs kernel.mcp.engage_reads_notify, which stamps their grants and writes one notification. A failure for one person never stops the others; it is tried again on the next pass.
 // Once everyone was told the scan reads an empty partial index.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.mcp.engage_reads_notice' };
 // How often the worker looks, and how many people it takes per pass.

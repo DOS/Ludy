@@ -3,10 +3,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
-import { cn } from '@crove/ui/lib/utils';
+import { Card } from '@ludy/ui/components/card';
+import { cn } from '@ludy/ui/lib/utils';
 import { ErrorText, Spinner } from './ui.tsx';
-import { comparableRate, engagementRateOfBases, type EngagementRate, type RateBases } from '@crove/mod-social/contract';
+import { comparableRate, engagementRateOfBases, type EngagementRate, type RateBases } from '@ludy/mod-social/contract';
 import { RateValue, useRateText } from './social-engagement-rate.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';

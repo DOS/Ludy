@@ -7,9 +7,9 @@
 // The line is read, never written: nothing here asks for a payment or stores a text, and it is not a command. With nothing to say there is no call (`none`). When there is no model, the AI budget is spent, the
 // member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows the facts alone. An answer is kept for a while by its facts,
 // so reopening the screen does not pay for the same line twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { Decimal } from '@crove/l10n-vn';
-import { AiBudgetExhaustedError, supplierPayableLineFactsText, supplierPayableLineHasNews, type InboxReader, type SupplierPayableLineFacts } from '@crove/agent';
-import type { SupplierPayableFacts, SupplierPayableLine, SupplierPayableList } from '@crove/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
+import { AiBudgetExhaustedError, supplierPayableLineFactsText, supplierPayableLineHasNews, type InboxReader, type SupplierPayableLineFacts } from '@ludy/agent';
+import type { SupplierPayableFacts, SupplierPayableLine, SupplierPayableList } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface SupplierPayableLineAi {

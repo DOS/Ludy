@@ -3,7 +3,7 @@
 // named the meeting, chose how the participants were told and confirmed they agreed; creating the meeting is what stores
 // that consent on the server, and no capture is opened before it. The same rule as the app's recorder (`startBlocker`),
 // checked again in the background worker so a popup cannot skip it.
-import { startBlocker } from '@crove/meeting-recorder';
+import { startBlocker } from '@ludy/meeting-recorder';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (A1, #3159).
 export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;

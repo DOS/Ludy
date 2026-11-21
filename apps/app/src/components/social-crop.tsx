@@ -4,8 +4,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Label } from '@crove/ui/components/label';
+import { Button } from '@ludy/ui/components/button';
+import { Label } from '@ludy/ui/components/label';
 import { ErrorText, Spinner } from './ui.tsx';
 import type { MediaItem } from './social-media.tsx';
 import { errorMessage, fetchFile, queryClient, uploadFiles } from '../lib/api.ts';

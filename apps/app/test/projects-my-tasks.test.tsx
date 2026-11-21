@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { PROJECT_TASK_MAP_LIMIT, zProjectTaskProjectsInput, type MyWork, type ProjectListResult, type ProjectTaskProjectEntry } from '@crove/kernel-contract';
+import { PROJECT_TASK_MAP_LIMIT, zProjectTaskProjectsInput, type MyWork, type ProjectListResult, type ProjectTaskProjectEntry } from '@ludy/kernel-contract';
 import { TASK_LIST_LIMIT } from '../src/lib/agents.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import { isModuleOff } from '../src/lib/errors.ts';

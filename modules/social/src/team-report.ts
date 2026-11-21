@@ -16,8 +16,8 @@
 // is not in it (the Metrics tab's card says so). The assignments leave out archived posts that never went out (#1331).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_LINK_KINDS, type MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_LINK_KINDS, type MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { TEAM_REPORT_DST_SLACK_MS, TEAM_REPORT_MAX_DAYS, medianOrNull, type TeamMemberRow, type TeamReport } from './domain/team-report.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

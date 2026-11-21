@@ -3,10 +3,10 @@
 // a rule matches is proposed as before, and the placeholder the kernel counts them by is the one l10n-vn writes.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { UNCLASSIFIED_ACCOUNT_CODE, zPurchaseProposal, type PurchaseProposal } from '@crove/kernel-contract';
-import type { ExtractClient } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { UNCLASSIFIED_ACCOUNT, type LearnedRule, type ParsedInvoice } from '@crove/l10n-vn';
+import { UNCLASSIFIED_ACCOUNT_CODE, zPurchaseProposal, type PurchaseProposal } from '@ludy/kernel-contract';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { UNCLASSIFIED_ACCOUNT, type LearnedRule, type ParsedInvoice } from '@ludy/l10n-vn';
 import { extractAndPropose } from '../src/extract.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

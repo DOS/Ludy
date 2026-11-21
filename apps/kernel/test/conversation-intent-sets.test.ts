@@ -3,9 +3,9 @@
 // (packages/kernel-contract, which the screens and the schemas use) and the AI reader's (packages/agent, the labels the model may answer). The sizes of
 // what one suggestion reads are written twice, in the contract (what the query returns) and in the reader (what the prompt keeps). All must stay equal.
 import { describe, expect, it } from 'vitest';
-import { INTENTS, INTENT_BATCH_MAX, INTENT_MESSAGES_MAX, INTENT_MESSAGE_CHARS } from '@crove/agent';
-import { CONVERSATION_INTENTS as DB_INTENTS } from '@crove/db';
-import { CONVERSATION_INTENT_BATCH_MAX, CONVERSATION_INTENT_CHARS, CONVERSATION_INTENT_MESSAGES, CONVERSATION_INTENTS } from '@crove/kernel-contract';
+import { INTENTS, INTENT_BATCH_MAX, INTENT_MESSAGES_MAX, INTENT_MESSAGE_CHARS } from '@ludy/agent';
+import { CONVERSATION_INTENTS as DB_INTENTS } from '@ludy/db';
+import { CONVERSATION_INTENT_BATCH_MAX, CONVERSATION_INTENT_CHARS, CONVERSATION_INTENT_MESSAGES, CONVERSATION_INTENTS } from '@ludy/kernel-contract';
 
 describe('the conversation intent sets (CV3, #2306)', () => {
   it('has one list of intents in the database package, the contract and the AI reader', () => {

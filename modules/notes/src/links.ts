@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared record link helpers for notes and private to-dos (notes.md §3.4, ADR-0037, ADR-0048, #2595).
-import { NOTE_LINKS_MAX, type NoteLink, type NoteLinkTarget } from '@crove/kernel-contract';
-import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { NOTE_LINKS_MAX, type NoteLink, type NoteLinkTarget } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 // The query that opens a record another module owns (notes.md §3.4, #1672). No foreign key goes to another module's
 // schema, so such a target is checked by running that module's own get query in the caller's context: its role check,

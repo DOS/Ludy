@@ -3,7 +3,7 @@
 // commands check). Each side pins the same literal (packages/agent/test/member-vy-features.test.ts is the other), so the two cannot differ
 // without one of the tests failing (ADR-0049, issue #2782).
 import { describe, expect, it } from 'vitest';
-import { MEMBER_VY_FEATURES } from '@crove/kernel';
+import { MEMBER_VY_FEATURES } from '@ludy/kernel';
 
 describe('member-Vy features (kernel side)', () => {
   it('are the table both sides pin', () => {

@@ -2,8 +2,8 @@
 // channel of which failed, needs a person to settle an unclear outcome, or waits paused on such a channel. Each opens
 // where it is fixed. Owners and admins fix them (reconnect, retry, resolve), so members and viewers get an empty list.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EXCERPT = 200;

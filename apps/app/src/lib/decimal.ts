@@ -1,6 +1,6 @@
 // Exact decimal arithmetic on strings for client-side previews (BigInt based). Amounts arrive with up to 8 decimals
 // (zMoney); the ledger keeps 4 (NUMERIC(20,4)), rounded half away from zero like decimal.js ROUND_HALF_UP in
-// @crove/l10n-vn's toMoney. Sums are taken exactly at 8 decimals and rounded once, where the server rounds.
+// @ludy/l10n-vn's toMoney. Sums are taken exactly at 8 decimals and rounded once, where the server rounds.
 const SCALE = 10_000n;
 const EXACT = 100_000_000n;
 const TO_LEDGER = EXACT / SCALE;
@@ -54,7 +54,7 @@ function divRound(n: bigint, d: bigint): bigint {
   return negative ? -q : q;
 }
 
-// Mirrors vatPercent / parseVatRate in @crove/l10n-vn (apps/app does not depend on it; decimal.test.ts keeps the two
+// Mirrors vatPercent / parseVatRate in @ludy/l10n-vn (apps/app does not depend on it; decimal.test.ts keeps the two
 // in step): a rate 0-100 with an optional "%", or "KHAC:r%" with 0 < r <= 100, as exact units (8 decimals); exempt,
 // untaxed, bare "KHAC" and unreadable rates count as 0.
 export function vatPercent(rate: string | null): bigint {
@@ -66,7 +66,7 @@ export function vatPercent(rate: string | null): bigint {
   return percent;
 }
 
-// Mirrors fixedAssetVat in @crove/l10n-vn: 1332 for fixed assets, estimated per line on mixed invoices and rounded
+// Mirrors fixedAssetVat in @ludy/l10n-vn: 1332 for fixed assets, estimated per line on mixed invoices and rounded
 // to whole VND. Exact units in and out.
 function fixedAssetVat(lines: PreviewLine[], vat: bigint): bigint {
   const assets = lines.filter((l) => l.debitAccount === '211');
@@ -86,7 +86,7 @@ export interface PreviewJournalLine {
   credit: string;
 }
 
-// Mirrors @crove/l10n-vn buildPurchaseJournal for the approval preview; the server recomputes on approve. Each
+// Mirrors @ludy/l10n-vn buildPurchaseJournal for the approval preview; the server recomputes on approve. Each
 // account's amount is summed exactly and rounded once to the ledger's 4 decimals, as toMoney does, and the payable
 // (331) balances the rounded lines, so the preview shows the very amounts the ledger will hold.
 export function previewPurchaseJournal(lines: PreviewLine[], vatTotal: string): PreviewJournalLine[] {
@@ -109,7 +109,7 @@ export function previewPurchaseJournal(lines: PreviewLine[], vatTotal: string): 
   return out;
 }
 
-// Mirrors @crove/l10n-vn buildSalesJournal (issue #313): Cr each line's revenue account, Cr 3331 for the VAT, and the
+// Mirrors @ludy/l10n-vn buildSalesJournal (issue #313): Cr each line's revenue account, Cr 3331 for the VAT, and the
 // receivable (131) first, balancing the rounded lines. `debitAccount` of a sale line is its revenue account. Under the regime 'tt99' the net reduction of a sales-revenue account (511 or a
 // sub-account) is one debit to 521 instead (#3712 slice 4), as the server's entry does.
 export function previewSalesJournal(lines: PreviewLine[], vatTotal: string, regime?: string): PreviewJournalLine[] {

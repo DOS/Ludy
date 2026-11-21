@@ -1,6 +1,6 @@
 // Proposal reminders (#676): which stages are due, when a proposal expires (#876), and the reminder mail.
 import { describe, expect, it } from 'vitest';
-import { expiryDue, mayResubmit, nudgesDue, resubmitSource } from '@crove/kernel';
+import { expiryDue, mayResubmit, nudgesDue, resubmitSource } from '@ludy/kernel';
 import { renderProposalReminderMail } from '../src/proposal-reminder-mail.ts';
 
 const DAY = 86_400_000;

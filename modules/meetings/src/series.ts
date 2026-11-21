@@ -13,9 +13,9 @@
 // No model is used and nothing here writes to Projects: the task is read, never changed.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { notifyMembers, uploaderEntity } from '@crove/kernel';
-import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesNudge, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItem, type SeriesOpenItems } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { notifyMembers, uploaderEntity } from '@ludy/kernel';
+import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesNudge, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItem, type SeriesOpenItems } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 

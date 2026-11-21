@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // How many extract jobs the worker starts workers for (#2119): the extract client's slots, 1 when it names none.
 import { describe, expect, it } from 'vitest';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
 import { extractWorkers } from '../src/worker.ts';
 
 describe('extractWorkers', () => {

@@ -4,8 +4,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));

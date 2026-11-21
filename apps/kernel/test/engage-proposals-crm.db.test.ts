@@ -3,7 +3,7 @@
 // changes nothing; a rejection changes nothing, ever; an approval runs the original command once, as the approver, with every check it has (a quote edited since is stale, a booking time that is taken or a booking
 // that is no longer changeable) judged then and leaving the proposal pending when it refuses. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { isVietnamHoliday, zonedDate, zonedInstant, type Deal, type EventType, type PipelineStage, type Quote } from '@crove/kernel-contract';
+import { isVietnamHoliday, zonedDate, zonedInstant, type Deal, type EventType, type PipelineStage, type Quote } from '@ludy/kernel-contract';
 import { bookingRequest } from '../src/booking-page.ts';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 

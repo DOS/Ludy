@@ -12,8 +12,8 @@
 //   day is known (rule 8: a refund takes the rate of the sale it reverses, exactly where the rate changes); a piece with no usable delivery day takes the date of the entry;
 // - a month whose net is zero is KEPT while it holds pieces: pieces at different VAT rates, or a refund at the rate of an earlier sale, can net to zero while 33311 is not, so whether a month has an entry is
 //   known only with the rates (entryIsEmpty, offeredMonths in marketplace-settlement-vat.ts); a month with a negative net runs the entry the other way (the platform owing less).
-import { money, sum, toMoney } from '@crove/l10n-vn';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import type { SettlementPostingLine } from './marketplace-settlement-posting.ts';
 import { reversedSource } from './source-entry.ts';

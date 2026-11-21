@@ -14,20 +14,20 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { ExtractClient } from '@crove/extract-contract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { ExtractClient } from '@ludy/extract-contract';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
   kernelCommands,
   kernelQueries,
   upsertIdentity,
-} from '@crove/kernel';
-import { SIGN_DIRECT_PAGE_PATH } from '@crove/kernel-contract';
-import { Runtime, contentGeneration, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import type { MailProvider, OutboundMail } from '@crove/mail';
-import { signCommands, signQueries } from '@crove/mod-sign';
+} from '@ludy/kernel';
+import { SIGN_DIRECT_PAGE_PATH } from '@ludy/kernel-contract';
+import { Runtime, contentGeneration, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { MailProvider, OutboundMail } from '@ludy/mail';
+import { signCommands, signQueries } from '@ludy/mod-sign';
 import { createAuthenticator } from '../../src/auth.ts';
 import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { loadConfig } from '../../src/config.ts';

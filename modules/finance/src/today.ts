@@ -16,10 +16,10 @@
 // the acting screen opens in the right books.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ORIGINAL_FLAGGED, taxDuesOf } from '@crove/kernel';
-import { STOCK_LEAD_DAYS_DEFAULT, type TodayItem, type VatFilingPeriod } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
+import { ORIGINAL_FLAGGED, taxDuesOf } from '@ludy/kernel';
+import { STOCK_LEAD_DAYS_DEFAULT, type TodayItem, type VatFilingPeriod } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, sha256Hex, type QueryContext } from '@ludy/kernel-runtime';
 import { closingPeriod } from './notifications.ts';
 import { readCollectionSetting } from './collection-settings.ts';
 import { databaseToday } from './period-lock.ts';

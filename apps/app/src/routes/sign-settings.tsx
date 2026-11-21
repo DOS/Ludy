@@ -4,12 +4,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

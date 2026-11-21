@@ -1,12 +1,12 @@
-// App-level building blocks composed from the @crove/ui design system. Screens import primitives (Button, Input,
-// Card, Badge, ...) from @crove/ui directly and these composites from here.
-import { Alert } from '@crove/ui/components/alert';
-import { Empty as EmptyRoot, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@crove/ui/components/empty';
-import { Label } from '@crove/ui/components/label';
-import { Skeleton } from '@crove/ui/components/skeleton';
-import { Spinner as SpinnerIcon } from '@crove/ui/components/spinner';
-import { Table, TableBody, TableFooter, TableHead, TableHeader, TableRow } from '@crove/ui/components/table';
-import { cn } from '@crove/ui/lib/utils';
+// App-level building blocks composed from the @ludy/ui design system. Screens import primitives (Button, Input,
+// Card, Badge, ...) from @ludy/ui directly and these composites from here.
+import { Alert } from '@ludy/ui/components/alert';
+import { Empty as EmptyRoot, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@ludy/ui/components/empty';
+import { Label } from '@ludy/ui/components/label';
+import { Skeleton } from '@ludy/ui/components/skeleton';
+import { Spinner as SpinnerIcon } from '@ludy/ui/components/spinner';
+import { Table, TableBody, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
+import { cn } from '@ludy/ui/lib/utils';
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslations } from 'use-intl';
@@ -353,7 +353,7 @@ export function ProposalSkeleton() {
   );
 }
 
-// A table with one header row; the body rows are TableRow/TableCell from @crove/ui. `numeric` lists the columns that
+// A table with one header row; the body rows are TableRow/TableCell from @ludy/ui. `numeric` lists the columns that
 // hold amounts: their headers are right-aligned like the amounts (DESIGN.md 4.3).
 // A list's table (DESIGN.md §4.3). Its header stays in view (#1444): a table taller than the window scrolls inside its
 // card, under a pinned header, and only then becomes a tab stop, so the keyboard can scroll it too. The same when it

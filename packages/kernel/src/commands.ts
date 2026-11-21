@@ -22,8 +22,8 @@ import {
   zPurchaseProposal,
   zRole,
   zSessionRevoke,
-} from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
 import {
   DomainError,
   defineCommand,
@@ -32,7 +32,7 @@ import {
   type CommandContext,
   type Runtime,
   type UserActor,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
 import { extensionCommands } from './extension.ts';

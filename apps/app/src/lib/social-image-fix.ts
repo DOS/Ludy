@@ -3,7 +3,7 @@
 // of the post takes, uploaded as a new library file in place of the original (the original stays), as a crop is.
 // This module decides, from the contract's limits, whether an image needs the fix, what it must become and the encodes
 // to try; the drawing runs in components/social-image-fix.tsx.
-import { CAPABILITIES, IMAGE_RULES, isProvider, mediaKindOf, type Provider } from '@crove/mod-social/contract';
+import { CAPABILITIES, IMAGE_RULES, isProvider, mediaKindOf, type Provider } from '@ludy/mod-social/contract';
 import { CROP_MAX_SIDE } from './social-crop.ts';
 
 // Every channel takes JPEG (a test checks the contract), so the fix always makes one.

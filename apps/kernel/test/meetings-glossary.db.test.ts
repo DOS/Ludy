@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { EXPORT_TABLE_NAMES, OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { GlossaryTerms } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { EXPORT_TABLE_NAMES, OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { GlossaryTerms } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

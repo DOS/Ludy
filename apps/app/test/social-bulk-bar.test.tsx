@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { SOCIAL_BULK_SKIP_REASONS, SOCIAL_REPLACE_FIELDS } from '@crove/kernel-contract';
+import { SOCIAL_BULK_SKIP_REASONS, SOCIAL_REPLACE_FIELDS } from '@ludy/kernel-contract';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import type { BulkAction, BulkPost, DuplicatePostResult, ReplacePreviewPost } from '../src/lib/social-bulk.ts';

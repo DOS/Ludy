@@ -11,10 +11,10 @@
 // Sent only fresh (#4124, S3b of #4103): right before a batch goes out the entries its stored matches rely on are read from the catalogue once more (parties by tax code, items by code), and a batch whose match
 // changed in MISA since the check (an entry gone, inactive, with another tax code, or now ambiguous) is `failed` with MATCH_STALE and nothing is sent; a person checks again and confirms again.
 // Nothing here logs or stores a credential, a party's name, an amount or MISA's own text other than the capped `reason` of a refused voucher: ids, codes and counts.
-import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection, type AmisVoucher } from '@crove/misa-amis';
-import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
-import { amisContextOf, amisPartRows, loadAmisEntries, misaChannelProvider, relied, staleMatches, type AmisPartRow, type MisaAmisMatchResults, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection, type AmisVoucher } from '@ludy/misa-amis';
+import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult, type MisaAmisPreviewAsk } from '@ludy/kernel-contract';
+import { amisContextOf, amisPartRows, loadAmisEntries, misaChannelProvider, relied, staleMatches, type AmisPartRow, type MisaAmisMatchResults, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@ludy/mod-finance';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { matchCatalogue, readStockNames, TooLarge } from './misa-amis-catalogue.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };

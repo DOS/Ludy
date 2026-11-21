@@ -1,5 +1,5 @@
 // Period lock (issue #329): the month after or before one, and the answer to a posting the database guard refused
-// (months and days in Vietnam time are @crove/kernel-contract vietnamMonth and vietnamToday, tested there). The lock
+// (months and days in Vietnam time are @ludy/kernel-contract vietnamMonth and vietnamToday, tested there). The lock
 // itself is tested on PostgreSQL in apps/kernel/test/finance-period-lock.db.test.ts.
 import { describe, expect, it } from 'vitest';
 import { openingEntryError, periodLockedError, postingGuardError, shiftMonth } from '../src/period-lock.ts';

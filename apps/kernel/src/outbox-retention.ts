@@ -9,7 +9,7 @@
 // deletion map); a bucket lifecycle rule on outbox/ removes them afterwards (docs/runbooks/worm-archive.md).
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import { ArchiveObjectExistsError, type ArchiveStore } from './worm.ts';
 
 export const OUTBOX_KEEP_DAYS = 30;

@@ -1,13 +1,13 @@
 // Worker job: read a received file, extract the invoice, run deterministic checks and raise a proposal.
 // Files are parsed in crove-extract (plan §7.6, External-tenant gate T12); its answer is untrusted, validated
-// against @crove/extract-contract by the client and checked again here before it becomes a proposal.
+// against @ludy/extract-contract by the client and checked again here before it becomes a proposal.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { ExtractClient, ExtractFailure } from '@crove/extract-contract';
-import type { UsageMetric } from '@crove/db';
-import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
+import type { ExtractClient, ExtractFailure } from '@ludy/extract-contract';
+import type { UsageMetric } from '@ludy/db';
+import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@ludy/kernel-contract';
+import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@ludy/agent';
 import { journalMemo } from './memo.ts';
 import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/foreign-currency.ts';
 
@@ -35,7 +35,7 @@ import {
   type InvoiceCheck,
   type LearnedRule,
   type ParsedInvoice,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 
 // The file to read and whether this run should happen: `version` names a pending re-extraction (issue #40), which
 // runs only while that version is still pending; without it, the first extraction runs only if the file has none.
@@ -409,7 +409,7 @@ interface ReadUsage {
   pages: number;
 }
 
-// The cost of the AI calls of one read lives with the meter (@crove/agent): each call records its own, so a read no
+// The cost of the AI calls of one read lives with the meter (@ludy/agent): each call records its own, so a read no
 // longer records AI cost itself. Re-exported for the callers that priced a read.
 export { aiCost };
 

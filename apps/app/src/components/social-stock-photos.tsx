@@ -6,8 +6,8 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { client, errorMessage, queryClient } from '../lib/api.ts';
 import { ErrorText, Spinner } from './ui.tsx';
 

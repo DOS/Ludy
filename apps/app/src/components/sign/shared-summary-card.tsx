@@ -4,12 +4,12 @@
 // lets authorized senders prefill, edit, and explicitly toggle sharing.
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from '../ui.tsx';
 import type { SignAiAnalysis, SignSharedKeyTerm, SignSharedSummary } from '../../lib/sign-api.ts';
 

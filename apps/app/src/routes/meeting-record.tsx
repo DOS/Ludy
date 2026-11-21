@@ -8,13 +8,13 @@
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { MEETING_SUMMARY_TEMPLATES, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { useConsentPolicy } from '../components/consent-policy.tsx';
@@ -22,7 +22,7 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
 import { TOUCH_BUTTON } from '../lib/touch.ts';
-import { createIndexedDbChunkStore, formatClock, startBlocker, type ChunkStore, type RecordingMeta } from '@crove/meeting-recorder';
+import { createIndexedDbChunkStore, formatClock, startBlocker, type ChunkStore, type RecordingMeta } from '@ludy/meeting-recorder';
 import {
   clearRecorderError,
   getRecorderSnapshot,

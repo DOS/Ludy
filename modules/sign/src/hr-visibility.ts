@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Strict HR contract envelope confidentiality helpers for @crove/mod-sign (#3553, docs/plan/esign.md Slice 2b A4).
+// Strict HR contract envelope confidentiality helpers for @ludy/mod-sign (#3553, docs/plan/esign.md Slice 2b A4).
 // Envelopes with source_kind = 'hr_contract' carry employee compensation and contract terms (owner decision 2026-11-08):
 // only organization owners, admins, the envelope creator, or system workers may read, list, or mutate them.
 // Unauthorized workspace members receive identical NOT_FOUND (404) responses on ID lookups so no existence oracle leaks.
 import type { SelectQueryBuilder } from 'kysely';
-import type { Database, MemberRole, SignSourceKind } from '@crove/db';
-import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { Database, MemberRole, SignSourceKind } from '@ludy/db';
+import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 export interface HrEnvelopeVisibilityCtx {
   readonly actor: QueryContext['actor'] | CommandContext['actor'];

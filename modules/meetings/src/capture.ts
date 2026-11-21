@@ -19,9 +19,9 @@ import {
   type CaptureKind,
   type CaptureRunning,
   type CaptureStart,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 

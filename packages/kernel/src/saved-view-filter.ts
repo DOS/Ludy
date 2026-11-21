@@ -2,7 +2,7 @@
 // The Filter AST of a saved view turned into a SQL condition (CRM plan 4.3, step K3, #2227). The AST says what to match;
 // this file says how, once per kind of condition, and the module that owns a list (crm for the deals) says which column
 // or expression each field of its scope means. So the kernel never names a table of a module, a stored view is checked
-// against the registry in @crove/kernel-contract before anything runs (an unknown field or operator is a 422), and every
+// against the registry in @ludy/kernel-contract before anything runs (an unknown field or operator is a 422), and every
 // value reaches the database as a bound parameter, never as SQL text.
 //
 // A view only narrows: the condition is ANDed into the query the caller already runs under row-level security, so it
@@ -16,8 +16,8 @@ import {
   sortIssues,
   type FilterAst,
   type SavedViewSort,
-} from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 // What a condition may need beyond its own value: who is asking ("is me"), today in Vietnam ("overdue", "within the next
 // N days") and the clock ("within the last N days"). The caller passes ctx.now and vietnamToday(ctx.now), so one run

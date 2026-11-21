@@ -9,7 +9,7 @@ import type {
   SignDrafterRenderPdfResult,
   SignSharedKeyTerm,
   SignSharedSummary,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { client, fetchFile, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
 import type {

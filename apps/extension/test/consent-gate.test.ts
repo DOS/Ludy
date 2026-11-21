@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Recording cannot start without the consent step: the gate refuses before any device is opened or any meeting created.
 import { describe, expect, it, vi } from 'vitest';
-import { CONSENT_METHODS as CONTRACT_METHODS, IMPORT_ONLY_CONSENT_METHODS } from '@crove/kernel-contract';
+import { CONSENT_METHODS as CONTRACT_METHODS, IMPORT_ONLY_CONSENT_METHODS } from '@ludy/kernel-contract';
 import { consentBlocker, CONSENT_METHODS } from '../src/consent.ts';
 import { startCapture, type CaptureDeps } from '../src/capture-run.ts';
 

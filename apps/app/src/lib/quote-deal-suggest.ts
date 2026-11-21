@@ -2,9 +2,9 @@
 // What the sales coworker offers on a deal once its quote was sent or accepted (#3420, docs/plan/crm-quotes.md section 2, ADR-0050 decision 1): move the deal to "Báo giá"
 // after a send, to the won stage after an acceptance, and set the deal's amount to the quote total. Computed on read from the deal, the pipeline and the deal's quotes; nothing
 // is stored, no model is called, and a person confirms each offer with a click (the existing `crm.deal.move` and `crm.deal.update`). Amounts are decimal strings compared through
-// @crove/l10n-vn, never JS numbers.
-import { zDealAmount, type Deal, type PipelineStage, type QuoteSummary } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
+// @ludy/l10n-vn, never JS numbers.
+import { zDealAmount, type Deal, type PipelineStage, type QuoteSummary } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
 import { foldWord } from './search-fold.ts';
 
 // The default pipeline's third stage; an org that renamed or removed it gets no offer to move a deal to it.

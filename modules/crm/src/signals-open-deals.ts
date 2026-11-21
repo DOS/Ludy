@@ -9,11 +9,11 @@
 // Who sees which deal is the deal screens' own rule: a deal belongs to the whole org (the pipeline and the list show every deal to every role the CRM lists), so the row
 // policy of the caller's own transaction (org only) is the only filter. The 500 most recently created open deals are listed (the contract's cap); a longer list can hide
 // a flag (the oldest open deals), never raise a false one.
-import { zCrmOpenDealSignals, type CrmOpenDealSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { zCrmOpenDealSignals, type CrmOpenDealSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const LIMIT = 500;

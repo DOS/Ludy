@@ -8,9 +8,9 @@
 // the assignee's item.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db, SocialPostStatus } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db, SocialPostStatus } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { postsVisibleTo } from './channel-access.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'social.assign_reminders' };

@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TIME_ZONE, type MyWork, type MyWorkTask, type TodoSummary } from '@crove/kernel-contract';
+import { DEFAULT_TIME_ZONE, type MyWork, type MyWorkTask, type TodoSummary } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import {
   chunkTodoIds,

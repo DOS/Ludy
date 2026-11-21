@@ -60,7 +60,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.endpoint.outputs.ready == 'true'
-        run: pnpm install --frozen-lockfile --filter "@crove/agent..." --filter "@crove/extract..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/agent..." --filter "@ludy/extract..." --filter "ludy-monorepo"
 
       # Accuracy per kind and per field goes to the job summary. Values of wrong fields are printed: the set is
       # synthetic and public.

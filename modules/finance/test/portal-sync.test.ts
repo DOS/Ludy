@@ -3,7 +3,7 @@
 // (numbers for tax codes, dates as instants or epoch milliseconds, amounts as numbers) reads, and a row that does not
 // name an invoice properly is skipped with its reason, never guessed.
 import { describe, expect, it } from 'vitest';
-import { zExtractedPortalList } from '@crove/extract-contract';
+import { zExtractedPortalList } from '@ludy/extract-contract';
 import { PortalListTooLarge, checkPortalList, normalizePortalInvoices, portalDate, portalStatus, readSyncedList, xmlCallKey, type PortalAnswer } from '../src/index.ts';
 
 const PERIOD = { from: '2026-09-01', to: '2026-09-30' };

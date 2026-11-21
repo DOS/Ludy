@@ -2,7 +2,7 @@
 // The tool list of the Engage R1 write tools (epic #3857, E2, issue #3861): which grant is offered which tool, that each is a strict write descriptor over one twin command with its scope, that a client that
 // loops is stopped by the per-grant write budget before the command runs, and what a tool answers (ids and states, never the stored row). The database tests (engage-mcp-write.db.test.ts) run the commands behind them.
 import { describe, expect, it } from 'vitest';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { toolsFor } from '../src/mcp-endpoint.ts';
 import { McpWriteBudget } from '../src/mcp-write-limit.ts';

@@ -10,9 +10,9 @@
 // - Only a user, and no MCP grant, sets any of it: the handlers say so themselves, and a test reads them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, type McpWakeView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
+import { mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, type McpWakeView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@ludy/kernel-runtime';
 
 // Every role: the database decides whose wake-up it is (an owner or admin's for a company grant; a member's alone for their own member-bound grant), ADR-0051 slice 3c.
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

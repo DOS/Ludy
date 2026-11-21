@@ -1,7 +1,7 @@
 // Bounce reports (DSN, RFC 3464, #539) read in the parser: each recipient's action and status, the bounced mail's
 // Message-ID, and nothing else (no address, no diagnostic text); a mail that is not a report is refused.
 import { describe, expect, it } from 'vitest';
-import { zExtractSuccess } from '@crove/extract-contract';
+import { zExtractSuccess } from '@ludy/extract-contract';
 import { parse } from '../src/parse.ts';
 
 const report = (status: string, options: { action?: string; headers?: string; extra?: string } = {}) =>

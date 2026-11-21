@@ -10,9 +10,9 @@
 // a removal applies from the member's next command.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { BUILTIN_ROLE_KEYS, zId, zRoleAssignInput, type BuiltinRoleKey, type MemberRoles, type RoleAssignment } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { BUILTIN_ROLE_KEYS, zId, zRoleAssignInput, type BuiltinRoleKey, type MemberRoles, type RoleAssignment } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { lastChiefAccountant } from './approval.ts';
 import { cancelMemberVyRunsUnlessAllowed } from './member-vy.ts';
 import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';

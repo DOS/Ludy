@@ -2,9 +2,9 @@
 // Reading the firm's MISA catalogue in the worker's memory (#4112, S3a, and #4124, S3b, of #4103), shared by the check job (misa-amis-match-job.ts) and the push job's re-read (misa-amis-push-job.ts). The pages live in
 // the caller's variables and nowhere else: nothing here logs, stores or returns a catalogue name, address or tax code beyond the rows themselves, which the caller matches and drops. A catalogue of 20 000 entries or
 // more of a kind is not read in part (a party past the cut would read as unknown): `TooLarge` says so and the caller gives a fixed reason.
-import { AMIS_DICTIONARIES, type AmisClient, type AmisConnection } from '@crove/misa-amis';
-import { catalogueItems, catalogueParties, catalogueStocks, catalogueUnits, confirmedStillHold, matchItems, matchNames, matchParties, matchStocks, matchUnits, type WantedName } from '@crove/mod-finance';
-import type { MisaAmisMatchResult } from '@crove/kernel-contract';
+import { AMIS_DICTIONARIES, type AmisClient, type AmisConnection } from '@ludy/misa-amis';
+import { catalogueItems, catalogueParties, catalogueStocks, catalogueUnits, confirmedStillHold, matchItems, matchNames, matchParties, matchStocks, matchUnits, type WantedName } from '@ludy/mod-finance';
+import type { MisaAmisMatchResult } from '@ludy/kernel-contract';
 
 const PAGE = 1000;
 const MAX_PAGES = 20;

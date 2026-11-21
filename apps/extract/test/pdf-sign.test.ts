@@ -9,7 +9,7 @@ import {
   createExtractClient,
   encodePdfSealInput,
   type PdfSealInput,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   PDFArray,
   PDFBool,
