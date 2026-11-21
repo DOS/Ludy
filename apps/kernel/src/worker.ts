@@ -110,6 +110,7 @@ import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
+import { MARKETPLACE_HOOK_CLAIM, MARKETPLACE_PUSH_SLOT_SECONDS, claimMarketplaceHookNotices, rejectMarketplaceHook, sweepMarketplaceHookNotices, verifyMarketplaceHookNotices } from './marketplace-push-relay.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
 import type { BankFeedProvider } from '@ludy/bank-feed';
@@ -1734,6 +1735,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Only the exact scheduled `{ sweep: true }` is the sweep; any other payload (a null, `{ sweep: false }`) is checked below as a poll or a test, and refused when it is neither.
       const isSweep = typeof job.data === 'object' && job.data !== null && Object.keys(job.data).length === 1 && (job.data as { sweep?: unknown }).sweep === true;
       if (isSweep) {
+        // Pushes of a hook that waited more than ten minutes (a worker that was away) go first, whatever they hold (#4327).
+        const sweptPushes = await sweepMarketplaceHookNotices(deps.workerDb);
+        if (sweptPushes > 0) console.log(`[marketplace-push] swept ${sweptPushes} old push(es)`);
         let after: { orgId: string; id: string } | null = null;
         for (;;) {
           const page = await marketplacePollDue(deps.workerDb, after);
@@ -3504,6 +3508,42 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
           if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
           if (claimed < BANK_FEED_HOOK_CLAIM) break;
+        }
+      }
+      // A signed push of a marketplace (TikTok Shop, Shopee, Lazada; #4327, S3a of #4315): the route stored the raw push under the hook key of one connection; here the connection's sealed secret is opened, the HMAC is checked
+      // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch
+      // commits (ten in an hour stop it). The claim deletes the pushes as it takes them, and the claim and the sends share one transaction, so a failure leaves them waiting (the sweep deletes any older than ten minutes).
+      // Nothing of a push is logged: the line below carries counts.
+      const pushProviders = deps.channels?.marketplaceProviders;
+      if (finance && deps.channels?.broker && pushProviders && Object.keys(pushProviders).length > 0) {
+        const broker = deps.channels.broker;
+        const adapters = new Set(Object.keys(pushProviders));
+        for (;;) {
+          const tally = { ok: 0, refused: 0, dropped: 0 };
+          const refusedHooks: string[] = [];
+          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+            const rows = await claimMarketplaceHookNotices(trx);
+            const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+            const seen = new Set<string>();
+            return rows.map((row, i) => {
+              const verdict = verdicts[i] ?? 'dropped';
+              tally[verdict]++;
+              if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
+              seen.add(row.marketplaceConnectionId);
+              const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
+              return (boss: JobSender) =>
+                boss.send(QUEUES.marketplacePoll, target, {
+                  singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
+                  singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
+                  retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+            });
+          });
+          for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
+          if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
+          if (claimed < MARKETPLACE_HOOK_CLAIM) break;
         }
       }
       // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the
