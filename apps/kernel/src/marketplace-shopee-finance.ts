@@ -23,6 +23,7 @@
 // and `withholding_cit_tax` (and `tax_registration_code`) ARE in the escrow answer**: they are CARRIED as fields of their own and never booked here, as TikTok's tax fields are. Adjustments of an order (`order_adjustment`) and
 // the buyer's side (`buyer_*`, the user name, payment info) are never read: every record is read through an allow-list.
 import { Decimal } from '@crove/l10n-vn';
+import { MarketplaceProviderError } from '@crove/mod-finance';
 import { isoDay, marketplaceIdentifier, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { ShopeeNumber, parseShopeeSourceAnswer, parseShopeeSecret, shopeeCaller, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
 
@@ -167,6 +168,10 @@ export interface ShopeeFinanceWindow {
   // YYYY-MM-DD in Vietnam, both days included, at most SHOPEE_FINANCE_MAX_DAYS days.
   startDay: string;
   endDay: string;
+  // Optional: read only the part of those days between two instants (Unix seconds, both included, inside the days named). A window of orders over the list limit is refused as `too_large` (not as an
+  // unreadable answer), so a caller can split it and read the halves (marketplace-income-leg.ts).
+  fromSec?: number;
+  toSec?: number;
 }
 
 export interface ShopeeFinance {
@@ -179,7 +184,12 @@ export interface ShopeeFinance {
 function checkWindow(window: ShopeeFinanceWindow): { fromSec: number; toSec: number } {
   const span = isoDay(window.startDay) && isoDay(window.endDay) ? (Date.parse(window.endDay) - Date.parse(window.startDay)) / DAY_MS : Number.NaN;
   if (!(span >= 0 && span < SHOPEE_FINANCE_MAX_DAYS)) throw new RangeError('finance window');
-  return { fromSec: dayStartSec(window.startDay), toSec: dayStartSec(window.endDay) + DAY_MS / 1000 - 1 };
+  const dayFrom = dayStartSec(window.startDay);
+  const dayTo = dayStartSec(window.endDay) + DAY_MS / 1000 - 1;
+  const fromSec = window.fromSec ?? dayFrom;
+  const toSec = window.toSec ?? dayTo;
+  if (!Number.isInteger(fromSec) || !Number.isInteger(toSec) || fromSec < dayFrom || toSec > dayTo || fromSec > toSec) throw new RangeError('finance window');
+  return { fromSec, toSec };
 }
 
 export function shopeeFinance(options: ShopeeOptions, caller: ShopeeCaller = shopeeCaller(options)): ShopeeFinance {
@@ -211,11 +221,12 @@ export function shopeeFinance(options: ShopeeOptions, caller: ShopeeCaller = sho
         if (released < fromSec || released > toSec) throw notRecognized();
         out.push({ orderNo, payout: requiredMoney(e.payout_amount), paidAt: vietnamDay(released) });
       }
-      if (out.length > SHOPEE_FINANCE_MAX_ORDERS) throw notRecognized();
+      // More orders than one window may hold: refused whole (never cut), as its own kind so the caller can ask for a shorter window.
+      if (out.length > SHOPEE_FINANCE_MAX_ORDERS) throw new MarketplaceProviderError('too_large');
       if (!data.more) return out;
     }
     // More than the pages read: refused, never cut (the caller asks for a shorter window).
-    throw notRecognized();
+    throw new MarketplaceProviderError('too_large');
   }
 
   // The income of one order from its escrow detail, as only the fields the reader keeps; anything malformed or unknown refuses the page.

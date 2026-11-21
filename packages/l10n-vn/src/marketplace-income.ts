@@ -8,7 +8,8 @@
 //
 // **Unconfirmed until #2521.** No real income report of a seller was available (plan section 7: "no sample file was seen"). Every profile says `confirmed: false`, the staged read shows it,
 // and the confirm step is the protection against a wrong mapping. Lazada has NO profile here: its public documentation describes a fee-line layout (one row per order item and fee type),
-// not one row per order, and a mapping guessed for it would be worse than none; the golden file of #2521 decides it.
+// not one row per order, and a mapping guessed for it would be worse than none; the golden file of #2521 decides it. The `lazada` profile below is therefore NOT Lazada's own export: it is the
+// layout Ludy itself writes for the income its Lazada reader pulled (marketplace-income-csv.ts in the finance module), one row per order and payment day, so a member confirms it like any file.
 //
 // The sign. A file gives its deductions as negative numbers (Shopee) or as positive ones (declared by the profile). A deduction column is read as the amount taken from the seller, always
 // stored as a positive number; a value of the other sign in such a column (a rebate) is not hidden: it stays in the line's `other`, which is the net the file states minus everything the
@@ -19,7 +20,7 @@ import { Decimal } from 'decimal.js';
 import { headerKey, type StatementCell, type StatementGrid } from './bank-statement-sheet.ts';
 import { readDay, readDecimal, type MarketplacePlatform } from './marketplace-orders.ts';
 
-export const INCOME_PLATFORMS = ['shopee', 'tiktok_shop'] as const satisfies readonly MarketplacePlatform[];
+export const INCOME_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const satisfies readonly MarketplacePlatform[];
 export type IncomePlatform = (typeof INCOME_PLATFORMS)[number];
 
 // The columns of an income report that are read. taxVat and taxPit are summed into the line's taxWithheld.
@@ -89,6 +90,29 @@ export const INCOME_PROFILES: readonly IncomeProfile[] = [
       taxPit: { contains: ['pit withheld', 'personal income tax', 'pit'] },
       refund: { contains: ['refund', 'hoan tien'] },
       net: { contains: ['total settlement amount', 'settlement amount', 'tong so tien quyet toan'] },
+    },
+  },
+  {
+    // Ludy's own layout for a Lazada pull (the poll leg writes it): one row per order and payment day, deductions positive, the tax columns carry the withholding the reader found. Not a Lazada export;
+    // the marker is a header only this layout has, so a Shopee or TikTok file is never taken for it.
+    platform: 'lazada',
+    version: 'lazada-ludy-2026-11-a',
+    confirmed: false,
+    markers: ['lazada thuc nhan'],
+    deductions: 'positive',
+    columns: {
+      orderNo: { contains: ['ma don hang'] },
+      paidAt: { contains: ['ngay giao dich'] },
+      sales: { contains: ['doanh thu san pham'] },
+      sellerDiscount: { contains: ['giam gia nguoi ban chiu'] },
+      commission: { contains: ['phi hoa hong'] },
+      serviceFee: { contains: ['phi dich vu khac'] },
+      paymentFee: { contains: ['phi thanh toan'] },
+      shipping: { contains: ['phi van chuyen'] },
+      taxVat: { contains: ['thue khau tru'] },
+      taxPit: { contains: ['thue tncn khau tru'] },
+      refund: { contains: ['hoan tien'] },
+      net: { contains: ['lazada thuc nhan'] },
     },
   },
 ];
