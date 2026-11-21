@@ -669,6 +669,8 @@ import {
   zSignFieldSetResult,
   zSignSignerAddInput,
   zSignSignerAddResult,
+  zSignSignerCorrectRecipientInput,
+  zSignSignerCorrectRecipientResult,
   zSignSignerCreateLinkInput,
   zSignSignerCreateLinkResult,
   zSignSignerRemoveInput,
@@ -3364,6 +3366,7 @@ export const contract = {
       remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
       reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
       create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+      correct_recipient: oc.input(zSignSignerCorrectRecipientInput).output(zSignSignerCorrectRecipientResult),
     },
     field: {
       set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),
