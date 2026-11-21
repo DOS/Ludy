@@ -1206,6 +1206,7 @@ export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
 export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+export const HR_PAY_BASES = ['monthly', 'hourly', 'piece_rate'] as const;
 export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
 export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
 // Departments per legal entity (#3412): optional team structure with default pay_function.
@@ -1247,6 +1248,7 @@ export type HrPayrollEmploymentTable = Refine<
     probation_role_tier: ColumnType<(typeof HR_PROBATION_ROLE_TIERS)[number] | null, (typeof HR_PROBATION_ROLE_TIERS)[number] | null, never>;
     region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>;
     pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never>;
+    pay_basis: ColumnType<(typeof HR_PAY_BASES)[number], (typeof HR_PAY_BASES)[number] | undefined, never>;
   }
 >;
 // The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
@@ -1254,7 +1256,7 @@ export type HrPayrollEmploymentTable = Refine<
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
-export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'] as const;
 export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
 export type HrPayrollLeaveEntryTable = Refine<
   G.HrPayrollLeaveEntryTable,

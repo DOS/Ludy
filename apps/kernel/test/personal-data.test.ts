@@ -147,6 +147,7 @@ describe('personal-data registry: payroll people (#2530)', () => {
       'crove_hr.payroll_employee.insurance_number_sealed',
       'crove_hr.payroll_employee.national_id_sealed',
       'crove_hr.payroll_employee.tax_code_sealed',
+      'crove_hr.payroll_employee.work_permit_number_sealed',
     ]);
     for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
       expect(entries[key]?.handling, key).toBe('erase');
