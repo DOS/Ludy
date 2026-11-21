@@ -92,7 +92,7 @@ export const LAZADA_ITEM_STAGE: Readonly<Record<string, MarketplaceOrderStage>> 
 };
 
 // The sealed secret of a connection: {"appKey": "...", "appSecret": "...", "accessToken": "..."} (more fields join in the token slice and are ignored here). A malformed one is refused without echoing it.
-interface LazadaCredential {
+export interface LazadaCredential {
   appKey: string;
   appSecret: string;
   accessToken: string;
@@ -167,7 +167,9 @@ const RATE_CODES: ReadonlySet<string> = new Set(['ApiCallLimit', 'AppApiCallLimi
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
+// The one signed GET of the Lazada adapters, with the turn-taking per app key: the orders adapter and the finance reader (marketplace-lazada-finance.ts) both go through it, so one app's calls are spaced
+// whatever they ask for. `idKeys` are the answer's fields that hold an id which may pass 2^53 (kept as digits); anything else numeric stays a number.
+export function lazadaCaller(options: LazadaOptions): (credential: LazadaCredential, path: string, apiParams: Record<string, string>, idKeys?: readonly string[]) => Promise<unknown> {
   const now = options.now ?? (() => new Date());
   const spacingMs = options.spacingMs ?? DEFAULT_SPACING_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -193,7 +195,7 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
   }
 
   // One signed GET; the `data` of an answer whose code is "0". A failure is one of the port's kinds, never Lazada's text.
-  async function call(credential: LazadaCredential, path: string, apiParams: Record<string, string>): Promise<unknown> {
+  async function call(credential: LazadaCredential, path: string, apiParams: Record<string, string>, idKeys: readonly string[] = ID_KEYS): Promise<unknown> {
     await takeTurn(credential.appKey);
     const params: Record<string, string> = { ...apiParams, app_key: credential.appKey, timestamp: String(now().getTime()), sign_method: 'sha256', access_token: credential.accessToken };
     params.sign = signLazadaRequest(credential.appSecret, path, params);
@@ -210,7 +212,7 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     }
     let answer: unknown;
     try {
-      answer = parseMarketplaceJson(await readCappedAnswer(response, () => new MarketplaceProviderError('unreachable')), ID_KEYS);
+      answer = parseMarketplaceJson(await readCappedAnswer(response, () => new MarketplaceProviderError('unreachable')), idKeys);
     } catch (error) {
       if (error instanceof MarketplaceProviderError) throw error;
       throw new MarketplaceProviderError('unreachable');
@@ -224,6 +226,13 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     }
     return answer.data;
   }
+  return call;
+}
+
+// `caller` is the one signed GET; pass the same instance to the finance reader so one app's calls are spaced across both.
+export function lazadaMarketplace(options: LazadaOptions, caller: ReturnType<typeof lazadaCaller> = lazadaCaller(options)): MarketplaceProvider {
+  const now = options.now ?? (() => new Date());
+  const call = caller;
 
   // The orders of one window page, each as only the fields the adapter reads. A malformed one refuses the page.
   interface RawOrder {
