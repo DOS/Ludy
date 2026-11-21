@@ -830,6 +830,7 @@ export const envelopeSealJobData = defineQuery({
 });
 
 import { signAcceptanceQueries } from './acceptance.ts';
+import { signCaQueries } from './ca.ts';
 import { signTemplateQueries } from './templates.ts';
 import { signToday } from './today-and-reminders.ts';
 
@@ -927,4 +928,5 @@ export const signQueries = [
   signDrafterRenderPdf,
   ...signTemplateQueries,
   ...signAcceptanceQueries,
+  ...signCaQueries,
 ];

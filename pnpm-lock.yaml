@@ -584,6 +584,9 @@ importers:
       '@crove/mod-social':
         specifier: workspace:*
         version: link:../../modules/social
+      '@crove/sign':
+        specifier: workspace:*
+        version: link:../../packages/sign
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.5(hono@4.13.13)
