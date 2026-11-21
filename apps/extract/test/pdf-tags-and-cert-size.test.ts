@@ -688,4 +688,58 @@ describe('Audit Certificate summary page size matching (pdf_seal, #3552)', () =>
     expect(sealedDoc.getPage(1).getMediaBox().width).toBeCloseTo(280, 2);
     expect(sealedDoc.getPage(1).getMediaBox().height).toBeCloseTo(360, 2);
   });
+
+  it('renders signer delegation and in-flight recipient correction provenance on the Audit Certificate (#3819)', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([595.28, 841.89]);
+    const srcBytes = await doc.save();
+
+    const sealRes = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(srcBytes).toString('base64'),
+        fields: [],
+        certificate: makeCertificate({
+          sourceSha256: createHash('sha256').update(srcBytes).digest('hex'),
+          signers: [
+            {
+              name: 'Phạm Thị Đại Diện',
+              roleLabel: 'Giám đốc Bên A',
+              maskedEmail: 'd***n@example.com',
+              deliveryMode: 'email',
+              otpStatus: 'verified',
+              signedAtIso: '2026-11-21T08:10:00.000Z',
+              ipHashPrefix: 'aabbccdd11223344',
+              signatureKind: 'draw',
+              delegatedFromName: 'Trần Văn Ủy Quyền',
+              delegatedFromMaskedEmail: 'u***n@example.com',
+              delegationCount: 1,
+            },
+            {
+              name: 'Lê Hoàng Thảo Vy',
+              roleLabel: 'Đại diện Bên B',
+              maskedEmail: 'v***y@example.com',
+              deliveryMode: 'link',
+              otpStatus: 'not_required',
+              signedAtIso: '2026-11-21T08:15:00.000Z',
+              ipHashPrefix: '5566778899aabbcc',
+              signatureKind: 'type',
+              recipientCorrected: true,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(sealRes.ok).toBe(true);
+    if (!sealRes.ok || sealRes.kind !== 'pdf_seal') throw new Error('expected pdf_seal');
+
+    const sealedBytes = new Uint8Array(Buffer.from(sealRes.sealedPdfBase64, 'base64'));
+    const pageTexts = await extractPageTexts(sealedBytes);
+    const certText = pageTexts.slice(1).join('\n');
+    expect(certText).toContain('Ủy quyền ký bởi Trần Văn Ủy Quyền (u***n@example.com)');
+    expect(certText).toContain('Delegated by Trần Văn Ủy Quyền (u***n@example.com)');
+    expect(certText).toContain('Hiệu chỉnh người nhận');
+    expect(certText).toContain('Recipient corrected');
+  });
 });

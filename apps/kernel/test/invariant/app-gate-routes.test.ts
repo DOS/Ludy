@@ -69,6 +69,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/submit': { app: 'sign', gate: 'sql', why: 'crove_sign.public_submit gates org_app_on + entitlement -> 404' },
   '/api/sign/decline': { app: 'sign', gate: 'sql', why: 'crove_sign.public_decline gates org_app_on + entitlement -> 404' },
+  '/api/sign/delegate': { app: 'sign', gate: 'sql', why: 'crove_sign.public_delegate gates org_app_on + entitlement -> 404' },
   '/api/sign/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_certificate gates org_app_on + entitlement -> 404' },
   // #3551 (eSign Slice 2a A1): each direct signing link route gates via its crove_sign.public_direct_* SECURITY DEFINER procedure (org_app_on + entitlement -> 404).
   '/api/sign/direct/view': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_resolve gates org_app_on + entitlement -> 404' },

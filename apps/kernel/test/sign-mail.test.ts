@@ -5,7 +5,12 @@ import { BlobTooLargeError, type BlobStore } from '@crove/kernel-runtime';
 import type { MailTemplateInput } from '../src/mail-queue.ts';
 import { configureOpsAlerts, flushOpsAlerts } from '../src/ops-alert.ts';
 import { signMailTemplates } from '../src/sign-mail.ts';
-import { SIGN_COMPLETED_MAIL_TEMPLATE, SIGN_INVITE_MAIL_TEMPLATE, SIGN_REMIND_MAIL_TEMPLATE } from '@crove/mod-sign';
+import {
+  SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_DELEGATED_MAIL_TEMPLATE,
+  SIGN_INVITE_MAIL_TEMPLATE,
+  SIGN_REMIND_MAIL_TEMPLATE,
+} from '@crove/mod-sign';
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -271,5 +276,74 @@ describe('sign completed mail template attachments', () => {
     expect(remind?.subject).toBe(`Nhac duyet: ${'X'.repeat(288)}`);
     expect(remind?.subject.length).toBe(300);
     expect(remind?.text).toContain('nhac ban phe duyet tai lieu');
+  });
+
+  it('hydrates sign.delegated mail data at send time without PII in queued payload (#3819)', async () => {
+    const signerId = '0198f3a2-7b1c-7d2e-8f3a-123456789ddd';
+    const executedCommands: Array<{ name: string; input: unknown }> = [];
+
+    const delegatedInput: MailTemplateInput = {
+      messageId: '0198f3a2-7b1c-7d2e-8f3a-123456789dde',
+      subject: 'Uy quyen ky: Hop dong dich vu 2026',
+      payload: {
+        lang: 'vi',
+        orgName: 'Cong ty ABC',
+        envelopeId: ENV_ID,
+        signerId,
+        docTitle: 'Hop dong dich vu 2026',
+        roleLabel: 'Giam doc Ben B',
+        delegationCount: 1,
+      },
+      publicUrl: 'https://app.example.test',
+      inboundAddress: null,
+      brand: 'Ludy',
+      execute: (async (name: string, input: unknown) => {
+        executedCommands.push({ name, input });
+        return {
+          orgSlug: 'cong-ty-abc',
+          fromName: 'Tran Van Cu',
+          fromEmail: 'cu@example.com',
+          delegateName: 'Le Thi Moi',
+          delegateEmail: 'moi@example.com',
+          reason: 'Di cong tac nuoc ngoai',
+        };
+      }) as MailTemplateInput['execute'],
+    };
+
+    const renderedVi = await signMailTemplates[SIGN_DELEGATED_MAIL_TEMPLATE]!.render(delegatedInput);
+    expect(executedCommands).toEqual([
+      {
+        name: 'sign.signer.delegated_mail_data',
+        input: { envelopeId: ENV_ID, signerId },
+      },
+    ]);
+    expect(renderedVi).not.toBeNull();
+    expect(renderedVi?.text).toContain('Tran Van Cu (cu@example.com)');
+    expect(renderedVi?.text).toContain('Le Thi Moi (moi@example.com)');
+    expect(renderedVi?.text).toContain('Di cong tac nuoc ngoai');
+    expect(renderedVi?.text).toContain(`https://app.example.test/o/cong-ty-abc/sign/envelopes/${ENV_ID}`);
+    expect(renderedVi?.html).toContain(`https://app.example.test/o/cong-ty-abc/sign/envelopes/${ENV_ID}`);
+    expect(renderedVi?.html).toContain('Le Thi Moi');
+
+    const renderedNoEmailOrReason = await signMailTemplates[SIGN_DELEGATED_MAIL_TEMPLATE]!.render({
+      ...delegatedInput,
+      payload: { ...delegatedInput.payload, delegationCount: 2 },
+      execute: (async () => ({
+        orgSlug: 'cong-ty-abc',
+        fromName: 'Tran Van Cu',
+        fromEmail: null,
+        delegateName: 'Le Thi Moi',
+        delegateEmail: 'moi@example.com',
+        reason: null,
+      })) as MailTemplateInput['execute'],
+    });
+    expect(renderedNoEmailOrReason?.text).toContain('Nguoi uy quyen: Tran Van Cu\n');
+    expect(renderedNoEmailOrReason?.text).not.toContain('Ly do uy quyen:');
+
+    const skipped = await signMailTemplates[SIGN_DELEGATED_MAIL_TEMPLATE]!.render({
+      ...delegatedInput,
+      execute: (async () => null) as MailTemplateInput['execute'],
+    });
+    expect(skipped).toBeNull();
   });
 });

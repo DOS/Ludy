@@ -11,17 +11,21 @@ import {
   SIGN_SIGNER_ROLES,
   SIGN_SOURCE_KINDS,
   type MemberRole,
+  type SignDeliveryMode,
+  type SignSignerStatus,
 } from '@crove/db';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { tableWrite, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { tableWrite, zId, zSignSignerCorrectRecipientInput } from '@crove/kernel-contract';
+import { DomainError, defineCommand, type CommandContext, type ErrorStatus } from '@crove/kernel-runtime';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
-import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
+import { generateRawSigningToken, hashSigningToken, maskEmail } from './sealing.ts';
 import {
+  SIGN_CORRECT_INVITE_MAIL_SOURCE,
+  SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   queueSignCompletedEmail,
@@ -119,6 +123,7 @@ const zEnvelopeCreate = z.strictObject({
   subject: z.string().trim().min(1).max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: z.enum(SIGN_ROUTING_MODES).default('parallel'),
+  allowDelegation: z.boolean().optional(),
   sourceKind: z.enum(SIGN_SOURCE_KINDS).default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
@@ -139,6 +144,7 @@ export const envelopeCreate = defineCommand({
       'message',
       'status',
       'routing_mode',
+      'allow_delegation',
       'source_kind',
       'source_id',
       'source_file_id',
@@ -179,6 +185,7 @@ export const envelopeCreate = defineCommand({
         message: input.message ?? null,
         status: 'draft',
         routing_mode: input.routingMode,
+        allow_delegation: input.allowDelegation ?? false,
         source_kind: input.sourceKind,
         source_id: sourceId,
         source_file_id: file.id,
@@ -357,6 +364,7 @@ const zEnvelopeUpdate = z.strictObject({
   subject: z.string().trim().min(1).max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: z.enum(SIGN_ROUTING_MODES).optional(),
+  allowDelegation: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
 
@@ -373,6 +381,7 @@ export const envelopeUpdate = defineCommand({
       'subject',
       'message',
       'routing_mode',
+      'allow_delegation',
       'expires_at',
       'version',
       'updated_at',
@@ -395,11 +404,13 @@ export const envelopeUpdate = defineCommand({
     const nextSubject = input.subject === undefined ? row.subject : input.subject;
     const nextMessage = input.message === undefined ? row.message : input.message;
     const nextRoutingMode = input.routingMode ?? row.routing_mode;
+    const nextAllowDelegation = input.allowDelegation ?? row.allow_delegation;
     const changed: string[] = [];
     if (nextTitle !== row.title) changed.push('title');
     if (nextSubject !== row.subject) changed.push('subject');
     if (nextMessage !== row.message) changed.push('message');
     if (nextRoutingMode !== row.routing_mode) changed.push('routing_mode');
+    if (nextAllowDelegation !== row.allow_delegation) changed.push('allow_delegation');
     if (input.expiresAt !== undefined) {
       const oldIso = row.expires_at ? new Date(row.expires_at).toISOString() : null;
       const newIso = nextExpiresAt ? nextExpiresAt.toISOString() : null;
@@ -417,6 +428,7 @@ export const envelopeUpdate = defineCommand({
         subject: nextSubject,
         message: nextMessage,
         routing_mode: nextRoutingMode,
+        allow_delegation: nextAllowDelegation,
         expires_at: nextExpiresAt,
         version: nextVersion,
         updated_at: ctx.now,
@@ -993,6 +1005,197 @@ export const signerCreateLink = defineCommand({
   },
 });
 
+function toCorrectionErrorStatus(status: number | undefined): ErrorStatus {
+  if (status === 400 || status === 403 || status === 404 || status === 409 || status === 422 || status === 429) {
+    return status;
+  }
+  return 422;
+}
+
+type CorrectRecipientSqlRow =
+  | { status: 'not_found'; target: 'envelope' | 'signer' }
+  | { status: 'error'; code: string; httpStatus?: number; message?: string }
+  | {
+      status: 'ok';
+      envelopeId: string;
+      envelopeTitle: string;
+      envelopeExpiresAt: string | null;
+      sourceSha256: string;
+      version: number;
+      signerId: string;
+      signerRole: 'signer' | 'approver' | 'cc';
+      roleLabel: string;
+      signerStatus: SignSignerStatus;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      deliveryMode: SignDeliveryMode;
+      requireEmailOtp: boolean;
+      previousName: string;
+      previousEmail: string | null;
+      previousPhone: string | null;
+      previousDeliveryMode: SignDeliveryMode;
+      previousRequireEmailOtp: boolean;
+      revokedTokens: number;
+      invalidatedOtps: number;
+    };
+
+export const signerCorrectRecipient = defineCommand({
+  name: 'sign.signer.correct_recipient',
+  input: zSignSignerCorrectRecipientInput,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: WRITERS,
+  // May mint and return a fresh one-time signing link when deliveryMode = 'link'; never store plaintext tokens.
+  noIdempotency: true,
+  target,
+  writes: [
+    tableWrite(signManifest.tables, 'crove_sign', 'signer', [
+      'name',
+      'email',
+      'phone',
+      'delivery_mode',
+      'require_email_otp',
+      'status',
+      'viewed_at',
+      'otp_verified_at',
+      'token_last_reminded_at',
+      'updated_at',
+    ]),
+    ENVELOPE_VERSION_WRITE,
+    SIGNING_TOKEN_WRITE,
+    SIGNING_OTP_INVALIDATE_WRITE,
+    SIGNING_EVENT_WRITE,
+    MAIL_MESSAGE_WRITE,
+  ],
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx);
+    const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
+    const normalizedPhone = input.phone ? input.phone.trim() : null;
+    const { rows: sqlRows } = await sql<{ res: CorrectRecipientSqlRow }>`
+      SELECT crove_sign.correct_signer_recipient(
+        ${input.envelopeId}::uuid,
+        ${input.signerId}::uuid,
+        ${input.name},
+        ${normalizedEmail},
+        ${normalizedPhone},
+        ${input.deliveryMode},
+        ${input.requireEmailOtp ?? null}::boolean,
+        ${ctx.now}::timestamptz
+      ) AS res
+    `.execute(ctx.trx);
+    const res = sqlRows[0]?.res;
+    if (!res || res.status === 'not_found') {
+      if (res?.status === 'not_found' && res.target === 'signer') {
+        throw new DomainError('SIGN_SIGNER_NOT_FOUND', 404, 'Signer not found on envelope');
+      }
+      throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
+    }
+    if (res.status === 'error') {
+      const status = toCorrectionErrorStatus(res.httpStatus);
+      const message = res.message ?? 'Unable to correct recipient';
+      if (res.code === 'SIGN_SIGNER_ALREADY_COMPLETED') {
+        throw new DomainError('SIGN_SIGNER_ALREADY_COMPLETED', status, message);
+      }
+      throw new DomainError(res.code, status, message);
+    }
+
+    const revokedTokens = Number(res.revokedTokens ?? 0);
+    const invalidatedOtps = Number(res.invalidatedOtps ?? 0);
+    let mailStatus: 'sending' | 'queued' | 'suppressed' | null = null;
+    let issuedLink: IssuedSigningLink | null = null;
+
+    if (res.signerRole !== 'cc' && res.signerStatus === 'pending') {
+      if (res.deliveryMode === 'email' && res.email) {
+        const tenant = await ctx.trx
+          .selectFrom('crove_kernel.tenant')
+          .select('name')
+          .where('org_id', '=', ctx.orgId)
+          .executeTakeFirstOrThrow();
+        const mail = await queueSignInviteEmail(ctx, {
+          source: SIGN_CORRECT_INVITE_MAIL_SOURCE,
+          templateKey: SIGN_INVITE_MAIL_TEMPLATE,
+          orgName: tenant.name,
+          envelopeId: res.envelopeId,
+          signerId: res.signerId,
+          signerRole: res.signerRole === 'approver' ? 'approver' : 'signer',
+          to: res.email,
+          docTitle: res.envelopeTitle,
+          roleLabel: res.roleLabel,
+          expiresAt: res.envelopeExpiresAt,
+        });
+        mailStatus = mail.status;
+      } else {
+        const defaultExpiry = new Date(ctx.now.getTime() + DEFAULT_LINK_TTL_HOURS * 3_600_000);
+        const tokenExpiresAt = res.envelopeExpiresAt ? new Date(res.envelopeExpiresAt) : defaultExpiry;
+        const rawToken = generateRawSigningToken();
+        const tokenHash = hashSigningToken(rawToken);
+        const { rows: minted } = await sql<{ id: string }>`
+          SELECT crove_sign.mint_signing_token(
+            ${res.envelopeId}::uuid,
+            ${res.signerId}::uuid,
+            ${tokenHash},
+            ${tokenExpiresAt}::timestamptz
+          ) AS id
+        `.execute(ctx.trx);
+        const tokenId = minted[0]?.id;
+        if (!tokenId) throw new Error('mint_signing_token returned no id');
+        issuedLink = {
+          signerId: res.signerId,
+          tokenId,
+          token: rawToken,
+          expiresAt: tokenExpiresAt.toISOString(),
+        };
+      }
+    }
+
+    await appendSigningEvent(ctx.trx, {
+      orgId: ctx.orgId,
+      envelopeId: res.envelopeId,
+      signerId: res.signerId,
+      eventType: 'signer_corrected',
+      actorType: 'user',
+      actorId: userId,
+      actorLabel: actorLabelOf(ctx),
+      documentSha256: res.sourceSha256,
+      payloadJson: {
+        previousName: res.previousName,
+        previousMaskedEmail: maskEmail(res.previousEmail),
+        previousDeliveryMode: res.previousDeliveryMode,
+        name: res.name,
+        maskedEmail: maskEmail(res.email),
+        deliveryMode: res.deliveryMode,
+        requireEmailOtp: res.requireEmailOtp,
+        revokedTokens,
+        mintedLink: issuedLink !== null,
+        mailQueued: mailStatus !== null,
+      },
+      occurredAt: ctx.now,
+    });
+
+    ctx.audit({
+      envelopeId: input.envelopeId,
+      signerId: input.signerId,
+      deliveryMode: input.deliveryMode,
+      revokedTokens,
+      invalidatedOtps,
+      mintedLink: issuedLink !== null,
+      mailQueued: mailStatus !== null,
+    });
+
+    return {
+      envelopeId: res.envelopeId,
+      signerId: res.signerId,
+      status: res.signerStatus,
+      deliveryMode: res.deliveryMode,
+      version: Number(res.version),
+      revokedTokens,
+      mailStatus,
+      link: issuedLink,
+    };
+  },
+});
+
 export const envelopeRemind = defineCommand({
   name: 'sign.envelope.remind',
   input: z.strictObject({
@@ -1523,6 +1726,7 @@ export const signCommands = [
   fieldSet,
   envelopeSend,
   signerCreateLink,
+  signerCorrectRecipient,
   envelopeRemind,
   envelopeVoid,
   envelopeSealComplete,
