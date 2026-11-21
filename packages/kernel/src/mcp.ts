@@ -13,13 +13,14 @@
 // No command of the kernel declares `mcp`. The one command an MCP grant may run, the Social draft (#3227), is declared in modules/social, and a test pins that it is the only one.
 // - kernel.mcp.propose: what an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d): a pending proposal, never an execution.
 // - kernel.mcp.proposal_notify: the worker's step after it (E5, #4180): the people who may approve that proposal are told, once, in their notifications.
+// - kernel.mcp.engage_reads_notify: the worker's one-time notice (#4069) to a person who connected an AI app before the Engage reads (Hộp thư, bookings, ads) existed, naming what the app can now read.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
-import { APPROVAL_WAITING, notifyMembers } from './notifications.ts';
+import { APPROVAL_WAITING, MCP_ENGAGE_READS_NOTICE, notifyMembers } from './notifications.ts';
 import { approversNow } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpConversationQueries } from './mcp-conversations.ts';
@@ -403,5 +404,35 @@ export const mcpProposalNotify = defineCommand({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, ...mcpWakeCommands];
+// The one-time notice of the Engage reads (#4069, follow-up of #4068). A grant made before the consent screen named them holds `ludy.read`, which since #4068 also reads the Hộp thư conversations, the
+// bookings and the ads results; its owner never saw that. This tells the person, once, in their notifications, and links to the AI connections screen where they can disconnect. It changes no grant, scope or
+// check. The definer stamps every untold live grant of that person in this org (`engage_reads_told_at`) and answers how many of them are company and member grants, so the notice says which reads apply
+// (a member grant reads what its person reads, and no bookings or ads). Required: a person who turned notifications off is told anyway, because it is a notice about their own consent. It holds no text of
+// a client (a self-declared name is not copied into a notice): the screen it opens names each connection. A second pass, a retry and a replay write nothing.
+export const mcpEngageReadsNotify = defineCommand({
+  name: 'kernel.mcp.engage_reads_notify',
+  input: z.strictObject({ userId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.member', id: input.userId }),
+  handler: async (ctx, input) => {
+    const { rows } = await sql<{ company: number; member: number }>`SELECT company, member FROM crove_kernel.mcp_engage_reads_claim(${input.userId}::uuid)`.execute(ctx.trx);
+    const company = rows[0]?.company ?? 0;
+    const member = rows[0]?.member ?? 0;
+    if (company + member === 0) return { sent: 0 };
+    const sent = await notifyMembers(ctx, {
+      kind: MCP_ENGAGE_READS_NOTICE,
+      users: [input.userId],
+      key: 'mcp_engage_reads',
+      required: true,
+      detail: { grants: company > 0 && member > 0 ? 'both' : company > 0 ? 'company' : 'member' },
+    });
+    // Counts only: who was told is the notification table's.
+    ctx.audit({ company, member, sent });
+    return { sent };
+  },
+});
+
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, mcpEngageReadsNotify, ...mcpWakeCommands];
 export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpConversationQueries, ...mcpWakeQueries];

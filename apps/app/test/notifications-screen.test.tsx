@@ -64,6 +64,24 @@ beforeEach(() => {
   state.modules = ['kernel', 'finance'];
 });
 
+describe('the Engage reads notice (#4069)', () => {
+  const notice = (grants: string, read = false): Item => ({ id: '00000000-0000-4000-b000-000000000001', kind: 'kernel.mcp_engage_reads', subjectId: null, detail: { grants }, read, createdAt: '2026-11-21T08:00:00.000Z' });
+  it('names what a connected AI app can now read, in Vietnamese, and where to disconnect it', () => {
+    const company = page({ items: [notice('company')] }, 'vi');
+    for (const word of ['Hộp thư Engage', 'tin nhắn riêng và email', 'lịch hẹn', 'quảng cáo', 'Kết nối AI', 'ngắt kết nối']) expect(company, word).toContain(word);
+    // A member's own connection reads what the member reads, and no bookings or ads.
+    const member = page({ items: [notice('member')] }, 'vi');
+    expect(member).toContain('những gì bạn đọc được trong Hộp thư Engage');
+    expect(member).not.toContain('lịch hẹn');
+    const both = page({ items: [notice('both')] }, 'vi');
+    expect(both).toContain('Kết nối của công ty còn đọc lịch hẹn');
+  });
+  it('is shown in English too, and is not a kind a member can turn off in the settings', () => {
+    expect(page({ items: [notice('company')] })).toContain('also reads the Engage Inbox');
+    expect(notificationKinds(['finance', 'ads'])).not.toContain('kernel.mcp_engage_reads');
+  });
+});
+
 describe('the list screen holds the list and "Mark all as read" only', () => {
   it('shows no preference and no daily-brief card under the list, in either language', () => {
     for (const locale of ['en', 'vi'] as const) {
