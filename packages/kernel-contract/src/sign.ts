@@ -22,6 +22,12 @@ export const SIGN_SIGNATURE_PNG_MAX_WIDTH = 2000;
 export const SIGN_SIGNATURE_PNG_MAX_HEIGHT = 1000;
 export const SIGN_SIGNATURE_PNG_BASE64_MAX = 360_000;
 export const SIGN_FIELD_TEXT_MAX = 2000;
+export const SIGN_FIELD_OPTIONS_MAX = 50;
+export const SIGN_FIELD_OPTION_CHARS_MAX = 200;
+export const SIGN_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
+export const zSignAttachmentContentType = z.enum(SIGN_ATTACHMENT_CONTENT_TYPES);
 export const SIGN_DECLINE_REASON_MAX = 1000;
 export const SIGN_DELEGATE_REASON_MAX = 500;
 export const SIGN_MAX_DELEGATIONS = 2;
@@ -80,9 +86,28 @@ export const zSignPublicVerifyInput = z.strictObject({
   fileSha256: z.string().trim().toLowerCase().regex(SIGN_SHA256_HEX_PATTERN, 'Invalid SHA-256 hex digest'),
 });
 
+export interface SignPublicFieldAttachment {
+  fileId: string;
+  filename: string;
+  contentType: SignAttachmentContentType;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string | null;
+}
+
+export interface SignPublicAttachmentUploadResult {
+  fieldId: string;
+  fileId: string;
+  filename: string;
+  contentType: SignAttachmentContentType;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+}
+
 export interface SignPublicField {
   id: string;
-  fieldType: 'signature' | 'initials' | 'date' | 'text' | 'checkbox';
+  fieldType: 'signature' | 'initials' | 'date' | 'text' | 'checkbox' | 'dropdown' | 'radio' | 'attachment';
   pageNumber: number;
   xNorm: string;
   yNorm: string;
@@ -91,6 +116,8 @@ export interface SignPublicField {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  options?: string[] | null;
+  attachment?: SignPublicFieldAttachment | null;
 }
 
 export interface SignPageDimension {
@@ -363,6 +390,7 @@ export const SIGN_EVENT_TYPES = [
   'signer_delegated',
   'signer_viewed',
   'signer_otp_verified',
+  'attachment_uploaded',
   'signer_signed',
   'in_person_signed',
   'signer_declined',
@@ -393,7 +421,7 @@ export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
 export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
 export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export const SIGN_AI_SEVERITIES = ['low', 'medium', 'high'] as const;
 export const SIGN_AI_OUTCOME_STATES = ['used', 'off', 'budget', 'busy', 'not_ready', 'not_draft', 'no_text', 'failed'] as const;
@@ -447,6 +475,44 @@ function hasLoneSignSurrogate(value: string): boolean {
   return false;
 }
 
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+export const zSignFieldOption = z
+  .string()
+  .trim()
+  .min(1)
+  .max(SIGN_FIELD_OPTION_CHARS_MAX)
+  .refine(
+    (s) => !hasLoneSignSurrogate(s) && !hasControlChars(s),
+    'option must be printable well-formed Unicode',
+  );
+
+export const zSignFieldOptions = z
+  .array(zSignFieldOption)
+  .min(1)
+  .max(SIGN_FIELD_OPTIONS_MAX)
+  .refine((items) => new Set(items).size === items.length, 'field options must be unique');
+
+function validateSignFieldTypeOptions(
+  item: { fieldType: (typeof SIGN_FIELD_TYPES)[number]; options?: readonly string[] | null | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const isChoice = item.fieldType === 'dropdown' || item.fieldType === 'radio';
+  if (isChoice) {
+    if (!item.options || item.options.length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['options'], message: 'dropdown and radio fields require at least one option' });
+    }
+  } else if (item.options !== undefined && item.options !== null) {
+    ctx.addIssue({ code: 'custom', path: ['options'], message: 'options are only valid on dropdown and radio fields' });
+  }
+}
+
 export const zSignDetectedTag = z
   .strictObject({
     pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
@@ -460,6 +526,7 @@ export const zSignDetectedTag = z
       .max(120)
       .refine((s) => !hasLoneSignSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
       .nullable(),
+    options: z.array(zSignFieldOption).min(1).max(SIGN_FIELD_OPTIONS_MAX).optional(),
     xNorm: z.number().finite().min(0).lt(1),
     yNorm: z.number().finite().min(0).lt(1),
     wNorm: z.number().finite().gt(0).lte(1),
@@ -469,6 +536,7 @@ export const zSignDetectedTag = z
     if (item.roleKey !== `r${item.roleOrder}`) {
       ctx.addIssue({ code: 'custom', path: ['roleKey'], message: 'roleKey must match roleOrder' });
     }
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 export type SignDetectedTag = z.infer<typeof zSignDetectedTag>;
@@ -651,8 +719,14 @@ export const zSignEnvelopeDetail = z.strictObject({
       required: z.boolean(),
       proposedByAi: z.boolean(),
       fontSizePt: z.number().int().nullable(),
+      options: z.array(z.string()).nullable().optional(),
       valueText: z.string().nullable(),
       valueChecked: z.boolean().nullable(),
+      attachmentFileId: zId.nullable().optional(),
+      attachmentFilename: z.string().nullable().optional(),
+      attachmentContentType: zSignAttachmentContentType.nullable().optional(),
+      attachmentSizeBytes: z.number().int().nullable().optional(),
+      attachmentSha256: z.string().nullable().optional(),
       filledAt: z.string().nullable(),
       createdAt: z.string(),
       updatedAt: z.string(),
@@ -888,8 +962,10 @@ export const zSignFieldItemInput = z
     required: z.boolean().default(true),
     proposedByAi: z.boolean().default(false),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, ctx) => {
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 
@@ -1008,6 +1084,7 @@ export const zSignTemplateFieldRecord = z.strictObject({
   label: z.string().nullable(),
   required: z.boolean(),
   fontSizePt: z.number().int().nullable(),
+  options: z.array(z.string()).nullable().optional(),
 });
 
 export const zSignTemplateSummary = z.strictObject({
@@ -1158,11 +1235,13 @@ export const zSignTemplateFieldItemInput = z
     label: z.string().trim().min(1).max(200).nullable().optional(),
     required: z.boolean().default(true),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, ctx) => {
     if (!item.templateRoleId && !item.roleKey) {
       ctx.addIssue({ code: 'custom', path: ['templateRoleId'], message: 'Either templateRoleId or roleKey is required' });
     }
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 

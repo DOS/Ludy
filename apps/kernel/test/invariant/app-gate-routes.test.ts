@@ -70,6 +70,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/submit': { app: 'sign', gate: 'sql', why: 'crove_sign.public_submit gates org_app_on + entitlement -> 404' },
   '/api/sign/decline': { app: 'sign', gate: 'sql', why: 'crove_sign.public_decline gates org_app_on + entitlement -> 404' },
   '/api/sign/delegate': { app: 'sign', gate: 'sql', why: 'crove_sign.public_delegate gates org_app_on + entitlement -> 404' },
+  '/api/sign/attachment': { app: 'sign', gate: 'sql', why: 'crove_sign.public_attachment_preflight + crove_sign.public_record_attachment gate org_app_on + entitlement -> 404' },
   '/api/sign/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_certificate gates org_app_on + entitlement -> 404' },
   // #3551 (eSign Slice 2a A1): each direct signing link route gates via its crove_sign.public_direct_* SECURITY DEFINER procedure (org_app_on + entitlement -> 404).
   '/api/sign/direct/view': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_resolve gates org_app_on + entitlement -> 404' },
@@ -77,8 +78,6 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/direct/otp/request': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_request_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/direct/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_verify_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/direct/start': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_start gates org_app_on + entitlement -> 404' },
-  // #3818 (eSign Slice 4b): Step 1 of 2 pre-registration; moves from 'pending' to 'sql' when #3818 lands (org_app_on + entitlement -> 404).
-  '/api/sign/attachment': { app: 'sign', gate: 'pending', why: '#3818 (Slice 4b signer supporting attachment upload pre-registration; gated in SQL via crove_sign.public_token_resolve)' },
   '/api/sign/public-hub/:orgSlug': { app: 'sign', gate: 'sql', why: 'crove_sign.public_hub_* definers gate org_app_on + entitlement -> 404' },
 };
 

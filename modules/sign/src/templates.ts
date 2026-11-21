@@ -40,11 +40,13 @@ import {
   formatSignMicroNorm,
   normalizeNormalizedFieldBoxes,
   parseDetectedTags,
+  parseFieldOptions,
   parsePageDimensions,
   parseSharedSummary,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
+  serializeFieldOptionsForType,
   toSignMicroNorm,
   userIdOf,
   zSignInspectDetectedTags,
@@ -351,6 +353,7 @@ export const templateGet = defineQuery({
         'label',
         'required',
         'font_size_pt',
+        'options_json',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', tpl.id)
@@ -411,6 +414,7 @@ export const templateGet = defineQuery({
         label: f.label,
         required: f.required,
         fontSizePt: f.font_size_pt,
+        options: parseFieldOptions(f.options_json),
       })),
       directLink,
     };
@@ -504,6 +508,7 @@ export const templateCreate = defineCommand({
       'label',
       'required',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -733,7 +738,19 @@ export const templateCreate = defineCommand({
 
         const envFields = await ctx.trx
           .selectFrom('crove_sign.field')
-          .select(['signer_id', 'field_type', 'page_number', 'x_norm', 'y_norm', 'w_norm', 'h_norm', 'label', 'required', 'font_size_pt'])
+          .select([
+            'signer_id',
+            'field_type',
+            'page_number',
+            'x_norm',
+            'y_norm',
+            'w_norm',
+            'h_norm',
+            'label',
+            'required',
+            'font_size_pt',
+            'options_json',
+          ])
           .where('org_id', '=', ctx.orgId)
           .where('envelope_id', '=', sourceMeta.sourceEnvelopeId)
           .orderBy('page_number', 'asc')
@@ -744,6 +761,7 @@ export const templateCreate = defineCommand({
         const clonedFields = envFields.flatMap((f) => {
           const roleId = signerToTemplateRoleId.get(f.signer_id);
           if (!roleId) return [];
+          const clonedOptions = parseFieldOptions(f.options_json);
           return [
             {
               org_id: ctx.orgId,
@@ -758,6 +776,7 @@ export const templateCreate = defineCommand({
               label: f.label,
               required: f.required,
               font_size_pt: f.font_size_pt,
+              options_json: clonedOptions ? JSON.stringify(clonedOptions) : null,
               created_at: ctx.now,
               updated_at: ctx.now,
             },
@@ -1165,6 +1184,7 @@ export const templateFieldsSet = defineCommand({
       'label',
       'required',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -1237,6 +1257,7 @@ export const templateFieldsSet = defineCommand({
             label: f.label ?? null,
             required: f.required,
             font_size_pt: f.fontSizePt ?? null,
+            options_json: serializeFieldOptionsForType(f.fieldType, f.options),
             created_at: ctx.now,
             updated_at: ctx.now,
           })),
@@ -1582,6 +1603,7 @@ export const templateInstantiate = defineCommand({
       'required',
       'proposed_by_ai',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -1689,6 +1711,7 @@ export const templateInstantiate = defineCommand({
         'label',
         'required',
         'font_size_pt',
+        'options_json',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', tpl.id)
@@ -1798,6 +1821,7 @@ export const templateInstantiate = defineCommand({
     const fieldInsertValues = fields.flatMap((f) => {
       const signer = signerByTemplateRoleId.get(f.template_role_id);
       if (!signer) return [];
+      const instOptions = parseFieldOptions(f.options_json);
       return [
         {
           org_id: ctx.orgId,
@@ -1813,6 +1837,7 @@ export const templateInstantiate = defineCommand({
           required: f.required,
           proposed_by_ai: false,
           font_size_pt: f.font_size_pt,
+          options_json: instOptions ? JSON.stringify(instOptions) : null,
           created_at: ctx.now,
           updated_at: ctx.now,
         },
