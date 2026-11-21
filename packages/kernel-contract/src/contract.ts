@@ -621,6 +621,8 @@ import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
 import { zPersonalDataErasure, zPersonalDataNotice, zPersonalDataQuery, zPersonalDataResult } from './personal-data.ts';
 import {
+  zSignAcceptanceDraftInput,
+  zSignAcceptanceDraftResult,
   zSignAiAnalysisRecord,
   zSignAiAnalyzeInput,
   zSignAiAnalyzeResult,
@@ -3341,6 +3343,9 @@ export const contract = {
     ai: {
       analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
       get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
+    acceptance: {
+      draft_summary: oc.input(zSignAcceptanceDraftInput).output(zSignAcceptanceDraftResult),
     },
     template: {
       list: oc.input(zSignTemplateListInput).output(zSignTemplateListResult),

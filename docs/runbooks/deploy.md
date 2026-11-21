@@ -91,7 +91,7 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 
 ## Module settings in the deploy (#3531)
 
-Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
+Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md), `hr` via [pilot-enable-hr.md](pilot-enable-hr.md), and `projects` + `notes` via [pilot-enable-projects-notes.md](pilot-enable-projects-notes.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
 
 **Define both variables in the environment itself (`pilot`), never at repository or organization level**, so one environment's modules do not reach another environment:
 
