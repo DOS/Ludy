@@ -1422,6 +1422,11 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_TEMPLATE_NOT_FOUND',
   'SIGN_TEMPLATE_NOT_INSPECTED',
   'SIGN_UNKNOWN_ROLE_KEY',
+  // eSign Slice 4c in-flight recipient correction & audited signer delegation (#3819).
+  'SIGN_DELEGATE_SAME_EMAIL',
+  'SIGN_DELEGATION_DISABLED',
+  'SIGN_DELEGATION_LIMIT_REACHED',
+  'SIGN_SIGNER_ALREADY_COMPLETED',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

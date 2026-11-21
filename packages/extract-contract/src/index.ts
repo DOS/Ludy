@@ -686,6 +686,10 @@ export const zPdfSealCertificateSigner = z.strictObject({
     .regex(/^[0-9a-f]{8,64}$/, 'lowercase hex ip hash prefix')
     .nullable(),
   signatureKind: z.enum(['draw', 'type']).optional(),
+  delegatedFromName: z.string().min(1).max(200).nullable().optional(),
+  delegatedFromMaskedEmail: z.string().min(1).max(200).nullable().optional(),
+  delegationCount: z.number().int().min(0).max(2).optional(),
+  recipientCorrected: z.boolean().optional(),
 });
 export type PdfSealCertificateSigner = z.infer<typeof zPdfSealCertificateSigner>;
 

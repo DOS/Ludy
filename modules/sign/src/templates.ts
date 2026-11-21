@@ -362,6 +362,7 @@ export const templateGet = defineQuery({
         title: tpl.title,
         description: tpl.description,
         routingMode: tpl.routing_mode,
+        allowDelegation: tpl.allow_delegation,
         subject: tpl.subject,
         message: tpl.message,
         expiresInHours: tpl.expires_in_hours,
@@ -452,6 +453,7 @@ export const templateCreate = defineCommand({
       'title',
       'description',
       'routing_mode',
+      'allow_delegation',
       'subject',
       'message',
       'expires_in_hours',
@@ -506,6 +508,7 @@ export const templateCreate = defineCommand({
       sourceGeneration: string;
       sourceSha256: string;
       routingMode: 'parallel' | 'sequential';
+      allowDelegation: boolean;
       subject: string | null;
       message: string | null;
       inspectStatus: 'pending' | 'passed';
@@ -523,6 +526,7 @@ export const templateCreate = defineCommand({
           'source_kind',
           'created_by',
           'routing_mode',
+          'allow_delegation',
           'subject',
           'message',
           'source_file_id',
@@ -569,6 +573,7 @@ export const templateCreate = defineCommand({
         sourceGeneration: env.source_generation,
         sourceSha256: env.source_sha256,
         routingMode: input.routingMode ?? env.routing_mode,
+        allowDelegation: input.allowDelegation ?? env.allow_delegation,
         subject: input.subject !== undefined ? input.subject : env.subject,
         message: input.message !== undefined ? input.message : env.message,
         inspectStatus: reused ? 'passed' : 'pending',
@@ -601,6 +606,7 @@ export const templateCreate = defineCommand({
         sourceGeneration: file.generation,
         sourceSha256: file.sha256,
         routingMode: input.routingMode ?? 'parallel',
+        allowDelegation: input.allowDelegation ?? false,
         subject: input.subject ?? null,
         message: input.message ?? null,
         inspectStatus: reused ? 'passed' : 'pending',
@@ -623,6 +629,7 @@ export const templateCreate = defineCommand({
         title: input.title,
         description: input.description ?? null,
         routing_mode: sourceMeta.routingMode,
+        allow_delegation: sourceMeta.allowDelegation,
         subject: sourceMeta.subject,
         message: sourceMeta.message,
         expires_in_hours: input.expiresInHours ?? null,
@@ -879,6 +886,7 @@ export const templateUpdate = defineCommand({
       'title',
       'description',
       'routing_mode',
+      'allow_delegation',
       'subject',
       'message',
       'expires_in_hours',
@@ -909,6 +917,7 @@ export const templateUpdate = defineCommand({
         title: input.title ?? row.title,
         description: input.description === undefined ? row.description : input.description,
         routing_mode: input.routingMode ?? row.routing_mode,
+        allow_delegation: input.allowDelegation ?? row.allow_delegation,
         subject: input.subject === undefined ? row.subject : input.subject,
         message: input.message === undefined ? row.message : input.message,
         expires_in_hours: input.expiresInHours === undefined ? row.expires_in_hours : input.expiresInHours,
@@ -1484,6 +1493,7 @@ export const templateInstantiate = defineCommand({
       'message',
       'status',
       'routing_mode',
+      'allow_delegation',
       'source_kind',
       'source_id',
       'source_file_id',
@@ -1663,6 +1673,7 @@ export const templateInstantiate = defineCommand({
         message: input.message === undefined ? tpl.message : input.message,
         status: 'draft',
         routing_mode: tpl.routing_mode,
+        allow_delegation: input.allowDelegation ?? tpl.allow_delegation,
         source_kind: sourceKind,
         source_id: sourceId,
         source_file_id: tpl.source_file_id,

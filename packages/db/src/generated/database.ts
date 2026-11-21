@@ -3794,6 +3794,7 @@ export interface SignEnvelopeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
   direct_link_id: string | null;
+  allow_delegation: Generated<boolean>;
 }
 
 /** crove_sign.field */
@@ -3848,6 +3849,10 @@ export interface SignSignerTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   role_key: string | null;
+  delegated_from_name: string | null;
+  delegated_from_email: string | null;
+  delegation_reason: string | null;
+  delegation_count: Generated<number>;
 }
 
 /** crove_sign.signing_event */
@@ -3930,6 +3935,7 @@ export interface SignTemplateTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  allow_delegation: Generated<boolean>;
 }
 
 /** crove_social.account_snapshot */

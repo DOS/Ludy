@@ -8,6 +8,7 @@ import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { DEFAULT_MESSAGE_ID_DOMAIN } from '@crove/kernel';
 import {
   zSignPublicDeclineInput,
+  zSignPublicDelegateInput,
   zSignPublicOtpRequestInput,
   zSignPublicOtpVerifyInput,
   zSignPublicPdfInput,
@@ -16,6 +17,7 @@ import {
   zSignPublicViewInput,
   zSignToken,
   type SignPublicDeclineResult,
+  type SignPublicDelegateResult,
   type SignPublicOtpRequestResult,
   type SignPublicOtpVerifyResult,
   type SignPublicSubmitResult,
@@ -40,6 +42,8 @@ export const SIGN_OTP_VERIFIES_PER_MINUTE = 20;
 export const SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE = 10;
 export const SIGN_SUBMITS_PER_MINUTE = 20;
 export const SIGN_TOKEN_SUBMITS_PER_MINUTE = 10;
+export const SIGN_DELEGATES_PER_MINUTE = 10;
+export const SIGN_TOKEN_DELEGATES_PER_MINUTE = 5;
 export const SIGN_VERIFY_PER_MINUTE = 30;
 export const SIGN_PDF_MAX_BYTES = EXTRACT_LIMITS.maxFileBytes;
 
@@ -89,6 +93,12 @@ function throwSqlDomainError(row: SqlErrorPayload): never {
       throw new DomainError('SIGN_OTP_RATE_LIMITED', status, message);
     case 'SIGN_OTP_REQUIRED':
       throw new DomainError('SIGN_OTP_REQUIRED', status, message);
+    case 'SIGN_DELEGATION_DISABLED':
+      throw new DomainError('SIGN_DELEGATION_DISABLED', status, message);
+    case 'SIGN_DELEGATION_LIMIT_REACHED':
+      throw new DomainError('SIGN_DELEGATION_LIMIT_REACHED', status, message);
+    case 'SIGN_DELEGATE_SAME_EMAIL':
+      throw new DomainError('SIGN_DELEGATE_SAME_EMAIL', status, message);
     default:
       throw new DomainError(row.code ?? 'VALIDATION', status, message);
   }
@@ -120,6 +130,9 @@ export interface SignResolvedToken {
   routingOrder: number;
   requireEmailOtp: boolean;
   otpVerifiedAt: string | null;
+  allowDelegation?: boolean;
+  delegationCount?: number;
+  delegatedFromName?: string | null;
   title: string;
   message: string | null;
   roleLabel: string;
@@ -514,6 +527,81 @@ export async function runSignDecline(
       signerStatus: res.signerStatus,
       envelopeStatus: res.envelopeStatus,
       declinedAt: res.declinedAt,
+    },
+  };
+}
+
+export async function runSignDelegate(
+  runtime: Runtime,
+  billing: SignBilling,
+  body: unknown,
+  meta: SignRequestMeta,
+  limitToken?: SignTokenLimiterFn,
+): Promise<
+  | { status: 'not_found' }
+  | { status: 'rate_limited'; retryAfterSeconds: number }
+  | { status: 'already_used' }
+  | { status: 'validation_error'; message: string }
+  | { status: 'ok'; result: SignPublicDelegateResult }
+> {
+  const rawToken = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).token : undefined;
+  if (!zSignToken.safeParse(rawToken).success) {
+    return { status: 'not_found' };
+  }
+  const tokenHash = tokenHashOf(rawToken as string);
+  const decision = limitToken?.(tokenHash);
+  if (decision && !decision.allowed) {
+    return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
+  }
+  const resolved = await resolvePublicToken(runtime, billing, tokenHash, true);
+  if (!resolved) return { status: 'not_found' };
+  if (resolved.tokenUsed) return { status: 'already_used' };
+
+  const parsed = zSignPublicDelegateInput.safeParse(body);
+  if (!parsed.success) {
+    return { status: 'validation_error', message: parsed.error.issues[0]?.message ?? 'Invalid delegation payload' };
+  }
+  if (
+    parsed.data.delegateName.includes('\u0000') ||
+    parsed.data.delegateEmail.includes('\u0000') ||
+    parsed.data.reason.includes('\u0000')
+  ) {
+    return { status: 'validation_error', message: 'NUL is not allowed' };
+  }
+
+  type SqlDelegateRow =
+    | { status: 'not_found' }
+    | { status: 'already_used' }
+    | SqlErrorPayload
+    | ({ status: 'ok' } & SignPublicDelegateResult);
+
+  const res = await runtime.orgless(async (db) => {
+    const { rows } = await sql<{ result: SqlDelegateRow }>`
+      SELECT crove_sign.public_delegate(
+        ${tokenHash},
+        ${parsed.data.delegateName},
+        ${parsed.data.delegateEmail},
+        ${parsed.data.reason},
+        ${signIpHash(meta.ip)},
+        ${sanitizeSignUserAgent(meta.userAgent)},
+        ${DEFAULT_MESSAGE_ID_DOMAIN}
+      ) AS result
+    `.execute(db);
+    return rows[0]?.result ?? { status: 'not_found' as const };
+  });
+
+  if (res.status === 'not_found') return { status: 'not_found' };
+  if (res.status === 'already_used') return { status: 'already_used' };
+  if (res.status === 'error') throwSqlDomainError(res);
+
+  return {
+    status: 'ok',
+    result: {
+      signerId: res.signerId,
+      delegateName: res.delegateName,
+      maskedDelegateEmail: res.maskedDelegateEmail,
+      delegationCount: res.delegationCount,
+      delegatedAt: res.delegatedAt,
     },
   };
 }
