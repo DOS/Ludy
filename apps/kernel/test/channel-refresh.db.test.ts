@@ -195,7 +195,10 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       expect(await sweep(refreshers)).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
       const next = JSON.parse(await secretOf(o.orgId, due)) as Record<string, string>;
       expect(next).toMatchObject({ accessToken: 'access-token-1', refreshToken: 'refresh-token-1', sellerId: '1000100', ...APP });
-      expect(next.refreshExpiresAt).toBe(new Date(end).toISOString());
+      // Not extended: it is the date it was, or a moment sooner (Lazada's countdown is in whole seconds and the clock is the real one), never later.
+      const kept = Date.parse(next.refreshExpiresAt ?? '');
+      expect(kept).toBeLessThanOrEqual(end);
+      expect(end - kept).toBeLessThan(5000);
       expect((await row(due))?.expires_at.getTime()).toBeGreaterThan(Date.now() + 29 * DAY);
       expect((await row(due))?.status).toBe('active');
       // The one outside the window is untouched, and the renewed one is no longer due.
