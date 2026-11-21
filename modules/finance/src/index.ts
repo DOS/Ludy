@@ -96,7 +96,7 @@ export type { MarketplaceSuggestSource } from './marketplace-orders.ts';
 export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './einvoice-suggest.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
-export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, MARKETPLACE_TEST_REQUESTED, MARKETPLACE_AUTHORIZE_REQUESTED, MARKETPLACE_AUTHORIZE_TTL_MS, marketplaceAuthorizeCodeAccount, type MarketplaceAuthorizeTarget, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
+export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, MARKETPLACE_TEST_REQUESTED, MARKETPLACE_AUTHORIZE_REQUESTED, MARKETPLACE_AUTHORIZE_TTL_MS, MARKETPLACE_AUTHORIZE_PENDING_MS, marketplaceAuthorizeCodeAccount, type MarketplaceAuthorizeTarget, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
 export { MISA_AMIS_TEST_REQUESTED, type MisaAmisTestTarget } from './misa-amis-connections.ts';
 export {
   MISA_AMIS_PUSH_REQUESTED,

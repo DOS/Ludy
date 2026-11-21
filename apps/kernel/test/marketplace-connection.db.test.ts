@@ -653,6 +653,21 @@ suite('marketplace connections (#2519)', () => {
     expect(dump).not.toContain(third);
     expect(dump).not.toContain(codeSealed.envelope.toString('base64'));
 
+    // A code left waiting past the window (the worker may have died) counts as failed: the list shows it, the worker's target and the completing command refuse it; storing a new code starts a new window.
+    const waitingDigest = sha256Hex(new TextEncoder().encode(codeSealed.envelope.toString('base64')));
+    await rows("UPDATE crove_finance.marketplace_connection SET authorize_pending_at = now() - interval '16 minutes' WHERE org_id = $1 AND id = $2", [orgId, id]);
+    expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('failed');
+    expect(await worker.query('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'expired' });
+    expect(
+      await worker.execute(
+        'finance.marketplace_connection.authorize_complete',
+        { id, codeDigest: waitingDigest, ifVersion: new Date().toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), reauthorizeBy: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor: SYSTEM, orgId },
+      ),
+    ).toEqual({ recorded: false });
+    await rows("UPDATE crove_finance.marketplace_connection SET authorize_pending_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
+    expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('pending');
+
     // The worker: target (the sealed code), then the outcome. Only a pending authorization is recorded, once.
     const target = await worker.query<{ action: string; codeEnvelope: string; adapter: string; codeDigest: string; codeAccount: string }>('finance.marketplace_connection.authorize_target', { id }, { actor: SYSTEM, orgId });
     expect(target).toMatchObject({ action: 'authorize', adapter: 'lazada', codeEnvelope: codeSealed.envelope.toString('base64'), codeAccount: marketplaceAuthorizeCodeAccount(id) });
