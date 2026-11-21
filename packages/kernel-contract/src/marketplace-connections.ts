@@ -127,3 +127,28 @@ export const zMarketplaceAuthorizeStarted = z.object({ authorizeUrl: z.url(), ex
 export type MarketplaceAuthorizeStarted = z.infer<typeof zMarketplaceAuthorizeStarted>;
 export const zMarketplaceAuthorizeReturn = z.strictObject({ state: z.string().min(16).max(200), code: z.string().min(1).max(400) });
 export type MarketplaceAuthorizeReturn = z.infer<typeof zMarketplaceAuthorizeReturn>;
+
+// The marketplaces whose platform pushes (webhooks) a seller's own app to Crove (#4348, S3b of #4315): the adapters the push route (POST /api/marketplace/<adapter>/webhook/<hookKey>) and the worker's verifiers know.
+export const MARKETPLACE_PUSH_ADAPTERS = ['tiktok_shop', 'shopee', 'lazada'] as const;
+export const MARKETPLACE_HOOK_KEY_LENGTH = 22;
+
+// The push address of one marketplace connection. `pushHookSet` makes the address or replaces it (the old one stops at once) and answers the address ONCE: it holds a key of 128 random bits, of which only the SHA-256
+// is kept, and it is built on the server from the configured public URL, the same string the route signs for Shopee. `pushHook` is the status, never the address or the key.
+export const zMarketplacePushHookSet = z.strictObject({ id: zId });
+export type MarketplacePushHookSet = z.infer<typeof zMarketplacePushHookSet>;
+export const zMarketplacePushHookCreated = z.strictObject({ adapter: z.enum(MARKETPLACE_PUSH_ADAPTERS), address: z.string().min(1).max(400), created: z.boolean() });
+export type MarketplacePushHookCreated = z.infer<typeof zMarketplacePushHookCreated>;
+export const zMarketplacePushHookStatus = z.strictObject({
+  exists: z.boolean(),
+  createdAt: z.string().nullable(),
+  rotatedAt: z.string().nullable(),
+  lastSeenAt: z.string().nullable(),
+  // Pushes the worker refused in the current hour; ten stop the hook until its address is replaced.
+  rejectedCount: z.number().int().min(0),
+  stopped: z.boolean(),
+});
+export type MarketplacePushHookStatus = z.infer<typeof zMarketplacePushHookStatus>;
+
+// The address a seller pastes into its platform app, and the address Shopee signs: the configured public URL of the API, the adapter and the key. One function, so the card of the owner shows the very string the route
+// stores with a Shopee push (apps/kernel marketplace-push-hook.ts, #4347).
+export const marketplaceHookAddress = (publicUrl: string, adapter: string, key: string): string => `${publicUrl.replace(/\/+$/, '')}/api/marketplace/${adapter}/webhook/${key}`;

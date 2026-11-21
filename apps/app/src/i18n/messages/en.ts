@@ -5735,6 +5735,37 @@ export const en = {
     symbolType: 'type {letter}',
   },
   marketplaceConnections: {
+    pushHook: {
+      title: 'Push notifications from the marketplace',
+      intro:
+        'The marketplace tells Ludy as soon as there is a new order or return, through a notification address. Paste the address below into the notification (webhook or push) settings of the app you created on the marketplace. Skipping it is fine: Ludy still checks on a schedule.',
+      none: 'No notification address yet.',
+      create: 'Create address',
+      rotate: 'Replace the address',
+      createdAt: 'Address made {when}',
+      rotatedAt: 'Replaced {when}',
+      lastSeen: 'Last notification from the marketplace: {when}',
+      noNotice: 'Last notification from the marketplace: none yet',
+      rejected: 'Notifications refused this hour: {count}',
+      stopped:
+        'This address stopped taking notifications because too many were refused (10 in an hour). Replace the address and paste the new one into the app on the marketplace.',
+      shownOnce: 'Copy this address now. It is shown only once; after you close it, you can only make a new one.',
+      addressLabel: 'Notification address',
+      noteExact:
+        'Paste the whole address exactly, without adding or removing any character (a trailing slash included). Shopee signs the address too, so one wrong character makes its notifications be refused and the address stop.',
+      noteShared:
+        'An app used for several shops has a single address box: only the shop whose key is in that address gets notifications, and the other shops are still checked on a schedule.',
+      copy: 'Copy address',
+      copied: 'Copied',
+      copyFailed: 'Could not copy. Select the address and copy it by hand.',
+      close: 'I have pasted it, hide the address',
+      warnRotate:
+        'Replacing the address stops the old one at once. The marketplace keeps sending to the old address until you paste the new one into the app on the marketplace; in the meantime Ludy still checks on a schedule.',
+      confirmRotate: 'Yes, replace the address now',
+      replacedExisting: 'This address replaced an existing one; the old one no longer works. Paste this new address into the app on the marketplace.',
+      rotateFailed: 'The old address may have stopped working. Check the status above, or replace the address again.',
+      cancel: 'Keep the current address',
+    },
     title: 'Marketplaces: pull orders from your seller account',
     intro:
       'Connect your seller account on a marketplace to bring its orders into the Inbox. The system only reads orders and changes nothing on the marketplace. Pulled orders still wait for a person to confirm them in the Inbox, just like an uploaded report file; until then no order and no stock is recorded.',

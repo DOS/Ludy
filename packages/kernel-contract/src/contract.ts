@@ -194,7 +194,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders, zMarketplacePushHookCreated, zMarketplacePushHookSet, zMarketplacePushHookStatus } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
@@ -2738,6 +2738,10 @@ export const contract = {
       // Finish: the page the platform returns the seller to calls this with the state and the one-time code. The code is sealed here and traded by the worker; the answer is only the connection. MARKETPLACE_AUTHORIZE_INVALID (400)
       // for a state that is wrong, used, ended, another member's or another org's.
       authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
+      // The push address of one connection (#4348, S3b of #4315): owners and admins make it or replace it (the old one stops at once) and see it ONCE; the status never carries it. MARKETPLACE_CONNECTION_NOT_FOUND (404),
+      // MARKETPLACE_PUSH_UNSUPPORTED (422) for an adapter that takes no push or a deployment that does not run it, CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403) unless owner or admin.
+      pushHookSet: oc.input(zMarketplacePushHookSet).output(zMarketplacePushHookCreated),
+      pushHook: oc.input(zMarketplacePushHookSet).output(zMarketplacePushHookStatus),
     },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.

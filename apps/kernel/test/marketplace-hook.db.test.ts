@@ -65,6 +65,8 @@ suite('Marketplace push hook (#4316)', () => {
   let app: ReturnType<typeof createHttpApp>;
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-hook.test', session: randomUUID(), userId: '' };
   const outsider: Account = { subject: randomUUID(), email: 'outsider@marketplace-hook.test', session: randomUUID(), userId: '' };
+  const adminUser: Account = { subject: randomUUID(), email: 'admin@marketplace-hook.test', session: randomUUID(), userId: '' };
+  const member: Account = { subject: randomUUID(), email: 'member@marketplace-hook.test', session: randomUUID(), userId: '' };
   let orgId = '';
   let otherOrgId = '';
   let connectionId = '';
@@ -136,8 +138,8 @@ suite('Marketplace push hook (#4316)', () => {
     });
     const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
-    app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false } });
-    for (const who of [owner, outsider]) {
+    app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, apiUrl: 'https://api.example.test', marketplaceProviders: { shopee: { id: 'shopee', hosts: [] }, tiktok_shop: { id: 'tiktok_shop', hosts: [] } } as never } });
+    for (const who of [owner, outsider, adminUser, member]) {
       const me = await rpc('me/get', await tokenFor(who), undefined, null);
       expect(me.status).toBe(200);
       who.userId = String(me.body?.userId);
@@ -146,6 +148,7 @@ suite('Marketplace push hook (#4316)', () => {
     orgId = String(created.body?.orgId);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherOrgId = String(other.body?.orgId);
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
     // A marketplace connection of each org (the channel connection that holds its credential, then the connection itself: its entity is the org's default, by its trigger), and a hook of each.
     const connect = async (org: string, by: string, adapter: string) => {
       const channel = randomUUID();
@@ -168,6 +171,81 @@ suite('Marketplace push hook (#4316)', () => {
     await root.connect();
     await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await root.end();
+  });
+
+  // The owner's command and the status (S3b, #4348), through the real app: a connection of its own (TikTok Shop) so the hook of the other tests is not touched.
+  describe('the owner command and the status', () => {
+    let pushConnectionId = '';
+    const pushSet = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHookSet', await tokenFor(who), { id });
+    const pushStatus = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHook', await tokenFor(who), { id });
+    const keyOf = (address: string) => String(address.split('/').pop());
+    const lookupTiktok = (hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', hash]);
+
+    beforeAll(async () => {
+      const channel = randomUUID();
+      pushConnectionId = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_tiktok_shop', $3, 'Sàn thử', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_tiktok_shop', 'tiktok_shop')", [orgId, pushConnectionId, channel]);
+    });
+
+    it('lets owners and admins make the address, refuses a member and an outsider, and keeps only the hash of the key', async () => {
+      expect((await pushSet(member)).status).toBe(403);
+      expect((await pushSet(outsider)).status).not.toBe(200);
+      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toHaveLength(0);
+      const made = await pushSet(owner);
+      expect(made.status).toBe(200);
+      expect(made.body).toMatchObject({ adapter: 'tiktok_shop', created: true });
+      const address = String(made.body.address);
+      const newKey = keyOf(address);
+      expect(newKey).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      // The address is the configured public URL, the adapter and the key, and nothing else.
+      expect(address).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${newKey}`);
+      expect(made.body.key).toBeUndefined();
+      const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      expect(stored).toEqual([{ key_sha256: sha(newKey) }]);
+      expect(await lookupTiktok(sha(newKey))).toEqual([{ hook_id: expect.any(String), standing: 'ok' }]);
+      // The key, its hash and the address are in no audit row, and the status answers never carry them.
+      const audit = JSON.stringify(await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]));
+      for (const secret of [newKey, sha(newKey), address]) expect(audit).not.toContain(secret);
+      const status = await pushStatus(adminUser);
+      expect(status.status).toBe(200);
+      for (const secret of [newKey, sha(newKey), address]) expect(JSON.stringify(status.body)).not.toContain(secret);
+      expect(status.body).toMatchObject({ exists: true, stopped: false, rejectedCount: 0 });
+      expect((await pushStatus(member)).status).toBe(403);
+      // A connection of another org is not found, whoever asks.
+      expect((await pushSet(owner, otherConnectionId)).status).toBeGreaterThanOrEqual(400);
+      expect((await pushStatus(owner, otherConnectionId)).body).toMatchObject({ exists: false });
+    });
+
+    it('replaces the address: the old key stops at once, waiting pushes go, and a hook stopped by refused pushes takes pushes again', async () => {
+      const [first] = await rows<{ id: string; key_sha256: string }>('SELECT id, key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      const hookOfPush = first?.id ?? '';
+      const oldHash = first?.key_sha256 ?? '';
+      expect(await put(hookOfPush, oldHash, sha('before-rotation'))).toBe('accepted');
+      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
+      expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: true }]);
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: true, rejectedCount: 10 });
+      const rotated = await pushSet(adminUser);
+      expect(rotated.status).toBe(200);
+      expect(rotated.body).toMatchObject({ adapter: 'tiktok_shop', created: false });
+      const newHash = sha(keyOf(String(rotated.body.address)));
+      expect(newHash).not.toBe(oldHash);
+      expect(await lookupTiktok(oldHash)).toEqual([]);
+      expect(await lookupTiktok(newHash)).toEqual([{ hook_id: hookOfPush, standing: 'ok' }]);
+      // The push that waited for the old key is gone, and a request that passed the lookup with the old key stores nothing.
+      expect((await waiting()).filter((n) => n.hook_id === hookOfPush)).toEqual([]);
+      expect(await put(hookOfPush, oldHash, sha('after-rotation'))).toBe('gone');
+      expect(await put(hookOfPush, newHash, sha('with-new-key'))).toBe('accepted');
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0 });
+      await rows('DELETE FROM crove_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
+    });
+
+    it('refuses a connection whose channel connection is not active, and a connection that does not exist', async () => {
+      await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      expect((await pushSet(owner)).body).toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
+      await rows("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      expect((await pushSet(owner, randomUUID())).body).toMatchObject({ code: 'MARKETPLACE_CONNECTION_NOT_FOUND' });
+    });
   });
 
   it('finds a hook only for its own adapter and a real key: an unknown key, another adapter, the offline adapter and a malformed hash all find nothing', async () => {

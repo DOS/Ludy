@@ -13,13 +13,14 @@
 // it); `dropped` (nothing to count: the secret cannot be read, the body is not one this reads, or it names ANOTHER shop or seller, as happens when two shops of one own app share the app's one callback address, or its
 // time is outside the window). A push is only a hint to poll, so a dropped one costs nothing: the periodic poll makes it up.
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { MARKETPLACE_PUSH_ADAPTERS } from '@ludy/kernel-contract';
 import { parseLazadaSecret } from './marketplace-lazada.ts';
 import { parseShopeeSecret } from './marketplace-shopee.ts';
 import { parseTiktokSecret } from './marketplace-tiktok.ts';
 
 export type MarketplacePushVerdict = 'ok' | 'refused' | 'dropped';
 
-export const MARKETPLACE_PUSH_ADAPTERS = ['tiktok_shop', 'shopee', 'lazada'] as const;
+// The adapters that take a push are named once, in the contract (the owner's command and the route read the same list).
 export type MarketplacePushAdapter = (typeof MARKETPLACE_PUSH_ADAPTERS)[number];
 export const isMarketplacePushAdapter = (value: string): value is MarketplacePushAdapter => (MARKETPLACE_PUSH_ADAPTERS as readonly string[]).includes(value);
 

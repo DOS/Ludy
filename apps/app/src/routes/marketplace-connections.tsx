@@ -7,13 +7,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LegalEntity, MarketplaceAdapterInfo, MarketplaceConnection, MarketplacePlatformInfo } from '@ludy/kernel-contract';
+import { MARKETPLACE_PUSH_ADAPTERS, type LegalEntity, type MarketplaceAdapterInfo, type MarketplaceConnection, type MarketplacePlatformInfo } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { MarketplacePushHook } from '../components/marketplace-push-hook.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -150,6 +151,8 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           )}
         </div>
       )}
+      {/* The push address (#4348): only for an owner or admin, a live connection and a platform that pushes. */}
+      {canManage && live && (MARKETPLACE_PUSH_ADAPTERS as readonly string[]).includes(adapterIdOf(connection)) && <MarketplacePushHook connection={connection} />}
       {watching && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
           {t('testQueued')}

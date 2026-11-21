@@ -2,7 +2,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
 import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-feed';
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
@@ -366,6 +366,8 @@ export interface RpcChannels {
   calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   // The meeting platforms this deployment has an adapter for (Zoom: C3, only with its own OAuth app), by provider; one with a connect dialog is offered to members.
   meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
+  // Where the API answers (kernel.ts hands over PUBLIC_URL): a marketplace's push address is built from it (#4348, S3b of #4315), the same string the push route signs for Shopee. Unset: no push address is made.
+  apiUrl?: string;
   // The web app's address (kernel.ts hands over APP_URL, else PUBLIC_URL, #2261): the provider sends the browser back to
   // <it>/channels/oauth/:provider/callback, a page of the app that posts the code to the API. Named publicUrl for history.
   publicUrl?: string;
@@ -3637,6 +3639,24 @@ export function createRpcHandler(
             return runtime.execute<{ id: string }>('finance.marketplace_connection.authorize_finish', { stateHash, codeKeyId: sealed.keyId, codeEnvelope: sealed.envelope.toString('base64') }, { actor, orgId });
           }),
         ),
+        // The push address of a connection (#4348, S3b of #4315). The command makes the key and answers it once; the address is built here from the API's public URL and the key is dropped, so only the address leaves, in this
+        // one answer. Neither is logged or audited. A deployment without a credential broker, or that does not run the adapter, has no push route, so no address is made for it.
+        pushHookSet: os.marketplace.connections.pushHookSet.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được địa chỉ nhận thông báo của sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const adapter = row.provider.slice('marketplace_'.length);
+            const pushAdapter = MARKETPLACE_PUSH_ADAPTERS.find((id) => id === adapter);
+            if (!pushAdapter || !marketplaceProviderOf(adapter) || !channels?.apiUrl || !channels.broker || channels.broker.id === 'none') {
+              throw new DomainError('MARKETPLACE_PUSH_UNSUPPORTED', 422, 'Sàn này chưa nhận thông báo đẩy ở hệ thống này');
+            }
+            const made = await runtime.execute<{ adapter: (typeof MARKETPLACE_PUSH_ADAPTERS)[number]; key: string; created: boolean }>('finance.marketplace_connection.push_hook_set', { id: row.id }, { actor, orgId });
+            return { adapter: made.adapter, address: marketplaceHookAddress(channels.apiUrl, made.adapter, made.key), created: made.created };
+          }),
+        ),
+        pushHook: os.marketplace.connections.pushHook.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_connection.push_hook', input, { actor, orgId }))),
         pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới lấy đơn từ sàn được');
