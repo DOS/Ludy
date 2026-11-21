@@ -69,6 +69,8 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
+  // Created by the notes attachments migration (20270126190000): extracts text from PDF/DOCX/UTF-8 note attachments in crove-extract (#3561).
+  notesAttachmentExtract: 'notes-attachment-extract',
   // Created by the member Vy sweeps migration (20261212100000): the daily expiry of results and purge of a former member's Vy data (#2822).
   memberVySweep: 'kernel-member-vy-sweep',
   // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
@@ -99,6 +101,8 @@ export const QUEUES = {
   // Created by the MISA AMIS test queue migration (20270119130000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
   misaAmisTest: 'finance-misa-amis-test',
   misaAmisMatch: 'finance-misa-amis-match',
+  // Created by the marketplace column check migration (20270125200000): one unrecognised order report's check of a column mapping through the extract sandbox (#4036, slice 1c of #3850).
+  marketplaceColumns: 'finance-marketplace-column-check',
   misaAmisPush: 'finance-misa-amis-push',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
@@ -204,6 +208,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  [QUEUES.notesAttachmentExtract]: 'none',
   // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
   [QUEUES.meetingsSeriesNudge]: 'none',
   // The sweep reads the database and runs a command that writes an in-app notice and queues a mail (the mail queues send it); it reaches nothing itself.
@@ -225,9 +230,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   [QUEUES.meetingsLiveNotes]: ['provider:ai'],
-  // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
-  // provider here, and to DEPS_REACH first.
-  [QUEUES.bankFeedSync]: 'none',
+  // The bank feed adapters: the offline sandbox (channels.bankFeeds) reaches nothing, a real adapter (channels.bankFeedHosted, Tingee #2045) the hosts it declares, each through its own host-bound
+  // fetch. What a sync pulls goes through the ordinary bank line path (finance.bank_feed.record_pull), which a person matches and approves.
+  [QUEUES.bankFeedSync]: ['provider:bank_feed'],
   // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
   // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.einvoiceIssue]: ['provider:einvoice'],
@@ -237,6 +242,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The MISA AMIS client (channels.misaAmis, @crove/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
   // company's information; a later slice's push job declares itself here too.
   [QUEUES.misaAmisTest]: ['provider:misa_amis'],
+  // The column check of an unrecognised order report reads a file from the blob store and calls the extract sandbox (which has no egress of its own); it reaches no provider and no tenant URL (#4036).
+  [QUEUES.marketplaceColumns]: 'none',
   [QUEUES.misaAmisMatch]: ['provider:misa_amis'],
   [QUEUES.misaAmisPush]: ['provider:misa_amis'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones

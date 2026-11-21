@@ -67,6 +67,14 @@ describe('configuration guards', () => {
     // The sandbox bank feed (ADR-0039): made-up bank lines, never on a deployment others reach.
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
+    // The Tingee bank feed (ADR-0039, #2045): off by default; it seals each org's credential, so it needs the credential key; its UAT host is for the UAT run, never a public deployment.
+    expect(loadConfig({ ...base }).BANK_FEED_TINGEE).toBe('false');
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true' })).toThrow(/CREDENTIAL_KEY/);
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') })).not.toThrow();
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE_UAT: 'true' })).toThrow(/BANK_FEED_TINGEE_UAT/);
+    const tingee = { ...base, BANK_FEED_TINGEE: 'true', BANK_FEED_TINGEE_UAT: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') };
+    expect(() => loadConfig(tingee)).not.toThrow();
+    expect(() => loadConfig({ ...tingee, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).toThrow(/BANK_FEED_TINGEE_UAT/);
     // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
     // runs the ads module. Unset, it is off on a public URL.
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
