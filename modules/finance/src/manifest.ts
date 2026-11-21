@@ -59,7 +59,7 @@ export const financeManifest = defineModule({
       // A marketplace connection's push hook key (#4316, S1 of #4315): only the SHA-256 of the key in the address, the dates and the count of refused pushes; definer-only.
       marketplace_hook: columns(['org_id', 'id', 'marketplace_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
       // A raw push waiting for the worker (#4316): the dedupe key, the header as sent and the body as bytes (treated as personal data), deleted when the worker claims it or after ten minutes; definer-only.
-      marketplace_hook_notice: columns(['org_id', 'id', 'hook_id', 'dedupe_key', 'authorization_header', 'received_at'], { body: 'pii' }),
+      marketplace_hook_notice: columns(['org_id', 'id', 'hook_id', 'dedupe_key', 'authorization_header', 'received_at'], { body: 'pii', request_url: 'pii' }),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),

@@ -86,8 +86,8 @@ suite('Marketplace push hook (#4316)', () => {
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
   const asApi = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await pool.query<T>(text, values)).rows;
   const asWorker = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await workerPool.query<T>(text, values)).rows;
-  const put = async (hook: string, keyHash: string, dedupe: string, body: Buffer = BODY) =>
-    (await asApi<{ put: string }>('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5) AS put', [hook, keyHash, dedupe, HEADER, body]))[0]?.put;
+  const put = async (hook: string, keyHash: string, dedupe: string, body: Buffer = BODY, requestUrl: string | null = null) =>
+    (await asApi<{ put: string }>('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, keyHash, dedupe, HEADER, body, requestUrl]))[0]?.put;
   const waiting = async () => rows<{ hook_id: string; dedupe_key: string }>('SELECT hook_id, dedupe_key FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
 
   async function tokenFor(who: Account) {
@@ -204,7 +204,7 @@ suite('Marketplace push hook (#4316)', () => {
       await expect(workerPool.query(`SELECT 1 FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
     }
     await expect(workerPool.query("SELECT * FROM crove_finance.marketplace_hook_lookup('shopee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b')])).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b'), null])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT crove_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT crove_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
@@ -214,8 +214,9 @@ suite('Marketplace push hook (#4316)', () => {
   });
 
   it('claims the waiting pushes with their bytes and deletes them as it hands them out, one push for each org', async () => {
-    expect(await put(otherHookId, sha(otherKey), sha('other'))).toBe('accepted');
-    const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer }>(
+    const URL_SIGNED = 'https://example.test/api/marketplace/shopee/webhook/the-key-in-the-address';
+    expect(await put(otherHookId, sha(otherKey), sha('other'), BODY, URL_SIGNED)).toBe('accepted');
+    const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null }>(
       'SELECT * FROM crove_finance.marketplace_hook_claim(10)',
     );
     expect(claimed.map((c) => [c.org_id, c.hook_id, c.marketplace_connection_id, c.adapter, c.platform, c.dedupe_key]).sort()).toEqual(
@@ -225,6 +226,9 @@ suite('Marketplace push hook (#4316)', () => {
       ].sort(),
     );
     const mine = claimed.find((c) => c.hook_id === hookId);
+    // The address is kept only where the push was stored with one, and comes back with the claim.
+    expect(mine?.request_url).toBeNull();
+    expect(claimed.find((c) => c.hook_id === otherHookId)?.request_url).toBe(URL_SIGNED);
     expect(Buffer.compare(mine?.body ?? Buffer.alloc(0), BODY)).toBe(0);
     expect(await waiting()).toEqual([]);
     expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);

@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS crove_finance.marketplace_hook_notice (
   dedupe_key text NOT NULL CHECK (dedupe_key ~ '^[0-9a-f]{64}$'),
   -- The platform's Authorization header as sent (a hex digest).
   authorization_header text NOT NULL CHECK (pg_catalog.char_length(authorization_header) BETWEEN 1 AND 256),
+  -- The address the push arrived at, kept only for an adapter whose signature covers it (Shopee signs `callback_url|body`): it carries the hook key (a credential for pushing, which only its hash is kept of), so it lives
+  -- exactly as long as the body, in this row, and is deleted with it. NULL for the adapters that do not sign the address.
+  request_url text CHECK (request_url IS NULL OR pg_catalog.char_length(request_url) BETWEEN 1 AND 400),
   -- The raw body, as received: kept only until the worker claims it (at most ten minutes).
   body bytea NOT NULL CHECK (pg_catalog.octet_length(body) BETWEEN 1 AND 16384),
   received_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
@@ -93,8 +96,8 @@ $$;
 -- Stores one push for a hook found by marketplace_hook_lookup and answers 'accepted', 'duplicate' (the same header and body are already waiting), 'busy' (the hook has twenty pushes waiting, or the machine's backlog is
 -- full) or 'gone' (the hook is no longer there, stopped, its key was rotated since the lookup, or its org or connection closed in between). The caller passes the hash the lookup accepted: the push is stored only while
 -- that is still the hook's current key, so a request that passed with a retired key stores nothing. A push already waiting is acknowledged ('duplicate') before the capacity check. The org comes from the hook row. It
--- stores the raw push and nothing else, and it wakes the worker with an empty notification (the body is never in the notification).
-CREATE OR REPLACE FUNCTION crove_finance.marketplace_hook_put_notice(p_hook uuid, p_key_sha256 text, p_dedupe_key text, p_authorization text, p_body bytea)
+-- stores the raw push (and, for an adapter that signs its address, that address) and nothing else, and it wakes the worker with an empty notification (the body is never in the notification).
+CREATE OR REPLACE FUNCTION crove_finance.marketplace_hook_put_notice(p_hook uuid, p_key_sha256 text, p_dedupe_key text, p_authorization text, p_body bytea, p_request_url text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
@@ -103,7 +106,8 @@ DECLARE
 BEGIN
   IF p_hook IS NULL OR p_key_sha256 IS NULL OR p_key_sha256 !~ '^[0-9a-f]{64}$' OR p_dedupe_key IS NULL OR p_dedupe_key !~ '^[0-9a-f]{64}$'
      OR p_authorization IS NULL OR pg_catalog.char_length(p_authorization) NOT BETWEEN 1 AND 256
-     OR p_body IS NULL OR pg_catalog.octet_length(p_body) NOT BETWEEN 1 AND 16384 THEN
+     OR p_body IS NULL OR pg_catalog.octet_length(p_body) NOT BETWEEN 1 AND 16384
+     OR (p_request_url IS NOT NULL AND pg_catalog.char_length(p_request_url) NOT BETWEEN 1 AND 400) THEN
     RAISE EXCEPTION 'MARKETPLACE_HOOK_INVALID' USING ERRCODE = '22P02';
   END IF;
   SELECT h.org_id INTO v_org
@@ -126,8 +130,8 @@ BEGIN
      OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.marketplace_hook_notice LIMIT 10001) s) > 10000 THEN
     RETURN 'busy';
   END IF;
-  INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body)
-  VALUES (v_org, p_hook, p_dedupe_key, p_authorization, p_body)
+  INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, request_url)
+  VALUES (v_org, p_hook, p_dedupe_key, p_authorization, p_body, p_request_url)
   ON CONFLICT ON CONSTRAINT marketplace_hook_notice_dedupe_uq DO NOTHING;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows = 0 THEN
@@ -156,7 +160,7 @@ END $$;
 -- and what an org or connection that no longer takes pushes left is deleted and not answered. Anything older than ten minutes is swept first. The answer is the raw push with the hook, the marketplace connection, its
 -- channel connection, its adapter and platform: the worker alone opens the connection's secret and checks it, and the body stays in its memory.
 CREATE OR REPLACE FUNCTION crove_finance.marketplace_hook_claim(p_limit integer)
-RETURNS TABLE (org_id uuid, hook_id uuid, marketplace_connection_id uuid, channel_connection_id uuid, adapter text, platform text, dedupe_key text, authorization_header text, body bytea)
+RETURNS TABLE (org_id uuid, hook_id uuid, marketplace_connection_id uuid, channel_connection_id uuid, adapter text, platform text, dedupe_key text, authorization_header text, body bytea, request_url text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 BEGIN
@@ -167,9 +171,9 @@ BEGIN
     WHERE (n.org_id, n.id) IN (
       SELECT q.org_id, q.id FROM crove_finance.marketplace_hook_notice q ORDER BY q.received_at, q.id LIMIT LEAST(GREATEST(p_limit, 1), 1000) FOR UPDATE SKIP LOCKED
     )
-    RETURNING n.org_id AS c_org, n.hook_id AS c_hook, n.dedupe_key AS c_dedupe, n.authorization_header AS c_authorization, n.body AS c_body
+    RETURNING n.org_id AS c_org, n.hook_id AS c_hook, n.dedupe_key AS c_dedupe, n.authorization_header AS c_authorization, n.body AS c_body, n.request_url AS c_url
   )
-  SELECT cl.c_org, cl.c_hook, m.id, m.channel_connection_id, pg_catalog.substr(m.provider, 13), m.platform, cl.c_dedupe, cl.c_authorization, cl.c_body
+  SELECT cl.c_org, cl.c_hook, m.id, m.channel_connection_id, pg_catalog.substr(m.provider, 13), m.platform, cl.c_dedupe, cl.c_authorization, cl.c_body, cl.c_url
   FROM claimed cl
   JOIN crove_finance.marketplace_hook h ON h.org_id = cl.c_org AND h.id = cl.c_hook AND h.stopped_at IS NULL
   JOIN crove_finance.marketplace_connection m ON m.org_id = h.org_id AND m.id = h.marketplace_connection_id
@@ -298,7 +302,7 @@ END $$;
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION
   crove_finance.marketplace_hook_lookup(text, text),
-  crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea),
+  crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea, text),
   crove_finance.marketplace_hook_sweep(),
   crove_finance.marketplace_hook_claim(integer),
   crove_finance.marketplace_hook_reject(uuid),
@@ -312,7 +316,7 @@ DECLARE
 BEGIN
   FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\_%' AND rolname <> current_user LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION crove_finance.marketplace_hook_lookup(text, text), crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea), crove_finance.marketplace_hook_sweep(), '
+      'REVOKE ALL ON FUNCTION crove_finance.marketplace_hook_lookup(text, text), crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea, text), crove_finance.marketplace_hook_sweep(), '
       'crove_finance.marketplace_hook_claim(integer), crove_finance.marketplace_hook_reject(uuid), crove_finance.marketplace_hook_set(uuid, text), crove_finance.marketplace_hook_status(uuid), '
       'crove_finance.personal_data_erase_marketplace_hook_notice(text, text) FROM %I',
       r.rolname);
@@ -321,7 +325,7 @@ END $$;
 -- The API's own login: the route's lookup and put, the owner's or admin's set and status, and the owner's erasure.
 GRANT EXECUTE ON FUNCTION
   crove_finance.marketplace_hook_lookup(text, text),
-  crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea),
+  crove_finance.marketplace_hook_put_notice(uuid, text, text, text, bytea, text),
   crove_finance.marketplace_hook_set(uuid, text),
   crove_finance.marketplace_hook_status(uuid),
   crove_finance.personal_data_erase_marketplace_hook_notice(text, text)
