@@ -5649,6 +5649,23 @@ export const vi = {
     connect: 'Kết nối',
     test: 'Kiểm tra kết nối',
     pollNow: 'Lấy đơn ngay',
+    authorize: 'Cấp quyền',
+    authorizeAgain: 'Cấp quyền lại',
+    reauthorizeBy: 'cần cấp quyền lại trước {when}',
+    authorizeStates: {
+      pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại; sau 15 phút mà chưa xong thì sẽ báo lỗi và bạn bấm Cấp quyền lại.',
+      authorized: 'Đã cấp quyền',
+      refused: 'Sàn từ chối mã cấp quyền (mã sai, đã dùng hoặc hết hạn). Hãy bấm Cấp quyền lại.',
+      failed: 'Chưa hoàn tất được việc cấp quyền. Hãy bấm Cấp quyền lại; nếu vẫn lỗi, báo người quản trị hệ thống.',
+    },
+    oauth: {
+      title: 'Cấp quyền cho kết nối sàn',
+      finishing: 'Đang nhận quyền từ sàn...',
+      received: 'Đã nhận quyền. Hệ thống đang hoàn tất; kết quả hiện ở thẻ kết nối sàn.',
+      cancelled: 'Bạn chưa cấp quyền cho ứng dụng trên sàn. Có thể bấm Cấp quyền lại bất cứ lúc nào.',
+      lost: 'Không tìm thấy lượt cấp quyền này (đã dùng, hết hạn hoặc mở ở trình duyệt khác). Hãy bắt đầu lại từ thẻ kết nối sàn.',
+      back: 'Về trang kết nối',
+    },
     testQueued: 'Đã yêu cầu kiểm tra. Kết quả sẽ hiện ở đây sau ít giây.',
     testNoResult: 'Chưa có kết quả kiểm tra. Hãy thử lại sau ít phút; nếu vẫn chưa có, báo người quản trị hệ thống.',
     pollQueued: 'Đã yêu cầu lấy đơn. Đơn mới sẽ chờ bạn xác nhận ở Hộp thư.',
@@ -5677,7 +5694,7 @@ export const vi = {
     },
     testStatesLazada: {
       wrong_credentials: 'Lazada từ chối khóa, mã bí mật hoặc mã truy cập. Hãy kiểm tra App Key và App Secret rồi kết nối lại.',
-      api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn. Bước cấp quyền sẽ có ở bản sau.',
+      api_not_enabled: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn. Hãy bấm Cấp quyền và đăng nhập tài khoản người bán trên Lazada.',
     },
     pollStatesLazada: { not_authorized: 'Chưa cấp quyền cho ứng dụng trên Lazada nên chưa lấy được đơn' },
     pollStates: {
@@ -15108,6 +15125,7 @@ export const vi = {
       },
       marketplace_connection: {
         authorize_begin: 'Bắt đầu cấp quyền cho kết nối sàn',
+        authorize_complete: 'Hoàn tất cấp quyền và lưu thông tin đăng nhập mới của kết nối sàn',
         authorize_finish: 'Hoàn tất cấp quyền cho kết nối sàn',
         authorize_lookup: 'Xem kết nối sàn của lượt cấp quyền',
         authorize_record: 'Ghi kết quả cấp quyền cho kết nối sàn',

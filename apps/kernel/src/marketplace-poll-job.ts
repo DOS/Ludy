@@ -22,6 +22,7 @@ import {
   type MarketplacePollEnding,
   type MarketplacePollTarget,
   type MarketplaceProvider,
+  type MarketplaceAuthorizeTarget,
   type MarketplaceTestResult,
 } from '@crove/mod-finance';
 import { z } from 'zod';
@@ -34,8 +35,8 @@ export interface MarketplacePollJob {
   orgId: string;
   // The marketplace connection's id (the finance module's row), not the channel connection's.
   connectionId: string;
-  // What the job does: a poll (also when left out) or a connection test (#4238). Closed: see zMarketplaceJob.
-  kind?: 'poll' | 'test' | undefined;
+  // What the job does: a poll (also when left out), a connection test or the finish of a seller's authorization (#4238). Closed: see zMarketplaceJob.
+  kind?: 'poll' | 'test' | 'authorize' | undefined;
 }
 
 export interface MarketplacePollDeps {
@@ -68,7 +69,7 @@ const csvFilename = (platform: string, connectionId: string, orders: readonly Ma
 export const MARKETPLACE_MAX_PAGES_PER_RUN = 5;
 
 // The job's payload (ids only), closed: a `kind` the worker does not know is refused, never guessed. A job queued before `kind` existed has none and is a poll.
-export const MARKETPLACE_JOB_KINDS = ['poll', 'test'] as const;
+export const MARKETPLACE_JOB_KINDS = ['poll', 'test', 'authorize'] as const;
 export const zMarketplaceJob = z.strictObject({ orgId: zId, connectionId: zId, kind: z.enum(MARKETPLACE_JOB_KINDS).optional() });
 export const marketplaceJobKind = (job: { kind?: (typeof MARKETPLACE_JOB_KINDS)[number] | undefined }): (typeof MARKETPLACE_JOB_KINDS)[number] => job.kind ?? 'poll';
 
@@ -85,6 +86,88 @@ async function openSecret(deps: MarketplacePollDeps, provider: MarketplaceProvid
       return null;
     }
     throw error;
+  }
+}
+
+export type MarketplaceAuthorizeOutcome =
+  | { state: 'skipped'; reason: string }
+  // `superseded`: the connection or the code changed after the worker read it (a reconnect, a second authorization): the new credential was NOT stored and nothing was overwritten.
+  | { state: 'authorized' | 'refused' | 'failed' | 'superseded' };
+
+// The finish of a seller's authorization, the worker's half (#4238): the one-time code and the connection's secret are opened here and nowhere else, the code is traded with the seller's own secret (the
+// provider's `authorize`, one call, never repeated: a code is single use), and a good answer replaces the connection's credential and marks the authorization done in ONE command, so the tokens are never
+// half stored. A refusal or a failure is recorded as such and the code is cleared whatever the result. Nothing here logs or stores a token, a code or the platform's text: ids and a state.
+export async function runMarketplaceAuthorize(deps: MarketplacePollDeps, job: MarketplacePollJob): Promise<MarketplaceAuthorizeOutcome> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const target = await deps.runtime.query<MarketplaceAuthorizeTarget>('finance.marketplace_connection.authorize_target', { id: job.connectionId }, options);
+  if (target.action === 'none') return { state: 'skipped', reason: target.reason };
+  // A code that waited past the window is not traded: it is recorded as failed (and the sealed code cleared) so the seller sees it and authorizes again.
+  if (target.action === 'expired') {
+    await deps.runtime.execute('finance.marketplace_connection.authorize_record', { id: job.connectionId, codeDigest: target.codeDigest, outcome: 'failed' }, options);
+    return { state: 'failed' };
+  }
+  if (!Object.hasOwn(deps.providers, target.adapter)) return { state: 'skipped', reason: 'provider_off' };
+  const provider = deps.providers[target.adapter] as MarketplaceProvider;
+  if (!provider.authorize) return { state: 'skipped', reason: 'no_authorize' };
+  const record = async (outcome: 'refused' | 'failed'): Promise<MarketplaceAuthorizeOutcome> => {
+    await deps.runtime.execute('finance.marketplace_connection.authorize_record', { id: job.connectionId, codeDigest: target.codeDigest, outcome }, options);
+    return { state: outcome };
+  };
+  // The connection's secret (and the binding it is sealed under, for sealing the new one) and the code, each opened for its own binding.
+  let sealed: SealedChannelCredential;
+  try {
+    sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: target.channelConnectionId }, options);
+  } catch (error) {
+    if (error instanceof DomainError && (error.code === 'CHANNEL_OWNER_LEFT' || error.code === 'CHANNEL_NOT_ACTIVE')) {
+      if (error.code === 'CHANNEL_OWNER_LEFT') await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: target.channelConnectionId, reason: 'owner_left' }, options);
+      return record('failed');
+    }
+    throw error;
+  }
+  const binding = { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId };
+  let secret: string;
+  let code: string;
+  try {
+    secret = String(deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, binding));
+    code = String(deps.broker.open({ keyId: target.codeKeyId, envelope: Buffer.from(target.codeEnvelope, 'base64') }, { orgId: job.orgId, provider: sealed.provider, externalAccountId: target.codeAccount }));
+  } catch {
+    // A secret or a code that does not open under its own binding is not one this system sealed: nothing is asked of the platform.
+    console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: authorize, a sealed value did not open`);
+    return record('failed');
+  }
+  let result;
+  try {
+    result = await provider.authorize(secret, code);
+  } catch {
+    // The port's trade answers a result and does not throw; anything that does is not kept (its text may carry a URL or a header). The code may be spent, so it is not asked again.
+    return record('failed');
+  }
+  if ('refused' in result) return record('refused');
+  if ('failed' in result) return record('failed');
+  const next = deps.broker.seal(result.granted.secret, binding);
+  const command = {
+    id: job.connectionId,
+    codeDigest: target.codeDigest,
+    ifVersion: target.channelVersion,
+    expiresAt: result.granted.accessExpiresAt.toISOString(),
+    reauthorizeBy: result.granted.refreshExpiresAt ? result.granted.refreshExpiresAt.toISOString() : null,
+    credential: { keyId: next.keyId, envelope: next.envelope.toString('base64') },
+  };
+  // The platform has spent the code and given the pair: this command holds the only copy of the tokens, so a passing database error is tried again (the command is safe to repeat: it records only the pending
+  // authorization of this code, once).
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const stored = await deps.runtime.execute<{ recorded: boolean }>('finance.marketplace_connection.authorize_complete', command, options);
+      return { state: stored.recorded ? 'authorized' : 'superseded' };
+    } catch (error) {
+      if (error instanceof DomainError) return record('failed');
+      if (attempt >= 3) {
+        // The tokens are lost with this job (the code is spent): at least the sealed code is cleared and the seller sees a failure, as far as the database lets this one write through.
+        await record('failed').catch(() => undefined);
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
   }
 }
 

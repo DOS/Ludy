@@ -194,7 +194,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
@@ -2687,6 +2687,12 @@ export const contract = {
       // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
       // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
       pollNow: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // The seller's authorization of a connection on the platform's own page (#4238, Lazada). Start: the address of that page, with a one-time state bound to this connection and this member (10 minutes).
+      // MARKETPLACE_AUTHORIZE_UNSUPPORTED (422), MARKETPLACE_APP_KEY_MISSING (409), CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403) unless owner or admin.
+      authorizeStart: oc.input(z.object({ id: zId })).output(zMarketplaceAuthorizeStarted),
+      // Finish: the page the platform returns the seller to calls this with the state and the one-time code. The code is sealed here and traded by the worker; the answer is only the connection. MARKETPLACE_AUTHORIZE_INVALID (400)
+      // for a state that is wrong, used, ended, another member's or another org's.
+      authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
     },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
