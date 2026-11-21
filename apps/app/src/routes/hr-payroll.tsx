@@ -38,7 +38,11 @@ type Money = (value: string | null | undefined, currency?: string) => string;
 // The inputs of a line as the form edits them: every field a string, so a half-typed number is not lost.
 interface InputsState {
   unpaidLeaveDays: string;
+  sicknessBhxhDays: string;
+  maternityBhxhDays: string;
   daysNotEmployed: string;
+  workedHours: string;
+  pieceCount: string;
   bonus: string;
   advance: string;
   nightHours: string;
@@ -51,11 +55,15 @@ interface InputsState {
 }
 
 const str = (v: unknown, fallback = '0') => (typeof v === 'string' ? v : fallback);
-function stateOf(inputs: Record<string, unknown>): InputsState {
+export function stateOf(inputs: Record<string, unknown>): InputsState {
   const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
   return {
     unpaidLeaveDays: str(inputs.unpaidLeaveDays),
+    sicknessBhxhDays: str(inputs.sicknessBhxhDays),
+    maternityBhxhDays: str(inputs.maternityBhxhDays),
     daysNotEmployed: str(inputs.daysNotEmployed),
+    workedHours: str(inputs.workedHours, ''),
+    pieceCount: str(inputs.pieceCount, ''),
     bonus: str(inputs.bonus),
     advance: str(inputs.advance),
     nightHours: str(inputs.nightHours),
@@ -66,11 +74,15 @@ function stateOf(inputs: Record<string, unknown>): InputsState {
     rest: { otherRegularPay: inputs.otherRegularPay, voluntaryPension: inputs.voluntaryPension, commitment: inputs.commitment, insured: inputs.insured, withholdingRequested: inputs.withholdingRequested },
   };
 }
-const inputsOf = (s: InputsState): HrPayrollInputs =>
+export const inputsOf = (s: InputsState): HrPayrollInputs =>
   ({
     ...s.rest,
     unpaidLeaveDays: s.unpaidLeaveDays,
+    sicknessBhxhDays: s.sicknessBhxhDays,
+    maternityBhxhDays: s.maternityBhxhDays,
     daysNotEmployed: s.daysNotEmployed,
+    workedHours: s.workedHours === '' ? null : s.workedHours,
+    pieceCount: s.pieceCount === '' ? null : s.pieceCount,
     bonus: s.bonus,
     advance: s.advance,
     nightHours: s.nightHours,
@@ -80,12 +92,14 @@ const inputsOf = (s: InputsState): HrPayrollInputs =>
     deductions: s.deductions,
   }) as HrPayrollInputs;
 const dayOk = (v: string) => /^\d{1,2}(\.\d)?$/.test(v);
+const bhxhDayOk = (v: string) => /^\d{1,2}(\.\d{1,2})?$/.test(v);
 const hoursOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v);
-const formOk = (s: InputsState) =>
-  dayOk(s.unpaidLeaveDays) && dayOk(s.daysNotEmployed) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
+const workUnitsOk = (v: string) => /^\d{1,7}(\.\d{1,2})?$/.test(v);
+export const formOk = (s: InputsState) =>
+  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
-function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
+export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
   const t = useTranslations('hrPayroll');
   const b = line.breakdown as unknown as PayrollBreakdown | null;
   if (!b) return <p className="text-sm text-muted-foreground">{line.refusal ?? t('noBreakdown')}</p>;
@@ -106,11 +120,16 @@ function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
         {b.pay.nightWork && row(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
         {row(t('bd.bonus'), b.pay.bonus, 'bonus')}
         {row(t('bd.unpaidReduction'), b.pay.unpaidReduction, 'unpaid')}
+        {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && row(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
+        {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && row(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
       </div>
       <div>
         <h4 className="mb-1 font-medium text-foreground">{t('bd.deductions')}</h4>
         {b.insurance.funds.map((fund) => row(t(`fund.${fund.fund}`), fund.employee, fund.fund))}
+        {b.insurance.suspended === 'sickness_leave' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.insuranceSuspendedSickness')}</p>}
+        {b.insurance.suspended === 'maternity_leave' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.insuranceSuspendedMaternity')}</p>}
         {row(t('bd.pit'), f?.pit ?? '0', 'pit')}
+        {b.tax.mode === 'non_resident_flat' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.taxModeNonResident')}</p>}
         {row(t('bd.advance'), b.deductions.advance, 'advance')}
         {row(t('bd.damage'), b.deductions.damage, 'damage')}
         {row(t('bd.other'), b.deductions.other, 'other')}
@@ -122,7 +141,11 @@ function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
   );
 }
 
-function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) {
+export function normalizePayrollNumericInput(raw: string): string {
+  return raw.replaceAll(',', '.').replace(/[^\d.]/g, '');
+}
+
+export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) {
   const t = useTranslations('hrPayroll');
   const [s, setS] = useState(() => stateOf(line.inputs));
   const save = useMutation({
@@ -132,16 +155,33 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
       onDone();
     },
   });
-  const text = (key: 'unpaidLeaveDays' | 'daysNotEmployed' | 'bonus' | 'advance' | 'nightHours' | 'contractTermMonths', label: string) => (
+  const text = (
+    key:
+      | 'unpaidLeaveDays'
+      | 'sicknessBhxhDays'
+      | 'maternityBhxhDays'
+      | 'daysNotEmployed'
+      | 'workedHours'
+      | 'pieceCount'
+      | 'bonus'
+      | 'advance'
+      | 'nightHours'
+      | 'contractTermMonths',
+    label: string,
+  ) => (
     <div className="space-y-1">
       <Label htmlFor={`in-${line.id}-${key}`}>{label}</Label>
-      <Input id={`in-${line.id}-${key}`} value={s[key]} inputMode="decimal" onChange={(e) => setS({ ...s, [key]: e.target.value.replace(/[^\d.]/g, '') })} />
+      <Input id={`in-${line.id}-${key}`} value={s[key]} inputMode="decimal" onChange={(e) => setS({ ...s, [key]: normalizePayrollNumericInput(e.target.value) })} data-testid={`hr-input-${key}`} />
     </div>
   );
   return (
     <div className="mt-3 space-y-3 border-t pt-3" data-testid="hr-inputs-form">
       <div className="grid gap-3 sm:grid-cols-3">
+        {text('workedHours', t('in.workedHours'))}
+        {text('pieceCount', t('in.pieceCount'))}
         {text('unpaidLeaveDays', t('in.unpaidLeaveDays'))}
+        {text('sicknessBhxhDays', t('in.sicknessBhxhDays'))}
+        {text('maternityBhxhDays', t('in.maternityBhxhDays'))}
         {text('daysNotEmployed', t('in.daysNotEmployed'))}
         {text('bonus', t('in.bonus'))}
         {text('advance', t('in.advance'))}
@@ -159,11 +199,11 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-1 text-xs">
+            <label className="flex items-center gap-1 text-xs max-md:min-h-11">
               <input type="checkbox" checked={o.night} onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, night: e.target.checked } : x)) })} />
               {t('in.night')}
             </label>
-            <Input aria-label={t('in.hours')} className="w-24" value={o.hours} inputMode="decimal" onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, hours: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.hours')} className="w-24" value={o.hours} inputMode="decimal" onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, hours: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <Button variant="ghost" size="sm" onClick={() => setS({ ...s, overtime: s.overtime.filter((_, j) => j !== i) })}>
               {t('remove')}
             </Button>
@@ -178,7 +218,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
         {s.allowances.map((a, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
             <Input aria-label={t('in.label')} className="w-40" value={a.label} maxLength={100} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
-            <Input aria-label={t('in.amount')} className="w-32" value={a.amount} inputMode="decimal" onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.amount')} className="w-32" value={a.amount} inputMode="decimal" onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, amount: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <NativeSelect aria-label={t('in.allowanceType')} value={a.type} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, type: e.target.value as typeof a.type } : x)) })}>
               {HR_ALLOWANCE_TYPES.map((k) => (
                 <NativeSelectOption key={k} value={k}>
@@ -186,7 +226,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-1 text-xs">
+            <label className="flex items-center gap-1 text-xs max-md:min-h-11">
               <input type="checkbox" checked={a.namedInContract} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, namedInContract: e.target.checked } : x)) })} />
               {t('in.named')}
             </label>
@@ -204,7 +244,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
         {s.deductions.map((d, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
             <Input aria-label={t('in.label')} className="w-40" value={d.label} maxLength={100} onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
-            <Input aria-label={t('in.amount')} className="w-32" value={d.amount} inputMode="decimal" onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.amount')} className="w-32" value={d.amount} inputMode="decimal" onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, amount: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <NativeSelect aria-label={t('in.deductionKind')} value={d.kind} onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, kind: e.target.value as typeof d.kind } : x)) })}>
               {HR_DEDUCTION_KINDS.map((k) => (
                 <NativeSelectOption key={k} value={k}>
@@ -331,7 +371,7 @@ function MonthCoworker({ runId }: { runId: string }) {
 }
 
 // The payslip of Labor Code Art. 95(3): only stored facts. "Print" opens the browser's print dialog, where the person saves it as a PDF; nothing is emailed.
-function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
+export function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
   const t = useTranslations('hrPayroll');
   const f = useFormat();
   const q = useQuery({ ...orpc.hr.payroll.lines.payslip.queryOptions({ input: { lineId } }), ...ONCE });
@@ -369,6 +409,8 @@ function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
           {b.pay.overtime.map((o, i) => line(t('bd.overtime', { kind: t(`dayKind.${o.dayKind}`), hours: o.hours }), o.pay, `o${i}`))}
           {b.pay.nightWork && line(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
           {line(t('bd.bonus'), b.pay.bonus, 'bonus')}
+          {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && line(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
+          {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && line(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
           {line(t('gross'), p.figures.gross, 'gross')}
           {b.insurance.funds.map((fund) => line(t(`fund.${fund.fund}`), fund.employee, fund.fund))}
           {line(t('bd.pit'), p.figures.pit, 'pit')}
@@ -381,6 +423,9 @@ function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
           </tr>
         </tbody>
       </table>
+      {b.tax.mode === 'non_resident_flat' && <p className="mt-2 text-xs text-muted-foreground">{t('bd.taxModeNonResident')}</p>}
+      {b.insurance.suspended === 'sickness_leave' && <p className="mt-1 text-xs text-muted-foreground">{t('bd.insuranceSuspendedSickness')}</p>}
+      {b.insurance.suspended === 'maternity_leave' && <p className="mt-1 text-xs text-muted-foreground">{t('bd.insuranceSuspendedMaternity')}</p>}
       <ExplainPayslip lineId={lineId} />
     </Card>
   );
@@ -696,7 +741,7 @@ function BankFile({ runId, month, legalEntityId }: { runId: string; month: strin
   );
 }
 
-function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: readonly { id: string; month: string }[]; onBack: () => void }) {
+export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: readonly { id: string; month: string }[]; onBack: () => void }) {
   const t = useTranslations('hrPayroll');
   const f = useFormat();
   const q = useQuery({ ...orpc.hr.payroll.runs.sheet.queryOptions({ input: { runId } }), ...ONCE });
@@ -825,11 +870,14 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                     {t('adjustmentOf', { month: l.adjustsMonth ?? '' })}
                   </Badge>
                 )}
-                {l.flags.map((x) => (
-                  <Badge key={x} className="ml-2" variant="destructive" data-testid="hr-flag">
-                    {t(`flag.${x}`)}
-                  </Badge>
-                ))}
+                {l.flags.map((x) => {
+                  const variant = x === 'work_permit_expiring' ? 'warning' : x === 'bhxh_suspended_regime' || x === 'non_resident_flat_pit' ? 'secondary' : 'destructive';
+                  return (
+                    <Badge key={x} className="ml-2" variant={variant} data-testid="hr-flag">
+                      {t(`flag.${x}`)}
+                    </Badge>
+                  );
+                })}
               </TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.gross, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.employeeInsurance, 'VND') : '-'}</TableCell>
@@ -899,7 +947,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           <div className="mt-4 border-t pt-4">
             <p className="text-sm text-muted-foreground">{t('approveHint')}</p>
             {flagged && (
-              <label className="mt-2 flex items-center gap-2 text-sm">
+              <label className="mt-2 flex items-center gap-2 text-sm max-md:min-h-11">
                 <input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} data-testid="hr-accept-flags" />
                 {t('acceptFlags')}
               </label>
