@@ -52,7 +52,9 @@ export type ModelFeature =
   | 'projects.tasks_from_note'
   | 'projects.tasks_from_source'
   | 'notes.summary'
-  | 'notes.todo_suggest';
+  | 'notes.todo_suggest'
+  | 'notes.todo_plan'
+  | 'notes.organize';
 export interface ModelPrompt {
   system: string;
   user: string;

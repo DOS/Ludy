@@ -334,6 +334,8 @@ describe('route enumeration with an extension token (#2582)', () => {
       ['POST', '/api/rpc/notes/search'],
       ['POST', '/api/rpc/notes/panel'],
       ['POST', '/api/rpc/notes/exportMine'],
+      ['POST', '/api/rpc/notes/todoPlan'],
+      ['POST', '/api/rpc/notes/organize'],
       ['POST', '/api/rpc/notes/vyResults'],
       ['POST', '/api/rpc/notes/privateCounts'],
       ['POST', '/api/rpc/notes/todos/list'],

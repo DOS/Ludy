@@ -15,7 +15,7 @@ export const TRANSCRIPT: ReadonlyArray<{ from: number; to: number; who: string; 
   { from: 20, to: 30, who: 'Hà', said: 'Được, họp tiếp tuần sau.' },
 ];
 
-export type Route = 'title' | 'commitments' | 'adherence' | 'digest' | 'brief';
+export type Route = 'title' | 'commitments' | 'adherence' | 'digest' | 'brief' | 'todo_plan' | 'organize';
 export type Scenario = 'default' | 'bad' | 'garbage' | 'down';
 
 // A phrase of each feature's instruction, copied from the first line of its INSTRUCTION in the member-Vy feature files of the agent package; tools/test/fake-model.test.ts fails when a source stops holding its phrase, so the
@@ -26,6 +26,8 @@ export const ROUTE_MARKERS: Readonly<Record<Route, string>> = {
   adherence: 'check whether the meeting covered its agenda',
   digest: 'look back on the week',
   brief: 'You prepare a person who is about to go into a meeting',
+  todo_plan: 'You are Vy, a personal work planner coworker helping one member plan their day',
+  organize: 'You are Vy, a notes organization coworker helping one member organize their unfiled inbox notes',
 };
 
 export const SCENARIO_TOKENS: Readonly<Record<Exclude<Scenario, 'default'>, string>> = { bad: '[fake:bad]', garbage: '[fake:garbage]', down: '[fake:down]' };
@@ -139,6 +141,72 @@ function sentencesAnswer(subject: string, scenario: Scenario): string {
   return JSON.stringify({ sentences: [{ text: `Đã chốt: ${text}`, cites: [n] }, ...dropped] });
 }
 
+function plusDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y ?? 2026, (m ?? 1) - 1, (d ?? 1) + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// todo_plan (Notes v2 T4b): picks up to 3 open to-dos and reschedules overdue items, plus 1 hallucinated ID for deterministic checks to drop.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+function todoPlanAnswer(subject: string, scenario: Scenario): string {
+  const data = dataOf(subject);
+  const today = typeof data.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.today) ? data.today : '2026-11-21';
+  const todos = listOf(data.todos);
+  if (scenario === 'bad') {
+    const firstId = typeof todos[0]?.id === 'string' ? todos[0].id : 'bad-id';
+    return JSON.stringify({
+      focus: [{ todoId: '00000000-0000-0000-0000-000000000999', reason: 'Hallucinated' }],
+      reschedules: [{ todoId: firstId, dueOn: '2026-02-30', reason: 'Invalid calendar date' }],
+    });
+  }
+  const focus = [
+    ...todos.slice(0, 3).map((t) => ({ todoId: String(t.id ?? ''), reason: 'Việc trọng tâm hôm nay' })),
+    { todoId: '00000000-0000-0000-0000-000000000999', reason: 'Hallucinated ID dropped by guardrail' },
+  ];
+  const nextDay = plusDays(today, 1);
+  const reschedules = todos
+    .filter((t) => t.overdue === true || t.group === 'overdue')
+    .map((t) => ({ todoId: String(t.id ?? ''), dueOn: nextDay, reason: 'Dời sang ngày mai để kịp xử lý' }));
+  return JSON.stringify({ focus, reschedules });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// organize (Notes v2 E5b): matches unfiled notes to compatible existing notebooks and #tags, plus 1 hallucinated note ID to drop.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+function organizeAnswer(subject: string, scenario: Scenario): string {
+  const data = dataOf(subject);
+  const notebooks = listOf(data.notebooks);
+  const notes = listOf(data.notes);
+  if (scenario === 'bad') {
+    return JSON.stringify({
+      suggestions: [
+        { noteId: '00000000-0000-0000-0000-000000000999', notebookId: null, tags: ['https://evil.example'], reason: 'Bad' },
+      ],
+    });
+  }
+  const suggestions = [
+    ...notes.map((n) => {
+      const vis = n.visibility === 'org' ? 'org' : 'private';
+      const compatibleNb = notebooks.find((nb) => vis !== 'org' || nb.visibility === 'org') ?? null;
+      return {
+        noteId: String(n.id ?? ''),
+        notebookId: compatibleNb ? String(compatibleNb.id ?? '') : null,
+        tags: n.canEditTags === false ? [] : ['#hộp-thư', 'cần-xem'],
+        reason: 'Gợi ý phân loại gọn theo nội dung',
+      };
+    }),
+    {
+      noteId: '00000000-0000-0000-0000-000000000999',
+      notebookId: notebooks[0]?.id ? String(notebooks[0].id) : null,
+      tags: ['ghost'],
+      reason: 'Hallucinated note dropped by guardrail',
+    },
+  ];
+  return JSON.stringify({ suggestions });
+}
+
 /** What the model "writes" for one request: the answer text, or null when the scenario is a failed request (HTTP 500). */
 export function answerFor(route: Route, subject: string, scenario: Scenario): string | null {
   if (scenario === 'down') return null;
@@ -153,5 +221,9 @@ export function answerFor(route: Route, subject: string, scenario: Scenario): st
     case 'digest':
     case 'brief':
       return sentencesAnswer(subject, scenario);
+    case 'todo_plan':
+      return todoPlanAnswer(subject, scenario);
+    case 'organize':
+      return organizeAnswer(subject, scenario);
   }
 }
