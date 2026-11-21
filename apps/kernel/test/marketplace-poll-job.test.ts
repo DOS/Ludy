@@ -86,6 +86,20 @@ describe('the page is checked before anything of it is used (#2840 point 2)', ()
   });
 });
 
+describe('the page limit is on orders, not on port orders', () => {
+  const order = (n: number, stage: 'completed' | 'returned') => ({ orderNo: `91${String(n).padStart(8, '0')}`, orderedAt: '2026-11-02', shippedAt: null, deliveredAt: null, stage, lines: [{ lineKey: `${n}-${stage}`, sku: 'MAU-001', itemName: 'Áo', quantity: '1', unitPrice: '150000', amount: '150000' }] });
+
+  it('takes 100 orders that each answer as two port orders (an order whose items are in two states), and refuses 101 orders', async () => {
+    const hundred: MarketplaceOrderPage = { orders: Array.from({ length: 100 }, (_, n) => [order(n, 'completed'), order(n, 'returned')]).flat(), nextCursor: 'u:2026-11-09T03:00:00.000Z' };
+    const ok = setup(async () => hundred, 'lazada');
+    expect(await ok.run()).toEqual({ state: 'ok', orders: 200, staged: true });
+    const many: MarketplaceOrderPage = { orders: Array.from({ length: 101 }, (_, n) => order(n, 'completed')), nextCursor: 'u:2026-11-09T03:00:00.000Z' };
+    const refused = setup(async () => many, 'lazada');
+    expect(await refused.run()).toEqual({ state: 'too_large', orders: 101, staged: false });
+    expect(refused.ingests()).toHaveLength(0);
+  });
+});
+
 describe('the rows are counted before any is built (#2840 point 1)', () => {
   it('ends a page of 30 million rows as too_large at once, without building or storing any', async () => {
     const lines = Array.from({ length: 300 }, (_, i) => ({ lineKey: `9101-${i}`, sku: 'MAU-001', itemName: 'Áo', quantity: '100000', unitPrice: '1000', amount: '100000000' }));

@@ -138,14 +138,14 @@ describe('listOrders', () => {
   it('says nothing is new, and keeps the cursor it was given', async () => {
     const { provider } = setup([]);
     expect(await provider.listOrders(SECRET, 'lazada', null)).toEqual({ orders: [], nextCursor: null });
-    expect(await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:0')).toEqual({ orders: [], nextCursor: 'u:2026-11-09T03:00:00.000Z:0' });
+    expect(await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z')).toEqual({ orders: [], nextCursor: 'u:2026-11-09T03:00:00.000Z' });
   });
 
   it('resumes a little before the newest order, never earlier than the window it read, and reads the same page again for nothing new', async () => {
     const { provider, fake } = setup(two);
     const first = await provider.listOrders(SECRET, 'lazada', null);
     // The newest order was updated 2026-11-09T11:00:00+07:00 = 04:00Z; ten minutes before.
-    expect(first.nextCursor).toBe('u:2026-11-09T03:50:00.000Z:0');
+    expect(first.nextCursor).toBe('u:2026-11-09T03:50:00.000Z');
     const again = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
     expect(fake.calls.filter((c) => c.path === '/orders/get')[1]?.params.update_after).toBe('2026-11-09T10:50:00+07:00');
     // Only the second order is inside the overlap, and the cursor does not move back or forward.
@@ -153,32 +153,70 @@ describe('listOrders', () => {
     expect(again.nextCursor).toBe(first.nextCursor);
   });
 
-  it('pages a full window: the same start with a growing skip, then the window moves on when it is read to its end', async () => {
+  it('pages a full window by moving it forward, never by an offset: every read is offset 0, a full page resumes a second before its newest order, a short page ten minutes before it', async () => {
     const many = Array.from({ length: 230 }, (_, i) =>
       fakeOrder({ id: String(3000000000000000 + i), number: `91020${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [{ id: String(4000000000000000 + i) }]),
+    );
+    const { provider, fake } = setup(many);
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    const sizes: number[] = [];
+    for (let poll = 0; poll < 4; poll += 1) {
+      const page: Awaited<ReturnType<typeof provider.listOrders>> = await provider.listOrders(SECRET, 'lazada', cursor);
+      sizes.push(page.orders.length);
+      for (const o of page.orders) seen.add(o.orderNo);
+      cursor = page.nextCursor;
+    }
+    // Every order is read, whatever the overlap repeats, and no call ever asked for an offset.
+    expect(seen.size).toBe(230);
+    expect(sizes[0]).toBe(100);
+    expect(fake.calls.filter((c) => c.path === '/orders/get').every((c) => c.params.offset === '0')).toBe(true);
+    // The first full page ends at the 100th order by update time, 07:39:00 +07:00; the window resumes a second before it.
+    const calls = fake.calls.filter((c) => c.path === '/orders/get');
+    expect(calls[1]?.params.update_after).toBe('2026-11-09T07:38:59+07:00');
+  });
+
+  it('does not skip an order that Lazada updates between two pages (the list shifts, the window does not)', async () => {
+    const many = Array.from({ length: 150 }, (_, i) =>
+      fakeOrder({ id: String(7000000000000000 + i), number: `91030${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [{ id: String(8000000000000000 + i) }]),
     );
     const { provider } = setup(many);
     const p1 = await provider.listOrders(SECRET, 'lazada', null);
     expect(p1.orders).toHaveLength(100);
-    const start = lazadaStamp(NOW - 30 * 86_400_000);
-    expect(p1.nextCursor).toBe(`u:${new Date(NOW - 30 * 86_400_000).toISOString()}:100`);
+    // Order 0, already read, is updated before the next page: it moves to the end of the list.
+    many[0]!.updatedAt = '2026-11-09T12:00:00+07:00';
     const p2 = await provider.listOrders(SECRET, 'lazada', p1.nextCursor);
-    expect(p2.orders).toHaveLength(100);
-    expect(p2.nextCursor).toBe(`u:${new Date(NOW - 30 * 86_400_000).toISOString()}:200`);
-    const p3 = await provider.listOrders(SECRET, 'lazada', p2.nextCursor);
-    expect(p3.orders).toHaveLength(30);
-    // Read to its end: the next window starts ten minutes before the newest order (index 229 = 09:49 +07:00 = 02:49Z).
-    expect(p3.nextCursor).toBe('u:2026-11-09T02:39:00.000Z:0');
-    expect(start).toContain('+07:00');
-    expect(new Set([...p1.orders, ...p2.orders, ...p3.orders].map((o) => o.orderNo)).size).toBe(230);
+    const names = new Set([...p1.orders, ...p2.orders].map((o) => o.orderNo));
+    expect(names.size).toBe(150);
   });
 
-  it('moves the window to the last order seen when Lazada\'s offset limit of 5000 is reached', async () => {
-    const many = Array.from({ length: 5100 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
-    const { provider } = setup(many);
-    const page = await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T00:00:00.000Z:4900');
-    expect(page.orders).toHaveLength(100);
-    expect(page.nextCursor).toBe('u:2026-11-09T03:00:00.000Z:0');
+  it('shows a window that cannot move (a hundred orders updated in the same second) as not_recognized, never loops on it and never skips it silently', async () => {
+    const same = Array.from({ length: 120 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
+    const { provider } = setup(same);
+    expect(await kind(() => provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z'))).toBe('not_recognized');
+    // Spread over time, the same 120 orders are read.
+    const spread = same.map((o, i) => ({ ...o, updatedAt: `2026-11-09T10:${String(i % 60).padStart(2, '0')}:00+07:00` }));
+    const ok = await setup(spread).provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z');
+    expect(ok.orders.length).toBeGreaterThan(0);
+  });
+
+  it('answers a full page of orders whose items are in two states as more port orders than a page, and the poll job takes it (the limit is on orders)', async () => {
+    const mixed = Array.from({ length: 100 }, (_, i) =>
+      fakeOrder({ id: String(1100000000000000 + i), number: `91040${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [
+        { id: String(1200000000000000 + 2 * i), status: 'delivered' },
+        { id: String(1200000000000000 + 2 * i + 1), status: 'returned' },
+      ]),
+    );
+    const page = await setup(mixed).provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders).toHaveLength(200);
+    expect(new Set(page.orders.map((o) => o.orderNo)).size).toBe(100);
+    expect(parseMarketplaceOrderPage(page)).not.toBeNull();
+  });
+
+  it('never reads a window older than the platform\'s 30 days, whatever cursor it is given', async () => {
+    const { provider, fake } = setup(two);
+    await provider.listOrders(SECRET, 'lazada', 'u:2020-01-01T00:00:00.000Z');
+    expect(fake.calls[0]?.params.update_after).toBe(lazadaStamp(NOW - 30 * 86_400_000));
   });
 
   it('treats an unreadable cursor as no cursor', async () => {
@@ -205,11 +243,10 @@ describe('the closed status table', () => {
 describe('a page the adapter will not store', () => {
   const base = (items: Array<Partial<FakeOrder['items'][number]> & { id: string }>, over: Partial<FakeOrder> = {}) => [fakeOrder({ id: '1', number: '9105000001', updatedAt: '2026-11-09T10:00:00+07:00', ...over }, items)];
 
-  it('refuses a masked order number, SKU or name, and an amount that is not a decimal string', async () => {
+  it('refuses a masked order number or SKU, and an amount that is not a decimal string', async () => {
     for (const orders of [
       base([{ id: '2' }], { number: '91***0001' }),
       base([{ id: '2', sku: 'MA***01' }]),
-      base([{ id: '2', name: 'Á*** ***' }]),
       base([{ id: '2', paidPrice: '1e5' }]),
       base([{ id: '2', paidPrice: '140,000' }]),
       base([{ id: '2', paidPrice: '140000.12345' }]),
@@ -246,6 +283,50 @@ describe('a page the adapter will not store', () => {
   });
 });
 
+describe('ids and days a hostile answer could bend', () => {
+  it('refuses an id that is not only digits (it is written into the list an items call is asked for), and an id or an item twice in one answer', async () => {
+    const order = (id: string) => fakeOrder({ id, number: '9107000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2' }]);
+    for (const id of ['1,2', '1]', '12 3', '-5', '1e3', 'abc']) {
+      const asOrder = (path: string): Response | undefined =>
+        path === '/orders/get' ? new Response(JSON.stringify({ code: '0', data: { orders: [{ order_id: id, order_number: '91', created_at: '2026-11-09T10:00:00+07:00', updated_at: '2026-11-09T10:00:00+07:00' }] } })) : undefined;
+      expect(await kind(() => setup([order('1')], { intercept: asOrder }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    }
+    const twice = (path: string): Response | undefined => {
+      const entry = { order_id: '1', order_number: '91', created_at: '2026-11-09T10:00:00+07:00', updated_at: '2026-11-09T10:00:00+07:00' };
+      return path === '/orders/get' ? new Response(JSON.stringify({ code: '0', data: { orders: [entry, entry] } })) : undefined;
+    };
+    expect(await kind(() => setup([order('1')], { intercept: twice }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    const sameItem = (path: string): Response | undefined => {
+      const item = { order_item_id: '2', order_id: '1', sku: 'A', name: 'a', item_price: '1', paid_price: '1', status: 'delivered' };
+      return path === '/orders/items/get' ? new Response(JSON.stringify({ code: '0', data: [{ order_id: '1', order_items: [item, item] }] })) : undefined;
+    };
+    expect(await kind(() => setup([order('1')], { intercept: sameItem }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+  });
+
+  it('takes the order day in Vietnam, whatever offset the time is written in', async () => {
+    // 2026-11-08 23:30 at +08:00 is 22:30 in Vietnam, still the 8th; 2026-11-09 00:30 at +08:00 is 23:30 on the 8th in Vietnam.
+    const orders = [
+      fakeOrder({ id: '1', number: '9108000001', createdAt: '2026-11-09T00:30:00+08:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2' }]),
+      fakeOrder({ id: '3', number: '9108000002', createdAt: '2026-11-08T23:30:00+08:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '4' }]),
+      fakeOrder({ id: '5', number: '9108000003', createdAt: '2026-11-08T18:00:00-05:00', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '6' }]),
+    ];
+    const page = await setup(orders).provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders.map((o) => [o.orderNo, o.orderedAt])).toEqual([['9108000001', '2026-11-08'], ['9108000002', '2026-11-08'], ['9108000003', '2026-11-09']]);
+  });
+
+  it('keeps an asterisk in a product name (a size, a footnote) and still refuses one in an order number', async () => {
+    const page = await setup([fakeOrder({ id: '1', number: '9109000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', name: 'Áo 5* size M' }])]).provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders[0]?.lines[0]?.itemName).toBe('Áo 5* size M');
+  });
+
+  it('cuts a long name by characters, never inside one', async () => {
+    const name = '😀'.repeat(400);
+    const page = await setup([fakeOrder({ id: '1', number: '9110000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', name }])]).provider.listOrders(SECRET, 'lazada', null);
+    expect(Array.from(page.orders[0]!.lines[0]!.itemName)).toHaveLength(300);
+    expect(page.orders[0]!.lines[0]!.itemName).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+  });
+});
+
 describe('a call that fails', () => {
   const orders = [fakeOrder({ id: '1', number: '9106000001', updatedAt: '2026-11-09T10:00:00+07:00' })];
 
@@ -263,9 +344,51 @@ describe('a call that fails', () => {
     expect(await kind(() => setup(orders, { intercept: () => new Response(JSON.stringify({ code: 'SomethingNew', message: 'secret text' })) }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
   });
 
-  it('reads no more than a bounded answer', async () => {
+  it('reads no more than a bounded answer: by its declared length, by what it streams, and by what it holds when it declares nothing', async () => {
     const big = () => new Response('x', { headers: { 'content-length': '999999999' } });
     expect(await kind(() => setup(orders, { intercept: big }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+    // No declared length: a stream of 5 MB in 1 MB pieces is cut at the cap.
+    const chunk = new Uint8Array(1_000_000).fill(120);
+    let sent = 0;
+    const streamed = () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            sent += 1;
+            if (sent > 20) controller.close();
+            else controller.enqueue(chunk);
+          },
+        }),
+      );
+    expect(await kind(() => setup(orders, { intercept: streamed }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+    expect(sent).toBeLessThan(10);
+  });
+
+  it('releases the body of an answer it refuses by status', async () => {
+    let cancelled = false;
+    const refusedBody = () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 500 },
+      );
+    expect(await kind(() => setup(orders, { intercept: refusedBody }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
+    expect(cancelled).toBe(true);
+  });
+
+  it('spaces the calls of one app from each other and does not hold one app up for another', async () => {
+    const { fake } = setup(orders);
+    const waits: number[] = [];
+    const provider = lazadaMarketplace({ fetch: fake.fetch, now: () => new Date(NOW), sleep: async (ms) => void waits.push(ms) });
+    const other = { ...KEY, appKey: '999999' };
+    // The fake knows one key, so the second app's calls are refused as credentials; what matters is when it is made.
+    await provider.testConnection(SECRET);
+    await provider.testConnection(SECRET);
+    await provider.testConnection(JSON.stringify(other));
+    expect(waits).toEqual([1000]);
   });
 
   it('does not carry Lazada\'s text or the credential in its error', async () => {

@@ -25,7 +25,11 @@ export const looksMasked = (value: string): boolean => value.includes('*');
 
 const hasControlCharacter = (text: string): boolean => [...text].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
 // A text made safe to keep: control characters become spaces, then it is cut to `max` characters.
-export const cleanLabel = (text: string, max: number): string => [...text].map((ch) => (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f ? ' ' : ch)).join('').trim().slice(0, max);
+// Cut by characters, not by UTF-16 units, so a character outside the basic plane is never split.
+export function cleanLabel(text: string, max: number): string {
+  const plain = Array.from(text, (ch) => (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f ? ' ' : ch)).join('').trim();
+  return Array.from(plain).slice(0, max).join('');
+}
 // An identifier (an order number, an item id, a SKU): short, one line, never masked.
 export function marketplaceIdentifier(value: unknown, max: number): string | null {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) value = String(value);
@@ -33,6 +37,12 @@ export function marketplaceIdentifier(value: unknown, max: number): string | nul
   const text = value.trim();
   if (text.length < 1 || text.length > max || hasControlCharacter(text) || looksMasked(text)) return null;
   return text;
+}
+
+// An id that is only digits (a Lazada order or item id): not a comma, a bracket or a space that could break the list an items call is asked for.
+export function marketplaceDigits(value: unknown, max: number): string | null {
+  const id = marketplaceIdentifier(value, max);
+  return id !== null && /^\d+$/.test(id) ? id : null;
 }
 
 // A calendar day written YYYY-MM-DD that exists.

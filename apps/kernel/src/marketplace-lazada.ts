@@ -19,7 +19,7 @@ import {
   type MarketplaceProvider,
   type MarketplaceTestResult,
 } from '@crove/mod-finance';
-import { cleanLabel, isoDay, looksMasked, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
+import { cleanLabel, isoDay, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const LAZADA_API_HOST = 'api.lazada.vn';
 // The hosts the adapter's fetch is bound to. Authorization (auth.lazada.com) joins in the token slice (S3): nothing here calls it.
@@ -29,13 +29,16 @@ export const LAZADA_HOSTS: readonly string[] = [LAZADA_API_HOST];
 const ORDERS_PATH = '/orders/get';
 const ITEMS_PATH = '/orders/items/get';
 
-// The documented limits: at most 100 orders a page, an offset of at most 5000 (past it the window is moved forward), at most 50 order ids per items call.
+// The documented limits: at most 100 orders a page and at most 50 order ids per items call. Offset paging is never used (the documented offset limit is 5000 and an offset over a list that changes
+// while it is read skips orders): the window itself moves forward, see listOrders.
 const PAGE_SIZE = MARKETPLACE_PLATFORM_LIMITS.lazada.pageSize;
-const MAX_OFFSET = 5000;
 const ITEMS_BATCH = 50;
 const WINDOW_DAYS = MARKETPLACE_PLATFORM_LIMITS.lazada.windowDays;
 // A resumed read starts this far before the newest order seen, so an order Lazada updated late is caught; the confirm step dedupes on (platform, order number, line) and moves a status forward only.
+// The price is that a quiet shop re-reads its last ten minutes of orders on every poll (two calls); a shop with nothing new for ten minutes reads nothing.
 const OVERLAP_MS = 10 * 60_000;
+// A full page resumes this far before its newest order, so the orders that share its last second are read again rather than lost (whether Lazada's `update_after` is inclusive is not documented).
+const TIE_MS = 1000;
 // One call at a time, at least this far apart: Lazada publishes no per-second limit in what was read, and it reviews the call success rate of an app (85% to go online).
 const DEFAULT_SPACING_MS = 1000;
 const DAY_MS = 86_400_000;
@@ -112,15 +115,14 @@ export function parseLazadaTime(text: unknown): number | null {
   return Number.isNaN(ms) || !isoDay(m[1]!) ? null : ms;
 }
 
-// The cursor: where the window of updated orders starts and how many of its orders were already read. `u:2026-11-02T03:04:05.000Z:100`.
-const CURSOR = /^u:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z):(\d{1,4})$/;
-function readCursor(since: string | null): { start: number; skip: number } | null {
+// The cursor: where the window of updated orders starts, `u:2026-11-02T03:04:05.000Z`. Never an offset: every read is offset 0 of a window that moves forward.
+const CURSOR = /^u:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/;
+function readCursor(since: string | null): number | null {
   const m = since === null ? null : CURSOR.exec(since);
-  if (!m) return null;
-  const start = Date.parse(m[1]!);
-  return Number.isNaN(start) ? null : { start, skip: Number(m[2]) };
+  const start = m ? Date.parse(m[1]!) : Number.NaN;
+  return Number.isNaN(start) ? null : start;
 }
-const writeCursor = (start: number, skip: number): string => `u:${new Date(start).toISOString()}:${skip}`;
+const writeCursor = (start: number): string => `u:${new Date(start).toISOString()}`;
 
 export interface LazadaOptions {
   // Bound to LAZADA_HOSTS by the caller (hostBoundFetch); the adapter uses no other.
@@ -142,14 +144,15 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
   const now = options.now ?? (() => new Date());
   const spacingMs = options.spacingMs ?? DEFAULT_SPACING_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let lastCall = Number.NEGATIVE_INFINITY;
+  // The last call of each app key: Lazada limits per app, so one app's calls are spaced from each other and another app's are not held up by them.
+  const lastCalls = new Map<string, number>();
 
   // One signed GET; the `data` of an answer whose code is "0". A failure is one of the port's kinds, never Lazada's text.
   async function call(credential: LazadaCredential, path: string, apiParams: Record<string, string>): Promise<unknown> {
     // The slot is taken before waiting, so two calls in flight at once are spaced from each other too.
-    const slot = Math.max(now().getTime(), lastCall + spacingMs);
+    const slot = Math.max(now().getTime(), (lastCalls.get(credential.appKey) ?? Number.NEGATIVE_INFINITY) + spacingMs);
     const wait = slot - now().getTime();
-    lastCall = slot;
+    lastCalls.set(credential.appKey, slot);
     if (wait > 0) await sleep(wait);
     const params: Record<string, string> = { ...apiParams, app_key: credential.appKey, timestamp: String(now().getTime()), sign_method: 'sha256', access_token: credential.accessToken };
     params.sign = signLazadaRequest(credential.appSecret, path, params);
@@ -159,9 +162,11 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     } catch {
       throw new MarketplaceProviderError('unreachable');
     }
-    if (response.status === 429) throw new MarketplaceProviderError('rate_limited');
-    if (response.status === 401 || response.status === 403) throw new MarketplaceProviderError('credentials');
-    if (!response.ok) throw new MarketplaceProviderError('unreachable');
+    if (!response.ok) {
+      // The body is released, not left to hold the connection until the transport cleans up.
+      await response.body?.cancel().catch(() => undefined);
+      throw new MarketplaceProviderError(response.status === 429 ? 'rate_limited' : response.status === 401 || response.status === 403 ? 'credentials' : 'unreachable');
+    }
     let answer: unknown;
     try {
       answer = parseMarketplaceJson(await readCappedAnswer(response, () => new MarketplaceProviderError('unreachable')));
@@ -191,45 +196,53 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     const picked = isRecord(data) ? data.orders : undefined;
     if (picked === undefined) return [];
     if (!Array.isArray(picked) || picked.length > PAGE_SIZE) throw notRecognized();
+    const seen = new Set<string>();
     return picked.map((entry) => {
       const o = pickAllowed(entry, ORDER_FIELDS);
-      const id = marketplaceIdentifier(o?.order_id, 40);
+      const id = marketplaceDigits(o?.order_id, 40);
       const number = marketplaceIdentifier(o?.order_number, 40);
       const created = parseLazadaTime(o?.created_at);
       const updatedAt = parseLazadaTime(o?.updated_at);
-      if (!o || id === null || number === null || created === null || updatedAt === null) throw notRecognized();
-      return { id, number, createdDay: String(o.created_at).trim().slice(0, 10), updatedAt };
+      // An order id twice in one answer is not Lazada's: it would write the same line twice.
+      if (!o || id === null || number === null || created === null || updatedAt === null || seen.has(id)) throw notRecognized();
+      seen.add(id);
+      // The order's day is the day in Vietnam, whatever offset Lazada wrote the time in.
+      return { id, number, createdDay: new Date(created + VIETNAM_OFFSET_MS).toISOString().slice(0, 10), updatedAt };
     });
   }
 
   // The items of the orders, in batches of at most 50 ids, by order id. One order with no item, or an item of another order than the one asked, refuses the page.
   async function readItems(credential: LazadaCredential, orders: readonly RawOrder[]): Promise<Map<string, Array<{ line: MarketplaceOrderLine; stage: MarketplaceOrderStage }>>> {
     const byOrder = new Map<string, Array<{ line: MarketplaceOrderLine; stage: MarketplaceOrderStage }>>();
+    // An item id twice in a page would be one line written twice.
+    const seenItems = new Set<string>();
     for (let from = 0; from < orders.length; from += ITEMS_BATCH) {
       const batch = orders.slice(from, from + ITEMS_BATCH);
       const data = await call(credential, ITEMS_PATH, { order_ids: `[${batch.map((o) => o.id).join(',')}]` });
       if (!Array.isArray(data)) throw notRecognized();
       const asked = new Set(batch.map((o) => o.id));
       for (const group of data) {
-        const orderId = marketplaceIdentifier(isRecord(group) ? group.order_id : undefined, 40);
+        const orderId = marketplaceDigits(isRecord(group) ? group.order_id : undefined, 40);
         const items = isRecord(group) ? group.order_items : undefined;
         if (orderId === null || !asked.has(orderId) || !Array.isArray(items)) throw notRecognized();
         const rows = byOrder.get(orderId) ?? [];
         for (const raw of items) {
           const item = pickAllowed(raw, ITEM_FIELDS);
-          const itemId = marketplaceIdentifier(item?.order_item_id, 40);
+          const itemId = marketplaceDigits(item?.order_item_id, 40);
           const paid = marketplaceMoney(item?.paid_price);
           const price = marketplaceMoney(item?.item_price);
           const status = typeof item?.status === 'string' ? item.status.trim().toLowerCase() : '';
           const stage = Object.hasOwn(LAZADA_ITEM_STAGE, status) ? LAZADA_ITEM_STAGE[status] : undefined;
           // An item of another order, a masked or missing amount or SKU, a currency other than dong or a status not in the table: the page is not stored.
           if (!item || itemId === null || paid === null || price === null || stage === undefined) throw notRecognized();
-          if (marketplaceIdentifier(item.order_id, 40) !== orderId) throw notRecognized();
+          if (marketplaceDigits(item.order_id, 40) !== orderId) throw notRecognized();
           if (item.currency !== undefined && item.currency !== 'VND') throw notRecognized();
           const sku = item.sku === undefined || item.sku === null || item.sku === '' ? null : marketplaceIdentifier(item.sku, 100);
           if (sku === null && item.sku !== undefined && item.sku !== null && item.sku !== '') throw notRecognized();
+          // A product name is the seller's own text: an asterisk in it (a size, a footnote) is not a mask, so only an order number, a SKU and an amount are checked for one.
           const name = typeof item.name === 'string' ? item.name : '';
-          if (looksMasked(name)) throw notRecognized();
+          if (seenItems.has(itemId)) throw notRecognized();
+          seenItems.add(itemId);
           // One order item is one unit (Lazada answers each unit as its own item): quantity 1, the item's own id as the line key.
           rows.push({ line: { lineKey: itemId, sku, itemName: cleanLabel(name, 300), quantity: '1', unitPrice: price, amount: paid }, stage });
         }
@@ -258,15 +271,16 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
       }
     },
 
-    // The orders updated since the cursor, at most one page of 100: the window starts at the cursor (the last 30 days on the first read) and the cursor says how many of its orders were read. An order
-    // answers as one port order for each stage its items are in, so an order whose items are in different states keeps each item's own state.
+    // The orders updated since the cursor, at most one page of 100 (raw orders: an order whose items are in different states answers as one port order for each state, so a port page may hold more
+    // port orders than that). The window starts at the cursor (never earlier than 30 days back: the capability's window) and is always read from offset 0, ascending by update time, and moves forward:
+    // a full page resumes a second before its newest order, a short page resumes ten minutes before it. An order Lazada updates between two pages moves to the end of the list and is read later, and no
+    // position is ever skipped, because there is no position to skip. Repeats are the confirm step's to dedupe.
     async listOrders(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceOrderPage> {
       if (platform !== 'lazada') throw new MarketplaceProviderError('unreachable');
       const credential = parseLazadaSecret(secret);
-      const cursor = readCursor(since);
-      const start = cursor?.start ?? now().getTime() - WINDOW_DAYS * DAY_MS;
-      const skip = cursor?.skip ?? 0;
-      const raw = await readOrders(credential, { update_after: lazadaStamp(start), sort_by: 'updated_at', sort_direction: 'ASC', offset: String(skip), limit: String(PAGE_SIZE) });
+      const floor = now().getTime() - WINDOW_DAYS * DAY_MS;
+      const start = Math.max(readCursor(since) ?? floor, floor);
+      const raw = await readOrders(credential, { update_after: lazadaStamp(start), sort_by: 'updated_at', sort_direction: 'ASC', offset: '0', limit: String(PAGE_SIZE) });
       // Nothing new: the cursor stays.
       if (raw.length === 0) return { orders: [], nextCursor: since };
       const items = await readItems(credential, raw);
@@ -284,15 +298,17 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
         .map((o) => ({ ...o, lines: [...o.lines].sort((a, b) => (a.lineKey < b.lineKey ? -1 : a.lineKey > b.lineKey ? 1 : 0)) }))
         .sort((a, b) => (a.orderNo === b.orderNo ? (a.stage < b.stage ? -1 : 1) : a.orderNo < b.orderNo ? -1 : 1));
       const newest = Math.max(...raw.map((o) => o.updatedAt));
-      let next: string;
+      let next: number;
       if (raw.length >= PAGE_SIZE) {
-        // A full page: more orders wait in the same window. Past Lazada's offset limit the window moves forward to the last order seen instead (article 121327).
-        next = skip + raw.length >= MAX_OFFSET ? writeCursor(raw[raw.length - 1]!.updatedAt, 0) : writeCursor(start, skip + raw.length);
+        // A full page: more orders wait. The window cannot move when a hundred orders were all updated within a second of its start (a bulk change): that is shown as `not_recognized`, never read
+        // again in a loop and never skipped without a trace.
+        next = newest - TIE_MS;
+        if (next <= start) throw notRecognized();
       } else {
         // The window is read to its end: the next one starts a little before the newest order, and never earlier than this one.
-        next = writeCursor(Math.max(start, newest - OVERLAP_MS), 0);
+        next = Math.max(start, newest - OVERLAP_MS);
       }
-      return { orders, nextCursor: next };
+      return { orders, nextCursor: writeCursor(next) };
     },
 
     // Not in this slice: the order's money lines come with the finance reads (S5); a poll never asks for them today.

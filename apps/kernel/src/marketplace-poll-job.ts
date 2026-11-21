@@ -111,9 +111,10 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: not_recognized`);
     return { state: 'not_recognized', orders: 0, staged: false };
   }
-  // A page past what the intake accepts is recorded as such and never ingested; the cursor stays, so an owner sees it rather than a silent gap.
+  // A page past what the intake accepts is recorded as such and never ingested; the cursor stays, so an owner sees it rather than a silent gap. The limit is on ORDERS, counted by order number: a
+  // platform that keeps the state of each item (Lazada) answers an order whose items are in different states as one port order for each state.
   const limit = MARKETPLACE_PLATFORM_LIMITS[target.platform];
-  if (page.orders.length > limit.pageSize) {
+  if (new Set(page.orders.map((order) => order.orderNo)).size > limit.pageSize) {
     await record({ state: 'too_large' });
     return { state: 'too_large', orders: page.orders.length, staged: false };
   }
