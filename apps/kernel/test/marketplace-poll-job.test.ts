@@ -10,6 +10,9 @@ import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_HOSTS, lazadaMarketplace } from '../src/marketplace-lazada.ts';
 import { MARKETPLACE_MAX_PAGES_PER_RUN, marketplaceJobKind, runMarketplacePoll, runMarketplaceTest, zMarketplaceJob } from '../src/marketplace-poll-job.ts';
 import { fakeLazada, fakeOrder } from './fake-lazada.ts';
+import { TIKTOK_HOSTS } from '../src/marketplace-tiktok.ts';
+import { tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';
+import { fakeLine as fakeTiktokLine, fakeOrder as fakeTiktokOrder, fakeReturn as fakeTiktokReturn, fakeTiktok } from './fake-tiktok.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const CONNECTION = '22222222-2222-4222-8222-222222222222';
@@ -18,7 +21,7 @@ const goodPage = (): MarketplaceOrderPage => ({
   nextCursor: 'sandbox:1',
 });
 
-function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' = 'shopee', duplicate = false, ingestFails = false) {
+function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' | 'tiktok_shop' = 'shopee', duplicate = false, ingestFails = false) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const puts: string[] = [];
   const runtime = {
@@ -135,6 +138,26 @@ describe('the real Lazada adapter through the job', () => {
     expect(ingests()).toHaveLength(1);
     expect(polls()).toHaveLength(1);
     expect(polls()[0]).toMatchObject({ state: 'ok' });
+  });
+});
+
+describe('the real TikTok Shop adapter through the job', () => {
+  it('stages a page of orders in two stages and a return, with the fake TikTok behind the adapter, and records a cursor the job accepts', async () => {
+    const key = { appKey: '123abc', appSecret: 'helloworld', accessToken: 'TTP_access_token_1' };
+    const now = Date.parse('2026-11-21T08:00:00Z');
+    const base = Math.floor(now / 1000) - 3600;
+    const lineA = fakeTiktokLine({ display_status: 'COMPLETED' });
+    const done = fakeTiktokOrder({ status: 'COMPLETED', update_time: base + 10, rts_time: base - 9000, delivery_time: base - 7000, line_items: [lineA, fakeTiktokLine({ display_status: 'COMPLETED' })] });
+    const mixed = fakeTiktokOrder({ status: 'PARTIALLY_SHIPPING', update_time: base + 20, line_items: [fakeTiktokLine({ display_status: 'IN_TRANSIT' }), fakeTiktokLine({ display_status: 'AWAITING_SHIPMENT' })] });
+    const fake = fakeTiktok({ ...key, now: () => now, orders: [done, mixed], returns: [fakeTiktokReturn({ order_id: done.id, update_time: base + 30, return_line_items: [{ order_line_item_id: lineA.id }] })] });
+    const tiktok = tiktokMarketplace({ fetch: hostBoundFetch(TIKTOK_HOSTS, fake.fetch), now: () => new Date(now), sleep: async () => undefined });
+    const secret = JSON.stringify({ ...key, shopCipher: 'GCP_XF90igAAAABh00qsWgtvOiGFNqyubMt3', shopId: '7000714532876273420' });
+    const { run, polls, ingests } = setup(() => tiktok.listOrders(secret, 'tiktok_shop', null), 'tiktok_shop');
+    // The completed order's two units split into a completed line and a returned one; the mixed order into a shipped and a placed one: four port orders.
+    expect(await run(1)).toEqual({ state: 'ok', orders: 4, staged: true });
+    expect(ingests()).toHaveLength(1);
+    expect(polls()).toHaveLength(1);
+    expect(polls()[0]).toMatchObject({ state: 'ok', cursor: expect.stringMatching(/^o:.{24};r:.{24}$/) });
   });
 });
 
