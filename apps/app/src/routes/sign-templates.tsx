@@ -19,14 +19,17 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
-import { errorMessage, getCurrentOrg, queryClient } from '../lib/api.ts';
+import { errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignPdfBytes,
   signApi,
   uploadSignPdf,
+  type SignSharedSummary,
   type SignSignerRecord,
   type SignTemplateDetail,
   type SignTemplateFieldRecord,
@@ -896,6 +899,7 @@ export function SignTemplatesPage() {
 
   // Create template dialog state
   const [createOpen, setCreateOpen] = useState(false);
+  const [drafterOpen, setDrafterOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createDesc, setCreateDesc] = useState('');
   const [createRouting, setCreateRouting] = useState<SignRoutingMode>('parallel');
@@ -1249,6 +1253,37 @@ export function SignTemplatesPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const defaultPartyAName = meQuery.data?.orgs.find((o) => o.slug === slug)?.name ?? '';
+
+  const canEditTemplateSharedSummary = useMemo(() => {
+    if (!detail || detail.template.status === 'archived') return false;
+    const me = meQuery.data;
+    if (!me) return true;
+    const orgSummary = me.orgs.find((o) => o.slug === slug);
+    if (!orgSummary) return false;
+    if (orgSummary.role === 'owner' || orgSummary.role === 'admin') return true;
+    return orgSummary.role === 'member' && me.userId === detail.template.createdBy;
+  }, [detail, meQuery.data, slug]);
+
+  const templateSharedSummaryMutation = useMutation({
+    mutationFn: (vars: {
+      templateId: string;
+      shareSummaryWithSigners: boolean;
+      sharedSummary: SignSharedSummary | null;
+    }) => signApi.setTemplateSharedSummary(vars),
+    onSuccess: async (_res, vars) => {
+      await invalidateTemplates(vars.templateId);
+      toast(tSign('sharedSummary.savedToast'));
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
   const instantiateMutation = useMutation({
     mutationFn: async (vars: { capturedSlug: string | undefined }) => {
       if (!detail) throw new Error('No template selected');
@@ -1411,9 +1446,25 @@ export function SignTemplatesPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button type="button" onClick={() => setCreateOpen(true)} data-testid="sign-tpl-new-btn">
-            {t('createButton')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDrafterOpen(true)}
+              data-testid="sign-tpl-open-drafter-btn"
+            >
+              {tSign('drafter.openButton')}
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11"
+              onClick={() => setCreateOpen(true)}
+              data-testid="sign-tpl-new-btn"
+            >
+              {t('createButton')}
+            </Button>
+          </div>
         }
       />
 
@@ -1723,6 +1774,26 @@ export function SignTemplatesPage() {
                   }
                   onCopyUrl={(url) => void handleCopy(url)}
                 />
+
+                {canEditTemplateSharedSummary ||
+                Boolean(detail.template.sharedSummary) ||
+                Boolean(detail.template.shareSummaryWithSigners) ? (
+                  <SenderSharedSummaryEditor
+                    recordKey={`tpl-${detail.template.id}`}
+                    initialShare={Boolean(detail.template.shareSummaryWithSigners)}
+                    initialSummary={detail.template.sharedSummary ?? null}
+                    pageCount={detail.template.pageCount ?? detectedPages}
+                    editable={canEditTemplateSharedSummary}
+                    saving={templateSharedSummaryMutation.isPending}
+                    onSave={(payload) =>
+                      templateSharedSummaryMutation.mutateAsync({
+                        templateId: detail.template.id,
+                        shareSummaryWithSigners: payload.shareSummaryWithSigners,
+                        sharedSummary: payload.sharedSummary,
+                      })
+                    }
+                  />
+                ) : null}
 
                 <Card>
                   <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-3">
@@ -2127,6 +2198,28 @@ export function SignTemplatesPage() {
           if (!archiveMutation.isPending && detail) archiveMutation.mutate(detail.template.id);
         }}
       />
+
+      {drafterOpen ? (
+        <ContractDrafterDialog
+          open={drafterOpen}
+          onOpenChange={setDrafterOpen}
+          defaultPartyAName={defaultPartyAName}
+          onEnvelopeCreated={async (envelopeId) => {
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+          onTemplateCreated={async (templateId) => {
+            pendingCreatedIdRef.current = templateId;
+            const nextFilters = nextFiltersAfterTemplateCreate(tab);
+            if (nextFilters.tab !== tab) setTab(nextFilters.tab);
+            setSearchQuery(nextFilters.searchQuery);
+            setSelectedId(templateId);
+            await invalidateTemplates(templateId);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
