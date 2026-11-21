@@ -152,7 +152,7 @@ export {
 export { MARKETPLACE_COLUMN_CHECK_REQUESTED, type MarketplaceColumnsTarget } from './marketplace-columns.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
-export { readWithSavedColumns, type SavedColumns } from './marketplace-column-apply.ts';
+export { readWithSavedColumns, type SavedMapping } from './marketplace-column-apply.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 export { createMarketplacePayoutCommands } from './marketplace-payout-record.ts';
 export { createMarketplaceFeeClearingCommands } from './marketplace-fee-clearing-record.ts';

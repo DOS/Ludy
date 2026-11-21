@@ -586,7 +586,8 @@ export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: stri
   // Not an order report: the same call says whether it is an income report, so the caller can skip that reader (and its sandbox parse) for any other sheet (#2753).
   if (!orders.recognized || orders.platform === null || orders.profile === null) {
     // No built-in profile fits: a mapping a person saved for a file with this very header row reads it (#4037), and its lines are staged like any report's for a person to approve.
-    const applied = await readWithSavedColumns(deps, orgId, bytes, attempt);
+    // An income report (the same call says so) is the income reader's, never an order report read through a mapping.
+    const applied = orders.incomeReport === true ? null : await readWithSavedColumns(deps, orgId, bytes, attempt);
     if (applied === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
     orders = applied;
   }

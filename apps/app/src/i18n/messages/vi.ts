@@ -15024,6 +15024,7 @@ export const vi = {
         suggest_source: 'Đọc tên sản phẩm và SKU của các dòng đơn sàn chưa gán để gợi ý mặt hàng',
         columns_check: 'Yêu cầu đọc các cột của báo cáo đơn hàng sàn chưa nhận ra và kiểm tra cách ghép cột trên tệp',
         columns_record: 'Ghi lại kết quả kiểm tra cột của báo cáo đơn hàng sàn chưa nhận ra',
+        columns_saved: 'Đọc các cách ghép cột đã lưu cho báo cáo đơn hàng sàn',
         columns_target: 'Đọc báo cáo đơn hàng sàn chưa nhận ra đang chờ được kiểm tra cột',
         columns_files: 'Liệt kê các báo cáo đơn hàng sàn chưa nhận ra để kiểm tra cột',
         columns: 'Xem kết quả kiểm tra cột của báo cáo đơn hàng sàn chưa nhận ra',

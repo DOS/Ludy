@@ -120,9 +120,14 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
   const [rereadAsked, setRereadAsked] = useState(false);
   // Focus goes to the saved note when the Save button it replaces disappears.
   const savedNote = useRef<HTMLParagraphElement>(null);
+  const rereadNote = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (savedNow) savedNote.current?.focus();
   }, [savedNow]);
+  // And to the note that replaces the "read now" button, so a keyboard user is not left on the page body.
+  useEffect(() => {
+    if (rereadAsked) rereadNote.current?.focus();
+  }, [rereadAsked]);
   const status = useQuery({
     ...orpc.marketplace.columns.queryOptions({ input: { fileId: file.fileId } }),
     enabled: opened,
@@ -168,7 +173,6 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
     mutationFn: () => client.files.reextract({ fileId: file.fileId, idempotencyKey: crypto.randomUUID() }),
     onSuccess: () => {
       setRereadAsked(true);
-      toast(t('readRequested'), 'success');
       void queryClient.invalidateQueries({ queryKey: orpc.marketplace.columnsFiles.key() });
       void queryClient.invalidateQueries({ queryKey: orpc.marketplace.staged.key() });
     },
@@ -194,7 +198,7 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
           {t('saved')}
         </p>
         {rereadAsked ? (
-          <p className="mt-3 text-xs text-subtle-foreground" role="status" data-testid="staged-columns-reread-asked">
+          <p ref={rereadNote} tabIndex={-1} className="mt-3 text-xs text-subtle-foreground outline-none" role="status" data-testid="staged-columns-reread-asked">
             {t('readRequested')}
           </p>
         ) : (

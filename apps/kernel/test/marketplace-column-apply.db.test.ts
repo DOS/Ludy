@@ -104,7 +104,7 @@ suite('a saved column mapping applied on import (#4037)', () => {
       o.owner,
       over.at ?? null,
     ]);
-  const staged = (o: Org) => rt.query<Array<{ fileId: string; summary: { platform: string; lines: number; orders: number; profile: { version: string; confirmed: boolean } } }>>('finance.marketplace.staged', {}, { actor: asUser(o.member), orgId: o.orgId });
+  const staged = (o: Org) => rt.query<Array<{ fileId: string; summary: { platform: string; lines: number; orders: number; profileVersion: string; profileConfirmed: boolean } }>>('finance.marketplace.staged', {}, { actor: asUser(o.member), orgId: o.orgId });
   const orderRows = (o: Org) => rows<{ order_no: string }>('SELECT order_no FROM crove_finance.channel_order WHERE org_id = $1 ORDER BY order_no', [o.orgId]);
 
   beforeAll(async () => {
@@ -159,10 +159,9 @@ suite('a saved column mapping applied on import (#4037)', () => {
     expect(result.handled).toBe(true);
     const waiting = await staged(o);
     expect(waiting.map((s) => s.fileId)).toEqual([result.fileId]);
-    expect(waiting[0]?.summary).toMatchObject({ platform: 'shopee', lines: 3, orders: 3 });
+    expect(waiting[0]?.summary).toMatchObject({ platform: 'shopee', lines: 3, orders: 3, profileConfirmed: false });
     // A mapping a person confirmed is not the profile's own words, nor a real seller's file checked: its version says so.
-    expect(waiting[0]?.summary.profile.version.endsWith('+columns')).toBe(true);
-    expect(waiting[0]?.summary.profile.confirmed).toBe(false);
+    expect(waiting[0]?.summary.profileVersion).toMatch(/\+columns$/);
     // Staged, nothing stored yet; a member confirms and the orders are stored once.
     expect(await orderRows(o)).toEqual([]);
     await rt.execute('finance.marketplace.confirm', { fileId: result.fileId }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -190,14 +189,21 @@ suite('a saved column mapping applied on import (#4037)', () => {
     expect(await staged(o)).toEqual([]);
   });
 
-  it('looks the mapping up for the worker alone, the newest confirmation winning whichever platform it was saved for', async () => {
+  it('lists the mappings for the worker alone: the latest for each header row, whichever platform, the newest first', async () => {
     const o = await org();
     await saveProfile(o, COLUMNS, { platform: 'tiktok_shop', at: '2026-11-01T00:00:00Z' });
     await saveProfile(o, COLUMNS, { platform: 'lazada', at: '2026-11-02T00:00:00Z' });
-    await expect(rt.query('finance.marketplace.columns_saved', { headerDigest: digest }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await saveProfile(o, REFUSED_COLUMNS, { digest: 'f'.repeat(64), at: '2026-11-03T00:00:00Z' });
+    await expect(rt.query('finance.marketplace.columns_saved', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     const system = { type: 'system' as const, component: 'test' };
-    expect(await worker.query('finance.marketplace.columns_saved', { headerDigest: digest }, { actor: system, orgId: o.orgId })).toMatchObject({ platform: 'lazada', assignments: COLUMNS.map(({ index, field }) => ({ index, field })) });
-    expect(await worker.query('finance.marketplace.columns_saved', { headerDigest: 'f'.repeat(64) }, { actor: system, orgId: o.orgId })).toBeNull();
-    await expect(worker.query('finance.marketplace.columns_saved', { headerDigest: 'not-hex' }, { actor: system, orgId: o.orgId })).rejects.toBeTruthy();
+    const saved = await worker.query<Array<{ headerDigest: string; platform: string; columns: unknown }>>('finance.marketplace.columns_saved', {}, { actor: system, orgId: o.orgId });
+    expect(saved.map((s) => [s.headerDigest, s.platform])).toEqual([
+      ['f'.repeat(64), 'shopee'],
+      [digest, 'lazada'],
+    ]);
+    expect(saved[1]?.columns).toEqual(COLUMNS);
+    // An org with none gets an empty list, and the lookup takes no digest from a caller.
+    expect(await worker.query('finance.marketplace.columns_saved', {}, { actor: system, orgId: (await org()).orgId })).toEqual([]);
+    await expect(worker.query('finance.marketplace.columns_saved', { headerDigest: digest }, { actor: system, orgId: o.orgId })).rejects.toBeTruthy();
   });
 });
