@@ -146,6 +146,11 @@ describe('line identity and paging', () => {
     const second = await poll([crossed], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })]);
     expect(stagesOf(second.page, 'A1')).toEqual(['completed:A|+']);
     expect(detailCalls(second.fake)).toHaveLength(0);
+    // The writer puts a `'` in front of a name that starts a formula, so a SKU `'=A|` and a line with no SKU named `=A` make the same base too.
+    const formula = order('A1', { items: [item({ modelSku: "'=A|", itemSku: '', quantity: 1, name: 'Khác', modelName: '' }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: '', itemSku: '', name: '=A', modelName: '', quantity: 2 })] });
+    const third = await poll([formula], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })]);
+    expect(stagesOf(third.page, 'A1')).toEqual(["completed:'=A|+"]);
+    expect(detailCalls(third.fake)).toHaveLength(0);
     // The same two lines under different SKUs are split as usual.
     const distinct = order('A1', { items: [item({ modelSku: 'ONE', quantity: 1 }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: 'TWO', quantity: 2 })] });
     expect(stagesOf((await poll([distinct], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })])).page, 'A1')).toEqual(['returned:TWO', 'completed:ONE']);

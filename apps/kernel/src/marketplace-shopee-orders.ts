@@ -18,7 +18,7 @@
 // platform's own limit), 3 days, a day, 6 hours, an hour, 10 minutes, a minute; past that the page is `not_recognized`, never skipped without a trace. The width that worked is kept in the cursor: a window with
 // no order makes the next one wider (a quiet shop is read in one call, and a burst that was cut is passed quickly), a window with orders keeps its width. A caught-up poll moves the cursor only when it found orders.
 import { money, toMoney } from '@crove/l10n-vn';
-import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@crove/mod-finance';
+import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceCellText, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@crove/mod-finance';
 import { cleanLabel, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { SHOPEE_MAX_RETURN_DETAILS, goodsBackLines, mayBringGoodsBack, readReturnDetail, readReturnList, type ShopeeReturn } from './marketplace-shopee-returns.ts';
 import { SHOPEE_HOSTS, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, testShopeeConnection, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
@@ -155,7 +155,8 @@ function parseOrder(entry: unknown, latestMs: number): RawOrder {
 
 // The base of the key the intake gives a Shopee line (packages/l10n-vn marketplace-orders.ts, orderLines): the SKU cell when there is one, else `<name>|<variation>`, and the Shopee report has no variation column. Two
 // lines of one order with the same base are told apart only by their ROW ORDER, so the comparison is on exactly this text (a SKU that ends in `|` and a line with no SKU and the same name make the same base).
-const intakeBaseKey = (line: MarketplaceOrderLine): string => (line.sku !== null && line.sku.trim() !== '' ? line.sku.trim() : `${line.itemName.trim()}|`);
+// The name goes through the writer's own cell rule first (a name that starts a formula gets a leading `'`, which the reader then keeps), so the comparison is on the text the reader sees.
+const intakeBaseKey = (line: MarketplaceOrderLine): string => (line.sku !== null && line.sku.trim() !== '' ? line.sku.trim() : `${marketplaceCellText(line.itemName).trim()}|`);
 
 // The port orders of the raw ones, sorted by number. An order with lines whose goods came back answers as TWO port orders of one number: the returned lines first (stage `returned`), then the rest in the stage the
 // order had, so a line never moves back (the intake dedupes by order and line and moves a stage forward only). Dates only where the stage makes them true.
