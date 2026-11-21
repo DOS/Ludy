@@ -5655,6 +5655,9 @@ export const en = {
     authorize: 'Authorize',
     authorizeAgain: 'Authorize again',
     reauthorizeBy: 'authorize again before {when}',
+    reauthorizeSoon: 'The authorization given to the marketplace ends on {when}. Press Authorize again before then so Ludy keeps pulling orders.',
+    reauthorizeEnded: 'The authorization given to the marketplace ended on {when}, so Ludy cannot pull new orders. Press Authorize again.',
+    discardWaiting: 'Also discard the {count} orders from this connection still waiting for confirmation (nothing is posted; the originals are deleted on the retention that already applies)',
     authorizeStates: {
       pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',
@@ -14197,6 +14200,7 @@ export const en = {
       MARKETPLACE_AUTHORIZE_INVALID: 'The authorization link is not valid, has expired or was already used; press Authorize again.',
       MARKETPLACE_AUTHORIZE_UNSUPPORTED: 'This connection does not need to be authorized on the marketplace.',
       MARKETPLACE_APP_KEY_MISSING: 'This connection has no App Key saved; disconnect it and connect again.',
+      MARKETPLACE_TOO_MANY_STAGED: 'There are too many reports waiting to discard at once; confirm or discard some in the inbox, then disconnect again.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',
       MARKETPLACE_INCOME_NOT_STAGED: 'This income report was already handled or was read again; reload the list.',

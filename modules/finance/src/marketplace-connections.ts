@@ -678,6 +678,29 @@ export const marketplaceConnectionList = defineQuery({
   },
 });
 
+// The reports of one connection that wait in the Inbox (staged: no member has confirmed or rejected them), by file id, for "disconnect and discard what is waiting" (#4240 S3b). The same condition as
+// `ordersWaiting` in the list: the file's name carries the connection's id and its latest read is a staged marketplace report. Read only; the rpc runs each through `finance.marketplace.reject`, the
+// member's own decision, so nothing is deleted here and the originals follow the retention that already exists for a decided report. More than the cap is refused whole, so a disconnect never discards part.
+const MARKETPLACE_DISCARD_MAX = 500;
+export const marketplaceConnectionStaged = defineQuery({
+  name: 'finance.marketplace_connection.staged',
+  input: z.strictObject({ id: zId }),
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<{ fileIds: string[] }> => {
+    const { rows } = await sql<{ file_id: string }>`
+      SELECT f.id::text AS file_id
+      FROM crove_finance.marketplace_connection c
+      JOIN crove_kernel.file f ON f.org_id = c.org_id AND f.filename LIKE 'don-hang-%' AND pg_catalog.strpos(f.filename, c.id::text) > 0
+      JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.id}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
+        AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+      ORDER BY f.created_at, f.id
+      LIMIT ${MARKETPLACE_DISCARD_MAX + 1}`.execute(ctx.trx);
+    if (rows.length > MARKETPLACE_DISCARD_MAX) throw new DomainError('MARKETPLACE_TOO_MANY_STAGED', 409, 'Có quá nhiều báo cáo đang chờ để bỏ một lần; hãy xác nhận hoặc bỏ bớt trong hộp thư đến rồi ngắt kết nối lại');
+    return { fileIds: rows.map((r) => r.file_id) };
+  },
+});
+
 // A page of the active connections of active orgs after a key (crove_finance.marketplace_poll_due, the worker login's alone), for the worker's sweep, which pages through them all.
 export const MARKETPLACE_POLL_DUE_PAGE = 1000;
 export async function marketplacePollDue(workerDb: Db, after: { orgId: string; id: string } | null): Promise<Array<{ orgId: string; id: string; provider: string }>> {
@@ -699,4 +722,4 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionAuthorizeRecord,
   marketplaceConnectionAuthorizeComplete,
 ];
-export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget];
+export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget, marketplaceConnectionStaged];

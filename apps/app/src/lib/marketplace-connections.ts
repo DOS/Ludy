@@ -48,6 +48,18 @@ export const AUTHORIZED_ADAPTERS: readonly string[] = ['lazada'];
 export const canAuthorize = (connection: Pick<MarketplaceConnection, 'provider' | 'status'>, adapters: readonly MarketplaceAdapterInfo[]): boolean =>
   connection.status === 'active' && AUTHORIZED_ADAPTERS.includes(adapterIdOf(connection)) && adapters.some((a) => a.id === adapterIdOf(connection) && !a.offline);
 
+// The notice on a connection whose seller authorization is running out (#4240 S3b): `soon` from this many days before `reauthorizeBy` (the end of the refresh token, a date the server keeps in the clear),
+// `ended` once it has passed (the sweep has then stopped renewing it). Only a connection that was authorized and has a date, and that was not disconnected, has one.
+export const REAUTHORIZE_NOTICE_DAYS = 14;
+export type ReauthorizeNotice = 'soon' | 'ended';
+export const reauthorizeNotice = (connection: Pick<MarketplaceConnection, 'authorizeState' | 'reauthorizeBy' | 'status'>, now: Date): ReauthorizeNotice | null => {
+  if (connection.status === 'revoked' || connection.authorizeState !== 'authorized' || !connection.reauthorizeBy) return null;
+  const left = Date.parse(connection.reauthorizeBy) - now.getTime();
+  if (Number.isNaN(left)) return null;
+  if (left <= 0) return 'ended';
+  return left <= REAUTHORIZE_NOTICE_DAYS * 86_400_000 ? 'soon' : null;
+};
+
 // The platforms a connect can name: those an adapter serves.
 export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo[]): MarketplacePlatformInfo[] => platforms.filter((p) => p.adapter);
 

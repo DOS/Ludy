@@ -5652,6 +5652,9 @@ export const vi = {
     authorize: 'Cấp quyền',
     authorizeAgain: 'Cấp quyền lại',
     reauthorizeBy: 'cần cấp quyền lại trước {when}',
+    reauthorizeSoon: 'Quyền cấp cho sàn sẽ hết hạn ngày {when}. Hãy bấm Cấp quyền lại trước ngày đó để Ludy tiếp tục lấy đơn.',
+    reauthorizeEnded: 'Quyền cấp cho sàn đã hết hạn từ {when}, Ludy không lấy được đơn mới. Hãy bấm Cấp quyền lại.',
+    discardWaiting: 'Bỏ luôn {count} đơn đang chờ xác nhận của kết nối này (không nhập vào sổ; bản gốc xóa theo thời hạn lưu hiện có)',
     authorizeStates: {
       pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại; sau 15 phút mà chưa xong thì sẽ báo lỗi và bạn bấm Cấp quyền lại.',
       authorized: 'Đã cấp quyền',
@@ -14210,6 +14213,7 @@ export const vi = {
       MARKETPLACE_AUTHORIZE_INVALID: 'Đường dẫn cấp quyền không hợp lệ, đã hết hạn hoặc đã dùng rồi; hãy bấm Cấp quyền lại.',
       MARKETPLACE_AUTHORIZE_UNSUPPORTED: 'Kết nối này không cần cấp quyền trên sàn.',
       MARKETPLACE_APP_KEY_MISSING: 'Kết nối này chưa lưu App Key; hãy ngắt kết nối rồi kết nối lại.',
+      MARKETPLACE_TOO_MANY_STAGED: 'Có quá nhiều báo cáo đang chờ để bỏ một lần; hãy xác nhận hoặc bỏ bớt trong hộp thư đến rồi ngắt kết nối lại.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
       MARKETPLACE_INCOME_NOT_STAGED: 'Báo cáo thu nhập này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
