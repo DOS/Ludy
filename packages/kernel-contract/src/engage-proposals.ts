@@ -49,6 +49,7 @@ export const ENGAGE_PROPOSALS: readonly EngageProposalSpec[] = Object.freeze([
   { command: 'ads.object.archive_approved', wraps: 'ads.object.archive', kind: 'ads.object_archive', scope: 'ludy.ads.draft' },
   { command: 'ads.budget.lower_approved', wraps: 'ads.budget.lower', kind: 'ads.budget_lower', scope: 'ludy.ads.draft' },
   { command: 'ads.schedule.shorten_approved', wraps: 'ads.schedule.shorten', kind: 'ads.schedule_shorten', scope: 'ludy.ads.draft' },
+  { command: 'ads.manage.cancel_approved', wraps: 'ads.manage.cancel', kind: 'ads.manage_cancel', scope: 'ludy.ads.draft' },
 ]);
 
 const BY_COMMAND = new Map(ENGAGE_PROPOSALS.map((p) => [p.command, p]));

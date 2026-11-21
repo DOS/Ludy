@@ -4,9 +4,9 @@
 // photographer, the photo's page and its description in crove_social.media_attribution. Files are deduplicated by
 // content, so saving the same bytes again finds the same file and keeps its first credit.
 import { z } from 'zod';
-import { SOCIAL_PHOTO_TYPES } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { SOCIAL_PHOTO_TYPES } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { STOCK_ALT_MAX, STOCK_NAME_MAX, pexelsPageUrl, stockText } from './domain/stock-photos.ts';
 
 // Those who may add to the library.

@@ -2,7 +2,7 @@
 // The yearly rule of the household tax (#3710 slice 3): nothing up to the threshold; above it VAT on all the revenue and PIT only on the part above; the VAT cut by the caller's say-so and the PIT cut up to its
 // ceiling; the household's pick of the trade that takes the deduction, never defaulted; a period is the difference of two year-to-date figures.
 import { describe, expect, it } from 'vitest';
-import type { HouseholdTrade } from '@crove/kernel-contract';
+import type { HouseholdTrade } from '@ludy/kernel-contract';
 import { annualTax, periodTax, type AnnualInput } from '../src/domain/household-annual.ts';
 
 const RATES = new Map([

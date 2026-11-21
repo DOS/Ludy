@@ -3,8 +3,8 @@
 // (ads-pause.ts, with the live write connection's token) and the revoke sweep (ads-revoke.ts, with the sealed copy of a closed connection's token, before it revokes).
 // It hands the secret to the narrowed pauser and nothing else, and turns what the pauser answers into what `ads.pause.record` takes: ids, levels, the platform's kinds
 // and codes. The secret never leaves this function, is never logged and never reaches a command.
-import { PAUSE_LEVELS, type AdPauser, type PauseResult } from '@crove/ad-platform';
-import type { PauseBegin, PauseResultInput } from '@crove/mod-ads';
+import { PAUSE_LEVELS, type AdPauser, type PauseResult } from '@ludy/ad-platform';
+import type { PauseBegin, PauseResultInput } from '@ludy/mod-ads';
 
 export type PauseWork = Extract<PauseBegin, { action: 'pause' }>;
 

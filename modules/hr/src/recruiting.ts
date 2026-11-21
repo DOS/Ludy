@@ -7,7 +7,7 @@
 // Audit facts carry IDs, stages, counts, and changed field names (plus auditValue on payroll baseWage),
 // never candidate PII or raw notes. Calendar interview event titles carry the opening role only, never candidate PII.
 import { sql } from 'kysely';
-import { acquireAdvisoryXactLock, advisoryLockKey, busyOf, kernelManifest, workingHoursOf } from '@crove/kernel';
+import { acquireAdvisoryXactLock, advisoryLockKey, busyOf, kernelManifest, workingHoursOf } from '@ludy/kernel';
 import {
   CALENDAR_RANGE_MAX_DAYS,
   HR_ERASED_NAME,
@@ -48,8 +48,8 @@ import {
   type HrPayFunction,
   type HrRegion,
   type WorkingHours,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import {
   INTERVIEW_DURATION_MAX_MINUTES,
   INTERVIEW_DURATION_MIN_MINUTES,
@@ -57,7 +57,7 @@ import {
   money,
   rankInterviewSlots,
   type InterviewInterval,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import {
   EMPLOYMENT,
   EMPLOYMENT_COLUMNS,

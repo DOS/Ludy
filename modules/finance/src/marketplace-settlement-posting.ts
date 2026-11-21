@@ -7,8 +7,8 @@
 // the return reduces 511 directly). A refund of an earlier period's sale reduces 511 in the period the refund occurs (PO decision 2026-11-08, the usual practice; only a material prior-year error is restated). When refunds and discounts exceed the sales the entry runs the other way, Dr 511 / Cr 131 for the excess. The refund total stays visible on the proposal. The rule is commentary until the accountant confirms it (#2520). The income line cannot say whether a refund
 // belongs to this period's sale or an earlier one's (the row has the order's paid date and amounts, not the original sale's period), so a refund of an earlier sale is netted the same way here, by that decision.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap). The platform's party link is a later slice: the caller fills `partyId`.
-import { DomainError } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { DomainError } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePath, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 

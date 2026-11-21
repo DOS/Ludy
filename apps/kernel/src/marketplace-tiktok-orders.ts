@@ -21,7 +21,7 @@
 //
 // THE CURSOR is two windows, `o:<iso>;r:<iso>`: the orders changed since the first and the returns changed since the second. A page token is never kept between polls (it may expire): a window whose first page
 // is full and lies within one second of its start is read on by token in the same call, up to MAX_PAGES, and past that it is `not_recognized`, never skipped without a trace.
-import { money, toMoney } from '@crove/l10n-vn';
+import { money, toMoney } from '@ludy/l10n-vn';
 import {
   MARKETPLACE_PLATFORM_LIMITS,
   MarketplaceProviderError,
@@ -32,7 +32,7 @@ import {
   type MarketplacePlatformKey,
   type MarketplaceProvider,
   type MarketplaceTestResult,
-} from '@crove/mod-finance';
+} from '@ludy/mod-finance';
 import { cleanLabel, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { TIKTOK_HOSTS, parseTiktokSecret, testTiktokConnection, tiktokCaller, type TiktokCaller, type TiktokCredential, type TiktokOptions } from './marketplace-tiktok.ts';
 

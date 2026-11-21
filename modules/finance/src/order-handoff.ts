@@ -22,10 +22,10 @@ import {
   type SalesOrderHandoff,
   type SalesOrderHandoffLine,
   type StockMoveFromOrderLineResult,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { computeLineTotals, money, sumLineTotals } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { computeLineTotals, money, sumLineTotals } from '@ludy/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { moveQuantity, movableQuantity, oppositeQuantity } from './domain/stock.ts';
 import { loadDraft, toDraftInput } from './einvoice-drafts.ts';

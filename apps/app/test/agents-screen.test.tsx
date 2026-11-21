@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MODULE_IDS } from '@crove/kernel-contract';
+import { MODULE_IDS } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { COWORKERS } from '../src/i18n/brand.ts';
 import { catalog } from '../src/i18n/runtime.ts';

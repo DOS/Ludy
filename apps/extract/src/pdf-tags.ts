@@ -3,7 +3,7 @@ import {
   EXTRACT_LIMITS,
   type PdfDetectedTag,
   type PdfDetectedTagFieldType,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import type { PageRotation } from './fonts.ts';
 
 const NORM_MICRO_SCALE = 1_000_000;

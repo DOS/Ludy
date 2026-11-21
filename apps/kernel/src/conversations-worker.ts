@@ -23,12 +23,12 @@ import {
   parseZaloNotice,
   type ConversationAdapter,
   type ConversationNotice,
-} from '@crove/channel';
+} from '@ludy/channel';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
-import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, TelegramChatWork, UsageLimits } from '@crove/kernel';
+import type { Db } from '@ludy/db';
+import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@ludy/agent';
+import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, TelegramChatWork, UsageLimits } from '@ludy/kernel';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { fetchConversationImage, fetchConversationMedia, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';

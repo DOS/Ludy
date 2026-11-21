@@ -17,8 +17,8 @@ import {
   type ProjectTaskRecurrence,
   type ProjectTaskRecurrenceClearResult,
   type ProjectTaskRecurrenceView,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
 import { READERS, WRITERS, assertNotArchived, loadProject, taskNotFound, userOf } from './shared.ts';
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A marketplace order report as .xlsx or CSV (#2515, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@crove/l10n-vn, marketplace-orders.ts): the platform is
+// A marketplace order report as .xlsx or CSV (#2515, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@ludy/l10n-vn, marketplace-orders.ts): the platform is
 // told by the headers, the lines by the allow-list of columns. A file's other columns, the buyer's name, phone, email and address among them, are never looked at beyond finding the header
 // row: the contract has no field for them, so they cannot leave this process.
 //
 // A file that is no order report of a platform the profiles know (another workbook, a bank statement, a platform whose headers fit two profiles equally) is an answer, not a failure:
 // recognized is false and the worker goes on as it did before. Only a report past the line cap is flagged apart (tooMany).
-import { EXTRACT_LIMITS, type ExtractedMarketplaceOrders } from '@crove/extract-contract';
-import { findOrderColumns, orderLines, type OrderRead } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, type ExtractedMarketplaceOrders } from '@ludy/extract-contract';
+import { findOrderColumns, orderLines, type OrderRead } from '@ludy/l10n-vn';
 import { readSheetGrid } from './bank-statement.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 

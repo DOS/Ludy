@@ -3,8 +3,8 @@
 // carried fields never booked, adjustments apart from the lines, only PAID statements as income, every currency checked against dong, and hostile pages ending as `not_recognized`. No call to TikTok: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Decimal } from '@crove/l10n-vn';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { Decimal } from '@ludy/l10n-vn';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { TIKTOK_HOSTS } from '../src/marketplace-tiktok.ts';
 import { TIKTOK_FINANCE_MAX_DAYS, tiktokFinance, type TiktokIncomeLine } from '../src/marketplace-tiktok-finance.ts';

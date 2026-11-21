@@ -9,13 +9,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError, metered, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { WAITING_FOR_AI_BUDGET, createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { AI_BUDGET_RECHECK_MS, extractAndPropose, financeAgentPrograms, financeCommands, financeQueries } from '@crove/mod-finance';
-import type { ExtractClient } from '@crove/extract-contract';
+import { AiBudgetExhaustedError, metered, withAiScope, type AiMeter, type InvoiceReader } from '@ludy/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { WAITING_FOR_AI_BUDGET, createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { AI_BUDGET_RECHECK_MS, extractAndPropose, financeAgentPrograms, financeCommands, financeQueries } from '@ludy/mod-finance';
+import type { ExtractClient } from '@ludy/extract-contract';
 import { memberMeter, systemMeter } from '../src/ai-meter.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -92,7 +92,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
 
   const setBudget = (o: { orgId: string; owner: string }, monthlyLimit: string, scope = 'org', target = '*') =>
     rt.execute('kernel.agent.budget.set', { scope, target, monthlyLimit }, { actor: asMfa(o.owner), orgId: o.orgId });
-  // A model call as the worker makes one: through the door of @crove/agent, as the system, for one feature.
+  // A model call as the worker makes one: through the door of @ludy/agent, as the system, for one feature.
   const call = (orgId: string, feature: 'social.draft' | 'finance.invoice_extract' = 'social.draft', agentId?: string) =>
     withAiScope({ orgId, agentId, meter: systemMeter(worker, { price: PRICE }) }, () => metered(feature, async () => ({ usage })));
   const status = (o: { orgId: string; owner: string }, module?: string) => rt.query<{ state: string; percent: number | null; scope: string | null }>('kernel.ai.meter.status', module ? { module } : {}, { actor: asUser(o.owner), orgId: o.orgId });

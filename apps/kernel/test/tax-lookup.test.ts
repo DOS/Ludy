@@ -3,7 +3,7 @@
 // in onboarding.db.test.ts.
 import type pg from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createTaxCodeLookup, type TaxCodeLookup } from '../src/tax-lookup.ts';

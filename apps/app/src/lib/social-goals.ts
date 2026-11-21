@@ -1,6 +1,6 @@
 // Monthly goals (#1056) in the app: the month before or after another, and the progress of a client report's goals,
 // judged with the module's rules (goalProgress) at the moment the page shows them.
-import { goalProgress, isMonthKey, type GoalMetric, type GoalProgress } from '@crove/mod-social/contract';
+import { goalProgress, isMonthKey, type GoalMetric, type GoalProgress } from '@ludy/mod-social/contract';
 
 /** The month delta months from a YYYY-MM month. */
 export function shiftMonth(month: string, delta: number): string {

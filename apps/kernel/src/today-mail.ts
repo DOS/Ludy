@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The daily "Hôm nay cần bạn" mail (issue #2406, template kernel.today_mail): what needs the member today, as counts and links
-// only, with the plain brief built from the same counts (templateBrief of @crove/agent: no model call, so the AI budget never
+// only, with the plain brief built from the same counts (templateBrief of @ludy/agent: no model call, so the AI budget never
 // touches the mail). The command that queues it (kernel.today_mail.send) wrote the merge data for one opted-in member; this
 // only checks its shape and lays it out. No amount, name, title or message text is in the payload, so none can reach the mail;
 // every link is an app path of the org, checked here before the public URL is put in front of it, and nothing secret is in it.
 import { z } from 'zod';
-import { templateBrief, type BriefFacts } from '@crove/agent';
+import { templateBrief, type BriefFacts } from '@ludy/agent';
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);

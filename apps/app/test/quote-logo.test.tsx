@@ -5,7 +5,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { QUOTE_LOGO_MAX_BYTES } from '@crove/kernel-contract';
+import { QUOTE_LOGO_MAX_BYTES } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 

@@ -6,11 +6,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { NOTE_ATTACHMENT_MAX_BYTES, type NoteAttachment } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Skeleton } from '@crove/ui/components/skeleton';
+import { NOTE_ATTACHMENT_MAX_BYTES, type NoteAttachment } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Skeleton } from '@ludy/ui/components/skeleton';
 import { ClientError, clientForOrg, errorMessage, fetchNoteAttachmentBlob, uploadNoteAttachment } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 import { refreshNotes } from './notes-panel.tsx';

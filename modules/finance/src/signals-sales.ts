@@ -10,10 +10,10 @@
 // The honesty rule: an EMPTY answer means "no sales invoice exists for these parties", so the read REFUSES whenever the caller cannot see all of them. Sales invoices are rows of a
 // legal entity, so a caller whose entity scope is narrower than the org (a branch-limited accountant) gets a DomainError with the code SIGNAL_PARTIAL_VIEW, never a list of the rows they
 // can see; a caller with no user identity gets FORBIDDEN. The composition reads a refusal as "no item".
-import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceSalesSignals, zFinanceSalesSignalsInput, type FinanceSalesSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceSalesSignals, zFinanceSalesSignalsInput, type FinanceSalesSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 

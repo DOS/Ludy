@@ -2,7 +2,7 @@
 // The VAT rate of an adjusting or a replacing sales e-invoice across the end of the 8% rate (#3709, plan einvoice-issue.md section 3c, research E row 7): by the nature a person picks, the first three
 // keep the original's rate and a change of amount uses the rate in force on the correction date.
 import { describe, expect, it } from 'vitest';
-import { EINVOICE_RATE_NATURES } from '@crove/kernel-contract';
+import { EINVOICE_RATE_NATURES } from '@ludy/kernel-contract';
 import {
   CORRECTION_RATE_PRECEDENT_NOTE,
   correctionRateDate,

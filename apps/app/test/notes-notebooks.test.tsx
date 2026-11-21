@@ -12,7 +12,7 @@ import {
   type NoteSummary,
   type NotebookSummary,
   type NotesExport,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { groupNotebooks } from '../src/components/note-notebooks.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
 import { Markdown, toggleMarkdownTaskLine } from '../src/lib/markdown.tsx';

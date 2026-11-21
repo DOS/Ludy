@@ -13,8 +13,8 @@ import {
   type CashVoucherProposal,
   type VoucherLine,
   type VoucherType,
-} from '@crove/kernel-contract';
-import { money, sum, toMoney, type JournalLineDraft } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { money, sum, toMoney, type JournalLineDraft } from '@ludy/l10n-vn';
 
 export const VOUCHER_SOURCE = 'finance.cash_voucher';
 

@@ -4,10 +4,10 @@
 // platforms still owe (131) and the fees whose invoice has not come (1388), the last two being the sums of slice D's balance rows over the platforms that owe (a negative balance, an overpaid platform or a reversed payout, is not waiting and is never netted against another platform's debt). Read only and the same scope as the balance: the row policies
 // keep it to the entities the caller may see. No platform name, order, buyer or bank data is in the answer.
 import { sql } from 'kysely';
-import { zMarketplaceBalanceInput, type MarketplaceFacts } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { zMarketplaceBalanceInput, type MarketplaceFacts } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { loadMarketplaceBalance } from './marketplace-balance.ts';
 import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';

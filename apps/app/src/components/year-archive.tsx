@@ -4,11 +4,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { YearArchive, YearArchiveVerification } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { YearArchive, YearArchiveVerification } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { archivableYears, canArchiveYears, isStalled, type ArchiveManifestView } from '../lib/year-archive.ts';

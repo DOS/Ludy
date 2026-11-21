@@ -13,7 +13,7 @@
 //   before and paid on the day, and keeps the lines paid on it. A statement unpaid for longer than that lookback is not read (the same named gap).
 // A reader refuses a window it cannot read whole (more orders than its page limit, an answer it does not recognise) as `not_recognized`: the leg records that state and the cursor stays, so a day that
 // cannot be read is seen and retried, never skipped.
-import { MarketplaceProviderError, type MarketplaceIncomeLine, type MarketplaceIncomePage, type MarketplacePlatformKey, type MarketplaceProvider } from '@crove/mod-finance';
+import { MarketplaceProviderError, type MarketplaceIncomeLine, type MarketplaceIncomePage, type MarketplacePlatformKey, type MarketplaceProvider } from '@ludy/mod-finance';
 import { isoDay, notRecognized } from './marketplace-adapter-kit.ts';
 import { lazadaFinance } from './marketplace-lazada-finance.ts';
 import type { LazadaOptions } from './marketplace-lazada.ts';

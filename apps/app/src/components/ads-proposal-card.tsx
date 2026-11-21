@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeText, isAdsManageChange } from '../lib/ads-change.ts';
 import { orpc } from '../lib/api.ts';

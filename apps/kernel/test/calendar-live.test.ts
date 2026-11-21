@@ -4,9 +4,9 @@
 // stands in the booking's way. No database, no network.
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { CalendarAdapter } from '@crove/channel';
-import { calendarBinding } from '@crove/kernel-contract';
-import { CredentialVault, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
+import type { CalendarAdapter } from '@ludy/channel';
+import { calendarBinding } from '@ludy/kernel-contract';
+import { CredentialVault, parseVaultKey, type Runtime } from '@ludy/kernel-runtime';
 import { LIVE_CHECK_TIMEOUT_MS, runLiveCheck } from '../src/calendar-live.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';

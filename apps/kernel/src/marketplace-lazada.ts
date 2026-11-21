@@ -19,7 +19,7 @@ import {
   type MarketplacePlatformKey,
   type MarketplaceProvider,
   type MarketplaceTestResult,
-} from '@crove/mod-finance';
+} from '@ludy/mod-finance';
 import { cleanLabel, isoDay, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 
 export const LAZADA_API_HOST = 'api.lazada.vn';

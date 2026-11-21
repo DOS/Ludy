@@ -1,4 +1,4 @@
-// Design-token lint for the web app (plan §9, `web` rule): screens and components use the @crove/ui theme tokens
+// Design-token lint for the web app (plan §9, `web` rule): screens and components use the @ludy/ui theme tokens
 // (`bg-primary`, `text-muted-foreground`, `border-destructive/30`, ...), never Tailwind palette colors
 // (`text-rose-300`, `bg-white`), literal colors (`#7c3aed`, `rgba(...)`, `oklch(...)`) or CSS color names
 // (`bg-[red]`, `fill="white"`, `style={{ color: 'red' }}`). Colors live only in packages/ui/src/styles/globals.css.
@@ -36,7 +36,7 @@ export function parseTailwindTheme(css) {
   return { palettes: [...palettes], singles: [...singles], shades: [...shades] };
 }
 
-/** The installed Tailwind's theme (the version @crove/ui builds with). */
+/** The installed Tailwind's theme (the version @ludy/ui builds with). */
 export function readTailwindTheme() {
   const require = createRequire(join(ROOT, 'packages/ui/package.json'));
   const path = require.resolve('tailwindcss/theme.css');
@@ -171,7 +171,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const files = args.length ? args.map((f) => relative(ROOT, f).replaceAll('\\', '/')) : defaultFiles();
   const failures = files.flatMap((file) =>
     findRawColors(readFileSync(join(ROOT, file), 'utf8'), { css: file.endsWith('.css') }).map(
-      (f) => `${file}:${f.line}: ${f.what} "${f.match}"; use a theme token from @crove/ui`,
+      (f) => `${file}:${f.line}: ${f.what} "${f.match}"; use a theme token from @ludy/ui`,
     ),
   );
   if (failures.length) {

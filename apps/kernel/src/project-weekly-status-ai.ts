@@ -8,14 +8,14 @@ import {
   type InboxReader,
   type ProjectWeeklyStatusFacts,
   type ProjectWeeklyStatusTaskFact,
-} from '@crove/agent';
+} from '@ludy/agent';
 import {
   vietnamToday,
   type ProjectWeeklyStatus,
   type ProjectWeeklyStatusState,
   type ProjectWeeklyStatusTask,
-} from '@crove/kernel-contract';
-import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
+} from '@ludy/kernel-contract';
+import type { ProjectWeeklyStatusSource } from '@ludy/mod-projects';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface ProjectWeeklyStatusAi {

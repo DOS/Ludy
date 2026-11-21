@@ -8,9 +8,9 @@
 // cost the person states, the rest Cr 711), tax withheld from a seller that is no household (Dr 1388 under the platform's party, in place of 3331 and 3335). Every adjustment names a stored line and its exact amount;
 // an unclassified or negative line is refused as before.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap).
-import { DomainError } from '@crove/kernel-runtime';
-import type { MarketplacePayoutAdjustment } from '@crove/kernel-contract';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { DomainError } from '@ludy/kernel-runtime';
+import type { MarketplacePayoutAdjustment } from '@ludy/kernel-contract';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePath, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import type { ProposedJournalLine } from './marketplace-settlement-posting.ts';

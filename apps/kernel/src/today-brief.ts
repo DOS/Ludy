@@ -2,10 +2,10 @@
 // The figures of Vy's daily brief (#2383): the member's Home list (kernel.today) reduced to counts, the sum of the waiting
 // proposals' amounts per currency and the nearest due dates. Nothing of an item's title, id or link goes further: the brief
 // is told numbers and dates only (packages/agent/src/today.ts).
-import { Decimal } from '@crove/l10n-vn';
-import { VIETNAM_TIME_ZONE, isTodayAnnotation, todayCurrency, type TodayBrief, type TodayItem } from '@crove/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
+import { VIETNAM_TIME_ZONE, isTodayAnnotation, todayCurrency, type TodayBrief, type TodayItem } from '@ludy/kernel-contract';
 import { type DraftTicket } from './ai-draft-limit.ts';
-import { AiBudgetExhaustedError, templateBrief, type BriefFacts, type BriefResult } from '@crove/agent';
+import { AiBudgetExhaustedError, templateBrief, type BriefFacts, type BriefResult } from '@ludy/agent';
 
 const DUE_DATES_MAX = 3;
 const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: VIETNAM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });

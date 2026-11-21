@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { BUILD, VERSION_MIN_GAP_MS, VERSION_POLL_MS, fetchServerBuild, isStaleBuild } from '../lib/build-version.ts';
 
 // "Please reload" when the API runs another build than this bundle (#2261). Only a bundle with a build id asks, so the

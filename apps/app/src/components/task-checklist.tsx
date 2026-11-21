@@ -6,11 +6,11 @@ import {
   countTaskChecklistSteps,
   serializeTaskChecklist,
   type TaskChecklistStep,
-} from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
+} from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

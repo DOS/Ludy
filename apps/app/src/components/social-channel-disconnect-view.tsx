@@ -5,8 +5,8 @@
 // container (social-channel-disconnect.tsx) holds the state and makes the calls.
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 
 export interface DisconnectCounts {
   threads: number;

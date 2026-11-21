@@ -4,7 +4,7 @@
 // - renderStarterContractPdf across all 5 Vietnamese SME starter templates (A4 PDF bytes, decimal money, tag neutralization)
 // - sanitizeSharedSummaryForWrite & parseSharedSummary
 import { describe, expect, it } from 'vitest';
-import { SIGN_STARTER_TEMPLATE_KINDS, type SignStarterTemplateKind } from '@crove/kernel-contract';
+import { SIGN_STARTER_TEMPLATE_KINDS, type SignStarterTemplateKind } from '@ludy/kernel-contract';
 import {
   STARTER_CONTRACT_TEMPLATES,
   buildStarterContractClauses,

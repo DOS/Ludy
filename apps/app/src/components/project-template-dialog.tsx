@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Dialogs to create a project from a starter or org template, or save an existing project as a template (#2607).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { BuiltinProjectTemplateKey, ProjectTemplateSummary } from '@crove/kernel-contract';
+import type { BuiltinProjectTemplateKey, ProjectTemplateSummary } from '@ludy/kernel-contract';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { refreshProjectQueries } from './project-task-dialog.tsx';

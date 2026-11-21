@@ -2,7 +2,7 @@
 // data (request and reminder, Reply-To, the cut-off list, escaping). The commands are covered on PostgreSQL in
 // apps/kernel/test/finance-missing-invoices.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import {
   MISSING_INVOICE_PAYLOAD_BYTES,
   collectMissing,

@@ -14,9 +14,9 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_SCOPE, canReadEventsWith, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_SCOPE, canReadEventsWith, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 

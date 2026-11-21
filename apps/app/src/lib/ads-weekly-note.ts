@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the Ads screen says in the deterministic 7-day comparison note (#2220): side-by-side platform breakdown (spend change,
 // cost per result change) and the campaign that moved the most across connected platforms, in the reader's language, per currency.
-import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@crove/kernel-contract';
+import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { adProviderName, isNamedResultKind, isSandboxProvider, signedMoney } from './ads.ts';
 import type { FlagFormat } from './ads-flags.ts';

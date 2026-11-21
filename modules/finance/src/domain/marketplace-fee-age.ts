@@ -2,7 +2,7 @@
 // How old the fees a platform kept are while no invoice has cleared them (#3711 slice 2, research A3 of docs/plan/accounting-rules-research-2026-11-18.md: "flag a balance older than one cycle").
 // The fees wait as a debit balance on the platform's 331 (the payout debits them, the platform's fee invoice credits them). Pure functions over the platform's 331 lines, so the read and the tests
 // share one rule. Money is decimal strings and decimal.js.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 
 // One settlement cycle, in days: a fee balance older than this is flagged. The research gives no number (platforms settle within days to a few weeks and invoice a month after), so this is the
 // decision recorded on #3711: 45 days since the entry that left the fees on 331, kept in this one place. A change here is the whole change.

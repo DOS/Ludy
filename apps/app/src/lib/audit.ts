@@ -1,6 +1,6 @@
 // The audit log screen's filter (#672): the form's text fields as the query's filter, and the cursor of the next page;
 // and the commands' labels (#1654), on the screen and in the exported file.
-import { AUDIT_OUTCOMES, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@crove/kernel-contract';
+import { AUDIT_OUTCOMES, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@ludy/kernel-contract';
 
 export interface AuditFilterForm {
   actor: string;

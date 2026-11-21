@@ -1,7 +1,7 @@
 // The register of fixed assets and prepaid costs (#919): the form's defaults and checks, the months offered for a
 // depreciation and the label of a month. The kernel decides every rule again (modules/finance/src/fixed-assets.ts);
 // these only spare a round trip.
-import type { FixedAssetCreate } from '@crove/kernel-contract';
+import type { FixedAssetCreate } from '@ludy/kernel-contract';
 import { amountUnits, normalizeAmount } from './vouchers.ts';
 
 export type FixedAssetKind = FixedAssetCreate['kind'];

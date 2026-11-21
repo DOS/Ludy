@@ -3,8 +3,8 @@
 // login role; the token is the only credential, a bad, expired or revoked token gets the same answer as an unknown one, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES, QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@crove/kernel-contract';
-import { readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES, QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@ludy/kernel-contract';
+import { readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { sniffType } from './sniff.ts';
 
 export const QUOTE_VIEWS_PER_MINUTE = 60;

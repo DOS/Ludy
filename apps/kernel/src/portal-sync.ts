@@ -19,7 +19,7 @@
 // nothing needs discarding but what expires on its own. Each envelope is AES-256-GCM under the deployment's credential
 // key with a binding no channel credential uses, so neither can be opened as the other.
 import { randomUUID } from 'node:crypto';
-import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import {
   MAX_IMPORT_BYTES,
   PORTAL_CHALLENGE_SECONDS,
@@ -28,8 +28,8 @@ import {
   type PortalCaptchaView,
   type PortalListResult,
   type PortalXmlResult,
-} from '@crove/kernel-contract';
-import { PORTAL_LIST_TOO_LARGE_MESSAGE, PORTAL_SYNC_CONTENT_TYPE, PortalListTooLarge, checkPortalList, normalizePortalInvoices, vatPeriod, type PortalAnswer, type PortalCallError, type PortalXmlPlan } from '@crove/mod-finance';
+} from '@ludy/kernel-contract';
+import { PORTAL_LIST_TOO_LARGE_MESSAGE, PORTAL_SYNC_CONTENT_TYPE, PortalListTooLarge, checkPortalList, normalizePortalInvoices, vatPeriod, type PortalAnswer, type PortalCallError, type PortalXmlPlan } from '@ludy/mod-finance';
 import { ConcurrencyLimiter } from './concurrency.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { safeFilename, sniffType } from './sniff.ts';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What a recording captures, decided in one place. "Ghi cả video" is off by default; with it off no video track is ever
 // requested, so none can be recorded, stored or uploaded (plan section 6: video only when the person ticks it).
-import { pickRecorderMime, type RecordingKind } from '@crove/meeting-recorder';
+import { pickRecorderMime, type RecordingKind } from '@ludy/meeting-recorder';
 
 export interface CapturePlan {
   kind: RecordingKind;

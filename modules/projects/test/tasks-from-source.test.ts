@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pure formatting and caller-scoped query isolation unit tests for @crove/mod-projects tasks-from-source (#2608).
+// Pure formatting and caller-scoped query isolation unit tests for @ludy/mod-projects tasks-from-source (#2608).
 import { describe, expect, it } from 'vitest';
-import type { ConversationDetail, MeetingDetail, MeetingResults, Notes, Transcript } from '@crove/kernel-contract';
+import type { ConversationDetail, MeetingDetail, MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
 import {
   formatConversationTaskSource,
   formatMeetingTaskSource,

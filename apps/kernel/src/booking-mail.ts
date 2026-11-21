@@ -8,7 +8,7 @@
 // the token never sits in the queue. The visitor's mails carry the link to cancel or move the booking; it stops working
 // at the next cancel or move.
 import { z } from 'zod';
-import type { BookingMailData } from '@crove/mod-crm';
+import type { BookingMailData } from '@ludy/mod-crm';
 import { escapeText, foldLine, icsTime } from './calendar-feed.ts';
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 

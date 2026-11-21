@@ -4,7 +4,7 @@
 // day of the settlement's last day (household_trade_rate, dated rows). A household with no line of business or several is refused, never guessed: with several the pair is ambiguous.
 // A seller that is no household (an entity that is not of kind household) has no tax lines at all (null); a household with no profile in force is refused. A rate row still `commentary` is refused too: nothing that computes a tax
 // may rely on a row the accountant has not checked (household.ts, #2520).
-import { DomainError, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, type QueryContext } from '@ludy/kernel-runtime';
 import { pickInForce } from './domain/household-rules.ts';
 import type { HouseholdTaxRate } from './marketplace-settlement-posting.ts';
 

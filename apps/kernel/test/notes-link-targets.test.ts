@@ -1,8 +1,8 @@
 // A note's link to another module's record is checked through that module's get query (#1672). Each name the notes
 // module runs must be a query the kernel registers with every module on, or every such link would show as unavailable.
 import { describe, expect, it } from 'vitest';
-import { NOTE_LINK_TARGETS } from '@crove/kernel-contract';
-import { NOTE_TARGET_QUERIES } from '@crove/mod-notes';
+import { NOTE_LINK_TARGETS } from '@ludy/kernel-contract';
+import { NOTE_TARGET_QUERIES } from '@ludy/mod-notes';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 

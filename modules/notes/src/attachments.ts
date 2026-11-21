@@ -13,9 +13,9 @@ import {
   type NoteAttachmentDeleted,
   type NoteAttachmentExtractStatus,
   type NoteVisibility,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

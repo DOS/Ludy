@@ -2,8 +2,8 @@
 // The test of a MISA AMIS connection, the worker's half (#3885, S2b of #3854), against a fake AMIS and a fake runtime: every way a test ends, the state that is recorded, and that nothing but ids and a
 // state is recorded or logged (not the access code, not the integrator's ClientID, not AMIS's own text).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { runMisaAmisTest } from '../src/misa-amis-test-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';

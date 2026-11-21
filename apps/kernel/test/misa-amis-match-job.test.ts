@@ -2,9 +2,9 @@
 // The check of a MISA AMIS or MISA ASP connection's vouchers against the firm's catalogue, the worker's half (#4112, S3a, and #4152 of #4103), against a fake MISA and a fake runtime: which pages it reads, what it records (codes and ids
 // only), every way a check ends, and that nothing of the catalogue (a name, an address, a tax code of an entry), the access code or the ClientID is recorded or logged.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { zMisaAmisMatchRecordCheck } from '@crove/kernel-contract';
+import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { zMisaAmisMatchRecordCheck } from '@ludy/kernel-contract';
 import { runMisaAmisMatch } from '../src/misa-amis-match-job.ts';
 import { matchCatalogue } from '../src/misa-amis-catalogue.ts';
 

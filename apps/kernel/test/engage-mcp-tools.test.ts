@@ -2,7 +2,7 @@
 // The tool list of the Engage reads (epic #3857, E1, issue #3860): what a company grant and a member-bound grant are offered, that each tool is a strict, read-only descriptor over a query, and the row
 // limits (what an answer is charged, and the hard maximum of every page). The database tests of each tool (engage-mcp-*.db.test.ts) run the queries behind them.
 import { describe, expect, it } from 'vitest';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor, visibleTools } from '../src/mcp-endpoint.ts';

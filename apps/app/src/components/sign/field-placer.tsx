@@ -2,9 +2,9 @@
 // Interactive normalized [0..1] PDF field placer with pointer drag/resize, keyboard nudge, and Vy AI proposal overlays (#3325).
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { cn } from '@ludy/ui/lib/utils';
 import type { SignProposedField, SignSignerRecord } from '../../lib/sign-api.ts';
 import {
   clampFieldBox,

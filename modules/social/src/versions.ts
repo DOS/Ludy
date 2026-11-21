@@ -3,9 +3,9 @@
 // them for the post page, and social.post.restore_version (posts.ts) saves one again as a new edit.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { MAX_VERSIONS_PER_POST, contentKey, sameSnapshot, snapshotContentKey, variantContent, versionMedia, versionNumbers, versionVariants, type VersionContent, type VersionSnapshot } from './domain/versions.ts';
 import type { Trx } from './variants.ts';
 import { channelScope, postsInScope, variantsInScope } from './channel-access.ts';

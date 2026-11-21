@@ -3,8 +3,8 @@
 // member picked, and what comes back is recorded as the masked sheet and the verdict (a refusal, or a preview of at most 20 lines). A file that is gone, too large or unreadable, a sandbox that cannot be
 // reached and an answer that names a limit are recorded as a code of ours; nothing the sandbox says is passed on; an older request's record is reported so the job runs again.
 import { describe, expect, it, vi } from 'vitest';
-import { EXTRACT_LIMITS, decodeMarketplaceColumnsInput, type ExtractClient } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS, decodeMarketplaceColumnsInput, type ExtractClient } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { runMarketplaceColumns } from '../src/marketplace-columns-job.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';

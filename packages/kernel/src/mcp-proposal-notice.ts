@@ -4,8 +4,8 @@
 // kernel.mcp.proposal_notify for each, which checks again under the proposal's lock, writes one notification per eligible approver and stamps the proposal. A failure for one proposal never
 // stops the others; it is tried again on the next pass.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.mcp.proposal_notice' };
 // How often the worker looks, and how many proposals it takes per pass (at most 100 pending proposals of grants wait per org, so a pass drains an ordinary backlog; the rest waits for the next).

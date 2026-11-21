@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeetingResults as Results, MinutesTemplateView } from '@crove/kernel-contract';
+import type { MeetingResults as Results, MinutesTemplateView } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';

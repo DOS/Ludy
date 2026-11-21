@@ -2,8 +2,8 @@
 // The deadline of the state job's read (issue #3301): when it passes, the read is told to stop (its signal aborts), the objects not read are recorded as a failed read with the code
 // TIMEOUT, and the run ends without throwing. The database side is in ads.db.test.ts ("the platform's object states").
 import { describe, expect, it } from 'vitest';
-import type { AdStateReader } from '@crove/ad-platform';
-import type { CredentialBroker, Runtime } from '@crove/kernel-runtime';
+import type { AdStateReader } from '@ludy/ad-platform';
+import type { CredentialBroker, Runtime } from '@ludy/kernel-runtime';
 import { runAdsStateSync } from '../src/ads-state.ts';
 
 describe('the state job\'s deadline', () => {

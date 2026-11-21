@@ -11,11 +11,11 @@
 // the row policy of the caller's own transaction (org only) is the only filter, and a member who can open a deal in the CRM gets its row. There is no legal-entity
 // or owner scope on a deal to narrow it. The 500 most recently won deals are listed (the contract's cap); a cut leaves out only the oldest wins, so a longer list
 // can hide a flag, never raise a false one.
-import { zCrmWonDealSignals, type CrmWonDealSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { zCrmWonDealSignals, type CrmWonDealSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const LIMIT = 500;

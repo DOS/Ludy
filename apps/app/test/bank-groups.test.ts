@@ -2,7 +2,7 @@
 // The bank screen's clean group and the review page of matched lines (#2385): what asking for one clean line sends, the tags
 // that say how a party was found, and how a batch's results read.
 import { describe, expect, it } from 'vitest';
-import type { BankMatchLine } from '@crove/kernel-contract';
+import type { BankMatchLine } from '@ludy/kernel-contract';
 import { matchedByTag, needsSecondApprover, reasonTag, summarizeApproval, voucherRequestOf } from '../src/lib/bank-groups.ts';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';

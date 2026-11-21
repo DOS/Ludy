@@ -12,8 +12,8 @@
 //   with status 200) instead of retrying past it.
 // - Every answer is untrusted input: JSON is parsed with numbers kept as their text, then checked with strict shapes;
 //   an error never carries the portal's text, the password, the CAPTCHA answer or the token.
-import { EgressError, guardedRequest, type EgressOptions, type EgressResponse, type GuardedRequest } from '@crove/kernel-runtime';
-import { parseJsonKeepingNumbers, type PortalAnswer, type PortalCallError, type PortalQuery, type PortalXmlItem } from '@crove/mod-finance';
+import { EgressError, guardedRequest, type EgressOptions, type EgressResponse, type GuardedRequest } from '@ludy/kernel-runtime';
+import { parseJsonKeepingNumbers, type PortalAnswer, type PortalCallError, type PortalQuery, type PortalXmlItem } from '@ludy/mod-finance';
 import { z } from 'zod';
 
 // The portal's API origin. The 2026 redesign serves it under /api on the default port (older tools used port 30000).
@@ -93,7 +93,7 @@ const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_CAPTCHA_BYTES = 200 * 1024;
 const MAX_XML_BYTES = 5 * 1024 * 1024;
 
-// Which list queries a sync runs, in order (PortalQuery in @crove/mod-finance): purchase invoices with a tax authority
+// Which list queries a sync runs, in order (PortalQuery in @ludy/mod-finance): purchase invoices with a tax authority
 // code (ttxly 5), received without a code (6), from cash registers on the main endpoint (8), and the cash register
 // endpoint itself.
 const QUERIES: ReadonlyArray<{ query: PortalQuery; path: string; filter: string | null }> = [

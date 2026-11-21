@@ -3,7 +3,7 @@
 // lists, interactive checklists, [[Note]] wiki-links, bold, italics, inline code and safe external links, rendered as
 // React elements. Nothing is parsed as HTML, so raw HTML in a note shows as its text (trusted-types.test.ts).
 import type { ReactNode } from 'react';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import {
   INLINE_MARKDOWN,
   cleanNoteLineText,

@@ -7,9 +7,9 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
   BlobNotFoundError,
   DomainError,
@@ -20,8 +20,8 @@ import {
   wrapMediaKeyWithSubkey,
   type BlobStore,
   type CredentialBroker,
-} from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
+} from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setTranscribeBroker, setTranscribeEnabled } from '@ludy/mod-meetings';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps } from '../src/meetings-transcribe.ts';
 import { mediaMeasurerFor, type MediaMeasurer } from '../src/meetings-measure.ts';
 import { fakeMediaMeasurer } from './fake-media.ts';

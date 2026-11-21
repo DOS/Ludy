@@ -5,9 +5,9 @@
 // the worker's claim (crove_notes.todo_reminders_claim) and writes a notification that holds none of the to-do's text.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { notifyMembers, uploaderEntity } from '@crove/kernel';
-import { auditValue, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_TRASH_DAYS, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { notifyMembers, uploaderEntity } from '@ludy/kernel';
+import { auditValue, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_TRASH_DAYS, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
 
 function assertSystem(ctx: Pick<CommandContext | QueryContext, 'actor'>): void {

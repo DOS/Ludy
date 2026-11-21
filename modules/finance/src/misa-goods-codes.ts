@@ -1,15 +1,15 @@
 // The org's MISA SME item and warehouse codes for stock purchases (issue #1398), editable in Settings. The goods
 // purchase export (GET /api/export/misa/goods-purchases.xlsx) fills "Mã hàng (*)" and "Kho" from them; an account
-// without codes takes its nearest parent's, else the defaults (@crove/kernel-contract misa-goods.ts).
+// without codes takes its nearest parent's, else the defaults (@ludy/kernel-contract misa-goods.ts).
 // - finance.misa_goods_codes.list: every member reads them, as every member may export.
 // - finance.misa_goods_code.set / .remove: owners and admins set and clear one account's codes. R1: they change no
 //   amount and no posted entry, only what the next export writes, and each is undone by the other.
 // The database holds the same formats (20261102050000_crove_finance_misa_goods_codes.sql); the checks here come first
 // so the refusal says what to do.
 import { z } from 'zod';
-import { isStockAccount, zAccountCode, zMisaCode, type MisaGoodsCode } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { isStockAccount, zAccountCode, zMisaCode, type MisaGoodsCode } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

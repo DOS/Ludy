@@ -4,10 +4,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { vietnamMonth } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { vietnamMonth } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { canLockPeriods, monthLabel, previousMonth } from '../lib/period-lock.ts';

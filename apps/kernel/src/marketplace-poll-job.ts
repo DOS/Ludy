@@ -8,7 +8,7 @@
 // endpoint of a platform: the port has none. The same page of orders gives the same bytes, so the intake's content hash recognises a repeat and stages nothing twice; the cursor moves only
 // after the ingest succeeded. A failure records a state (unreachable, credentials, rate_limited, too_large), never the provider's own text. Nothing here logs or stores a credential or a
 // provider's message: ids, counts and states.
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import {
   MARKETPLACE_PLATFORM_LIMITS,
   MarketplaceProviderError,
@@ -27,10 +27,10 @@ import {
   type MarketplaceProvider,
   type MarketplaceAuthorizeTarget,
   type MarketplaceTestResult,
-} from '@crove/mod-finance';
+} from '@ludy/mod-finance';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { joinPollCursor, splitPollCursor } from './marketplace-income-leg.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };

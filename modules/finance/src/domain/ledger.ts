@@ -3,7 +3,7 @@
 // write path. The model is the reference the property tests check, and the rules the Phase 2a definer must
 // keep. State is immutable: every call returns a new state or a refusal.
 import { createHash } from 'node:crypto';
-import { money, sum, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { money, sum, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { canonical, checkAmount, fixed4, minorUnits, MoneyError, parseDecimal } from './money.ts';
 
 export const REVERSAL_SOURCE_TYPE = 'reversal';

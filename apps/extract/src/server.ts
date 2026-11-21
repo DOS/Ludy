@@ -1,5 +1,5 @@
 // HTTP face of crove-extract. One endpoint: POST /extract?kind=<one of EXTRACT_KINDS> with the raw bytes
-// as the body; the answer is the JSON of @crove/extract-contract. Only the worker calls it, over an internal
+// as the body; the answer is the JSON of @ludy/extract-contract. Only the worker calls it, over an internal
 // network; the service holds no credentials, so it has nothing to authenticate with and nothing to leak.
 import { Hono, type Context } from 'hono';
 import {
@@ -10,7 +10,7 @@ import {
   zExtractKind,
   type ExtractKind,
   type ExtractResponse,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import { failure } from './parse.ts';
 import { DEFAULT_SANDBOX, runSandboxed, type SandboxOptions } from './sandbox.ts';
 

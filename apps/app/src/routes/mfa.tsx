@@ -1,7 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { MfaChallengeForm } from '../components/two-factor.tsx';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { Logo, ScreenTitle } from '../components/ui.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { signOut } from '../lib/session-actions.ts';

@@ -1,7 +1,7 @@
 // How a tax due date and its period read (issues #318, #921): on the multi-client home screen and on an org's
 // overview (#1249).
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
 import { deadlineTone } from '../lib/clients.ts';
 import { taxPeriodParts } from '../lib/tax-calendar.ts';

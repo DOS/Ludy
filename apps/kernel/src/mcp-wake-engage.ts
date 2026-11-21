@@ -15,10 +15,10 @@
 //   ads.pace_over                   a monthly cap on course to be passed (from ads.mcp.flags, as the Ads screen)       window: the month
 //   ads.daily_cap_over              a day that spent more than its share of a daily cap (from ads.mcp.flags)           window: the day
 //   ads.monthly_cap_over            a day that spent more than its share of a monthly cap (from ads.mcp.flags)         window: the day
-import { money, toMoney } from '@crove/l10n-vn';
-import { ENGAGE_WAKE_PAGES_MAX, ENGAGE_WAKE_ROWS_MAX, vietnamDayOf, zEngageWakeConversations, zEngageWakeCrm, zAdsFlag, type AdsFlag, type EngageWakeConversations, type EngageWakeCrm } from '@crove/kernel-contract';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
-import type { McpWakeLinePlan } from '@crove/kernel';
+import { money, toMoney } from '@ludy/l10n-vn';
+import { ENGAGE_WAKE_PAGES_MAX, ENGAGE_WAKE_ROWS_MAX, vietnamDayOf, zEngageWakeConversations, zEngageWakeCrm, zAdsFlag, type AdsFlag, type EngageWakeConversations, type EngageWakeCrm } from '@ludy/kernel-contract';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import type { McpWakeLinePlan } from '@ludy/kernel';
 import type { LineWakeFeed, LineWakeItem, WakeGrant } from './mcp-wake-sweep.ts';
 import { WAKE_CURRENCIES } from './mcp-wake-body.ts';
 

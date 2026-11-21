@@ -22,9 +22,9 @@
 //   org-wide items and those channels' items only.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_CHECKS_MAX, zId, zSocialReviewCheckLabel } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_CHECKS_MAX, zId, zSocialReviewCheckLabel } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { channelScope } from './channel-access.ts';
 import { approvalsInRound } from './domain/approval.ts';
 import type { Trx } from './variants.ts';

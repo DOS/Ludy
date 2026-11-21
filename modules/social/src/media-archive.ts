@@ -5,9 +5,9 @@
 // channels neither archives nor restores another channel's own media). What an archived file may no longer do is in
 // library.ts (refuseUnusableMedia).
 import { z } from 'zod';
-import { SOCIAL_MEDIA_ARCHIVE_MAX, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_MEDIA_ARCHIVE_MAX, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { channelScope } from './channel-access.ts';
 import { LIBRARY_MEDIA_TYPES, mediaHidden, mediaNotAllowed } from './library.ts';
 

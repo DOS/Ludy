@@ -7,7 +7,7 @@
 // starts `Uncertain (#2520)` names a point the research itself leaves open (L: a legal reading, F: what a platform field means in a real export); the research file lists them all.
 // The gate is per path (#3711 slice 1): each posting asks only for the rows it uses, so a path opens when ITS rows are confirmed and the household tax path (whose debit account is still the
 // accountant's choice) stays closed without holding the rest.
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 
 export type MarketplaceMapStatus = 'commentary' | 'confirmed';
 

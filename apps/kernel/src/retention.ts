@@ -1,9 +1,9 @@
 // Retention purges (issue #38, plan §4.9): the worker runs crove_kernel.retention_purge() on a pg-boss schedule,
 // one batch per call, until no store has expired rows left or the run's batch budget is spent.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { EXPORT_EXPIRY_GRACE_HOURS } from '@crove/kernel';
-import type { BlobStore, ListedBlob, ListPrefix, Runtime, StagingSweep } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { EXPORT_EXPIRY_GRACE_HOURS } from '@ludy/kernel';
+import type { BlobStore, ListedBlob, ListPrefix, Runtime, StagingSweep } from '@ludy/kernel-runtime';
 import { opsAlert } from './ops-alert.ts';
 
 // Where an ALERT line goes: the operational alerts (log and webhook, #1993) when the job logs to the console, else the

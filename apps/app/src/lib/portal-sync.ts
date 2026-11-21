@@ -1,7 +1,7 @@
 // The assisted sync from the tax portal on the reconciliation screen (issue #325): who sees it, and the order of its
 // steps after the login. The kernel decides every rule; the portal session it answers is held in the screen's memory
 // for the length of one sync and then dropped.
-import { PORTAL_XML_PER_SYNC, PORTAL_XML_PER_REQUEST, type PortalListResult, type PortalXmlResult } from '@crove/kernel-contract';
+import { PORTAL_XML_PER_SYNC, PORTAL_XML_PER_REQUEST, type PortalListResult, type PortalXmlResult } from '@ludy/kernel-contract';
 
 // The roles that may run it (the kernel's finance.portal_sync.* commands check again), on a deployment that turned it on.
 export function canSyncFromPortal(role: string | null | undefined, enabled: boolean | undefined): boolean {

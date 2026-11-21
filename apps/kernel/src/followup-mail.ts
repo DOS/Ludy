@@ -3,7 +3,7 @@
 // and action items as they were at the send) as the mail's merge data; the worker renders them here. Every text is escaped (a person typed the words and the summary), and
 // the mail holds no link and no token. The Reply-To is the org's conversation address (#2439) when the deployment receives mail and the org has one, so an answer reaches the
 // Inbox; with none the mail has no Reply-To.
-import { FOLLOWUP_MAIL_TEMPLATE, followupClean, zFollowupMail, type FollowupMail } from '@crove/kernel-contract';
+import { FOLLOWUP_MAIL_TEMPLATE, followupClean, zFollowupMail, type FollowupMail } from '@ludy/kernel-contract';
 import type { MailTemplate } from './mail-queue.ts';
 
 export { FOLLOWUP_MAIL_TEMPLATE };

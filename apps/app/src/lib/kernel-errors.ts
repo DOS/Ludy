@@ -740,6 +740,8 @@ export const KERNEL_ERROR_CODES = [
   'ADS_CONNECTION_NOT_FOUND',
   'ADS_CONNECTION_INACTIVE',
   'ADS_CONNECTION_STILL_OPEN',
+  // An AI coworker's ask to cancel a waiting ad change (#4181): the approval refuses a change that would not raise spend.
+  'ADS_CANCEL_NOT_OPENING',
   'ADS_SYNC_TOO_SOON',
   'ADS_SYNC_ON_HOLD',
   'ADS_RANGE_INVALID',

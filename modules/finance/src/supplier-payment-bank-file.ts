@@ -25,11 +25,11 @@ import {
   zSupplierPaymentBankFileExport,
   zSupplierPaymentBankFileQuery,
   type SupplierPaymentBankFile,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
-import { Decimal, money } from '@crove/l10n-vn';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@ludy/kernel-runtime';
+import { Decimal, money } from '@ludy/l10n-vn';
 import { HOLDER_PLACE, NUMBER_PLACE, supplierSubject } from './supplier-bank-account.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

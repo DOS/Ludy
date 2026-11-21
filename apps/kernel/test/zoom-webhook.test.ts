@@ -7,7 +7,7 @@ import { createHmac } from 'node:crypto';
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely';
 import type pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';

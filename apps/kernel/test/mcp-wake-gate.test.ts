@@ -3,7 +3,7 @@
 // company grant (`enter_mcp_wake_company_context`, the worker login's alone) and opened it, and this test changed with the flag, which is the review that had to happen. What it pins now:
 // the sweep asks exactly the rules that declare `mcp`. That it never enters a member-bound grant's context is pinned against a real database in mcp-wake-sweep.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { kernelQueries } from '@crove/kernel';
+import { kernelQueries } from '@ludy/kernel';
 import { WAKE_RULES } from '../src/mcp-wake-body.ts';
 import { SIGNAL_WAKE_WORKER_ENTRY, declaredRules } from '../src/mcp-wake-sweep.ts';
 

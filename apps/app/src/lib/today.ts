@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Hôm nay cần bạn" on Home (issue #2383), the parts that need no screen: grouping the merged items by kind, the screen an
 // item opens, and the icon of each kind. The items come from kernel.today (already merged and ordered; the shape is
-// @crove/kernel-contract's today.ts), and each line's own read decided what this member may see.
-import { TODAY_KIND_ORDER, isTodayAnnotation, sortTodayItems, type TodayItem, type TodayKind, type TodaySeverity } from '@crove/kernel-contract';
-import type { NavIconName } from '@crove/ui/components/nav-icon';
+// @ludy/kernel-contract's today.ts), and each line's own read decided what this member may see.
+import { TODAY_KIND_ORDER, isTodayAnnotation, sortTodayItems, type TodayItem, type TodayKind, type TodaySeverity } from '@ludy/kernel-contract';
+import type { NavIconName } from '@ludy/ui/components/nav-icon';
 
 export interface TodayGroup {
   kind: TodayKind;

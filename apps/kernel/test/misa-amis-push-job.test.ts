@@ -5,9 +5,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { amisContextOf, amisPartRows, loadAmisEntries, NO_MATCH_RESULTS, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin } from '@crove/mod-finance';
+import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { amisContextOf, amisPartRows, loadAmisEntries, NO_MATCH_RESULTS, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin } from '@ludy/mod-finance';
 import { readStockNames } from '../src/misa-amis-catalogue.ts';
 import { CATALOGUE_REREAD_MS, PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, stockIdsOf, withStockNames, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 

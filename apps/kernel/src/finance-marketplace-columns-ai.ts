@@ -8,8 +8,8 @@
 // The proposal is read, never written: nothing here changes a row, and it is not a command. With fewer than three columns to show there is no call (`none`). When there is no model, the AI budget is spent, the
 // member's calls are too frequent, the call fails or every answer is dropped, the answer names the state (`ai`) with no assignment and the screen shows the manual pickers alone. An answer is kept for a while by
 // its facts, so reopening the screen does not pay for the same proposal twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { AiBudgetExhaustedError, marketplaceColumnsFactsText, marketplaceColumnsHaveNews, type InboxReader, type MarketplaceColumnFacts } from '@crove/agent';
-import type { MarketplaceColumnAssignment, MarketplaceColumnSheet, MarketplaceColumnsProposal } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, marketplaceColumnsFactsText, marketplaceColumnsHaveNews, type InboxReader, type MarketplaceColumnFacts } from '@ludy/agent';
+import type { MarketplaceColumnAssignment, MarketplaceColumnSheet, MarketplaceColumnsProposal } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface MarketplaceColumnsAi {

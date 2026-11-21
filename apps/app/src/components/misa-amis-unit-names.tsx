@@ -5,9 +5,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MisaAmisUnitRow } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import type { MisaAmisUnitRow } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';
 

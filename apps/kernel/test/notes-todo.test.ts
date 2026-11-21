@@ -2,8 +2,8 @@
 // zone, the tasks of My work, the hand-over's input, and the commands' access (no agent runs any of them, ADR-0029,
 // notes plan §3.5); the automatic reminder (#1675).
 import { describe, expect, it } from 'vitest';
-import { REBALANCE_AT, isSortKey, keyBetween, spreadKeys, taskStanding, todoAutoReminder, todoDueGroup, todoDueInstant, todoLocalTime, todoStanding, zTodoCreate, zTodoHandOver, zTodoListCreate, zTodoListUpdate, zTodoReorder, zTodoUpdate } from '@crove/kernel-contract';
-import { TODO_DUE, myWork, notesCommands, notesQueries, todoCommands, todoHandOver, todoListCommands, todoListQueries, todoQueries, todoRemind } from '@crove/mod-notes';
+import { REBALANCE_AT, isSortKey, keyBetween, spreadKeys, taskStanding, todoAutoReminder, todoDueGroup, todoDueInstant, todoLocalTime, todoStanding, zTodoCreate, zTodoHandOver, zTodoListCreate, zTodoListUpdate, zTodoReorder, zTodoUpdate } from '@ludy/kernel-contract';
+import { TODO_DUE, myWork, notesCommands, notesQueries, todoCommands, todoHandOver, todoListCommands, todoListQueries, todoQueries, todoRemind } from '@ludy/mod-notes';
 
 describe('to-do order keys', () => {
   it('finds a key between any two, and at both ends', () => {

@@ -6,8 +6,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { formOf, isFlagFieldValid, sameForm, settingOf, wrongFlagFields, type FlagField, type FlagForm } from '../lib/ads-flag-settings.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Google OAuth client of the Google Meet transcript import (Meetings C2, #3174, PR C): off by default, both settings or neither, a client of its own beside the calendar's, and the adapter exists only with both.
 import { describe, expect, it } from 'vitest';
-import { GoogleMeetAdapter } from '@crove/channel';
-import { MEETING_PLATFORM_OAUTH_NAME } from '@crove/kernel-contract';
+import { GoogleMeetAdapter } from '@ludy/channel';
+import { MEETING_PLATFORM_OAUTH_NAME } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { meetingPlatformsOf } from '../src/kernel.ts';
 

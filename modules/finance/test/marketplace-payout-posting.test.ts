@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
-import type { MarketplacePayoutAdjustment, MarketplacePayoutProposal } from '@crove/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
+import type { MarketplacePayoutAdjustment, MarketplacePayoutProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { payoutPaths, payoutProposal, type PayoutPostingLine, type PayoutProposalInput } from '../src/marketplace-payout-posting.ts';
 import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/marketplace-payout-record.ts';

@@ -1,10 +1,10 @@
 // Money rules of ADR-0021 decision 1, as pure functions. Amounts are decimal strings and all arithmetic goes
-// through decimal.js (`@crove/l10n-vn`), never JS numbers.
+// through decimal.js (`@ludy/l10n-vn`), never JS numbers.
 // - Every stored amount fits `amount numeric(20,4)`; the currency's ISO 4217 minor units decide how many of
 //   the 4 decimals may be used, and an amount with more is refused, never rounded silently.
 // - A line amount is rounded once, half away from zero, to the currency's minor units.
 // - Exchange rates are direct quotes: units of the book currency per 1 unit of the foreign currency.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 
 // ISO 4217 minor units for the currencies Crove knows so far. VND has none.
 export const CURRENCY_MINOR_UNITS: Readonly<Record<string, number>> = {

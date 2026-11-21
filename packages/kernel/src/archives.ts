@@ -5,9 +5,9 @@
 // extraction like an upload. The archive's single extraction run (method
 // 'archive') keeps what each entry became. An archive is opened once; it is never read again and never has a proposal.
 import { z } from 'zod';
-import { ACCEPTED_UPLOAD_TYPES, ARCHIVE_ENTRY_REASONS, MAX_BATCH_ENTRIES, MAX_BATCH_FILES, MAX_EMAIL_ARCHIVE_DOCUMENTS, zId, type BatchFile, type FileStatus } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { ACCEPTED_UPLOAD_TYPES, ARCHIVE_ENTRY_REASONS, MAX_BATCH_ENTRIES, MAX_BATCH_FILES, MAX_EMAIL_ARCHIVE_DOCUMENTS, zId, type BatchFile, type FileStatus } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { archiveEntries, fileStatuses, type StoredArchiveEntry } from './file-status.ts';
 import { uploaderEntity } from './extraction.ts';
 import { ingestFileRow, isArchiveType, zIngestFile } from './files.ts';

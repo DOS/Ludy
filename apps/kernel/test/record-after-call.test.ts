@@ -3,9 +3,9 @@
 // invoice was issued, and nothing in Ludy would say so. The worker's quiet rule (a MODULE_OFF ends a job) must not match it, without a database.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import type { AdActivator } from '@crove/ad-platform';
-import type { EInvoiceProvider } from '@crove/einvoice';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import type { AdActivator } from '@ludy/ad-platform';
+import type { EInvoiceProvider } from '@ludy/einvoice';
 import { runAdsActivate } from '../src/ads-activate.ts';
 import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
 import { withJobLogContext } from '../src/log.ts';

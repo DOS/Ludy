@@ -10,10 +10,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type NumberSeriesPage } from '@crove/kernel';
-import { Runtime, type InputHashMode } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type NumberSeriesPage } from '@ludy/kernel';
+import { Runtime, type InputHashMode } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 

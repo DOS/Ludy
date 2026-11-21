@@ -3,7 +3,7 @@
 // so it cannot be missing or forged; the app only says it. The row stays under the name of the person who connected the app, so the mark is how a person tells the coworker's text from that person's own, and
 // that it is data to read, not a decision anyone approved. `tainted` is the text's mark and `actorOrigin` the row's: the badge shows when either says an app was involved.
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
+import { Badge } from '@ludy/ui/components/badge';
 
 // `showHint` is for a detail view (a deal's sheet, a contact's page), where the sentence fits under the badge: a phone has no hover, so a `title` alone never reaches a touch user. A list row keeps the
 // compact badge (its hint stays for a screen reader and a mouse) and the detail one tap away shows the sentence.

@@ -3,7 +3,7 @@
 // Archived posts (#1299) are left out of every list, the calendar and the board, and are the only ones listed with
 // archived.
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
 import { searchMatch } from './library.ts';
 

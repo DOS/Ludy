@@ -9,9 +9,9 @@ import { BucketVersioningStatus, CreateBucketCommand, PutBucketVersioningCommand
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { buildKernelCommands, kernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { buildKernelCommands, kernelCommands, kernelQueries } from '@ludy/kernel';
 import {
   BlobConflictError,
   BlobNotFoundError,
@@ -26,8 +26,8 @@ import {
   type BlobStore,
   type DirectTransfers,
   type PresignedUpload,
-} from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+} from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { loadConfig } from '../src/config.ts';

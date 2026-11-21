@@ -7,9 +7,9 @@
 // suggestions.ts).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialCommentPin } from '@crove/kernel-contract';
-import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialCommentPin } from '@ludy/kernel-contract';
+import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { AUTO_REPLY_STALE_MS, autoReplyCallsOf } from './auto-reply.ts';
 import { REPOST_STALE_MS, repostCallsOf } from './repost.ts';
 import { EDIT_STALE_MS, editCallsOf } from './edit-published.ts';

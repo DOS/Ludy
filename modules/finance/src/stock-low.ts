@@ -9,10 +9,10 @@
 // The sales pace counts what left through a posted sale or a shipped marketplace order, net of its reversals and returns, each dated by the move it undoes (a return by the shipment of
 // its line); counts, manual moves and purchases are not sales.
 import { sql } from 'kysely';
-import { zStockLowInput, zStockReorderAsk, zStockSuggestInput, STOCK_LEAD_DAYS_DEFAULT, STOCK_REORDER_ITEMS_MAX, type StockLowItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { zStockLowInput, zStockReorderAsk, zStockSuggestInput, STOCK_LEAD_DAYS_DEFAULT, STOCK_REORDER_ITEMS_MAX, type StockLowItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { LOW_WINDOW_DAYS, lowFigures, observedDays, pickCandidates, reorderTemplate } from './domain/stock-low.ts';
 import { plainQuantity } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

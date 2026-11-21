@@ -13,14 +13,14 @@ import {
   type BankLineVoucher,
   type VoucherCursor,
   type VoucherType,
-} from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Menu, MenuChevron, MenuContent, MenuItem, MenuTrigger } from '@crove/ui/components/menu';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+} from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Menu, MenuChevron, MenuContent, MenuItem, MenuTrigger } from '@ludy/ui/components/menu';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { MisaCheckPanel } from '../components/misa-check-panel.tsx';

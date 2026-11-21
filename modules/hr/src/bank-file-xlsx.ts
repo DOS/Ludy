@@ -9,7 +9,7 @@
 // The file is built whole after the caller has its audit row, from a list bounded by HR_BANK_FILE_MAX_PEOPLE, so it is never cut short, and nothing of it is stored.
 import { PassThrough } from 'node:stream';
 import ExcelJS from 'exceljs';
-import type { HrBankFile } from '@crove/kernel-contract';
+import type { HrBankFile } from '@ludy/kernel-contract';
 
 const TEXT = '@';
 

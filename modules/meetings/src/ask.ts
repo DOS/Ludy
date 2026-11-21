@@ -23,8 +23,8 @@ import {
   type AskLines,
   type AskStatus,
   type MeetingSearchHit,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { findSearchHits } from './search.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, userOf } from './transcript.ts';

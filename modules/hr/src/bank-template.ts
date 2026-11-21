@@ -3,7 +3,7 @@
 // creates, edits and deletes a template of a legal entity, and lists them. A template holds the six columns in the bank's order with their headers and the payment's content text; it holds
 // no person's data (the account numbers stay sealed on the employee rows). The table's own policies refuse everyone but owners and admins, and its check refuses a layout that is not
 // valid, so these commands are not the only guard. The audit rows hold ids and the names of the changed fields, never a layout.
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   tableWrite,
   zHrBankTemplateCreate,
@@ -13,8 +13,8 @@ import {
   type HrBankLayout,
   type HrBankTemplate,
   type HrBankTemplateWritten,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { resolveEntity } from './employees.ts';
 import { hrManifest } from './manifest.ts';
 

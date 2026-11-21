@@ -3,8 +3,8 @@
 // system recorded, in a side sheet (DESIGN.md 4.5) behind the row's "Chi tiết" button. The list itself speaks in
 // sentences; whoever needs the raw record (an accountant, an engineer, support) opens this.
 import { useTranslations } from 'use-intl';
-import type { AuditEntry } from '@crove/kernel-contract';
-import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@crove/ui/components/sheet';
+import type { AuditEntry } from '@ludy/kernel-contract';
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { useFormat } from '../i18n/provider.tsx';
 
 export function AuditDetailBody({ row, sentence, actor, objectName }: { row: AuditEntry; sentence: string; actor: string; objectName: string | null }) {

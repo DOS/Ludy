@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure half of the column screen for an unrecognised marketplace order report (#4036, slice 1c of #3850): which field a person (or Ly's first suggestion) put on which column, the mapping that
 // choice makes, whether the verdict on screen still belongs to it, and what is held back from a press. Nothing here reads a file or calls the server; the server checks the mapping on the real file.
-import { MARKETPLACE_COLUMN_FIELDS, MARKETPLACE_COLUMN_PLATFORMS, MARKETPLACE_COLUMN_RUNNING_MINUTES, type MarketplaceColumnAssignment, type MarketplaceColumnMapping, type MarketplaceColumnSheet, type MarketplaceColumnsStatus } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_FIELDS, MARKETPLACE_COLUMN_PLATFORMS, MARKETPLACE_COLUMN_RUNNING_MINUTES, type MarketplaceColumnAssignment, type MarketplaceColumnMapping, type MarketplaceColumnSheet, type MarketplaceColumnsStatus } from '@ludy/kernel-contract';
 
 export type ColumnField = (typeof MARKETPLACE_COLUMN_FIELDS)[number];
 export type ColumnPlatform = (typeof MARKETPLACE_COLUMN_PLATFORMS)[number];

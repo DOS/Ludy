@@ -4,8 +4,8 @@
 // module's own queries). Nothing is stored, no model is called and nothing runs in the background: Vy's few sentences of a brief remain the member's own click on `meetings.brief.write`.
 //
 // The member reads only their own agenda: `calendar_agenda` rows are the member's own, and an owner, an admin, another member, an agent context and the system context read none of it.
-import { zBriefEmpty, zBriefFacts, zMeetingsTodayFacts, type MeetingsTodayFacts } from '@crove/kernel-contract';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zBriefEmpty, zBriefFacts, zMeetingsTodayFacts, type MeetingsTodayFacts } from '@ludy/kernel-contract';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { todaysAgenda } from './agenda.ts';
 import { briefFactsOf, stageNamesOnce } from './brief.ts';
 import { ROLES, userOf } from './transcript.ts';

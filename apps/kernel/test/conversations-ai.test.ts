@@ -3,8 +3,8 @@
 // and that none of them is an error, that a call is made only when nothing is cached and the member's AI budget allows it, that a failure is logged by its
 // name alone, and that the contact ranking leaves the deterministic order when the model is off, busy, spent or failing.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type Intent } from '@crove/agent';
-import type { ContactCandidates, IntentSource } from '@crove/kernel';
+import { AiBudgetExhaustedError, type Intent } from '@ludy/agent';
+import type { ContactCandidates, IntentSource } from '@ludy/kernel';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from '../src/conversations-ai.ts';
 

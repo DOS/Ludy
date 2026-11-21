@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Calendar month bounds and effective-dated employment term lookup shared across HR employees and pay runs.
-import { daysInCalendarMonth } from '@crove/l10n-vn';
+import { daysInCalendarMonth } from '@ludy/l10n-vn';
 
 export const isoDate = (value: Date | string): string => (typeof value === 'string' ? value : value.toISOString().slice(0, 10));
 

@@ -1,8 +1,8 @@
 // LinkedIn Company Pages (#1077) are offered only when the deployment says its LinkedIn app has the Community
 // Management API: asking a member for a scope the app lacks fails the whole LinkedIn dialog.
 import { describe, expect, it } from 'vitest';
-import { LINKEDIN_PAGES_NAMED } from '@crove/channel';
-import { OAUTH_MAX_ACCOUNTS_PER_GRANT } from '@crove/kernel-contract';
+import { LINKEDIN_PAGES_NAMED } from '@ludy/channel';
+import { OAUTH_MAX_ACCOUNTS_PER_GRANT } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { channelConnectors, channelPublishers, channelRefreshers } from '../src/kernel.ts';
 

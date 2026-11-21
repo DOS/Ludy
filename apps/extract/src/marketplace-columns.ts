@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A marketplace order report whose headers no platform profile fits (#4035, #3850 slice 1b), read in the sandbox for the column proposal and for the check of a column mapping on the real file.
-// The kernel has no sheet parser, so both happen here, and the buyer's data never leaves: the answer is the masked sheet (@crove/l10n-vn, marketplace-columns.ts: header texts and the SHAPES of a
+// The kernel has no sheet parser, so both happen here, and the buyer's data never leaves: the answer is the masked sheet (@ludy/l10n-vn, marketplace-columns.ts: header texts and the SHAPES of a
 // few values, a buyer column blanked) or, when the request carries the platform and a mapping, the check's verdict and, when the mapping reads the file, the lines of marketplace_orders. The
 // response schema has no field a cell's content could travel in, and the shapes are held to a character class by the schema itself.
 import { createHash } from 'node:crypto';
-import { EXTRACT_LIMITS, MarketplaceColumnsInputError, decodeMarketplaceColumnsInput, type ExtractedMarketplaceColumns } from '@crove/extract-contract';
-import { MARKETPLACE_PROFILES, checkColumnMapping, columnSheet, headerRowText } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, MarketplaceColumnsInputError, decodeMarketplaceColumnsInput, type ExtractedMarketplaceColumns } from '@ludy/extract-contract';
+import { MARKETPLACE_PROFILES, checkColumnMapping, columnSheet, headerRowText } from '@ludy/l10n-vn';
 import { readSheetGrid } from './bank-statement.ts';
 import { readToOrders } from './marketplace-orders.ts';
 

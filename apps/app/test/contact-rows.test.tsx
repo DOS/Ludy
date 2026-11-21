@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { Contact } from '@crove/kernel-contract';
+import type { Contact } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
 

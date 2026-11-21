@@ -7,8 +7,8 @@
 // daily). On a bucket without Object Lock nothing is attempted and nothing is recorded per file; the job logs one ALERT
 // a day while files wait. On local disk there are no holds at all (the worker says so at start).
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { BlobIntegrityError, BlobNotFoundError, type BlobStore, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { BlobIntegrityError, BlobNotFoundError, type BlobStore, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { opsAlert } from './ops-alert.ts';
 
 export const EVIDENCE_HOLD_SWEEP_MS = 5 * 60_000;

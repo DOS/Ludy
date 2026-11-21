@@ -1,6 +1,6 @@
 // Helpers for the working hours card in Settings (issue #1313). The form shows one window per weekday; the server
 // enforces every rule, these only turn the form into the saved shape and back.
-import { WEEKDAYS, zonedDate, zonedInstant, type Weekday, type WorkingHours } from '@crove/kernel-contract';
+import { WEEKDAYS, zonedDate, zonedInstant, type Weekday, type WorkingHours } from '@ludy/kernel-contract';
 import { VIETNAM_ZONE, isVietnamZone, zoneOffset, zonePlace } from './booking.ts';
 
 export interface DayHours {

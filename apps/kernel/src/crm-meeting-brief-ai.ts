@@ -7,9 +7,9 @@
 // It is computed when it is read and never written: nothing here stores the brief, sends a message or moves the deal. The customer's words reach the model only while the org's switch for AI on customers'
 // words (conversation_setting.auto_draft) is on; the facts list still shows the member the messages they may read. When the model is off, the AI budget is spent, the member's calls are too frequent,
 // the call fails or its words are refused, the answer names the state (`ai`) and carries no prose. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader, type MeetingBriefFacts } from '@crove/agent';
-import type { MeetingBrief, MeetingBriefState } from '@crove/kernel-contract';
-import type { MeetingBriefSource } from '@crove/mod-crm';
+import { AiBudgetExhaustedError, type InboxReader, type MeetingBriefFacts } from '@ludy/agent';
+import type { MeetingBrief, MeetingBriefState } from '@ludy/kernel-contract';
+import type { MeetingBriefSource } from '@ludy/mod-crm';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface MeetingBriefAi {

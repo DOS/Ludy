@@ -4,9 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MEMBER_VY_RUN_ERROR_CODES } from '@crove/kernel';
-import { AiBudgetExhaustedError, TranscriptionError } from '@crove/agent';
-import { DomainError } from '@crove/kernel-runtime';
+import { MEMBER_VY_RUN_ERROR_CODES } from '@ludy/kernel';
+import { AiBudgetExhaustedError, TranscriptionError } from '@ludy/agent';
+import { DomainError } from '@ludy/kernel-runtime';
 import { failureCode } from '../src/meetings-transcribe.ts';
 
 const MIGRATION = fileURLToPath(new URL('../../../supabase/migrations/20261215020000_crove_kernel_member_vy_run_finish_derive.sql', import.meta.url));

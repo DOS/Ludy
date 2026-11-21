@@ -1,9 +1,9 @@
-// The org's tax code is normalized by the kernel (normalizeTaxCode in @crove/kernel-contract) and compared by finance
-// with an invoice seller's code normalized by @crove/l10n-vn parseTaxCode (issue #313). The two must agree on every
+// The org's tax code is normalized by the kernel (normalizeTaxCode in @ludy/kernel-contract) and compared by finance
+// with an invoice seller's code normalized by @ludy/l10n-vn parseTaxCode (issue #313). The two must agree on every
 // input, or a sale would be read as a purchase. Codes here fail the MST checksum on purpose (synthetic test data).
 import { describe, expect, it } from 'vitest';
-import { normalizeTaxCode } from '@crove/kernel-contract';
-import { parseTaxCode } from '@crove/l10n-vn';
+import { normalizeTaxCode } from '@ludy/kernel-contract';
+import { parseTaxCode } from '@ludy/l10n-vn';
 import { journalMemo } from '../src/memo.ts';
 import { isOwnTaxCode, readSeller, type OwnTaxCodes } from '../src/own-tax-code.ts';
 

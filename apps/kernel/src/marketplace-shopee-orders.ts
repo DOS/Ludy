@@ -17,8 +17,8 @@
 // poll cannot resume in the middle of a window: it reads [cursor - 10 minutes, end], and when the list says `more` (over 100 orders: the port's page) the window is cut to the next narrower width: 15 days (the
 // platform's own limit), 3 days, a day, 6 hours, an hour, 10 minutes, a minute; past that the page is `not_recognized`, never skipped without a trace. The width that worked is kept in the cursor: a window with
 // no order makes the next one wider (a quiet shop is read in one call, and a burst that was cut is passed quickly), a window with orders keeps its width. A caught-up poll moves the cursor only when it found orders.
-import { money, toMoney } from '@crove/l10n-vn';
-import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceCellText, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@crove/mod-finance';
+import { money, toMoney } from '@ludy/l10n-vn';
+import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceCellText, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@ludy/mod-finance';
 import { cleanLabel, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { SHOPEE_MAX_RETURN_DETAILS, goodsBackLines, mayBringGoodsBack, readReturnDetail, readReturnList, type ShopeeReturn } from './marketplace-shopee-returns.ts';
 import { SHOPEE_HOSTS, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, testShopeeConnection, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
