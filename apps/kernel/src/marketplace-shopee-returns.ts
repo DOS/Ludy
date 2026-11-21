@@ -103,29 +103,48 @@ export interface ReturnsWindow {
   more: boolean;
 }
 
-// The returns whose update time is in [fromMs, toMs]: every page up to MAX_PAGES (the list is not promised in any order, so a window is read whole or not at all).
+// One page of the list: whether Shopee says more follow, and the returns on it. A page that says there is more and carries no list is contradictory, not an empty window: it would let the cursor pass returns
+// that were never read.
+async function readPage(call: ShopeeCaller, credential: ShopeeCredential, fromMs: number, toMs: number, page: number, nowMs: number): Promise<{ more: boolean; returns: ShopeeReturn[] }> {
+  const data = await call(credential, {
+    method: 'GET',
+    path: RETURN_LIST_PATH,
+    query: { page_no: String(page), page_size: String(PAGE_SIZE), update_time_from: String(Math.floor(fromMs / 1000)), update_time_to: String(Math.floor(toMs / 1000)) },
+    parse: parseShopeeAnswer,
+  });
+  if (!isRecord(data) || typeof data.more !== 'boolean') throw notRecognized();
+  const list = data.return;
+  if (list === undefined) {
+    if (data.more) throw notRecognized();
+    return { more: false, returns: [] };
+  }
+  if (!Array.isArray(list) || list.length > PAGE_SIZE) throw notRecognized();
+  return { more: data.more, returns: list.map((entry) => parseReturn(entry, LIST_FIELDS, nowMs + FUTURE_SLACK_MS).value) };
+}
+
+// The returns whose update time is in [fromMs, toMs]: every page up to MAX_PAGES (the list is not promised in any order, so a window is read whole or not at all). Offset paging has no snapshot: a return
+// updated between two page reads leaves the window and shifts the rows behind it, so a later page could start after a return that was never read. After more than one page the first page is read again; when
+// its returns are not the ones read at first, the window changed while it was read and is NOT taken as whole (`more`: the caller cuts it narrower, and the changed return, now updated after the window's end,
+// falls in the next window).
 export async function readReturnList(call: ShopeeCaller, credential: ShopeeCredential, fromMs: number, toMs: number, nowMs: number): Promise<ReturnsWindow> {
   const out: ShopeeReturn[] = [];
   const seen = new Set<string>();
+  let firstPage: string[] = [];
   for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const data = await call(credential, {
-      method: 'GET',
-      path: RETURN_LIST_PATH,
-      query: { page_no: String(page), page_size: String(PAGE_SIZE), update_time_from: String(Math.floor(fromMs / 1000)), update_time_to: String(Math.floor(toMs / 1000)) },
-      parse: parseShopeeAnswer,
-    });
-    if (!isRecord(data) || typeof data.more !== 'boolean') throw notRecognized();
-    const list = data.return;
-    if (list === undefined) return { returns: out, more: false };
-    if (!Array.isArray(list) || list.length > PAGE_SIZE) throw notRecognized();
-    for (const entry of list) {
-      const { value } = parseReturn(entry, LIST_FIELDS, nowMs + FUTURE_SLACK_MS);
+    const read = await readPage(call, credential, fromMs, toMs, page, nowMs);
+    for (const value of read.returns) {
       // A return number twice in the pages is not Shopee's.
       if (seen.has(value.returnSn)) throw notRecognized();
       seen.add(value.returnSn);
       out.push(value);
     }
-    if (!data.more) return { returns: out, more: false };
+    if (page === 1) firstPage = read.returns.map((r) => r.returnSn);
+    if (!read.more) {
+      if (page === 1) return { returns: out, more: false };
+      const again = await readPage(call, credential, fromMs, toMs, 1, nowMs);
+      const changed = again.returns.length !== firstPage.length || again.returns.some((r, i) => r.returnSn !== firstPage[i]);
+      return { returns: out, more: changed };
+    }
   }
   return { returns: out, more: true };
 }

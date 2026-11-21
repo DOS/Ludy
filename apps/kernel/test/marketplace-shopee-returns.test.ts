@@ -104,8 +104,8 @@ describe('the stock rule for returns', () => {
   });
 
   it('reads the order of a return by number when the order is not among those changed in the window', async () => {
-    // The order was last updated twenty days ago (outside the 15 day window the first poll reads); the return is recent.
-    const old = order('A1', { updatedMs: NOW - 14.99 * DAY });
+    // The order was last updated 16 days ago (outside the 15 day window the first poll reads); the return is recent.
+    const old = order('A1', { createdMs: NOW - 18 * DAY, updatedMs: NOW - 16 * DAY });
     const { page, fake } = await poll([old], [ret('R1', 'A1', { updatedMs: NOW - HOUR })]);
     expect(stagesOf(page, 'A1')).toEqual(['returned:AT-MAU-DL', 'completed:MU-MAU']);
     expect(fake.calls.some((c) => c.path === '/api/v2/order/get_order_detail' && c.query.order_sn_list === 'A1')).toBe(true);
@@ -132,6 +132,48 @@ describe('the stock rule for returns', () => {
   it('shipped order with goods back is returned too, with no delivery day', async () => {
     const { page } = await poll([order('S1', { status: 'TO_RETURN' })], [ret('R1', 'S1')]);
     expect(page.orders.find((o) => o.stage === 'returned')).toMatchObject({ shippedAt: '2026-11-17', deliveredAt: null });
+  });
+});
+
+describe('line identity and paging', () => {
+  it('never splits an order whose lines share a SKU (the intake numbers repeats in row order), and asks no detail for it', async () => {
+    const twin = order('A1', { items: [item({ modelSku: 'SAME', quantity: 1 }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: 'SAME', quantity: 2 })] });
+    const { page, fake } = await poll([twin], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })]);
+    expect(stagesOf(page, 'A1')).toEqual(['completed:SAME+SAME']);
+    expect(detailCalls(fake)).toHaveLength(0);
+    // The same two lines under different SKUs are split as usual.
+    const distinct = order('A1', { items: [item({ modelSku: 'ONE', quantity: 1 }), item({ itemId: 2600144045, modelId: 5074620259, modelSku: 'TWO', quantity: 2 })] });
+    expect(stagesOf((await poll([distinct], [ret('R1', 'A1', { items: [{ itemId: 2600144045, modelId: 5074620259, amount: 2 }] })])).page, 'A1')).toEqual(['returned:TWO', 'completed:ONE']);
+  });
+
+  it('rejects a list page that says there is more and carries no list, and keeps a valid empty list', async () => {
+    const onList = (body: string) => (path: string): Response | undefined => (path === '/api/v2/returns/get_return_list' ? new Response(body) : undefined);
+    expect(await kindOf(() => poll([order('A1')], [], onList('{"error":"","message":"","response":{"more":true}}')))).toBe('not_recognized');
+    const quiet = await poll([order('A1')], [], onList('{"error":"","message":"","response":{"more":false}}'));
+    expect(stagesOf(quiet.page, 'A1')).toEqual(['completed:AT-MAU-DL+MU-MAU']);
+  });
+
+  it('does not take a window as whole when its first page changed while the later pages were read', async () => {
+    // 60 returns: two pages. The first call of page 1 answers the real page; the second call of page 1 (the re-read) answers a page with its first return gone (it was updated meanwhile).
+    const rets = Array.from({ length: 60 }, (_, i) => ret(`Q${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - HOUR - (60 - i) * 1000 }));
+    let firstReads = 0;
+    const fake = fakeShopee({ ...CRED, raws: [order('A1')], returns: rets, now: () => NOW, intercept: () => undefined });
+    const options = { fetch: hostBoundFetch(SHOPEE_HOSTS, async (url, init) => {
+      const u = new URL(url);
+      if (u.pathname === '/api/v2/returns/get_return_list' && u.searchParams.get('page_no') === '1') {
+        firstReads += 1;
+        if (firstReads === 2) {
+          const real = (await (await fake.fetch(url, init)).json()) as { response: { more: boolean; return: unknown[] } };
+          return new Response(JSON.stringify({ ...real, response: { ...real.response, return: real.response.return.slice(1) } }));
+        }
+      }
+      return fake.fetch(url, init);
+    }), now: () => new Date(NOW), spacingMs: 0 };
+    const provider = shopeeMarketplace(options, shopeeCaller(options));
+    // The window is read twice at every width (changed each time at the first width only): the poll still ends with a page, from a narrower window.
+    const page = await provider.listOrders(SECRET, 'shopee', null);
+    expect(firstReads).toBeGreaterThanOrEqual(3);
+    expect(page.nextCursor).toMatch(/^o:/);
   });
 });
 

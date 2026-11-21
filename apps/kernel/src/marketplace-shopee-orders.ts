@@ -276,6 +276,9 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         if (!order) throw notRecognized();
         // An order that has not shipped (or was cancelled) cannot have goods coming back: no call is made for it.
         if (order.stage !== 'shipped' && order.stage !== 'completed') continue;
+        // The intake names a Shopee line by its SKU (else its name) and numbers a repeat `#2` in ROW ORDER, so writing the returned lines first would give a returned line the key of its sibling. An order whose lines
+        // do not all have their own key is therefore never split: its returns are left to a person (stock understated, never invented).
+        if (new Set(order.lines.map((l) => l.sku ?? l.itemName)).size !== order.lines.length) continue;
         const detail = await readReturnDetail(caller, credential, ret, nowMs);
         const held = new Map(order.lines.map((l) => [l.lineKey, Number(l.quantity)] as const));
         const back = goodsBackLines(detail, held);
