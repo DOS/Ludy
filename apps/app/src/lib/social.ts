@@ -360,7 +360,11 @@ export function lastSocialList(slug: string): SocialSearch {
     if (entry.fromLegacy) promoteMigratedItem(sessionStorage, key, legacyKey, entry.value);
     return parsed;
   } catch {
-    removeMigratedItem(sessionStorage, key, legacyKey);
+    try {
+      removeMigratedItem(sessionStorage, key, legacyKey);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return {};
   }
 }

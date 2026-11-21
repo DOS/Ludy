@@ -161,12 +161,16 @@ async function openLegacyDb(factory: IDBFactory): Promise<IDBDatabase> {
 }
 
 // Migrates any un-uploaded recordings and chunks left in `crove-meeting-recordings` once on first store open, without
-// overwriting entries already in `ludy-meeting-recordings` or failing the store if the legacy database is blocked.
+// overwriting entries already in `ludy-meeting-recordings` or deleting the legacy database if copying fails.
 async function migrateLegacyRecordings(factory: IDBFactory, newDb: IDBDatabase): Promise<void> {
   if (!(await hasLegacyDb(factory))) return;
   const legacyDb = await openLegacyDb(factory);
+  let shouldDeleteLegacy = false;
   try {
-    if (!legacyDb.objectStoreNames.contains('recordings') || !legacyDb.objectStoreNames.contains('chunks')) return;
+    if (!legacyDb.objectStoreNames.contains('recordings') || !legacyDb.objectStoreNames.contains('chunks')) {
+      shouldDeleteLegacy = true;
+      return;
+    }
     const readTx = legacyDb.transaction(['recordings', 'chunks'], 'readonly');
     const readDone = done(readTx);
     const recordingsReq = request(readTx.objectStore('recordings').getAll()) as Promise<RecordingMeta[]>;
@@ -183,21 +187,25 @@ async function migrateLegacyRecordings(factory: IDBFactory, newDb: IDBDatabase):
       if (toCopy.length > 0) {
         const copiedIds = new Set(toCopy.map((r) => r.id));
         const writeTx = newDb.transaction(['recordings', 'chunks'], 'readwrite');
+        const writeDone = done(writeTx);
         for (const meta of toCopy) writeTx.objectStore('recordings').put(meta);
         for (const row of chunks) {
           if (copiedIds.has(row.id)) writeTx.objectStore('chunks').put(row);
         }
-        await done(writeTx);
+        await writeDone;
       }
     }
+    shouldDeleteLegacy = true;
   } finally {
     legacyDb.close();
-    try {
-      const del = factory.deleteDatabase(LEGACY_RECORDINGS_DB_NAME);
-      del.onerror = () => undefined;
-      del.onblocked = () => undefined;
-    } catch {
-      // Ignore cleanup errors if IndexedDB refuses deleting the legacy database.
+    if (shouldDeleteLegacy) {
+      try {
+        const del = factory.deleteDatabase(LEGACY_RECORDINGS_DB_NAME);
+        del.onerror = () => undefined;
+        del.onblocked = () => undefined;
+      } catch {
+        // Ignore cleanup errors if IndexedDB refuses deleting the legacy database.
+      }
     }
   }
 }

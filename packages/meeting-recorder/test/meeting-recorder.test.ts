@@ -279,7 +279,7 @@ interface FakeDbData {
   chunks: Map<string, { id: string; seq: number; chunk: Blob }>;
 }
 
-function createFakeIdbFactory(initial: Record<string, FakeDbData> = {}) {
+function createFakeIdbFactory(initial: Record<string, FakeDbData> = {}, options: { failWriteOn?: string } = {}) {
   const databases = new Map<string, FakeDbData>();
   for (const [name, content] of Object.entries(initial)) {
     databases.set(name, {
@@ -314,17 +314,26 @@ function createFakeIdbFactory(initial: Record<string, FakeDbData> = {}) {
         storeNames.add(s);
         return {};
       },
-      transaction: (_stores: string[], _mode?: IDBTransactionMode) => {
+      transaction: (_stores: string[], mode?: IDBTransactionMode) => {
         let pending = 0;
+        const shouldFailWrite = mode === 'readwrite' && options.failWriteOn === name;
         const tx = {
           oncomplete: null as (() => void) | null,
           onerror: null as (() => void) | null,
           onabort: null as (() => void) | null,
-          error: null,
+          error: null as DOMException | Error | null,
           objectStore: (storeName: string) => {
             const finishSoon = <T>(work: () => T): IDBRequest<T> => {
               pending++;
               const req = toReq(() => {
+                if (shouldFailWrite) {
+                  pending--;
+                  if (pending === 0) {
+                    tx.error = new Error('QuotaExceededError');
+                    queueMicrotask(() => tx.onabort?.());
+                  }
+                  return undefined as unknown as T;
+                }
                 const res = work();
                 pending--;
                 if (pending === 0) queueMicrotask(() => tx.oncomplete?.());
@@ -429,6 +438,44 @@ describe('createIndexedDbChunkStore legacy migration (#3966)', () => {
       expect(await store.chunks('rec-legacy')).toEqual([legacyBlob]);
       expect(await store.chunks('rec-new')).toEqual([newBlob]);
       expect(fake.deleted).toEqual([LEGACY_RECORDINGS_DB_NAME]);
+    } finally {
+      globalThis.IDBKeyRange = originalKeyRange;
+    }
+  });
+
+  it('keeps crove-meeting-recordings intact when writing to ludy-meeting-recordings fails', async () => {
+    const originalKeyRange = globalThis.IDBKeyRange;
+    const legacyMeta: RecordingMeta = {
+      id: 'rec-keep',
+      scope: 'acme:u1',
+      meetingId: 'm-keep',
+      title: 'Bản ghi quan trọng',
+      kind: 'audio',
+      mimeType: 'audio/webm',
+      startedAt: 100,
+      elapsedMs: 5000,
+      chunkCount: 1,
+      updatedAt: 200,
+    };
+    const fake = createFakeIdbFactory(
+      {
+        [LEGACY_RECORDINGS_DB_NAME]: {
+          recordings: new Map([['rec-keep', legacyMeta]]),
+          chunks: new Map([['rec-keep:0', { id: 'rec-keep', seq: 0, chunk: new Blob(['important']) }]]),
+        },
+        [RECORDINGS_DB_NAME]: {
+          recordings: new Map(),
+          chunks: new Map(),
+        },
+      },
+      { failWriteOn: RECORDINGS_DB_NAME },
+    );
+    globalThis.IDBKeyRange = { bound: (lower: unknown, upper: unknown) => ({ lower, upper }) } as unknown as typeof IDBKeyRange;
+    try {
+      const store = createIndexedDbChunkStore(fake.factory);
+      expect(await store.list('acme:u1')).toEqual([]);
+      expect(fake.deleted).toEqual([]);
+      expect(fake.databases.get(LEGACY_RECORDINGS_DB_NAME)?.recordings.has('rec-keep')).toBe(true);
     } finally {
       globalThis.IDBKeyRange = originalKeyRange;
     }

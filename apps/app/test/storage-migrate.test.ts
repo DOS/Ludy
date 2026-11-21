@@ -82,18 +82,24 @@ describe('storage-migrate helpers', () => {
 });
 
 describe('migrateAuthStorage (#3966)', () => {
-  it('migrates crove-auth and crove-auth-code-verifier when ludy-auth keys are absent', () => {
+  it('migrates crove-auth and PKCE code-verifier keys when ludy-auth keys are absent', () => {
     expect(AUTH_STORAGE_KEY).toBe('ludy-auth');
     expect(LEGACY_AUTH_STORAGE_KEY).toBe('crove-auth');
     const store = memoryStorage({
       'crove-auth': JSON.stringify({ access_token: 'tok' }),
       'crove-auth-code-verifier': 'verifier-123',
+      'crove-auth-flows-code-verifier': 'flows-123',
+      'crove-auth-flow-abc-code-verifier': 'flow-abc',
     });
     migrateAuthStorage(store);
     expect(store.getItem('ludy-auth')).toBe(JSON.stringify({ access_token: 'tok' }));
     expect(store.getItem('ludy-auth-code-verifier')).toBe('verifier-123');
+    expect(store.getItem('ludy-auth-flows-code-verifier')).toBe('flows-123');
+    expect(store.getItem('ludy-auth-flow-abc-code-verifier')).toBe('flow-abc');
     expect(store.getItem('crove-auth')).toBeNull();
     expect(store.getItem('crove-auth-code-verifier')).toBeNull();
+    expect(store.getItem('crove-auth-flows-code-verifier')).toBeNull();
+    expect(store.getItem('crove-auth-flow-abc-code-verifier')).toBeNull();
   });
 
   it('preserves existing ludy-auth values and removes leftover crove-auth entries', () => {

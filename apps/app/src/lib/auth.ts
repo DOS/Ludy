@@ -72,21 +72,35 @@ export function getConfig(): PublicConfig {
 
 export const AUTH_STORAGE_KEY = 'ludy-auth';
 export const LEGACY_AUTH_STORAGE_KEY = 'crove-auth';
-const AUTH_VERIFIER_SUFFIX = '-code-verifier';
+const AUTH_STATIC_SUFFIXES = ['', '-code-verifier', '-flows-code-verifier'] as const;
+const LEGACY_FLOW_PREFIX = `${LEGACY_AUTH_STORAGE_KEY}-flow-`;
+const TARGET_FLOW_PREFIX = `${AUTH_STORAGE_KEY}-flow-`;
+
+function migrateAuthPair(store: StorageLike, key: string, legacyKey: string): void {
+  if (store.getItem(key) !== null) {
+    // Drop any leftover legacy entry so signing out of ludy-auth cannot resurrect an older session.
+    if (store.getItem(legacyKey) !== null) store.removeItem?.(legacyKey);
+  } else {
+    readMigratedItem(store, key, legacyKey);
+  }
+}
 
 export function migrateAuthStorage(storage?: StorageLike): void {
   try {
     const store = storage ?? (typeof window === 'undefined' ? undefined : window.localStorage);
     if (!store) return;
-    for (const [key, legacyKey] of [
-      [AUTH_STORAGE_KEY, LEGACY_AUTH_STORAGE_KEY],
-      [`${AUTH_STORAGE_KEY}${AUTH_VERIFIER_SUFFIX}`, `${LEGACY_AUTH_STORAGE_KEY}${AUTH_VERIFIER_SUFFIX}`],
-    ] as const) {
-      if (store.getItem(key) !== null) {
-        // Drop any leftover legacy entry so signing out of ludy-auth cannot resurrect an older session.
-        if (store.getItem(legacyKey) !== null) store.removeItem?.(legacyKey);
-      } else {
-        readMigratedItem(store, key, legacyKey);
+    for (const suffix of AUTH_STATIC_SUFFIXES) {
+      migrateAuthPair(store, `${AUTH_STORAGE_KEY}${suffix}`, `${LEGACY_AUTH_STORAGE_KEY}${suffix}`);
+    }
+    const enumerable = store as Partial<Pick<Storage, 'length' | 'key'>>;
+    if (typeof enumerable.length === 'number' && typeof enumerable.key === 'function') {
+      const legacyFlowKeys: string[] = [];
+      for (let i = 0; i < enumerable.length; i++) {
+        const key = enumerable.key(i);
+        if (key && key.startsWith(LEGACY_FLOW_PREFIX)) legacyFlowKeys.push(key);
+      }
+      for (const legacyKey of legacyFlowKeys) {
+        migrateAuthPair(store, `${TARGET_FLOW_PREFIX}${legacyKey.slice(LEGACY_FLOW_PREFIX.length)}`, legacyKey);
       }
     }
   } catch {
