@@ -177,29 +177,14 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     expect(roles.map((r) => r.key)).toEqual([...BUILTIN_ROLE_KEYS].sort());
     // The entity chief accountant (#1507) is limited to its legal entities and grants their period unlock alone.
     expect(roles.filter((r) => r.scope === 'legal_entity').map((r) => r.key)).toEqual(['external_accountant', 'finance.entity_chief_accountant']);
-    // #2612 (step 1 of 2): social.marketer (module social, scope org) may be seeded with vy.use alone until step 2 lands;
-    // the dated allowance expires on 2026-12-31 so step 2 pins the final list.
-    const marketer = roles.find((r) => r.key === 'social.marketer');
-    if (marketer) {
-      expect(marketer).toEqual({ key: 'social.marketer', module: 'social', scope: 'org' });
-    } else {
-      expect(Date.now() < Date.parse('2026-12-31T00:00:00Z'), 'the #2612 step-1 allowance expired on 2026-12-31; land step 2 and pin social.marketer').toBe(true);
-    }
+    expect(roles.find((r) => r.key === 'social.marketer')).toEqual({ key: 'social.marketer', module: 'social', scope: 'org' });
     // Both chief accountants mark the VAT return filed too (finance.vat.file, #1508), for their entities.
     // The Service inbox (CV3, #2306) seeds one permission for desk.agent, kernel.conversation.direct.read (reading private messages), and no other.
-    // vy.use (ADR-0049 decision 10, stage A step (a)) is the one permission a viewer may hold and the one every preset role of the
-    // catalog but finance.viewer grants. The rows may be absent (before its migration) or exactly these; every other row is pinned below.
-    const VY_ROLES = [
-      'crm.sales',
-      'desk.agent',
-      'external_accountant',
-      'finance.accountant',
-      'finance.chief_accountant',
-      'hr.manager',
-      ...(marketer ? ['social.marketer'] : []),
-    ];
+    // vy.use (ADR-0049 decision 10, #2612) is the one permission a viewer may hold and the one every preset role of the
+    // catalog but finance.viewer grants; every other row is pinned below.
+    const VY_ROLES = ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager', 'social.marketer'];
     const vyRows = permissions.filter((p) => p.permission === 'vy.use').map((p) => p.role_key);
-    expect((!marketer && vyRows.length === 0) || JSON.stringify(vyRows) === JSON.stringify(VY_ROLES), `vy.use rows: ${vyRows.join(', ')}`).toBe(true);
+    expect(vyRows).toEqual(VY_ROLES);
     expect(permissions.filter((p) => p.permission !== 'vy.use')).toEqual([
       { role_key: 'desk.agent', permission: 'kernel.conversation.direct.read' },
       { role_key: 'finance.chief_accountant', permission: 'finance.period.unlock' },

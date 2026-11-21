@@ -44,11 +44,12 @@ const TENANT_CALLABLE = [
   "crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)",
   "crove_meetings.member_vy_media_files()",
 ];
-// The department roles that grant vy.use (ADR-0049 decision 10) and the one that does not.
+// The department roles that grant vy.use (ADR-0049 decision 10, #2612) and the one that does not.
 const VY_ROLES = [
   "finance.chief_accountant",
   "finance.accountant",
   "external_accountant",
+  "social.marketer",
   "crm.sales",
   "desk.agent",
   "hr.manager",
@@ -1191,63 +1192,50 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           ),
         );
       }
-      const hasMarketer =
-        (
-          await admin((c) =>
-            c.query(
-              "SELECT 1 FROM crove_kernel.role WHERE key = 'social.marketer'",
-            ),
-          )
-        ).rowCount === 1;
-      const vyRoles = hasMarketer
-        ? [...VY_ROLES, "social.marketer"]
-        : VY_ROLES;
-      expect(await viewerRoles([...vyRoles, "finance.viewer"])).toEqual({
-        ...Object.fromEntries(vyRoles.map((r) => [r, true])),
+      expect(await viewerRoles([...VY_ROLES, "finance.viewer"])).toEqual({
+        ...Object.fromEntries(VY_ROLES.map((r) => [r, true])),
         "finance.viewer": false,
       });
-      if (hasMarketer) {
-        // #2612: social.marketer grants only vy.use (grantable_to_viewer), so role_assignment_check admits a viewer org-wide,
-        // refuses a legal-entity scope, and grants no non-grantable permission.
-        await expect(
-          admin((c) =>
-            c.query(
-              "SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, 'viewer', 'social.marketer', NULL)",
-              [orgId, users.viewer],
-            ),
+      // #2612: social.marketer grants only vy.use (grantable_to_viewer), so role_assignment_check admits a viewer org-wide,
+      // refuses a legal-entity scope, and grants no non-grantable permission.
+      await expect(
+        admin((c) =>
+          c.query(
+            "SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, 'viewer', 'social.marketer', NULL)",
+            [orgId, users.viewer],
           ),
-        ).resolves.toBeDefined();
-        await expect(
-          admin((c) =>
-            c.query(
-              "SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, 'viewer', 'social.marketer', $3::uuid)",
-              [orgId, users.viewer, branch],
-            ),
+        ),
+      ).resolves.toBeDefined();
+      await expect(
+        admin((c) =>
+          c.query(
+            "SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, 'viewer', 'social.marketer', $3::uuid)",
+            [orgId, users.viewer, branch],
           ),
-        ).rejects.toThrow(/ROLE_SCOPE_NOT_ALLOWED/);
+        ),
+      ).rejects.toThrow(/ROLE_SCOPE_NOT_ALLOWED/);
+      await admin((c) =>
+        c.query(
+          "INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'social.marketer', $3)",
+          [orgId, users.viewer, users.owner],
+        ),
+      );
+      try {
+        expect(
+          await permitted(users.viewer, "finance.period.unlock"),
+          "a viewer with social.marketer holds no finance permission",
+        ).toBe(false);
+        expect(
+          await permitted(users.viewer, "kernel.conversation.direct.read"),
+          "a viewer with social.marketer holds no direct-message permission",
+        ).toBe(false);
+      } finally {
         await admin((c) =>
           c.query(
-            "INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'social.marketer', $3)",
-            [orgId, users.viewer, users.owner],
+            "DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2 AND role_key = 'social.marketer'",
+            [orgId, users.viewer],
           ),
         );
-        try {
-          expect(
-            await permitted(users.viewer, "finance.period.unlock"),
-            "a viewer with social.marketer holds no finance permission",
-          ).toBe(false);
-          expect(
-            await permitted(users.viewer, "kernel.conversation.direct.read"),
-            "a viewer with social.marketer holds no direct-message permission",
-          ).toBe(false);
-        } finally {
-          await admin((c) =>
-            c.query(
-              "DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2 AND role_key = 'social.marketer'",
-              [orgId, users.viewer],
-            ),
-          );
-        }
       }
       // A viewer holds no other permission, whatever a grant says.
       if (has.override) {
