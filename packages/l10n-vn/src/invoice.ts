@@ -35,7 +35,7 @@ export interface TaxBreakdown {
 
 // The digital signatures of an e-invoice XML (#674), verified in the crove-extract sandbox: the seller's XML-DSig
 // signature and, for an invoice with a tax authority code (MCCQT), the tax authority's. The same lists are the wire
-// contract in @crove/extract-contract (its tests compare them).
+// contract in @ludy/extract-contract (its tests compare them).
 //   verified        every signature the invoice must carry is valid, covers the invoice data that was read, and its
 //                   certificate chains to a Vietnamese national root CA shipped with Crove (no revocation check)
 //   unverified      a signature is missing, broken, does not cover the data, or its certificate is not trusted;
@@ -98,7 +98,7 @@ const SIGNATURE_MESSAGES: Record<SignatureReason, string> = {
   too_large: 'Tệp quá lớn để xác minh chữ ký số',
 };
 
-// The check code of a signature verification (INVOICE_CHECK_CODES in @crove/kernel-contract, #677): signature.verified,
+// The check code of a signature verification (INVOICE_CHECK_CODES in @ludy/kernel-contract, #677): signature.verified,
 // or signature.<reason>.
 export function signatureCheckCode(signature: InvoiceSignature): string {
   return signature.status === 'verified' || !signature.reason ? `signature.${signature.status}` : `signature.${signature.reason}`;
@@ -154,7 +154,7 @@ export interface ParsedInvoice {
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 
 // id names the check (stable, BLOCKING_CHECK_IDS refers to it); code names its outcome and wording (one of
-// INVOICE_CHECK_CODES in @crove/kernel-contract, issue #677), with params filling the wording. message is the
+// INVOICE_CHECK_CODES in @ludy/kernel-contract, issue #677), with params filling the wording. message is the
 // Vietnamese sentence, kept for older readers and as the fallback.
 export interface InvoiceCheck {
   id: string;

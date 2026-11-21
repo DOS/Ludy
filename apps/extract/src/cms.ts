@@ -8,7 +8,7 @@ import {
   EXTRACT_LIMITS,
   decodePdfEmbedCmsInput,
   type PdfEmbedCmsResult,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   PDFArray,
   PDFDict,

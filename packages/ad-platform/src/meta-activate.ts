@@ -3,8 +3,8 @@
 // it reads back. It is a separate class from the writer (`MetaAdWriter`, meta-write.ts, which can only create paused objects and pause or archive them), built with the
 // same options and bound to the Graph API host the same way, so the one place in the code that sends ACTIVE is this file. The job never reaches it but through the frozen
 // view of activators.ts. [U] Meta's exact answer to the change of status is written from its documentation; the live check (W2-5) records what it really sends.
-import type { Fetch } from '@crove/channel';
-import { Graph, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
+import { Graph, META_DEFAULT_GRAPH_VERSION } from '@ludy/channel';
 import { AdPlatformError } from './index.ts';
 import type { ActivateTarget, AdActivator, PlatformObjectStatus } from './activators.ts';
 import { graphHostOnly, metaAdsError } from './meta.ts';

@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { COWORKER_ROSTER, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignRequestView } from '@crove/kernel-contract';
+import { COWORKER_ROSTER, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignRequestView } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));

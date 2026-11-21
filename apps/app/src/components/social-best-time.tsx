@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { orpc, queryClient } from '../lib/api.ts';
 import { BEST_TIME_DAYS, BEST_TIME_MIN_POSTS, channelBestTimes, knownZone, listedPosts, suggestBestTimes, takenTimes } from '../lib/social-best-time.ts';

@@ -4,8 +4,8 @@
 // (a field the official formula does not sign is flagged, never refused); the Vietnam withholding fields are carried and never booked; no buyer, payment or adjustment field is read; and the reader is GET only.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Decimal } from '@crove/l10n-vn';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { Decimal } from '@ludy/l10n-vn';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { SHOPEE_HOSTS, shopeeCaller } from '../src/marketplace-shopee.ts';
 import { shopeeFinance, type ShopeeIncomeLine } from '../src/marketplace-shopee-finance.ts';

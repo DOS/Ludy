@@ -3,7 +3,7 @@
 // number inside the server's bounds. Nothing here reads or writes: it turns the stored setting into the form and the form into the call, and
 // says which field is wrong. The server checks the same bounds again (and so does the database). A comma is read as the decimal point, since
 // the keypad of a phone set to Vietnamese shows only a comma.
-import { ADS_FLAG_FACTOR, type AdsFlagSetting } from '@crove/kernel-contract';
+import { ADS_FLAG_FACTOR, type AdsFlagSetting } from '@ludy/kernel-contract';
 
 export const FLAG_FIELDS = ['paceMinDays', 'dayFactor', 'cprFactor', 'cprMinResults', 'cprMinHistoryDays'] as const;
 export type FlagField = (typeof FLAG_FIELDS)[number];

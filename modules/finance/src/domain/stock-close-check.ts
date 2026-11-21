@@ -2,7 +2,7 @@
 // The 1381 rule at the close of a month of stock (#3712 slice 3, research C3 of 2026-11-18, accounting-rules-research-2026-11-18.md): under Circular 99 a balance on 1381 (goods waiting to be
 // resolved: a count's shortage beyond the norm) with no evidence of its cause is expensed at the reporting date, so closing a month with such a balance deserves a warning. Under Circular 133
 // the research names no such rule. Pure, decimal.js; the warning never blocks a close.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 
 export const WAITING_SHORTAGE_ACCOUNT = '1381';
 

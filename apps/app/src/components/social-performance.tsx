@@ -4,7 +4,7 @@
 // them; nothing shows when none has figures.
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { PERFORMANCE_FIGURES, reportPerformance, sumDays, type PerformanceTotals } from '../lib/social-performance.ts';

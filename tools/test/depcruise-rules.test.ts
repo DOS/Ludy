@@ -8,12 +8,12 @@ const kernel = { id: 'kernel', dir: 'packages/kernel', dependsOn: [] };
 const finance = { id: 'finance', dir: 'modules/finance', dependsOn: ['kernel'] };
 const crm = { id: 'crm', dir: 'modules/crm', dependsOn: ['kernel'] };
 const packages = [
-  { dir: 'packages/kernel', name: '@crove/kernel', exports: ['./src/index.ts'] },
-  { dir: 'packages/db', name: '@crove/db', exports: ['./src/index.ts', './src/migrate.ts'] },
-  { dir: 'packages/ui', name: '@crove/ui', exports: ['./src/components/*.tsx'] },
-  { dir: 'modules/finance', name: '@crove/mod-finance', exports: ['./src/index.ts'] },
-  { dir: 'modules/crm', name: '@crove/mod-crm', exports: ['./src/index.ts', './src/contract.ts'] },
-  { dir: 'apps/app', name: '@crove/app', exports: [] },
+  { dir: 'packages/kernel', name: '@ludy/kernel', exports: ['./src/index.ts'] },
+  { dir: 'packages/db', name: '@ludy/db', exports: ['./src/index.ts', './src/migrate.ts'] },
+  { dir: 'packages/ui', name: '@ludy/ui', exports: ['./src/components/*.tsx'] },
+  { dir: 'modules/finance', name: '@ludy/mod-finance', exports: ['./src/index.ts'] },
+  { dir: 'modules/crm', name: '@ludy/mod-crm', exports: ['./src/index.ts', './src/contract.ts'] },
+  { dir: 'apps/app', name: '@ludy/app', exports: [] },
 ];
 
 describe('depcruise rules from the manifests (#1651)', () => {
@@ -54,13 +54,13 @@ describe('depcruise rules from the manifests (#1651)', () => {
         writeFileSync(join(root, dir, 'package.json'), JSON.stringify(json));
       };
       for (const parent of ['apps', 'packages', 'modules']) mkdirSync(join(root, parent));
-      pkg('packages/a', { name: '@crove/a', exports: { '.': { import: './src/index.ts', default: null }, './private/*': null } });
-      pkg('modules/b', { name: '@crove/mod-b', exports: null });
-      pkg('e2e', { name: '@crove/e2e' });
+      pkg('packages/a', { name: '@ludy/a', exports: { '.': { import: './src/index.ts', default: null }, './private/*': null } });
+      pkg('modules/b', { name: '@ludy/mod-b', exports: null });
+      pkg('e2e', { name: '@ludy/e2e' });
       expect(readPackages(root).sort((x, y) => x.dir.localeCompare(y.dir))).toEqual([
-        { dir: 'e2e', name: '@crove/e2e', exports: [] },
-        { dir: 'modules/b', name: '@crove/mod-b', exports: [] },
-        { dir: 'packages/a', name: '@crove/a', exports: ['./src/index.ts'] },
+        { dir: 'e2e', name: '@ludy/e2e', exports: [] },
+        { dir: 'modules/b', name: '@ludy/mod-b', exports: [] },
+        { dir: 'packages/a', name: '@ludy/a', exports: ['./src/index.ts'] },
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });

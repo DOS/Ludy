@@ -2,7 +2,7 @@
 // accepts. The database part, re-recording an
 // export with the restored object versions, is in offboarding.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { BlobStoreAccessError, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { BlobStoreAccessError, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { rebindExport, rebindExports } from '../src/export-rebind.ts';
 
 function fakeRuntime() {

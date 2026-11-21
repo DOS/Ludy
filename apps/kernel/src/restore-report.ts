@@ -31,8 +31,8 @@
 // lacks).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Actor, type CommandDef, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Actor, type CommandDef, type Runtime } from '@ludy/kernel-runtime';
 import { acknowledgeRestore, restoreReport, type ArchiveStore, type RestoreReport, type RestoreSeries, type UncoveredSeries } from './worm.ts';
 
 export const RESTORE_REPORT_EXIT = { ok: 0, failed: 1, lost: 2, behind: 3 } as const;

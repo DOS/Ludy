@@ -3,10 +3,10 @@
 // often people corrected it, each invoice and its reason, and one button that approves the group through the bulk approval.
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import type { CategorizationRule } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { CategorizationRule } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { RULE_OFTEN_CORRECTED, type GroupableItem, type ProposalGroup } from '../lib/proposal-groups.ts';
 import { proposalName } from '../lib/review.ts';

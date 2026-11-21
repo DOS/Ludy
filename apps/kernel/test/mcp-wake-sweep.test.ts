@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the sweep makes of a Home item (ADR-0051 decision 4, issue #3024): ids, a severity, an amount, the day it falls due and a day count, and nothing a person typed.
 import { describe, expect, it } from 'vitest';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@crove/kernel';
-import type { TodayItem } from '@crove/kernel-contract';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@ludy/kernel';
+import type { TodayItem } from '@ludy/kernel-contract';
 import { wakeEvent } from '../src/mcp-wake-body.ts';
 import { wakeItemOf } from '../src/mcp-wake-sweep.ts';
 

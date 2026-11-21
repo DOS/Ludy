@@ -6,7 +6,7 @@ import { createRef, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { NotebookSummary, NoteOrganizeResult, TodoPlanResult } from '@crove/kernel-contract';
+import type { NotebookSummary, NoteOrganizeResult, TodoPlanResult } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const queryClientState = vi.hoisted(() => ({ current: null as unknown as QueryClient }));

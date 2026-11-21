@@ -7,8 +7,8 @@
 // It is read, never written: nothing here stores a text, chooses an account or a supplier, or starts a resolution; a person picks and a person approves the voucher. When there is no model, the
 // member's calls are too frequent, the AI budget is spent, the call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows its own template, so
 // everything works with AI off. A text is kept for a while by its facts, so opening the same count again does not pay twice. A failure is named, never quoted.
-import { AiBudgetExhaustedError, stockSurplusFactsText, type InboxReader, type StockSurplusFacts } from '@crove/agent';
-import type { StockSurplusNote, StockSurplusSource } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, stockSurplusFactsText, type InboxReader, type StockSurplusFacts } from '@ludy/agent';
+import type { StockSurplusNote, StockSurplusSource } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface StockSurplusAi {

@@ -4,8 +4,8 @@
 // and money is a decimal string whose products and comparisons go through decimal.js (AGENTS.md "Money"). The database computes the same hold (crove_ads.launch_hold) for the
 // caps and the guard; the tests pin the two to each other.
 import { Decimal } from 'decimal.js';
-import type { AdsManageKind, AdsManageObjectView, AdsManageSlot } from '@crove/kernel-contract';
-import { ADS_PLAN_LIMITS } from '@crove/kernel-contract';
+import type { AdsManageKind, AdsManageObjectView, AdsManageSlot } from '@ludy/kernel-contract';
+import { ADS_PLAN_LIMITS } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals } from './domain.ts';
 import type { Commitment } from './launch-caps.ts';
 

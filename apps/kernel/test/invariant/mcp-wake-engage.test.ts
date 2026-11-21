@@ -6,7 +6,7 @@
 // Part of the invariant suite: it imports package code under test, never helpers from outside test/invariant/.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { ENGAGE_WAKE_RULES } from '@crove/kernel-contract';
+import { ENGAGE_WAKE_RULES } from '@ludy/kernel-contract';
 import { LINE_WAKE_EVENTS, lineTypeProblem, wakeBody } from '../../src/mcp-wake-body.ts';
 
 const SCOPE_OF_LINE: Record<string, string> = { engage: 'ludy.engage.write', social: 'ludy.social.draft', ads: 'ludy.ads.draft' };

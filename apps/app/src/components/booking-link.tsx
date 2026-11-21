@@ -6,10 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { EventType } from '@crove/kernel-contract';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { EventType } from '@ludy/kernel-contract';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { orpc } from '../lib/api.ts';
 import { appOrigin, BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID, bookingLinkOf } from '../lib/booking.ts';
 

@@ -1,14 +1,14 @@
-// Outbound mail (issue #129). The providers live in @crove/mail (Email plan §3.9): SMTP, configured by SMTP_HOST,
+// Outbound mail (issue #129). The providers live in @ludy/mail (Email plan §3.9): SMTP, configured by SMTP_HOST,
 // SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM (the settings the bundled Supabase Auth uses for its own mails;
 // Mailpit locally), or Resend with MAIL_PROVIDER=resend (#539). Without a provider, mail is off: send() logs one line
 // naming the subject and sends nothing. Crove Cloud may plug its own provider.
 //
 // Mail bodies may carry secrets (an invite's accept link), so nothing here logs a body, a recipient or an error
 // message: failures are reported by error code only.
-import { createLogProvider, createResendProvider, createSmtpProvider, describeMailError, type MailProvider, type OutboundMail, type SendResult } from '@crove/mail';
+import { createLogProvider, createResendProvider, createSmtpProvider, describeMailError, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import type { Config } from './config.ts';
 
-export { createLogProvider, describeMailError, type MailProvider, type OutboundMail } from '@crove/mail';
+export { createLogProvider, describeMailError, type MailProvider, type OutboundMail } from '@ludy/mail';
 
 export type Delivery = 'sent' | 'failed' | 'off';
 

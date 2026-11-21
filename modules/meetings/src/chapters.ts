@@ -4,8 +4,8 @@
 // meeting the published rows, a user context only), and these commands check it again. The chapters are published with the minutes (meetings.result.publish), replace the set published before, go
 // with the meeting, and expire as a draft after 30 days. A start second must be the start of a real line of the transcript (the recorder reads every line of their meeting), each second once; a
 // title holds no email address and no run of eight or more digits (the personal-data finder and erasure reach a title anyway, so nothing rests on that rule). Audit rows carry the meeting id and counts, never a title.
-import { CHAPTERS_MAX, chapterTitleProblem, zChapters, zChaptersSave, zChaptersSaved, zMeetingRef, type Chapter, type Chapters } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { CHAPTERS_MAX, chapterTitleProblem, zChapters, zChaptersSave, zChaptersSaved, zMeetingRef, type Chapter, type Chapters } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { recorderMeeting } from './results.ts';
 import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 

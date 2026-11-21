@@ -7,7 +7,7 @@
 // What differs from Lazada: the consent link takes the app's SERVICE ID (a public identifier from Partner Center, kept in the clear like Lazada's App Key), not the App Key; the return address is the one
 // registered on the app in Partner Center (not a parameter); and a TikTok app can hold several shops, so after the token is stored the shop list is read and EXACTLY ONE shop is kept (its cipher and id are
 // sealed with the connection). None or several fails in words: choosing between shops is a later slice, and guessing would put another shop's orders in the books.
-import type { MarketplaceAuthorizeResult, MarketplaceProvider, MarketplaceTestResult } from '@crove/mod-finance';
+import type { MarketplaceAuthorizeResult, MarketplaceProvider, MarketplaceTestResult } from '@ludy/mod-finance';
 import { pickAllowed, type Fetch } from './marketplace-adapter-kit.ts';
 import { parseTiktokSecret, tiktokShops, type TiktokCaller } from './marketplace-tiktok.ts';
 import { createTiktokToken } from './marketplace-tiktok-token.ts';

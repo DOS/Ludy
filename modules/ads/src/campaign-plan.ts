@@ -4,8 +4,8 @@
 // plan and the same caps always give the same answer, so a draft the AI coworker wrote is judged exactly as one a person wrote. Money is a decimal string
 // and every product and comparison goes through decimal.js (AGENTS.md "Money"); amounts of different currencies are never compared.
 import { Decimal } from 'decimal.js';
-import { ADS_PLAN_LIMITS, zAdsCampaignPlan, type AdsCampaignPlan, type AdsCampaignPlanDraft, type AdsPlanIssue } from '@crove/kernel-contract';
-import { sha256Hex } from '@crove/kernel-runtime';
+import { ADS_PLAN_LIMITS, zAdsCampaignPlan, type AdsCampaignPlan, type AdsCampaignPlanDraft, type AdsPlanIssue } from '@ludy/kernel-contract';
+import { sha256Hex } from '@ludy/kernel-runtime';
 import { currencyDecimals } from './domain.ts';
 
 const DAY = 24 * 60 * 60 * 1000;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { filterIssues } from '@crove/kernel-contract';
+import { filterIssues } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, dealSortOfValue, dealSortValue, isAmount } from '../src/lib/deal-filter.ts';
 import { sameFilter } from '../src/lib/view-filter.ts';

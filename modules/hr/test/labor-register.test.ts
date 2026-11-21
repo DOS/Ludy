@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { HR_DECLARATION_MAX_PEOPLE } from '@crove/kernel-contract';
+import { HR_DECLARATION_MAX_PEOPLE } from '@ludy/kernel-contract';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import {

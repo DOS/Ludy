@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The finance coworker's proposal for the columns of a marketplace order report no profile knows (#3850, plan stock-and-marketplaces.md section 8.6 "Columns", feature `finance.stock_columns`).
-// Code has already found the header row and built the sheet a model may see (@crove/l10n-vn marketplace-columns.ts): the header texts and up to three MASKED sample values per column (digits as 9,
+// Code has already found the header row and built the sheet a model may see (@ludy/l10n-vn marketplace-columns.ts): the header texts and up to three MASKED sample values per column (digits as 9,
 // letters as a, cut at 12 characters), with every column whose header names a buyer or recipient left out altogether. The model answers, for each column given, which standard field it is or "none".
 // The answer is tainted: a column not given, a column answered twice, a field given to two columns and a field that is not on the list are dropped here, a buyer column cannot be answered because it
 // was never shown, and what is left is only a PROPOSAL: the kernel reads the real file with it (`checkColumnMapping`, which refuses a mapping that does not parse the file) and a person confirms.
 // The header texts come from a file and are data, never instructions. Nothing here writes.
-import { ORDER_FIELDS, type ColumnAssignment, type OrderField, type SheetColumn } from '@crove/l10n-vn';
+import { ORDER_FIELDS, type ColumnAssignment, type OrderField, type SheetColumn } from '@ludy/l10n-vn';
 
 export interface MarketplaceColumnFacts {
   language: 'vi' | 'en';

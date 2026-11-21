@@ -8,9 +8,9 @@
 // - While the S2b layout or a percentage in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen and the
 //   Excel file label the figures "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import { zHouseholdS2b, zHouseholdS2bGet, type HouseholdS2b } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zHouseholdS2b, zHouseholdS2bGet, type HouseholdS2b } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { householdBookWindow } from './household-books.ts';
 import { tradeRevenueBook } from './household-s2a.ts';
 

@@ -2,8 +2,8 @@
 // The deterministic part of a sales e-invoice draft (#2500, plan einvoice-issue.md section 8 step 2): the amounts of a draft from
 // its lines (decimal arithmetic, never a typed total) and the checks Decree 254 Art. 10 and the provider's rules ask of it. Pure:
 // no database, no provider. A failed check is a code on a field; nothing is sent either way.
-import type { BuyerIdentityKind, BuyerKind, DraftIssue, DraftIssueCode } from '@crove/kernel-contract';
-import { computeLineTotals, money, normalizeVatRate, parseTaxCode, reducedRateApplies, sumLineTotals } from '@crove/l10n-vn';
+import type { BuyerIdentityKind, BuyerKind, DraftIssue, DraftIssueCode } from '@ludy/kernel-contract';
+import { computeLineTotals, money, normalizeVatRate, parseTaxCode, reducedRateApplies, sumLineTotals } from '@ludy/l10n-vn';
 
 export { normalizeVatRate };
 
@@ -56,7 +56,7 @@ export interface ComputedDraft {
   total: string;
 }
 
-// The VAT rates and the rounding come from the one shared line-totals rule (@crove/l10n-vn), which a quote uses too. Amounts of a
+// The VAT rates and the rounding come from the one shared line-totals rule (@ludy/l10n-vn), which a quote uses too. Amounts of a
 // draft to the whole dong: each line is the quantity times the unit price and its VAT the rate of that amount, each rounded half
 // up; the totals are the sums of the rounded lines, so the invoice adds up as printed. A line that cannot be computed (a quantity
 // or price that is not a decimal) is left to the checks.

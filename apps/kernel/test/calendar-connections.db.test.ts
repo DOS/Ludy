@@ -6,11 +6,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, createOrg, kernelCommands, kernelQueries, upsertIdentity, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, weekdayOf, zonedDate, zonedInstant } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, createOrg, kernelCommands, kernelQueries, upsertIdentity, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from '@ludy/kernel';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, weekdayOf, zonedDate, zonedInstant } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

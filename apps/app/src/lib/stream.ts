@@ -3,7 +3,7 @@
 // authorized calls. While the stream is down the screens poll as before. No browser or API imports, so it is unit
 // tested; stream-hook.ts wires it to EventSource and the query client.
 import type { Query, QueryClient } from '@tanstack/react-query';
-import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@crove/kernel-contract';
+import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@ludy/kernel-contract';
 import { apiUrl } from './api-base.ts';
 
 // oRPC query keys are [path, { type, input }], for example [['inbox', 'get'], { type: 'query', input: { id } }].

@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { installDdlWatch, migrate, setRolePasswords } from '@ludy/db/migrate';
 import { sweepSecuritySignals } from '../../src/security-signals.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

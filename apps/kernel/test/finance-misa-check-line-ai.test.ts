@@ -2,8 +2,8 @@
 // The coworker's line above the MISA export check, on the API side (#3848 slice B): code counts the findings per kind, nothing flagged asks no model, the model is asked once with the counts, an answer is kept,
 // and every state with no text (no model, a spent budget, too many calls, a failed or refused call) is named and never quoted. The counts always come back, so the screen can tell which list the line belongs to.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type MisaCheckLineFacts, type MisaCheckLineResult } from '@crove/agent';
-import type { MisaCheck } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type MisaCheckLineFacts, type MisaCheckLineResult } from '@ludy/agent';
+import type { MisaCheck } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { MISA_CHECK_LINE_KEEP_MS, MISA_CHECK_LINE_REFUSED_KEEP_MS, explainMisaCheckLine, misaCheckCounts, misaCheckLineAi, misaCheckLineFacts } from '../src/finance-misa-check-line-ai.ts';
 

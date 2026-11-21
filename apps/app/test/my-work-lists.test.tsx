@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { MyWork, TodoListsResponse, TodoSummary } from '@crove/kernel-contract';
+import type { MyWork, TodoListsResponse, TodoSummary } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { browserTimeZone } from '../src/lib/my-work.ts';
 

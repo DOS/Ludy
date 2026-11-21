@@ -1,7 +1,7 @@
 // Labels for posts (#639): the classes each label colour shows with, and choosing a post's labels. No browser or
 // React imports, so it is unit tested.
-import { SOCIAL_LABEL_COLORS } from '@crove/kernel-contract';
-import { labelUtmTag } from '@crove/mod-social/contract';
+import { SOCIAL_LABEL_COLORS } from '@ludy/kernel-contract';
+import { labelUtmTag } from '@ludy/mod-social/contract';
 
 export type LabelColor = (typeof SOCIAL_LABEL_COLORS)[number];
 export const LABEL_COLORS: readonly LabelColor[] = SOCIAL_LABEL_COLORS;

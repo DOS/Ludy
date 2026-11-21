@@ -6,9 +6,9 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { SOCIAL_LINK_PREVIEW_ERRORS, type MemberRole, type SocialLinkPreviewError, type SocialLinkPreviewStatus } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { SOCIAL_LINK_PREVIEW_ERRORS, type MemberRole, type SocialLinkPreviewError, type SocialLinkPreviewStatus } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // An answer is fresh this long; a request in progress is not repeated for this long.

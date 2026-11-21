@@ -3,7 +3,7 @@
 // note says it will be refused; elsewhere it is advice, since followers see the same text twice. A link takes the
 // member to the AI rewrite (#583) of the text the channel sends, when they may use it.
 import { useTranslations } from 'use-intl';
-import { refusesDuplicates, type DuplicateOf } from '@crove/mod-social/contract';
+import { refusesDuplicates, type DuplicateOf } from '@ludy/mod-social/contract';
 import { useFormat } from '../i18n/provider.tsx';
 import { providerName } from '../lib/social.ts';
 

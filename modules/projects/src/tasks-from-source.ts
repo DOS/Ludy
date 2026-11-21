@@ -17,8 +17,8 @@ import {
   type ProjectTasksFromSourceConfirmResult,
   type ProjectTasksFromSourceStatus,
   type Transcript,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import {
   WRITERS,
   assertNotArchived,

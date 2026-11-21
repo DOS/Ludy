@@ -16,22 +16,22 @@ import {
   type SignCaRequestStatus,
   type SignCaSubFilter,
   type SignCaTestState,
-} from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
+} from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
 import {
   tableWrite,
   zId,
   type SignCaConnectionRecord,
   type SignCaSettingsResult,
   type SignCaSigningRequestRecord,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   defineCommand,
   defineQuery,
   type CommandContext,
   type QueryContext,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';

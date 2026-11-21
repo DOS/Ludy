@@ -19,14 +19,14 @@ import {
   type AdsCampaignPlanDraft,
   type AdsLaunchView,
   type AdsObjective,
-} from '@crove/kernel-contract';
-import { Alert } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Alert } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { useFormat } from '../i18n/provider.tsx';
 import type { Translate } from '../i18n/runtime.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

@@ -3,7 +3,7 @@
 // Cloudflare. Without them nothing changes. Polls of a request are never checked.
 import type pg from 'pg';
 import { describe, expect, it, vi } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { contentSecurityPolicy, createHttpApp } from '../src/http.ts';
 import { TURNSTILE_VERIFY_URL, createTurnstileVerifier, type TurnstileVerifier } from '../src/turnstile.ts';

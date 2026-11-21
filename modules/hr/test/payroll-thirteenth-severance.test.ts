@@ -12,8 +12,8 @@ import {
   zHrPayrollInputs,
   zHrRunApplyThirteenthMonth,
   zHrRunThirteenthMonthPreview,
-} from '@crove/kernel-contract';
-import { JOB_LOSS_TERMINATION_REASONS, PAYROLL_RULES, SEVERANCE_TERMINATION_REASONS, calculatePayroll } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { JOB_LOSS_TERMINATION_REASONS, PAYROLL_RULES, SEVERANCE_TERMINATION_REASONS, calculatePayroll } from '@ludy/l10n-vn';
 import { hrCommands, hrQueries } from '../src/index.ts';
 import { employeeJobLoss, employeeSeverance } from '../src/employees.ts';
 import { runApplyThirteenthMonth, runApprove, runThirteenthMonthPreview } from '../src/payroll-run.ts';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Comparing the filter and sort of a screen with the ones a saved view stores (CRM K3 and K4, #2227, #2228). No browser or
 // API imports, so it is unit tested.
-import type { FilterAst, FilterCondition, SavedViewSort } from '@crove/kernel-contract';
+import type { FilterAst, FilterCondition, SavedViewSort } from '@ludy/kernel-contract';
 
 // Two filters mean the same conditions, whatever their order.
 export function sameFilter(a: FilterAst, b: FilterAst): boolean {

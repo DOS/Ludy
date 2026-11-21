@@ -4,10 +4,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { GLOSSARY_TERMS_MAX, GLOSSARY_TERM_MAX, type GlossaryTermView } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { GLOSSARY_TERMS_MAX, GLOSSARY_TERM_MAX, type GlossaryTermView } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

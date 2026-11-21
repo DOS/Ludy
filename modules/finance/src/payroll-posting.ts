@@ -8,12 +8,12 @@
 //   has such a voucher (crove_finance.ledger_effect_recorded) before it moves to 'executed'.
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
-import { PAYROLL_POSTING_MAPS, money } from '@crove/l10n-vn';
+import { PAYROLL_POSTING_MAPS, money } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';

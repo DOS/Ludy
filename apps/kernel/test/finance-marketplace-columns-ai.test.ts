@@ -3,8 +3,8 @@
 // an empty shell and is not given), fewer than three columns to show ask no model, an answer is kept by its facts, and every state with no proposal (no model, a spent budget, too many calls, a failed call
 // or every answer dropped) is named and never quoted.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from '@crove/agent';
-import type { MarketplaceColumnSheet } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from '@ludy/agent';
+import type { MarketplaceColumnSheet } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { MARKETPLACE_COLUMNS_KEEP_MS, MARKETPLACE_COLUMNS_REFUSED_KEEP_MS, marketplaceColumnsAi, proposeMarketplaceColumns } from '../src/finance-marketplace-columns-ai.ts';
 

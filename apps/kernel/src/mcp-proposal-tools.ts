@@ -5,12 +5,12 @@
 // client and its host. A person approves it in Ludy (the Inbox); only then does the original command run, as that person, with every check it has (the reply window, the platform's limits, the caps, the kill
 // switch). The tool answers `{ proposalId, status: 'pending' }`: asked, not done. The arguments are the original command's own strict input, checked here before anything runs.
 import { z } from 'zod';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
-import { conversationProposalCommands } from '@crove/kernel';
-import type { McpWriteScopeId } from '@crove/kernel-contract';
-import { adsEngageProposalCommands } from '@crove/mod-ads';
-import { crmEngageProposalCommands } from '@crove/mod-crm';
-import { postSubmitApproved, variantScheduleApproved } from '@crove/mod-social';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
+import { conversationProposalCommands } from '@ludy/kernel';
+import type { McpWriteScopeId } from '@ludy/kernel-contract';
+import { adsEngageProposalCommands } from '@ludy/mod-ads';
+import { crmEngageProposalCommands } from '@ludy/mod-crm';
+import { postSubmitApproved, variantScheduleApproved } from '@ludy/mod-social';
 import type { ToolDescriptor } from './mcp-protocol.ts';
 
 const PROPOSED = {

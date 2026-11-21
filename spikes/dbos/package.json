@@ -1,5 +1,5 @@
 {
-  "name": "crove-spike-dbos",
+  "name": "ludy-spike-dbos",
   "private": true,
   "description": "Throwaway spike for issue #59: DBOS Transact vs the plan's process engine. Not part of the workspace.",
   "type": "module",

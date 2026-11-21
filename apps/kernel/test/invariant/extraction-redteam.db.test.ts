@@ -11,15 +11,15 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { InvoiceExtractor } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { parseTaxCode } from '@crove/l10n-vn';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { InvoiceExtractor } from '@ludy/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { parseTaxCode } from '@ludy/l10n-vn';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import {
   CASES,
   FAKE_TAX_CODES,

@@ -3,9 +3,9 @@
 // buyer comes from the customer's own record (a tax code that fails its checksum is left out), a line without a stated rate gets the customer's usual rate, else the org's, and every state of
 // `ai` is an answer with nothing to fill in, never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftResult } from '@crove/agent';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import type { EInvoiceSuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftResult } from '@ludy/agent';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
+import type { EInvoiceSuggestSource } from '@ludy/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, withInvoice, type EInvoiceAi } from '../src/einvoice-ai.ts';
 

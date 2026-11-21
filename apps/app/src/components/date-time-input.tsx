@@ -5,7 +5,7 @@
 // half is missing; the half already typed stays in the field.
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { DateInput } from './date-input.tsx';
 import { TimeInput } from './time-input.tsx';
 import { changeDateTime, splitDateTime, syncDateTime, type DateTimeParts } from '../lib/date-input.ts';

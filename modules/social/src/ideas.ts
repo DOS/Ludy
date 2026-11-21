@@ -8,9 +8,9 @@
 // never changed; a draft made from it is tainted like any AI text, so a person approves what goes out.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IDEA_STAGES, SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialIdeaOrigin, SocialIdeaStage } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_IDEA_STAGES, SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialIdeaOrigin, SocialIdeaStage } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

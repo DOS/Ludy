@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Deterministic Vietnamese (with or without diacritics) and English Quick Add parser for personal to-dos (#3556).
-// Zero AI calls, zero async I/O, synchronous pure TypeScript using @crove/l10n-vn Gregorian & time-zone helpers.
+// Zero AI calls, zero async I/O, synchronous pure TypeScript using @ludy/l10n-vn Gregorian & time-zone helpers.
 
 import { daysInCalendarMonth, parseIsoCalendarDate } from './labor-contracts.ts';
 import { assertValidTimeZone, formatZonedIsoOffset, zonedDateString, zonedInstant } from './time-zone.ts';

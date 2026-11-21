@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMITS, zExtractedFeed } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, zExtractedFeed } from '@ludy/extract-contract';
 import { FeedError, readFeed } from '../src/feed.ts';
 import { parse } from '../src/parse.ts';
 

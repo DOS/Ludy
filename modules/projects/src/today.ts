@@ -7,9 +7,9 @@
 // free text (no task title, project name or person's name), so nothing a user wrote reaches Vy's Home prompt.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { TODAY_ITEMS_MAX, vietnamToday, zTodayItems, type TodayItem, type TodayTitle } from '@crove/kernel-contract';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { TODAY_ITEMS_MAX, vietnamToday, zTodayItems, type TodayItem, type TodayTitle } from '@ludy/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 

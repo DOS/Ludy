@@ -54,7 +54,7 @@ const ORGANIZATION_URN = /^urn:li:organization:(\d{1,32})$/;
 // Pages read from one grant at most (the connect request then keeps OAUTH_MAX_ACCOUNTS_PER_GRANT of them).
 const MAX_PAGES_LISTED = 1000;
 // Pages named during connect (#1096): only those the connect request keeps (OAUTH_MAX_ACCOUNTS_PER_GRANT of
-// @crove/kernel-contract, which the kernel's linkedin-pages-config test holds this to); the rest are listed unnamed,
+// @ludy/kernel-contract, which the kernel's linkedin-pages-config test holds this to); the rest are listed unnamed,
 // for the count of those left out.
 export const LINKEDIN_PAGES_NAMED = 100;
 const ACL_PAGE_SIZE = 100;

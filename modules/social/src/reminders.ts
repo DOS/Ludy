@@ -6,9 +6,9 @@
 // notification dispatch turns into one item per reviewer.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { lockPost } from './variants.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'social.reminders' };

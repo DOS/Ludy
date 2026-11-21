@@ -8,7 +8,7 @@
 //   is named, so a person can type one: a surplus of goods never bought has no cost of its own.
 // - A shortage goes to 632 within the norm the count names (a percentage of the book quantity) and to 1381 (goods waiting to be resolved) beyond it; both credit the stock account. A
 //   surplus debits the stock account and credits 3381 (surplus waiting to be resolved). The accounts are the plan's defaults, for the accountant to confirm (#2520).
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 
 export const SHORTAGE_NORM_ACCOUNT = '632';
 export const SHORTAGE_OTHER_ACCOUNT = '1381';

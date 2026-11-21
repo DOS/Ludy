@@ -14,9 +14,9 @@
 // proposals, so its approvers are not mailed again). Its author may ask for it again (kernel.proposal.resubmit).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { decideApproval } from './approval.ts';
 import { createMailMessage } from './mail.ts';
 

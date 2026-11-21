@@ -2,7 +2,7 @@
 // (at most SOCIAL_REVIEW_CHECKS_MAX items in all, labels of 1 to SOCIAL_REVIEW_CHECK_LABEL_MAX characters, each item
 // once per channel), and the review panel's ticks. The server decides: it refuses an approval without every item of
 // the channel's list, and copies the labels from its own list.
-import { SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_REVIEW_CHECK_LABEL_MAX } from '@crove/kernel-contract';
+import { SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_REVIEW_CHECK_LABEL_MAX } from '@ludy/kernel-contract';
 
 export { SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_REVIEW_CHECK_LABEL_MAX };
 

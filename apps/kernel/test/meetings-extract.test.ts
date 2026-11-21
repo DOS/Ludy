@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MediaClientError, type MediaExtractClient } from '@crove/media-contract/extract';
-import { DomainError, LocalDiskStore } from '@crove/kernel-runtime';
+import { MediaClientError, type MediaExtractClient } from '@ludy/media-contract/extract';
+import { DomainError, LocalDiskStore } from '@ludy/kernel-runtime';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMediaAudioExtractor, extractAudioFromVideo, mediaAudioExtractorFor, type MediaAudioExtractor } from '../src/meetings-extract.ts';
 

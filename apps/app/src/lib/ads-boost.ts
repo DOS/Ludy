@@ -3,7 +3,7 @@
 // words, its link, the Facebook Page it went out on), the defaults of the panel, the words for where a boost stands, and the posts the AI coworker suggests. The
 // server decides every rule (the switches, the caps, the plan); these only choose what to offer and what to send. Ads reads no Social table: the post is read here,
 // through Social's own query, and its words are copied into the request. Money is a decimal string, never a number.
-import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostGoal, type AdsBoostState, type AdsObjective } from '@crove/kernel-contract';
+import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostGoal, type AdsBoostState, type AdsObjective } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { cutAt } from './ads-campaigns.ts';
 

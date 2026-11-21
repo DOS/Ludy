@@ -18,21 +18,21 @@ import {
   type SignAiReader,
   type SignClauseSummaryResult,
   type SignFieldProposeResult,
-} from '@crove/agent';
+} from '@ludy/agent';
 import type {
   SignDiffCompareInput,
   SignDiffCompareResult,
   SignDrafterProposeInput,
   SignDrafterProposeResult,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   type Actor,
   type Runtime,
   type SystemActor,
   type UserActor,
-} from '@crove/kernel-runtime';
-import { Decimal, money } from '@crove/l10n-vn';
+} from '@ludy/kernel-runtime';
+import { Decimal, money } from '@ludy/l10n-vn';
 import {
   computeSignVersionDiff,
   type SignAiAnalysisRecord,
@@ -41,7 +41,7 @@ import {
   type SignAiRiskClause,
   type SignAiSource,
   type SignDiffSourceResult,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 

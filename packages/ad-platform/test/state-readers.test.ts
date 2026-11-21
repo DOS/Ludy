@@ -4,7 +4,7 @@
 // the token in the header and turns the platform's feedback into short codes (never its words); and the sandbox answers from the objects of its writer.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { MetaAdStateReader, metaReasonOf } from '../src/meta-state.ts';
 import { AdPlatformError, SandboxAdStateReader, SandboxAdWriter, adStateReaders, sandboxWriteLogin, stateReaderOf, type AdObjectStateSource, type StateTarget } from '../src/index.ts';
 

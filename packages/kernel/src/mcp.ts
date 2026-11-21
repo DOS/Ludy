@@ -16,9 +16,9 @@
 // - kernel.mcp.engage_reads_notify: the worker's one-time notice (#4069) to a person who connected an AI app before the Engage reads (Hộp thư, bookings, ads) existed, naming what the app can now read.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
 import { uploaderEntity } from './extraction.ts';
 import { APPROVAL_WAITING, MCP_ENGAGE_READS_NOTICE, notifyMembers } from './notifications.ts';

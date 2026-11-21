@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { HR_LINE_FLAGS, zHrCheck, zHrPayrollInputs, zHrRunImportTimekeeping } from '@crove/kernel-contract';
-import { calculatePayroll, PAYROLL_RULES } from '@crove/l10n-vn';
+import { HR_LINE_FLAGS, zHrCheck, zHrPayrollInputs, zHrRunImportTimekeeping } from '@ludy/kernel-contract';
+import { calculatePayroll, PAYROLL_RULES } from '@ludy/l10n-vn';
 import { hrCommands } from '../src/index.ts';
 import { runApprove, runImportTimekeeping } from '../src/payroll-run.ts';
 

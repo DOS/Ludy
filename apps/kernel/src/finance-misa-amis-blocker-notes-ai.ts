@@ -7,8 +7,8 @@
 // The notes are read, never written: nothing here changes a voucher, a blocker or what is sent, and it is not a command. With no blocker there is no call (`none`). When there is no model, the AI budget is spent,
 // the member's calls are too frequent, the call fails or every note is dropped, the answer names the state (`ai`) with no notes and the screen shows the list alone. An answer is kept for a while by its kinds, so
 // reopening the preview does not pay for the same notes twice. A failure is named, never quoted: neither the kinds nor the model's answer is logged.
-import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesFactsText, misaAmisBlockerNotesHaveNews, type InboxReader, type MisaAmisBlockerKind, type MisaAmisBlockerNotesFacts, type MisaAmisNotesProduct } from '@crove/agent';
-import type { MisaAmisBlockerNotes, MisaAmisPreview } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesFactsText, misaAmisBlockerNotesHaveNews, type InboxReader, type MisaAmisBlockerKind, type MisaAmisBlockerNotesFacts, type MisaAmisNotesProduct } from '@ludy/agent';
+import type { MisaAmisBlockerNotes, MisaAmisPreview } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface MisaAmisBlockerNotesAi {

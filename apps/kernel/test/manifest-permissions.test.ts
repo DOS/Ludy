@@ -7,8 +7,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import * as contract from '@crove/kernel-contract';
-import { ROLE_PERMISSIONS, columns, defineModule, type ModuleManifest } from '@crove/kernel-contract';
+import * as contract from '@ludy/kernel-contract';
+import { ROLE_PERMISSIONS, columns, defineModule, type ModuleManifest } from '@ludy/kernel-contract';
 import {
   MODULE_MANIFESTS,
   appPermissionUses,
@@ -218,17 +218,17 @@ describe("the app's permission checks (#1641)", () => {
 
   it('fails on a key written in the app, and on a constant of an undeclared key', () => {
     const literal = appPermissionUses([{ file: 'apps/app/src/lib/x.ts', source: "permissions.includes('finance.invoice.post')" }], contract);
-    expect(literal.problems).toEqual(["apps/app/src/lib/x.ts: a permission check passes 'finance.invoice.post'; pass a permission constant imported from @crove/kernel-contract"]);
+    expect(literal.problems).toEqual(["apps/app/src/lib/x.ts: a permission check passes 'finance.invoice.post'; pass a permission constant imported from @ludy/kernel-contract"]);
     // A name the file does not import from the contract, or declares again over the import, is no constant of it.
     const local = "const PERIOD_UNLOCK_PERMISSION = 'finance.ledger.erase';\npermissions.includes(PERIOD_UNLOCK_PERMISSION);";
     expect(appPermissionUses([{ file: 'a.ts', source: local }], contract).problems).toHaveLength(1);
-    expect(appPermissionUses([{ file: 'b.ts', source: `import { PERIOD_UNLOCK_PERMISSION } from '@crove/kernel-contract';\n${local}` }], contract).problems).toHaveLength(1);
+    expect(appPermissionUses([{ file: 'b.ts', source: `import { PERIOD_UNLOCK_PERMISSION } from '@ludy/kernel-contract';\n${local}` }], contract).problems).toHaveLength(1);
     // An alias resolves to the constant it names.
-    const aliased = appPermissionUses([{ file: 'c.ts', source: "import { PERIOD_UNLOCK_PERMISSION as UNLOCK } from '@crove/kernel-contract';\npermissions.includes(UNLOCK);" }], contract);
+    const aliased = appPermissionUses([{ file: 'c.ts', source: "import { PERIOD_UNLOCK_PERMISSION as UNLOCK } from '@ludy/kernel-contract';\npermissions.includes(UNLOCK);" }], contract);
     expect(aliased).toEqual({ uses: [{ permission: 'finance.period.unlock', by: 'c.ts (UNLOCK)' }], problems: [] });
     // A constant with a key no manifest declares (a stand-in for the contract module).
     const planted = appPermissionUses(
-      [{ file: 'apps/app/src/lib/y.ts', source: "import { INVOICE_POST_PERMISSION } from '@crove/kernel-contract';\norg.permissions?.includes(INVOICE_POST_PERMISSION)" }],
+      [{ file: 'apps/app/src/lib/y.ts', source: "import { INVOICE_POST_PERMISSION } from '@ludy/kernel-contract';\norg.permissions?.includes(INVOICE_POST_PERMISSION)" }],
       { INVOICE_POST_PERMISSION: 'finance.invoice.post' },
     );
     expect(planted.problems).toEqual([]);
@@ -264,7 +264,7 @@ describe('reading the approval policy source', () => {
     const more = [policy, "const P = { ...LEDGER, permission: 'finance.invoice.post' };", 'const Q = { fourEyes: true, permission: SOMETHING_UNEXPORTED, roles: [] };'].join('\n');
     expect(approvalPolicyUses(more)).toEqual({
       uses: [ledger, { permission: 'finance.invoice.post', by: "the approval policy ('finance.invoice.post')" }],
-      problems: ["packages/kernel/src/approval.ts: a CommandPolicy's permission SOMETHING_UNEXPORTED is neither a string, null, nor a string constant @crove/kernel exports"],
+      problems: ["packages/kernel/src/approval.ts: a CommandPolicy's permission SOMETHING_UNEXPORTED is neither a string, null, nor a string constant @ludy/kernel exports"],
     });
   });
 

@@ -7,9 +7,9 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { TranscriptTranslationView, TranslationTarget } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import type { TranscriptTranslationView, TranslationTarget } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { ErrorText } from './ui.tsx';
 import { TranslationTargetPicker, translateBlocked } from './meeting-translation.tsx';

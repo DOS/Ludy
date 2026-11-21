@@ -7,7 +7,7 @@ import {
   calculateSeveranceAllowance,
   isValidCalendarDate,
   money,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import {
   HR_JOB_LOSS_TERMINATION_REASONS,
   HR_SEVERANCE_TERMINATION_REASONS,
@@ -17,13 +17,13 @@ import {
   type HrEmployeeSeveranceResult,
   type HrJobLossTerminationReason,
   type HrSeveranceTerminationReason,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { ErrorText, TableSkeleton } from './ui.tsx';

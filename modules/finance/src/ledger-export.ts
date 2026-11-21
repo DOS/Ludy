@@ -3,7 +3,7 @@
 // Same cell rules as the journal export (export.ts): amounts exact through moneyCell, text never read as a formula.
 // Headers and labels stay Vietnamese in every locale: the file goes to Vietnamese accountants and their software.
 import type ExcelJS from 'exceljs';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 import type { PartyLedger } from './domain/ledger-reports.ts';
 import type { LedgerBook } from './ledger-reports.ts';

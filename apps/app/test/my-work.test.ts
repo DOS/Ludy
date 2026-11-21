@@ -1,7 +1,7 @@
 // My work (#1673, #1674): the groups of the screen with the tasks of my positions, where a move puts a to-do, the keyboard
 // shortcuts and the text a hand-over proposes.
 import { describe, expect, it } from 'vitest';
-import type { MyWorkTask, TodoSummary } from '@crove/kernel-contract';
+import type { MyWorkTask, TodoSummary } from '@ludy/kernel-contract';
 import { filterMyWork, groupTodos, groupTodosBySection, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection } from '../src/lib/my-work.ts';
 
 const todo = (id: string, group: TodoSummary['group'], extra: Partial<TodoSummary> = {}): TodoSummary => ({

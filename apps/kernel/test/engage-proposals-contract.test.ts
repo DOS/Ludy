@@ -4,15 +4,15 @@
 // `mcp`. The database half (the catalog rows, the audit chain) is in engage-proposals-chain.db.test.ts.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { ENGAGE_PROPOSALS, zApprovedCall } from '@crove/kernel-contract';
-import { PROPOSAL_PREPARERS, approvalPolicies, kernelCommands, liveApprovalCommands } from '@crove/kernel';
-import { adsCommands } from '@crove/mod-ads';
-import { crmCommands } from '@crove/mod-crm';
-import { financeCommands } from '@crove/mod-finance';
-import { hrCommands } from '@crove/mod-hr';
-import { meetingsCommands } from '@crove/mod-meetings';
-import { notesCommands } from '@crove/mod-notes';
-import { socialCommands } from '@crove/mod-social';
+import { ENGAGE_PROPOSALS, zApprovedCall } from '@ludy/kernel-contract';
+import { PROPOSAL_PREPARERS, approvalPolicies, kernelCommands, liveApprovalCommands } from '@ludy/kernel';
+import { adsCommands } from '@ludy/mod-ads';
+import { crmCommands } from '@ludy/mod-crm';
+import { financeCommands } from '@ludy/mod-finance';
+import { hrCommands } from '@ludy/mod-hr';
+import { meetingsCommands } from '@ludy/mod-meetings';
+import { notesCommands } from '@ludy/mod-notes';
+import { socialCommands } from '@ludy/mod-social';
 
 type Def = { name: string; input: { safeParse: (v: unknown) => { success: boolean }; shape?: { payload?: { safeParse: (v: unknown) => { success: boolean } } } }; risk: string; sideEffect: string; access: unknown; proposalKind?: string; mcp?: unknown; permission?: unknown; agent?: unknown };
 const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands] as unknown as Def[];

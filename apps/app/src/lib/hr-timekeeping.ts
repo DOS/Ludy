@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { parseTimekeepingSheet, type TimekeepingIssue, type TimekeepingRow } from '@crove/l10n-vn';
-import { zHrDays, zHrHours, type HrLineView, type HrRunImportTimekeeping } from '@crove/kernel-contract';
+import { parseTimekeepingSheet, type TimekeepingIssue, type TimekeepingRow } from '@ludy/l10n-vn';
+import { zHrDays, zHrHours, type HrLineView, type HrRunImportTimekeeping } from '@ludy/kernel-contract';
 
 export type TimekeepingMatchStatus = 'matched' | 'unmatched' | 'ambiguous' | 'duplicate_target' | 'invalid_values';
 

@@ -10,10 +10,10 @@
 // nothing here logs it, the signature, the hook key or the secret: a log line carries a count and a code.
 import { createHash } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
-import type { Database, Db } from '@crove/db';
-import type { BankFeedProvider } from '@crove/bank-feed';
-import { BANK_FEED_HOOK_KEY_LENGTH } from '@crove/kernel-contract';
-import type { CredentialBroker, Runtime } from '@crove/kernel-runtime';
+import type { Database, Db } from '@ludy/db';
+import type { BankFeedProvider } from '@ludy/bank-feed';
+import { BANK_FEED_HOOK_KEY_LENGTH } from '@ludy/kernel-contract';
+import type { CredentialBroker, Runtime } from '@ludy/kernel-runtime';
 
 // The most a notice's body may be: the provider's notices are a few hundred bytes (a transaction), so a larger one is not its.
 export const MAX_BANK_FEED_HOOK_BYTES = 16 * 1024;

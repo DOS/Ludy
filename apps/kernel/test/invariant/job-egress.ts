@@ -4,8 +4,8 @@
 //
 // - workSites(): every boss.work() of the worker, with what its handler reaches: everything its code refers to,
 //   followed through the worker's own declarations and the kernel's own files (apps/kernel/src), and every WorkerDeps
-//   field it uses. The egress guard of @crove/kernel-runtime reaches a tenant's URL; the readers and writers of
-//   @crove/agent and the invoice reader reach provider:ai; what @crove/channel exports beyond its pure helpers, the
+//   field it uses. The egress guard of @ludy/kernel-runtime reaches a tenant's URL; the readers and writers of
+//   @ludy/agent and the invoice reader reach provider:ai; what @ludy/channel exports beyond its pure helpers, the
 //   publishers and the mailer reach their provider; fetch() itself and Node's network modules are never allowed.
 // - sendSites(): every boss.send() and boss.schedule() of apps/kernel/src, with the queues it may name and, inside the
 //   outbox relay, the outbox events that lead to it.
@@ -32,7 +32,7 @@ export type Reach = 'tenant_url' | `provider:${string}` | 'publishers' | 'raw_ne
 // The egress guard (packages/kernel-runtime/src/egress.ts). guardedStream, the streaming sibling of guardedRequest that the meeting import job downloads through (#3173), is named
 // here before it exists on main, so a job that imports it counts as reaching tenant_url from the day it lands.
 const GUARDS: ReadonlySet<string> = new Set(['guardedFetch', 'guardedRequest', 'guardedStream', 'egressFetch']);
-// What @crove/channel exports that reaches no platform: its constants, its errors and these helpers. Anything else
+// What @ludy/channel exports that reaches no platform: its constants, its errors and these helpers. Anything else
 // (publishers, connectors, refreshers, logins, checks, send helpers) reaches one: Telegram or Discord when it names
 // them, provider:channel otherwise.
 const CHANNEL_PURE: ReadonlySet<string> = new Set(['capOptions', 'discordChatTargetOf', 'isChannelProvider', 'newOAuthAttempt', 'oauthStateHash', 'postTypeOf', 'sandbox', 'telegramChatTargetOf', 'withCallSignal']);
@@ -41,7 +41,7 @@ const channelReach = (name: string): Reach | null =>
 const GLOBAL_OBJECTS: ReadonlySet<string> = new Set(['globalThis', 'global', 'window', 'self']);
 // Node's own network modules: a job reaches the network only through the guard or an adapter.
 const NETWORK_MODULES = /^(node:)?(http|https|http2|net|tls|dgram|dns)$|^undici$/;
-// What calls the AI endpoint in @crove/agent: its model and the readers and writers built on it.
+// What calls the AI endpoint in @ludy/agent: its model and the readers and writers built on it.
 const AI_EXPORT = /^chatModel$|^transcribeChunks$|^[A-Z]\w*(Extractor|Reader|Writer)$/;
 
 // Every field of WorkerDeps (a dotted path for a field inside one) and what using it reaches. A field the test does
@@ -84,27 +84,27 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // with its provider, before it is added.
   'channels.bankFeeds': [],
   // The bank feed adapters that reach a host (ADR-0039, #2045): a real adapter (Tingee, `bank_tingee`) calls its provider through a host-bound allowlisted fetch, so the field is
-  // classified for what it can reach: the providers of @crove/bank-feed. Only the sync job reaches the field. The sandbox stays in channels.bankFeeds, which reaches nothing.
+  // classified for what it can reach: the providers of @ludy/bank-feed. Only the sync job reaches the field. The sandbox stays in channels.bankFeeds, which reaches nothing.
   'channels.bankFeedHosted': ['provider:bank_feed'],
   // The ad platform adapters (ADR-0040, #2217, #2218): the offline sandbox reaches nothing, the Meta adapter reaches the
   // Graph API host, and later adapters their own hosts, each bound to them by its allowlisted fetch, so the field is
-  // classified for what it can reach: the platforms of @crove/ad-platform.
+  // classified for what it can reach: the platforms of @ludy/ad-platform.
   'channels.adPlatforms': ['provider:ad_platform'],
   // The revokers of the ad platforms (ADR-0043 point 4, #2296 W2-1): what the revoke worker may call, as a narrowed view of the writers of
-  // @crove/ad-platform that has `revokeToken` and nothing else (W2-4 adds the one call that pauses an object). Each is bound to its platform's host.
+  // @ludy/ad-platform that has `revokeToken` and nothing else (W2-4 adds the one call that pauses an object). Each is bound to its platform's host.
   'channels.adRevokers': ['provider:ad_platform'],
-  // The writers of the ad platforms (#2296 W2-3): what the launch job may call to create and change campaigns, the writers of @crove/ad-platform
+  // The writers of the ad platforms (#2296 W2-3): what the launch job may call to create and change campaigns, the writers of @ludy/ad-platform
   // (the sandbox's reaches nothing, the Meta one the Graph API host, to which its allowlisted fetch binds it). Only the launch job reaches the field.
   'channels.adWriters': ['provider:ad_platform'],
   // The pausers of the ad platforms (#2296 W2-4a): what the pause job may call to pause the objects of a stopped launch, a narrowed view of the writers of
-  // @crove/ad-platform that finds the objects that carry the launch's tag and pauses them, and nothing else (it cannot create, activate or revoke). Each is
+  // @ludy/ad-platform that finds the objects that carry the launch's tag and pauses them, and nothing else (it cannot create, activate or revoke). Each is
   // bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the pause job reaches the field.
   'channels.adPausers': ['provider:ad_platform'],
   // The activators of the ad platforms (#2296 W2-4b): what the activation job may call to set the objects of an approved launch to active, one object at a time, a
-  // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
+  // frozen view of @ludy/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
   // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
   'channels.adActivators': ['provider:ad_platform'],
-  // The managers of the ad platforms (#3835 W4): what the manage job may call to change a live launch's objects, a frozen view of @crove/ad-platform with a status change (pause,
+  // The managers of the ad platforms (#3835 W4): what the manage job may call to change a live launch's objects, a frozen view of @ludy/ad-platform with a status change (pause,
   // archive and, for an approved resume, the switch-on), the ad set's daily budget and end date, and a read of an object's status, budget and end date, and nothing else (it
   // cannot create, find by a tag or revoke). Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the manage job reaches the field.
   // Classified before the field exists (#3835, step one): the base copy of this suite must know it when the field lands.
@@ -114,11 +114,11 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // Classified before the field exists (#3301, step 0): the base copy of this suite must know it when the field lands.
   'channels.adStateReaders': ['provider:ad_platform'],
   // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
-  // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
+  // allowlisted fetch, so the field is classified for what it can reach: the providers of @ludy/einvoice. Only the issue job reaches the field.
   'channels.einvoiceProviders': ['provider:einvoice'],
   // The marketplace providers of modules/finance (#2519): the offline sandbox reaches no host, a real adapter calls its platform through guardedRequest. Only the poll job reaches the field.
   'channels.marketplaceProviders': ['provider:marketplace'],
-  // The MISA AMIS Kế toán client (@crove/misa-amis, #3854 S2b, #3885): one client built from the deployment's integrator ClientID over a transport bound to developer.misa.vn by the egress guard
+  // The MISA AMIS Kế toán client (@ludy/misa-amis, #3854 S2b, #3885): one client built from the deployment's integrator ClientID over a transport bound to developer.misa.vn by the egress guard
   // (guardedRequest, https and that host only). Only the connection-test job reaches the field (a later slice's push job adds itself). Classified before the field exists (step 0, the base copy of
   // this suite must know it when the field lands).
   'channels.misaAmis': ['provider:misa_amis'],
@@ -126,10 +126,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // same guard. Only the connection-test job reaches the field so far (a later slice's push job adds itself). Classified before the field exists (step 0, as for `channels.misaAmis`: the base copy of
   // this suite must know it when the field lands).
   'channels.misaAsp': ['provider:misa_amis'],
-  // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
+  // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @ludy/channel.
   'channels.calendars': ['provider:channel'],
   // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
-  // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @crove/channel. Only the import job and its sweep reach the field.
+  // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @ludy/channel. Only the import job and its sweep reach the field.
   'channels.meetingPlatforms': ['provider:channel'],
   publicUrl: [],
   // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
@@ -568,11 +568,11 @@ export function reachOf(root: N, sources: Sources): Set<Reach> {
         const target = importTarget(decl);
         const whole = decl.type === 'ImportNamespaceSpecifier';
         if (NETWORK_MODULES.test(target.module)) out.add('raw_network');
-        else if ((target.module === '@crove/kernel-runtime' || target.module === '@ludy/kernel-runtime') && (whole || GUARDS.has(target.name))) out.add('tenant_url');
-        else if (target.module === '@crove/channel' || target.module === '@ludy/channel') {
+        else if (target.module === '@ludy/kernel-runtime' && (whole || GUARDS.has(target.name))) out.add('tenant_url');
+        else if (target.module === '@ludy/channel') {
           const reach = whole ? 'provider:channel' : channelReach(target.name);
           if (reach) out.add(reach);
-        } else if ((target.module === '@crove/agent' || target.module === '@ludy/agent') && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
+        } else if (target.module === '@ludy/agent' && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
         else if (target.path?.startsWith(`${KERNEL_SRC}/`)) {
           const there = exported(sources.get(target.path), target.name);
           if (!there) throw new Error(`${target.path} exports no ${target.name} (imported at ${at(id)})`);

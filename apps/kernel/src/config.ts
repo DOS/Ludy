@@ -1,9 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EXTRACT_TIMING } from '@crove/extract-contract';
-import { misaBlockers } from '@crove/einvoice';
-import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@crove/kernel-contract';
-import type { UsageLimits } from '@crove/kernel';
+import { EXTRACT_TIMING } from '@ludy/extract-contract';
+import { misaBlockers } from '@ludy/einvoice';
+import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
+import type { UsageLimits } from '@ludy/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
 import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
 import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
@@ -388,7 +388,7 @@ const schema = z.object({
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
   EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
   // The real e-invoice adapters this deployment offers (#2503), a comma-separated list of adapter ids; `misa` is MISA meInvoice. Off by default, and naming `misa` is refused
-  // until the issues its gates name (MISA_GATES in @crove/einvoice) are done and written in issue #2503. The offline sandbox has its own switch, EINVOICE_SANDBOX.
+  // until the issues its gates name (MISA_GATES in @ludy/einvoice) are done and written in issue #2503. The offline sandbox has its own switch, EINVOICE_SANDBOX.
   EINVOICE_PROVIDERS: z
     .string()
     .default('')
@@ -477,7 +477,7 @@ const schema = z.object({
   // /api/channels/whatsapp/webhook exists and customers' messages to the connected numbers are taken in. A credential, as the secret is.
   CHANNEL_WHATSAPP_VERIFY_TOKEN: optional,
   // The hosts a customer's image on WhatsApp may be fetched from (conversation core CV5c, #3131): domain suffixes separated by commas, each matching the host itself
-  // and its subdomains. Unset: the built-in list (WHATSAPP_MEDIA_HOSTS in @crove/channel), which is [M] until the live check settles it. An image from any other
+  // and its subdomains. Unset: the built-in list (WHATSAPP_MEDIA_HOSTS in @ludy/channel), which is [M] until the live check settles it. An image from any other
   // host is never fetched, and the connection's token is never sent to one.
   CHANNEL_WHATSAPP_MEDIA_HOSTS: optional,
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
@@ -518,7 +518,7 @@ const schema = z.object({
   // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
   CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
   // The hosts a customer's image on Zalo may be fetched from (conversation core CV5c, #2357): domain suffixes separated by commas, each
-  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @crove/channel), which is [S, U] until the
+  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @ludy/channel), which is [S, U] until the
   // live check settles it (docs/runbooks/zalo-conversations-live-check.md row 18). An image from any other host is never fetched.
   CHANNEL_ZALO_MEDIA_HOSTS: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:

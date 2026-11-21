@@ -8,8 +8,8 @@
 //
 // The file names are the sender's text: control and bidirectional characters are removed and the length cut. Nothing here logs or returns a name
 // or a byte except in the note lines (the message body) and the planned images (handed to the store).
-import { CONVERSATION_ATTACHMENTS_MAX, CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@crove/kernel-contract';
-import { sha256Hex } from '@crove/kernel-runtime';
+import { CONVERSATION_ATTACHMENTS_MAX, CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@ludy/kernel-contract';
+import { sha256Hex } from '@ludy/kernel-runtime';
 import { inspectConversationImage } from './conversation-media.ts';
 
 // The attachments looked at in one mail: the parser's own cap, so a hostile mail cannot make a long list.

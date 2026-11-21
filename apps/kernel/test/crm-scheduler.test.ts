@@ -1,6 +1,6 @@
 // The crm.scheduler agent's comment (#1434): the cancelled time and the slots to offer, on the host's wall clock.
 import { describe, expect, it } from 'vitest';
-import { escalationTitle, proposalText, spreadSlots, wallClock, type NextSlots } from '@crove/mod-crm';
+import { escalationTitle, proposalText, spreadSlots, wallClock, type NextSlots } from '@ludy/mod-crm';
 
 const base: NextSlots = {
   bookingId: '0192f0a0-0000-7000-8000-000000000001',

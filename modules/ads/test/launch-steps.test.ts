@@ -3,7 +3,7 @@
 // (with the launch's tag), the flight in the account's own time zone, what a step does with the ledger row it finds, and how a plan's locations and interests are
 // split for the platform. Nothing here touches a database or a platform.
 import { describe, expect, it } from 'vitest';
-import type { AdsCampaignPlan } from '@crove/kernel-contract';
+import type { AdsCampaignPlan } from '@ludy/kernel-contract';
 import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, slotOfName, stepAction, stepLevel, stepVariant, targetingNames, zoneKnown, zonedMidnight } from '../src/launch-steps.ts';
 
 const TAG = 'ludy:0123456789';

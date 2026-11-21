@@ -1,6 +1,6 @@
 // LinkedIn and Bluesky link cards (#1498): the shape, the channel rules and the text the adapters send.
 import { describe, expect, it } from 'vitest';
-import { BLUESKY_LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_DESCRIPTION_MAX as ADAPTER_DESCRIPTION_MAX, LINK_CARD_TITLE_MAX as ADAPTER_TITLE_MAX, linkCardOf as adapterLinkCardOf } from '@crove/channel';
+import { BLUESKY_LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_DESCRIPTION_MAX as ADAPTER_DESCRIPTION_MAX, LINK_CARD_TITLE_MAX as ADAPTER_TITLE_MAX, linkCardOf as adapterLinkCardOf } from '@ludy/channel';
 import { carriesLinkCard, LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, CAPABILITIES, linkCardOf, linkCardThumbOf, sentText, splitThread, validateVariant, type VariantDraft } from '../src/contract.ts';
 
 const LINK = 'https://tiem.example/khai-truong';
@@ -28,7 +28,7 @@ describe('link cards (#1498)', () => {
     expect(linkCardOf({ linkCard: { title: 'ệ'.normalize('NFD').repeat(LINK_CARD_TITLE_MAX) } })).not.toBe('invalid');
   });
 
-  // The limits are copied from @crove/channel by hand (the contract runs in the browser); the two must agree.
+  // The limits are copied from @ludy/channel by hand (the contract runs in the browser); the two must agree.
   it('reads the same shape and limits as the adapters', () => {
     expect(LINK_CARD_TITLE_MAX).toBe(ADAPTER_TITLE_MAX);
     expect(LINK_CARD_DESCRIPTION_MAX).toBe(ADAPTER_DESCRIPTION_MAX);

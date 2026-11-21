@@ -5,9 +5,9 @@
 // of its kind, and a services file made before the split (no `stockLines` in its audit row) every purchase.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DocumentExport } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId, type DocumentExport } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most exports one history shows.

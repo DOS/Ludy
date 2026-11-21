@@ -25,10 +25,10 @@ import {
   type MarketplaceColumnMapping,
   type MarketplaceColumnProfile,
   type MarketplaceColumnsConfirmed,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { MARKETPLACE_PROFILES, isBuyerHeader, type ColumnRefusal, type MarketplacePlatform } from '@crove/l10n-vn';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { MARKETPLACE_PROFILES, isBuyerHeader, type ColumnRefusal, type MarketplacePlatform } from '@ludy/l10n-vn';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { sameMapping } from './marketplace-columns.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

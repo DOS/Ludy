@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A marketplace income report as .xlsx or CSV (#2516, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@crove/l10n-vn, marketplace-income.ts): the platform is told
+// A marketplace income report as .xlsx or CSV (#2516, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@ludy/l10n-vn, marketplace-income.ts): the platform is told
 // by the headers, the lines by the allow-list of columns. A file's other columns, the buyer's name, phone, email and address among them, are never looked at beyond finding the header row: the
 // contract has no field for them, so they cannot leave this process.
 //
 // The per-order table of such a report is on a later sheet behind a summary (Shopee's workbook has five), so the first few sheets are tried in turn and the first that is an income table of a
 // platform the profiles know is read. A file that is none (another workbook, an order report, a platform whose headers fit two profiles equally) is an answer, not a failure: recognized is false
 // and the worker goes on as it did before. Only a report past the line cap is flagged apart (tooMany).
-import { EXTRACT_LIMITS, type ExtractedMarketplaceIncome } from '@crove/extract-contract';
-import { findIncomeColumns, incomeLines } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, type ExtractedMarketplaceIncome } from '@ludy/extract-contract';
+import { findIncomeColumns, incomeLines } from '@ludy/l10n-vn';
 import { readSheetGrids } from './bank-statement.ts';
 
 const NONE: ExtractedMarketplaceIncome = { recognized: false, platform: null, profile: null, sheet: null, columns: [], tooMany: false, lines: [], statedNet: null, skipped: [], skippedCount: 0 };

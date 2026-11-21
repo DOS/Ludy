@@ -9,9 +9,9 @@ import {
   SignAiReader,
   type AiCall,
   type AiMeter,
-} from '@crove/agent';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import type { SignAiAnalysisRecord, SignAiSource } from '@crove/mod-sign';
+} from '@ludy/agent';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import type { SignAiAnalysisRecord, SignAiSource } from '@ludy/mod-sign';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { getEnvelopeAiAnalysis, proposeEnvelopeAnalysis, signAi } from '../src/sign-ai.ts';
 

@@ -1284,7 +1284,7 @@ const findMatchingSpecifier = (spec: string, re: RegExp): string | null => {
 };
 
 // What a member-Vy feature module must never import: the command runtime and the kernel, the database, and the vendors behind the ports.
-const BANNED_IMPORT = /^(?:node:(?:https?|http2|net|tls|dgram)$|https?$|undici$|axios$|@(?:crove|ludy)\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
+const BANNED_IMPORT = /^(?:node:(?:https?|http2|net|tls|dgram)$|https?$|undici$|axios$|@ludy\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
 
 function collectMemberVyTokenPass(
   text: string,
@@ -2471,36 +2471,26 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   return [...out];
 }
 
-const agentBarrelPackage = (spec: string, fromRelPath?: string): '@crove/agent' | '@ludy/agent' | null => {
+const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => {
   const normalizedSpec = normalizeModuleSpecifier(spec).replace(/\.[cm]?js$|\.[cm]ts$/, '.ts');
-  if (
-    normalizedSpec === '@crove/agent' ||
-    normalizedSpec === '@crove/agent/index.ts' ||
-    normalizedSpec === '@crove/agent/src/index.ts' ||
-    normalizedSpec === '@crove/agent/src/index' ||
-    normalizedSpec === 'packages/agent/src/index.ts' ||
-    normalizedSpec === 'packages/agent/src/index'
-  ) {
-    return '@crove/agent';
-  }
   if (
     normalizedSpec === '@ludy/agent' ||
     normalizedSpec === '@ludy/agent/index.ts' ||
     normalizedSpec === '@ludy/agent/src/index.ts' ||
-    normalizedSpec === '@ludy/agent/src/index'
+    normalizedSpec === '@ludy/agent/src/index' ||
+    normalizedSpec === 'packages/agent/src/index.ts' ||
+    normalizedSpec === 'packages/agent/src/index'
   ) {
-    return '@ludy/agent';
+    return true;
   }
-  if (/(?:^|\/)packages\/agent\/src\/index(?:\.ts)?$/.test(normalizedSpec)) return '@crove/agent';
+  if (/(?:^|\/)packages\/agent\/src\/index(?:\.ts)?$/.test(normalizedSpec)) return true;
   if (normalizedSpec.startsWith('.') && fromRelPath) {
     const baseDir = posix.dirname(fromRelPath.replace(/\\/g, '/'));
     const resolved = posix.normalize(posix.join(baseDir, normalizedSpec));
-    if (resolved === 'packages/agent/src/index.ts' || resolved === 'packages/agent/src/index') return '@crove/agent';
+    if (resolved === 'packages/agent/src/index.ts' || resolved === 'packages/agent/src/index') return true;
   }
-  return null;
+  return false;
 };
-
-const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => agentBarrelPackage(spec, fromRelPath) !== null;
 
 const isAllowedWorkspaceComputedImport = (
   fromRelPath: string | undefined,
@@ -2574,19 +2564,16 @@ function collectWorkspacePass(
     out.add('imports note-ai-model');
   }
   for (const decl of scan.importDecls) {
-    const pkg = agentBarrelPackage(decl.specifier, fromRelPath);
-    if (!pkg) continue;
-    if (decl.isNamespace) out.add(`namespace import from ${pkg}`);
-    if (decl.isDefault) out.add(`default import from ${pkg}`);
+    if (!isAgentBarrel(decl.specifier, fromRelPath)) continue;
+    if (decl.isNamespace) out.add('namespace import from @ludy/agent');
+    if (decl.isDefault) out.add('default import from @ludy/agent');
   }
   for (const decl of scan.exportDecls) {
-    const pkg = agentBarrelPackage(decl.specifier, fromRelPath);
-    if (pkg && decl.isStar) out.add(`export * from ${pkg}`);
+    if (isAgentBarrel(decl.specifier, fromRelPath) && decl.isStar) out.add('export * from @ludy/agent');
   }
   for (const call of scan.dynamicCalls) {
     if (call.specifier !== null) {
-      const pkg = agentBarrelPackage(call.specifier, fromRelPath);
-      if (pkg) out.add(`dynamic ${call.fn} from ${pkg}`);
+      if (isAgentBarrel(call.specifier, fromRelPath)) out.add(`dynamic ${call.fn} from @ludy/agent`);
     } else if (!isAllowedWorkspaceComputedImport(fromRelPath, call)) {
       out.add('uses computed dynamic import or require');
     }
@@ -2636,12 +2623,11 @@ export function workspaceAdapterLeakViolations(
 
 describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)', () => {
   it('flags what a pure feature must not do (the scanner is not vacuous)', () => {
-    expect(memberVyViolations(`import { Runtime } from '@crove/kernel-runtime';`)).toEqual(['imports @crove/kernel-runtime']);
     expect(memberVyViolations(`import { Runtime } from '@ludy/kernel-runtime';`)).toEqual(['imports @ludy/kernel-runtime']);
     expect(memberVyViolations(`import { generateText } from 'ai';\nimport z from 'zod';`)).toEqual(['imports ai']);
     expect(memberVyViolations(`import mem from 'mem0ai';`)).toEqual(['imports mem0ai']);
-    expect(memberVyViolations(`import { 'Runtime' as R } from '@crove/kernel-runtime';`)).toEqual([
-      'imports @crove/kernel-runtime',
+    expect(memberVyViolations(`import { 'Runtime' as R } from '@ludy/kernel-runtime';`)).toEqual([
+      'imports @ludy/kernel-runtime',
     ]);
     expect(memberVyViolations(`import { 'a(b' as x } from 'pg';`)).toEqual(['imports pg']);
     expect(memberVyViolations(`import café from 'pg';`)).toEqual(['imports pg']);
@@ -2650,9 +2636,9 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(memberVyViolations("import { createOpenAICompatible } from '@ai-sdk/\\\nopenai-compatible';")).toContain(
       'imports @ai-sdk/openai-compatible',
     );
-    expect(memberVyViolations("import { db } from '@crove/\\\ndb';")).toContain('imports @crove/db');
-    expect(memberVyViolations("const db = require('@crove/db/\\\nclient');")).toContain('imports @crove/db/client');
-    expect(memberVyViolations("const mod = await import('@crove/' + 'db');")).toContain(
+    expect(memberVyViolations("import { db } from '@ludy/\\\ndb';")).toContain('imports @ludy/db');
+    expect(memberVyViolations("const db = require('@ludy/db/\\\nclient');")).toContain('imports @ludy/db/client');
+    expect(memberVyViolations("const mod = await import('@ludy/' + 'db');")).toContain(
       'uses computed dynamic import or require',
     );
     expect(memberVyViolations("const mod = require('./' + x);")).toContain('uses computed dynamic import or require');
@@ -2683,10 +2669,10 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ]);
     expect(memberVyViolations(`import z from 'mem0ai/../zod';`)).toEqual(['imports mem0ai/../zod']);
     expect(memberVyViolations(`import z from '@ai-sdk/../zod';`)).toEqual(['imports @ai-sdk/../zod']);
-    expect(memberVyViolations(`import x from '@crove/db/../../x';`)).toEqual(['imports @crove/db/../../x']);
+    expect(memberVyViolations(`import x from '@ludy/db/../../x';`)).toEqual(['imports @ludy/db/../../x']);
     expect(memberVyViolations(`import x from 'langchain/..';`)).toEqual(['imports langchain/..']);
-    expect(memberVyViolations(`require('@crove/kernel/../../../packages/kernel/src/index.ts')`)).toContain(
-      'imports @crove/kernel/../../../packages/kernel/src/index.ts',
+    expect(memberVyViolations(`require('@ludy/kernel/../../../packages/kernel/src/index.ts')`)).toContain(
+      'imports @ludy/kernel/../../../packages/kernel/src/index.ts',
     );
     expect(memberVyViolations(`import x from '%6dem0ai/../zod';`)).toEqual(['imports mem0ai/../zod']);
     expect(memberVyViolations(`import p from 'pg";`)).toContain('imports pg');
@@ -2843,8 +2829,8 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       modelAdapterViolations(`import { createOpenAICompatible } from '@ai-sdk/\\\nopenai-compatible';\n${validAdapter}`),
     ).toContain('imports @ai-sdk/openai-compatible');
     expect(
-      modelAdapterViolations(`import { db } from '@crove/\\\ndb';\n${validAdapter}`),
-    ).toContain('imports @crove/db');
+      modelAdapterViolations(`import { db } from '@ludy/\\\ndb';\n${validAdapter}`),
+    ).toContain('imports @ludy/db');
     expect(
       modelAdapterViolations(`import { Output } from 'ai';\n${validAdapter}`),
     ).toContain('imports disallowed symbol from ai');
@@ -2860,7 +2846,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(modelAdapterViolations('')).toEqual(['requires at least one exported function declaration']);
     expect(
       modelAdapterViolations(
-        `import { generateText } from 'ai';\nimport { chatModel, type AiConfig } from './index.ts';\nimport { metered } from './meter.ts';\nexport function run(config: typeof import('@crove/db'), prompt: { system: string; user: string }) { return metered('notes.summary', () => generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, maxOutputTokens: 2000 })); }`,
+        `import { generateText } from 'ai';\nimport { chatModel, type AiConfig } from './index.ts';\nimport { metered } from './meter.ts';\nexport function run(config: typeof import('@ludy/db'), prompt: { system: string; user: string }) { return metered('notes.summary', () => generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, maxOutputTokens: 2000 })); }`,
       ),
     ).not.toEqual([]);
 
@@ -2942,77 +2928,68 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ]);
 
     // Workspace leak detection (covers aliases, escapes, string concatenation, namespace/default imports, dynamic import/require)
-    expect(workspaceAdapterLeakViolations(`import { generateNoteSummaryText as g } from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+    expect(workspaceAdapterLeakViolations(`import { generateNoteSummaryText as g } from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'generateNoteSummaryText',
     ]);
-    expect(workspaceAdapterLeakViolations(`import { "generateNote\\x53ummaryText" as g } from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+    expect(workspaceAdapterLeakViolations(`import { "generateNote\\x53ummaryText" as g } from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'generateNoteSummaryText',
     ]);
-    expect(workspaceAdapterLeakViolations(`import { generateNote\\u0053ummaryText as g } from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+    expect(workspaceAdapterLeakViolations(`import { generateNote\\u0053ummaryText as g } from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'generateNoteSummaryText',
     ]);
     expect(workspaceAdapterLeakViolations(`const fn = agent['generateNote' + 'SummaryText'];`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'generateNoteSummaryText',
     ]);
-    expect(workspaceAdapterLeakViolations(`import * as agent from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'namespace import from @crove/agent',
-    ]);
     expect(workspaceAdapterLeakViolations(`import * as agent from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'namespace import from @ludy/agent',
     ]);
-    expect(workspaceAdapterLeakViolations(`import agent from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'default import from @crove/agent',
-    ]);
-    expect(workspaceAdapterLeakViolations(`export * from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'export * from @crove/agent',
+    expect(workspaceAdapterLeakViolations(`import agent from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'default import from @ludy/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`export * from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'export * from @ludy/agent',
     ]);
-    expect(workspaceAdapterLeakViolations(`const a = await import('@crove/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'dynamic import from @crove/agent',
-    ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@ludy/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'dynamic import from @ludy/agent',
     ]);
-    expect(workspaceAdapterLeakViolations(`const a = await import('@crove/' + 'agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'dynamic import from @crove/agent',
+    expect(workspaceAdapterLeakViolations(`const a = await import('@ludy/' + 'agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'dynamic import from @ludy/agent',
     ]);
-    expect(workspaceAdapterLeakViolations(`const a = require('@crove/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'dynamic require from @crove/agent',
+    expect(workspaceAdapterLeakViolations(`const a = require('@ludy/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'dynamic require from @ludy/agent',
     ]);
     expect(
       workspaceAdapterLeakViolations(`export * as notesAI from '../../../packages/agent/src/index.ts';`, DEFAULT_ADAPTER_EXPORTS),
-    ).toEqual(['export * from @crove/agent']);
+    ).toEqual(['export * from @ludy/agent']);
     expect(
       workspaceAdapterLeakViolations(
         `import * as notesAI from '../index.ts';`,
         DEFAULT_ADAPTER_EXPORTS,
         'packages/agent/src/member-vy/note-ai.ts',
       ),
-    ).toEqual(['namespace import from @crove/agent']);
+    ).toEqual(['namespace import from @ludy/agent']);
     expect(
       workspaceAdapterLeakViolations(
         `const mod = await import('../../../../packages/agent/src/index.ts');`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/kernel/src/routes/notes.ts',
       ),
-    ).toEqual(['dynamic import from @crove/agent']);
+    ).toEqual(['dynamic import from @ludy/agent']);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <div></div>; import { generateNoteSummaryText as summarize } from '@crove/agent';`,
+        `const C = () => <div></div>; import { generateNoteSummaryText as summarize } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <Comp a={1}/>; const D = () => <Other b={2}/>; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const C = () => <Comp a={1}/>; const D = () => <Other b={2}/>; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        "const entry = '@crove/agent'; const a = await import(entry); const fn = a[`generateNote${'SummaryText'}`];",
+        "const entry = '@ludy/agent'; const a = await import(entry); const fn = a[`generateNote${'SummaryText'}`];",
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['uses computed dynamic import or require']);
@@ -3032,7 +3009,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toEqual([]);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <Comp a={1}/>; import { AiBudgetExhaustedError } from '@crove/agent';`,
+        `const C = () => <Comp a={1}/>; import { AiBudgetExhaustedError } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual([]);
@@ -3045,7 +3022,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toEqual([]);
     expect(
       workspaceAdapterLeakViolations(
-        `const r = /import(foo)/; const C = () => <Comp a={1}/>; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const r = /import(foo)/; const C = () => <Comp a={1}/>; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['generateNoteSummaryText']);
@@ -3057,20 +3034,20 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <div>don't</div>; import { generateNoteSummaryText } from "@crove/agent";`,
+        `const C = () => <div>don't</div>; import { generateNoteSummaryText } from "@ludy/agent";`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <div>don't</div>; import { generateNoteSummaryText } from "@crove/agent";`,
+        `const C = () => <div>don't</div>; import { generateNoteSummaryText } from "@ludy/agent";`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/app/src/components/example.tsx',
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <div>don't <span>can't</span></div>; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const C = () => <div>don't <span>can't</span></div>; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/app/src/components/example.tsx',
       ),
@@ -3104,20 +3081,20 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toEqual([]);
     expect(
       workspaceAdapterLeakViolations(
-        `const C = () => <div title="Line 1\nLine 2">don't</div>; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const C = () => <div title="Line 1\nLine 2">don't</div>; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/app/src/components/example.tsx',
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const f = <T>(x: T) => x; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const f = <T>(x: T) => x; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const bad = 'unclosed; import { generateNoteSummaryText } from '@crove/agent';`,
+        `const bad = 'unclosed; import { generateNoteSummaryText } from '@ludy/agent';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
     ).toContain('contains invalid or unclosed syntax');
@@ -3151,7 +3128,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         `import * as a from '../../../packages/agent/src/index.ts#x';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
-    ).toEqual(['namespace import from @crove/agent']);
+    ).toEqual(['namespace import from @ludy/agent']);
     expect(
       indexReexportViolations(
         `export { generateNoteSummaryText as g } from './note-ai-model.ts#x';`,
@@ -3181,53 +3158,53 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         `import * as m from 'file:///repo/packages/agent/src/index.ts';`,
         DEFAULT_ADAPTER_EXPORTS,
       ),
-    ).toEqual(['namespace import from @crove/agent']);
+    ).toEqual(['namespace import from @ludy/agent']);
     expect(
       workspaceAdapterLeakViolations(
         `import * as m from '../../../packages/agent/src/index.mts';`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/kernel/src/routes/notes.ts',
       ),
-    ).toEqual(['namespace import from @crove/agent']);
+    ).toEqual(['namespace import from @ludy/agent']);
     expect(
       indexReexportViolations(`export { generateNoteSummaryText as g } from './%E0%A4%A/../note-ai-%6dodel.ts';`, sampleSyms),
     ).toEqual(['re-exports note-ai-model under an alias ({ generateNoteSummaryText as g })']);
     // F2: contextual keyword `from` as binding identifier
     expect(memberVyViolations(`const x = 1; import from from 'pg';`)).toEqual(['imports pg']);
-    expect(workspaceAdapterLeakViolations(`import from from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'default import from @crove/agent',
+    expect(workspaceAdapterLeakViolations(`import from from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'default import from @ludy/agent',
     ]);
     expect(
-      workspaceAdapterLeakViolations(`import type from from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS),
-    ).toEqual(['default import from @crove/agent']);
+      workspaceAdapterLeakViolations(`import type from from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS),
+    ).toEqual(['default import from @ludy/agent']);
     expect(indexReexportViolations(`import from from './note-ai-model.ts';`, sampleSyms)).toEqual([
       'imports note-ai-model inside index.ts instead of direct re-export',
     ]);
     // F3: ASI regex-prefix keywords and speculative division/regex rescan
-    expect(memberVyViolations(`debugger\n/[/*]/;\nimport { Runtime } from '@crove/kernel-runtime';\n// */`)).toEqual([
-      'imports @crove/kernel-runtime',
+    expect(memberVyViolations(`debugger\n/[/*]/;\nimport { Runtime } from '@ludy/kernel-runtime';\n// */`)).toEqual([
+      'imports @ludy/kernel-runtime',
     ]);
     expect(memberVyViolations(`break\n/[/*]/;\nfetch('https://x.test');\n// */`)).toEqual(['calls the network directly']);
     expect(memberVyViolations(`continue\n/[/*]/;\nawait execute(c);\n// */`)).toEqual(['calls execute()']);
     expect(
-      memberVyViolations(`type T = number\n/[/*]/;\nimport { Runtime } from '@crove/kernel-runtime';\n// */`),
-    ).toEqual(['imports @crove/kernel-runtime']);
+      memberVyViolations(`type T = number\n/[/*]/;\nimport { Runtime } from '@ludy/kernel-runtime';\n// */`),
+    ).toEqual(['imports @ludy/kernel-runtime']);
     expect(
-      memberVyViolations(`const w = n as number & { a: number } / 2 + "/g/*";\nimport { Runtime } from '@crove/kernel-runtime';\n// */`),
-    ).toEqual(['imports @crove/kernel-runtime']);
+      memberVyViolations(`const w = n as number & { a: number } / 2 + "/g/*";\nimport { Runtime } from '@ludy/kernel-runtime';\n// */`),
+    ).toEqual(['imports @ludy/kernel-runtime']);
     expect(
       orgFeatureViolations(`type T = number\n/[/*]/;\nimport { x } from './member-vy/summary.ts';\n// */`),
     ).toEqual(['imports ./member-vy/summary.ts']);
     expect(
       workspaceAdapterLeakViolations(
-        `type T = number\n/[/*]/;\nimport { generateNoteSummaryText } from '@crove/agent';\n// */`,
+        `type T = number\n/[/*]/;\nimport { generateNoteSummaryText } from '@ludy/agent';\n// */`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/kernel/src/routes/notes.ts',
       ),
     ).toEqual(['generateNoteSummaryText']);
     expect(
       workspaceAdapterLeakViolations(
-        `const w = n as number & { a: number } / 2 + "/g/*";\nimport { generateNoteSummaryText } from '@crove/agent';\n// */`,
+        `const w = n as number & { a: number } / 2 + "/g/*";\nimport { generateNoteSummaryText } from '@ludy/agent';\n// */`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/kernel/src/routes/notes.ts',
       ),
@@ -3249,7 +3226,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       indexReexportViolations(`export * from './note-ai-model.ts';\nconst ratio = n / 2; // safe comment`, sampleSyms),
     ).toEqual([]);
     const f3JsxFallbackProbe =
-      'type G<T> = Array<T>\n/[/*]/;\nimport * as agent from "@crove/\\\nagent";\nexport const leaked = agent["generateNote" + "SummaryText"];\n// */';
+      'type G<T> = Array<T>\n/[/*]/;\nimport * as agent from "@ludy/\\\nagent";\nexport const leaked = agent["generateNote" + "SummaryText"];\n// */';
     expect(
       workspaceAdapterLeakViolations(f3JsxFallbackProbe, ['generateNoteSummaryText'], 'apps/kernel/src/other.ts'),
     ).not.toEqual([]);
@@ -3261,7 +3238,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(workspaceAdapterLeakViolations('const el = <div/> / 2;', ['generateNoteSummaryText'])).toEqual([]);
     expect(workspaceAdapterLeakViolations('const el = <div>a</div> / 2; // safe comment', ['generateNoteSummaryText'], 'apps/app/src/other.tsx')).toEqual([]);
     expect(workspaceAdapterLeakViolations('const el = <div>a</div> / 2; // safe comment', ['generateNoteSummaryText'])).toEqual([]);
-    expect(workspaceAdapterLeakViolations(`import { AiBudgetExhaustedError } from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([]);
+    expect(workspaceAdapterLeakViolations(`import { AiBudgetExhaustedError } from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([]);
 
     expect(
       modelAdapterViolations(

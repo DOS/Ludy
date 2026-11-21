@@ -5,11 +5,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { CALENDAR_RANGE_MAX_DAYS, type MyCalendar, type Weekday } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { CALENDAR_RANGE_MAX_DAYS, type MyCalendar, type Weekday } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { ExternalCalendars } from './calendar-connections.tsx';

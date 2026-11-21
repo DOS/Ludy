@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { styleSelection } from '@crove/mod-social/contract';
+import { styleSelection } from '@ludy/mod-social/contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { TextStyleButtons, TextStyleHint } from '../src/components/social-text-style.tsx';
 

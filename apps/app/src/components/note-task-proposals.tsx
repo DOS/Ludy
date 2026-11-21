@@ -14,12 +14,12 @@ import {
   type ProjectSeat,
   type ProjectTasksFromNoteResult,
   type ProjectTasksFromNoteStatus,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { refreshProjectQueries } from './project-task-dialog.tsx';
 import { ErrorText, Notice, RowsSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';

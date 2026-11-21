@@ -1,6 +1,6 @@
 // The queue editor's helpers (#1172): "Thêm", "Thêm cho mọi ngày" and the best-time suggestions add slots only while the
 // queue has room, up to the limit social.queue.set takes (SOCIAL_QUEUE_SLOTS_MAX), so a draft never fails on save for it.
-import { SOCIAL_QUEUE_SLOTS_MAX } from '@crove/kernel-contract';
+import { SOCIAL_QUEUE_SLOTS_MAX } from '@ludy/kernel-contract';
 
 type At = { weekday: number; minute: number };
 

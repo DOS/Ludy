@@ -15,9 +15,9 @@ import {
   zYearClosingProposal,
   zYearClosingRequest,
   type YearClosingProposal,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { closingDescription, closingLines, type AccountBalance, type ClosingLine } from './domain/year-closing.ts';

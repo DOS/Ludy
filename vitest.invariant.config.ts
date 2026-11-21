@@ -2,118 +2,16 @@
 // .github/workflows/protected.yml takes this file, every test/invariant/ directory and the pgTAP gate files
 // (supabase/tests/database/_*.test.sql, #1643) from the base branch and runs them against the PR's code, so the
 // PR's own vitest.config.ts cannot exclude or weaken them.
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
-
-const ROOT_DIR = fileURLToPath(new URL('.', import.meta.url));
-const INVARIANT_IMPORTER_RE = /^(?:apps|packages|modules)\/[^/]+\/test\/invariant\//;
-
-// Two-step package rename bridge (#3965, ADR-0054): once all workspace packages carry the @ludy/* scope,
-// rewrite @crove/<pkg> imports originating inside the base-branch invariant suite (never in PR application code)
-// to @ludy/<pkg> and let Vite's standard package/exports resolver select the exact same module entry.
-export function legacyCroveInvariantBridge(rootDir: string) {
-  const pkgDirs: string[] = [];
-  if (existsSync(join(rootDir, 'e2e', 'package.json'))) pkgDirs.push(join(rootDir, 'e2e'));
-  for (const group of ['apps', 'modules', 'packages']) {
-    const groupDir = join(rootDir, group);
-    if (!existsSync(groupDir)) continue;
-    for (const dir of readdirSync(groupDir)) {
-      const pkgDir = join(groupDir, dir);
-      if (existsSync(join(pkgDir, 'package.json'))) pkgDirs.push(pkgDir);
-    }
-  }
-
-  const repoReal = realpathSync(rootDir);
-  const seenNames = new Set<string>();
-  const seenSlugs = new Set<string>();
-  const names: string[] = [];
-  const ludyPkgDirs = new Map<string, string>();
-  for (const pkgDir of pkgDirs) {
-    const manifestPath = join(pkgDir, 'package.json');
-    const pkgReal = realpathSync(pkgDir);
-    const manifestReal = realpathSync(manifestPath);
-    if ((!pkgReal.startsWith(`${repoReal}${sep}`) && pkgReal !== repoReal) || !manifestReal.startsWith(`${pkgReal}${sep}`)) {
-      throw new Error(`vitest.invariant.config.ts: workspace manifest ${manifestPath} resolves outside repo root (${manifestReal})`);
-    }
-    const pkg = JSON.parse(readFileSync(manifestReal, 'utf8')) as { name?: string };
-    if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
-      throw new Error(`vitest.invariant.config.ts: ${manifestPath} has no package name`);
-    }
-    if (seenNames.has(pkg.name)) {
-      throw new Error(`vitest.invariant.config.ts: duplicate workspace package name ${pkg.name} (${manifestPath})`);
-    }
-    seenNames.add(pkg.name);
-    const slug = pkg.name.replace(/^@(?:crove|ludy)\//, '');
-    if (seenSlugs.has(slug)) {
-      throw new Error(`vitest.invariant.config.ts: duplicate workspace package slug ${slug} (${manifestPath})`);
-    }
-    seenSlugs.add(slug);
-    names.push(pkg.name);
-    if (pkg.name.startsWith('@ludy/')) {
-      ludyPkgDirs.set(pkg.name.slice('@ludy/'.length), pkgReal);
-    }
-  }
-
-  const invalid = names.filter((name) => !name.startsWith('@crove/') && !name.startsWith('@ludy/'));
-  if (invalid.length > 0) {
-    throw new Error(`vitest.invariant.config.ts: unexpected workspace package scope (${invalid.join(', ')}); expected @crove/* or @ludy/*`);
-  }
-  const hasCrove = names.some((name) => name.startsWith('@crove/'));
-  const hasLudy = names.some((name) => name.startsWith('@ludy/'));
-  if (hasCrove && hasLudy) {
-    throw new Error('vitest.invariant.config.ts: mixed @crove/* and @ludy/* workspace packages; rename all packages atomically');
-  }
-  const bridgeActive = names.length > 0 && names.every((name) => name.startsWith('@ludy/'));
-
-  return {
-    name: 'legacy-crove-invariant-bridge',
-    enforce: 'pre' as const,
-    async resolveId(
-      this: {
-        resolve: (
-          source: string,
-          importer?: string,
-          options?: { skipSelf?: boolean },
-        ) => Promise<{ id: string } | null>;
-      },
-      source: string,
-      importer?: string,
-    ) {
-      if (!bridgeActive || !importer || !source.startsWith('@crove/')) return null;
-      const cleanImporter = importer.split(/[?#]/, 1)[0] ?? '';
-      const relImporter = relative(rootDir, cleanImporter).replaceAll('\\', '/');
-      if (!INVARIANT_IMPORTER_RE.test(relImporter)) return null;
-      const rest = source.slice('@crove/'.length);
-      const slug = rest.split('/', 1)[0] ?? '';
-      const expectedDir = ludyPkgDirs.get(slug);
-      if (!expectedDir) {
-        throw new Error(`legacy-crove-invariant-bridge: missing workspace package @ludy/${slug} for ${source} imported from ${relImporter}`);
-      }
-      const target = `@ludy/${rest}`;
-      const resolved = await this.resolve(target, importer, { skipSelf: true });
-      if (!resolved) {
-        throw new Error(`legacy-crove-invariant-bridge: failed to resolve ${target} from ${relImporter}`);
-      }
-      const resolvedFile = resolved.id.split(/[?#]/, 1)[0] ?? resolved.id;
-      const resolvedReal = existsSync(resolvedFile) ? realpathSync(resolvedFile) : resolvedFile;
-      if (!resolvedReal.startsWith(`${expectedDir}${sep}`) && resolvedReal !== expectedDir) {
-        throw new Error(`legacy-crove-invariant-bridge: ${target} resolved outside ${expectedDir} (${resolvedReal})`);
-      }
-      return resolved;
-    },
-  };
-}
 
 // The context token key of the test suites (#1822), as in vitest.config.ts.
 const env = { CROVE_CONTEXT_TOKEN_KEY: Buffer.from('test-only-context-token-key-0123456789').toString('base64') };
 
 export default defineConfig({
-  plugins: [legacyCroveInvariantBridge(ROOT_DIR)],
   test: {
     env,
-    root: ROOT_DIR,
+    root: fileURLToPath(new URL('.', import.meta.url)),
     include: ['apps/*/test/invariant/**/*.test.ts', 'packages/*/test/invariant/**/*.test.ts', 'modules/*/test/invariant/**/*.test.ts'],
     exclude: ['**/node_modules/**'],
     fileParallelism: false,

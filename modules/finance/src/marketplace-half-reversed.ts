@@ -4,7 +4,7 @@
 // and the Sàn screen lists it with the count of months still standing ("đảo dở: còn N tháng chưa đảo") so the accountant finishes it. A settlement with every voucher reversed, or none, is not half
 // reversed. Facts only, read from the books; the row policies keep it to the entities the caller may see.
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { postingsOf } from './marketplace-settlement-months.ts';
 
 export interface HalfReversedSettlement {

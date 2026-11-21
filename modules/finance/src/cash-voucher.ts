@@ -38,10 +38,10 @@ import {
   type Check,
   type PayrollPaymentKind,
   type VoucherType,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { PAYROLL_POSTING_MAPS, journalIsBalanced, type PayrollRegime } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { PAYROLL_POSTING_MAPS, journalIsBalanced, type PayrollRegime } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { checkBankLineVoucher, lineMatchFor, lockBankLine, readParties, type StoredBankLine } from './bank-match.ts';
 import {

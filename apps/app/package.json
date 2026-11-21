@@ -1,5 +1,5 @@
 {
-  "name": "@crove/app",
+  "name": "@ludy/app",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,11 +11,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@crove/kernel-contract": "workspace:*",
-    "@crove/l10n-vn": "workspace:*",
-    "@crove/meeting-recorder": "workspace:*",
-    "@crove/mod-social": "workspace:*",
-    "@crove/ui": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
+    "@ludy/meeting-recorder": "workspace:*",
+    "@ludy/mod-social": "workspace:*",
+    "@ludy/ui": "workspace:*",
     "@orpc/client": "catalog:",
     "@orpc/contract": "catalog:",
     "@orpc/tanstack-query": "catalog:",

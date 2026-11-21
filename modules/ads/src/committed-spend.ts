@@ -5,9 +5,9 @@
 // caps are checked with, and the commitments come from the same definer, crove_ads.launch_commitments), so what the screen shows and what the next approval is
 // judged against cannot drift. Money is a decimal string and every sum goes through decimal.js (AGENTS.md "Money").
 import { Decimal } from 'decimal.js';
-import type { MemberRole } from '@crove/db';
-import { zAdsCommittedInput, type AdsCommitted, type AdsCommittedLine } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAdsCommittedInput, type AdsCommitted, type AdsCommittedLine } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { contextBase } from './campaign-draft.ts';
 import { committedInMonth, countedFor, type Commitment, type CommittedCap } from './launch-caps.ts';
 import { committedLaunches } from './launch-ledger.ts';

@@ -6,10 +6,10 @@
 // and, when the deterministic check accepts it on this file, its lines are staged like any recognised report's: a person still approves them line by line in the existing staged flow. A file with no saved
 // mapping, a mapping the check refuses on this file, or one whose headers moved is left as it was (the check card and Ly's proposal). A sandbox that cannot answer throws, as the first read does, so the job
 // runs again; nothing here decides, saves or sends anything, and there is no AI.
-import { EXTRACT_LIMIT_RETRIES, MARKETPLACE_ORDER_FIELDS, encodeMarketplaceColumnsInput, type ExtractClient, type ExtractedMarketplaceColumns, type MarketplaceColumnsInput } from '@crove/extract-contract';
+import { EXTRACT_LIMIT_RETRIES, MARKETPLACE_ORDER_FIELDS, encodeMarketplaceColumnsInput, type ExtractClient, type ExtractedMarketplaceColumns, type MarketplaceColumnsInput } from '@ludy/extract-contract';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { defineQuery, type Runtime } from '@crove/kernel-runtime';
+import { defineQuery, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace_columns_apply' };
 // How many saved mappings the worker holds in mind at once: one per header row, the newest first. An org that saved more is a different kind of org; the newest are enough.

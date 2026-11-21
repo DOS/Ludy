@@ -5,7 +5,7 @@
 // The line codes and the account mapping below were written from the circular's form and its guidance as we
 // understand them. An accountant has not verified them yet (issue #154); until then these reports are not
 // for filing. The mapping is data, so a correction is a change to the tables, not to the code.
-import { money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import type { PostedEntry } from './ledger.ts';
 import { canonical, parseDecimal } from './money.ts';
 

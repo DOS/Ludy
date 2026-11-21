@@ -2,8 +2,8 @@
 // The API's side of the wake-up setup (ADR-0051 decision 4, issue #3024): the secret it makes and seals, and the look-up of the receiver's name.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CredentialVault, DomainError, parseVaultKey } from '@crove/kernel-runtime';
-import { MCP_WAKE_PROVIDER as WAKE_PROVIDER } from '@crove/kernel';
+import { CredentialVault, DomainError, parseVaultKey } from '@ludy/kernel-runtime';
+import { MCP_WAKE_PROVIDER as WAKE_PROVIDER } from '@ludy/kernel';
 import { assertWakeHostPublic, makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { noCredentialBroker } from '../src/credentials.ts';
 

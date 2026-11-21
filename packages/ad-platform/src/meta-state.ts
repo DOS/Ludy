@@ -7,8 +7,8 @@
 // short CODE of lower-case letters, digits and underscores (`issue_<error_code>`, or `feedback_<the reason's key>`), and a status Ludy waits on becomes `in_review` or
 // `in_process`. The screen words the codes it knows in the reader's language and shows any other as plain text. [U] The exact shape of `ad_review_feedback` and `issues_info` is
 // written from Meta's documentation; the live check (W2-5) records what Meta really sends.
-import type { Fetch } from '@crove/channel';
-import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
+import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@ludy/channel';
 import { AdPlatformError } from './index.ts';
 import { graphHostOnly, metaAdsError } from './meta.ts';
 import type { AdObjectStateSource, StateTarget } from './state-readers.ts';

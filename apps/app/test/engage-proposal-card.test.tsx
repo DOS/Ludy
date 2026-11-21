@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { EngageProposalView } from '@crove/kernel-contract';
+import type { EngageProposalView } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('@tanstack/react-router', () => ({ Link: ({ children }: { children: unknown }) => children }));

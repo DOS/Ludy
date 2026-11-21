@@ -3,7 +3,7 @@
 // the key settings refused when partial or mismatched, and the push service's answers.
 import { createDecipheriv, createECDH, createPublicKey, hkdfSync, randomBytes, verify } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { EgressError } from '@crove/kernel-runtime';
+import { EgressError } from '@ludy/kernel-runtime';
 import { createPushSender, encryptPush, generateVapidKeys, loadVapidKeys, outcomeOf, vapidToken } from '../src/web-push.ts';
 
 const b64 = (s: string) => Buffer.from(s.replace(/\s+/g, ''), 'base64url');
