@@ -495,6 +495,7 @@ const UNIONS = unions({
   'crove_finance.misa_amis_push.source_type': MISA_AMIS_PUSH_SOURCES,
   'crove_finance.marketplace_connection.last_poll_state': MARKETPLACE_POLL_STATES,
   'crove_finance.marketplace_connection.platform': CHANNEL_PLATFORMS,
+  'crove_finance.marketplace_column_profile.platform': CHANNEL_PLATFORMS,
   'crove_finance.channel_order.platform': CHANNEL_PLATFORMS,
   'crove_finance.channel_order_line.stage': CHANNEL_STAGES,
   'crove_finance.channel_settlement.platform': CHANNEL_PLATFORMS,
