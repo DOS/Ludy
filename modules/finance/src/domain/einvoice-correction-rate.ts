@@ -4,8 +4,8 @@
 // Letter 2121/TCT-CS, 2023-05-29, medium confidence): a correction that changes neither the goods value nor the VAT, a return and a trade discount set later keep the rate of the original;
 // an error in quantity or price that changes the amount and the VAT uses the rate in force on the day the correcting invoice is made. The nature is what a person says the correction is about;
 // the code works out the basis and the rate from it and the screen only proposes them, a person confirms.
-import type { EInvoiceRateBasis, EInvoiceRateNature, EInvoiceRateReason } from '@crove/kernel-contract';
-import { REDUCED_RATE_PERIODS, normalizeVatRate, reducedRateApplies } from '@crove/l10n-vn';
+import type { EInvoiceRateBasis, EInvoiceRateNature, EInvoiceRateReason } from '@ludy/kernel-contract';
+import { REDUCED_RATE_PERIODS, normalizeVatRate, reducedRateApplies } from '@ludy/l10n-vn';
 
 export interface CorrectionRateInput {
   nature: EInvoiceRateNature;

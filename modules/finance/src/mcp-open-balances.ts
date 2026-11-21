@@ -6,11 +6,11 @@
 // behind "Ask to pay", so an invoice already asked for is left out), aged by INVOICE DATE because the books hold no due date for a received invoice (#3701): a caller must not read them as days overdue; `basis` says which. Not the
 // 331 balance by party. The figures are the whole org's or nothing (wholeOrgEntity). Oldest first, at most MCP_BALANCES_MAX parties.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { defineQuery } from '@crove/kernel-runtime';
-import { Decimal, money } from '@crove/l10n-vn';
-import { SUPPLIER_PAYMENT_COMMAND } from '@crove/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
+import { Decimal, money } from '@ludy/l10n-vn';
+import { SUPPLIER_PAYMENT_COMMAND } from '@ludy/kernel-contract';
 import { daysBetween } from './domain/payment-reminder.ts';
 import { wholeOrgEntity } from './mcp-whole-org.ts';
 import { databaseToday } from './period-lock.ts';

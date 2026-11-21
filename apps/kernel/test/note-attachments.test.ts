@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { NOTE_ATTACHMENT_FILENAME_MAX } from '@crove/kernel-contract';
+import { NOTE_ATTACHMENT_FILENAME_MAX } from '@ludy/kernel-contract';
 import { noteAttachmentContentDisposition, sanitizeNoteAttachmentFilename } from '../src/note-attachments.ts';
 
 describe('sanitizeNoteAttachmentFilename (#3561)', () => {

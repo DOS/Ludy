@@ -2,7 +2,7 @@
 // The form of the spend-flag thresholds (#2378): an empty field is the default, a field inside the server's bounds is a number or a ratio, and
 // the call carries `null` for every field left empty.
 import { describe, expect, it } from 'vitest';
-import { zAdsFlagSetting } from '@crove/kernel-contract';
+import { zAdsFlagSetting } from '@ludy/kernel-contract';
 import { formOf, isFlagFieldValid, sameForm, settingOf, wrongFlagFields, type FlagForm } from '../src/lib/ads-flag-settings.ts';
 
 const empty: FlagForm = { paceMinDays: '', dayFactor: '', cprFactor: '', cprMinResults: '', cprMinHistoryDays: '' };

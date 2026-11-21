@@ -2,7 +2,7 @@
 // The bank statement reader of the sandbox (#2142): an .xlsx or CSV statement read into its account number and lines, a
 // file that is no statement answered as such, and the same file through the parser and the sandboxed process.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMITS, zExtractResponse } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, zExtractResponse } from '@ludy/extract-contract';
 import { readBankStatement } from '../src/bank-statement.ts';
 import { parse } from '../src/parse.ts';
 import { runSandboxed } from '../src/sandbox.ts';

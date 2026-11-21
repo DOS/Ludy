@@ -8,9 +8,9 @@
 // The notes are read, never written: nothing here posts, changes a figure or a flag, and it is not a command. With no platform waiting there is no call (`none`). When there is no model, the AI budget is
 // spent, the member's calls are too frequent, the call fails or every note is dropped, the answer names the state (`ai`) with no notes and the screen shows the table alone. An answer is kept for a while by
 // its facts, so reopening the screen does not pay for the same notes twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { AiBudgetExhaustedError, marketplaceFeeNotesFactsText, marketplaceFeeNotesHaveNews, type InboxReader, type MarketplaceFeeNoteFacts } from '@crove/agent';
-import type { MarketplaceBalance, MarketplaceFeeNotes } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
+import { AiBudgetExhaustedError, marketplaceFeeNotesFactsText, marketplaceFeeNotesHaveNews, type InboxReader, type MarketplaceFeeNoteFacts } from '@ludy/agent';
+import type { MarketplaceBalance, MarketplaceFeeNotes } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface MarketplaceFeeNoteAi {

@@ -4,11 +4,11 @@
 // Jobs carry ids only; the commands run in the org's system context and reach private notes through definers that
 // answer counts, never text.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { INPUT_ERROR_CODES, type ExtractClient } from '@crove/extract-contract';
-import { NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_ATTACHMENT_MAX_BYTES, NOTE_MEMBER_PURGE_DAYS } from '@crove/kernel-contract';
-import { BlobNotFoundError, BlobTooLargeError, DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, trashCutoff, type NoteAttachmentExtractSource } from '@crove/mod-notes';
+import type { Db } from '@ludy/db';
+import { INPUT_ERROR_CODES, type ExtractClient } from '@ludy/extract-contract';
+import { NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_ATTACHMENT_MAX_BYTES, NOTE_MEMBER_PURGE_DAYS } from '@ludy/kernel-contract';
+import { BlobNotFoundError, BlobTooLargeError, DomainError, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, trashCutoff, type NoteAttachmentExtractSource } from '@ludy/mod-notes';
 import { jobKey } from './job-keys.ts';
 import { QUEUES } from './jobs-schema.ts';
 import { DOCX_CONTENT_TYPE } from './note-attachments.ts';

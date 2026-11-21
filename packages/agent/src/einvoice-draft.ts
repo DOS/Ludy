@@ -15,7 +15,7 @@
 // - more lines than the form takes, an empty line, a line with no description.
 // One refused line refuses the proposal: no line at all, no buyer (a person types them). A buyer number that is not in the list that was offered gives no buyer. Totals and VAT amounts are not here:
 // the draft computes them by code from what a person saves. A call that fails or is refused by the AI budget gives no proposal: the screen works as it does with AI off.
-import { money, salesVatRatesOn, writtenVatRate } from '@crove/l10n-vn';
+import { money, salesVatRatesOn, writtenVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { hasAddress } from './reminder.ts';
 

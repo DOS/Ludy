@@ -1,6 +1,6 @@
 // Drafts from library files (#1080): the files picked in the library, in the order they were picked, and the request
 // the "Create drafts" panel sends. The server checks every file against every channel and saves all or none.
-import { SOCIAL_DRAFTS_FROM_MEDIA_MAX } from '@crove/kernel-contract';
+import { SOCIAL_DRAFTS_FROM_MEDIA_MAX } from '@ludy/kernel-contract';
 
 export const DRAFTS_FROM_MEDIA_MAX = SOCIAL_DRAFTS_FROM_MEDIA_MAX;
 

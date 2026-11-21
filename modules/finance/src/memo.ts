@@ -1,4 +1,4 @@
-import type { PurchaseProposal } from '@crove/kernel-contract';
+import type { PurchaseProposal } from '@ludy/kernel-contract';
 
 // The journal memo and proposal title of an invoice: "HĐ <series>-<number> <supplier>" for a purchase, "HĐ bán
 // <series>-<number> <customer>" for a sale (issue #313).

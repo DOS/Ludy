@@ -3,10 +3,10 @@
 // C2 (Google Meet), C3 (Zoom) and C4 (Teams) each only ADD an adapter here and a key in `meetingPlatformAdapters`. C1 ships the platform-neutral interface and an offline sandbox, like the channel layer's
 // `sandbox` (ADR-0025): no network, so the whole flow runs on a laptop and in tests.
 //
-// The adapter never opens a download itself. The worker job performs every download through the shared egress guard (`guardedStream` of @crove/kernel-runtime), so `prepareDownload` only DESCRIBES the
+// The adapter never opens a download itself. The worker job performs every download through the shared egress guard (`guardedStream` of @ludy/kernel-runtime), so `prepareDownload` only DESCRIBES the
 // request. Tokens never leave the job: an error message never carries a token or the platform's response body.
 //
-// The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
+// The provider and error-code unions below repeat those of `@ludy/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
 import { GoogleCalendarAdapter } from './calendar-google.ts';
 import { GoogleMeetAdapter, type GoogleMeetAppConfig } from './meeting-google.ts';

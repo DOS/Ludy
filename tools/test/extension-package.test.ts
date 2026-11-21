@@ -75,7 +75,7 @@ describe('the extension release workflow', () => {
 
   it('builds as the CI job does and checks the permission list before it zips', () => {
     const build = jobs().build as string;
-    expect(build).toContain('pnpm install --frozen-lockfile --filter "@crove/extension..."');
+    expect(build).toContain('pnpm install --frozen-lockfile --filter "@ludy/extension..."');
     expect(build.indexOf('scripts/build.mjs --version')).toBeGreaterThan(0);
     expect(build.indexOf('check:manifest')).toBeGreaterThan(build.indexOf('scripts/build.mjs --version'));
     expect(build.indexOf('zip -X')).toBeGreaterThan(build.indexOf('check:manifest'));

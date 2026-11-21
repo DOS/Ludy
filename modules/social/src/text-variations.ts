@@ -7,9 +7,9 @@
 // rewrite's "variation" action) only fills the form; it is marked ai once a person saves it, and a copy made from it is
 // tainted.
 import { z } from 'zod';
-import { zId, zSocialTextVariations } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialTextVariations } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { effectiveContent } from './domain/approval.ts';
 import { refusesDuplicates } from './domain/duplicate.ts';
 import { cursorAfterEdit, cursorOf, keepAiMarks, parseTextVariations, variationOrder, type TextVariation } from './domain/text-variations.ts';

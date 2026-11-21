@@ -10,7 +10,7 @@ import {
   SIGN_SIGNATURE_PNG_MAX_WIDTH,
   SIGN_TOKEN_PATTERN,
   zSignPublicSubmitInput,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,

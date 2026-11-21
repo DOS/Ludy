@@ -6,8 +6,8 @@
 //   again on every send, so this is a courtesy and never the protection.
 import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
-import { DomainError, isPublicAddress, type CredentialBroker } from '@crove/kernel-runtime';
-import { MCP_WAKE_PROVIDER, type McpWakeCredential } from '@crove/kernel';
+import { DomainError, isPublicAddress, type CredentialBroker } from '@ludy/kernel-runtime';
+import { MCP_WAKE_PROVIDER, type McpWakeCredential } from '@ludy/kernel';
 
 export interface MadeWakeSecret {
   // Shown once to the person who asked, never stored in the clear.

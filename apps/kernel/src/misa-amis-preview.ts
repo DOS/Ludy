@@ -3,8 +3,8 @@
 // the AMIS voucher the push would send (modules/finance misa-amis-build.ts, the push's own path) and lists them with their blockers and the digest a confirmation carries. A read: it writes nothing, calls nothing outside the database, and never sends. The branch is
 // read from AMIS only by the push's worker, so a placeholder branch stands in. The party and item codes are those the last check against the firm's catalogue matched (S3a, #4112: a person asks for it, the worker
 // reads the catalogue): without a check they are not checked and `checkedAgainstAmis` is false; with one, a party or item it did not match is a blocker, and the check's time is shown.
-import { amisBatchDigest, amisContextOf, amisTotals, AMIS_PLACEHOLDER_BRANCH, loadAmisEntries, type AmisEntry, type AmisQuery, type MisaAmisMatchResults } from '@crove/mod-finance';
-import { MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreview, type MisaAmisPreviewAsk, type MisaAmisPreviewItem } from '@crove/kernel-contract';
+import { amisBatchDigest, amisContextOf, amisTotals, AMIS_PLACEHOLDER_BRANCH, loadAmisEntries, type AmisEntry, type AmisQuery, type MisaAmisMatchResults } from '@ludy/mod-finance';
+import { MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreview, type MisaAmisPreviewAsk, type MisaAmisPreviewItem } from '@ludy/kernel-contract';
 
 export type MisaAmisPreviewQuery = AmisQuery;
 

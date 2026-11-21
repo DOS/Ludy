@@ -5,9 +5,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ExtensionScopeId } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { ExtensionScopeId } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { apiFetch, errorMessage, orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';

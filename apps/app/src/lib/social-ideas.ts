@@ -1,5 +1,5 @@
 // The ideas board (#701): the stages its columns show, in order, and how an idea's link is shown.
-import type { SOCIAL_IDEA_STAGES } from '@crove/kernel-contract';
+import type { SOCIAL_IDEA_STAGES } from '@ludy/kernel-contract';
 
 export type IdeaStage = (typeof SOCIAL_IDEA_STAGES)[number];
 export const BOARD_STAGES: readonly IdeaStage[] = ['new', 'planned', 'drafted'];

@@ -10,7 +10,7 @@
 // document joins the group; with two or more, a document with no template counts as recorded in each of them but never
 // stretches their range, so it can hide a gap, never invent one. A number
 // that is not made of digits cannot be ordered and is left out.
-import { normalizeNumber } from '@crove/l10n-vn';
+import { normalizeNumber } from '@ludy/l10n-vn';
 import { invoiceSymbol } from './portal-reconcile.ts';
 
 export interface SalesNumberInvoice {

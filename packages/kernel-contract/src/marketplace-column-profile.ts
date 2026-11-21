@@ -6,7 +6,7 @@ import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnAssignment } from './marke
 import { zMarketplacePlatform } from './marketplace.ts';
 import { zId } from './schemas.ts';
 
-// The standard fields of an order line a column can be confirmed as: the list of the column check (marketplace-columns.ts, the same as `ORDER_FIELDS` of @crove/l10n-vn; a test in modules/finance keeps the two equal) and the database's CHECK.
+// The standard fields of an order line a column can be confirmed as: the list of the column check (marketplace-columns.ts, the same as `ORDER_FIELDS` of @ludy/l10n-vn; a test in modules/finance keeps the two equal) and the database's CHECK.
 export const zMarketplaceColumnField = z.enum(MARKETPLACE_COLUMN_FIELDS);
 export type MarketplaceColumnField = z.infer<typeof zMarketplaceColumnField>;
 

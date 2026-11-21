@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pluggable Vietnamese public CA signing port (docs/plan/esign.md section 4.3 and section 8 Slice 2c).
-// Modeled after @crove/einvoice: credentials stay opaque strings inside worker adapters, local USB/PC tokens
+// Modeled after @ludy/einvoice: credentials stay opaque strings inside worker adapters, local USB/PC tokens
 // are explicitly refused on server paths, and initiateSign uses reconcile_only retry safety.
 
 export const CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const;

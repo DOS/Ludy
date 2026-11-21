@@ -8,8 +8,8 @@
 // finance.payment_reminder.send, which rebuilds every fact from the books. When the model is off, the AI budget is spent, the member's calls are too frequent,
 // the call fails or its text is refused, the answer names the state (`ai`) with no words, and the screen keeps the fixed template words. A failure is named,
 // never quoted: neither the org's name, the hint nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@crove/agent';
-import type { PaymentReminderWording } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import type { PaymentReminderWording } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface ReminderAi {

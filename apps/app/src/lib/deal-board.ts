@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The deal board's pure part (#2226): where a card sits once it is dropped, before the server answers.
-import { vietnamToday, type Board, type Deal } from '@crove/kernel-contract';
+import { vietnamToday, type Board, type Deal } from '@ludy/kernel-contract';
 import { EMPTY_DEAL_FILTER, type DealFilterState } from './deal-filter.ts';
 
 // The three ways to look at the deals. `?tab=` of the screen keeps the one in use through a reload (#3647), and the Home list links to `?tab=next`.

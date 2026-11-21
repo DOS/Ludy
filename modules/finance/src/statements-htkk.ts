@@ -5,9 +5,9 @@
 // the year's closing entries (#889) not posted, B01 not balancing, balances no line reads, accounts outside HTKK's
 // trial balance list. They are warnings: the accountant decides, the file is still written.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { vietnamToday, zId, zStatementsHtkkYear, type StatementsHtkkCheck, type StatementsHtkkWarning } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { vietnamToday, zId, zStatementsHtkkYear, type StatementsHtkkCheck, type StatementsHtkkWarning } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { buildStatementsXml, f01Values, type BctcInput, type BctcTaxpayer } from './domain/statements-htkk-xml.ts';
 import { HtkkAmountError } from './domain/vat-01gtgt-xml.ts';
 import { yearTrialBalance } from './ledger-reports.ts';

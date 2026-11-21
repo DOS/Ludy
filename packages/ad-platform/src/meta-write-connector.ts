@@ -21,8 +21,8 @@
 // switch-off must close the read connections of that person too (W0b-2), and W2's revoke must remove the permission for the pair
 // (the permission-revoke call of the Graph API for the pair), not only drop one token. This connection records the whole granted set as its scopes
 // and refuses none of them (`ads_management` and `business_management` are what it is for).
-import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
-import { MetaLogin, asProviderError } from '@crove/channel';
+import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@ludy/channel';
+import { MetaLogin, asProviderError } from '@ludy/channel';
 import { ACT_ID, META_USER_ID, accountName, graphHostOnly, listAdAccounts, platformUserHash } from './meta.ts';
 
 export const META_WRITE_PROVIDER = 'metawrite_ads' as const;

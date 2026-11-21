@@ -5,11 +5,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { CHAPTER_TITLE_MAX, CHAPTERS_MAX, type Chapter } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { CHAPTER_TITLE_MAX, CHAPTERS_MAX, type Chapter } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

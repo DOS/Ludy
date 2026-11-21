@@ -5,10 +5,10 @@
 //   and the org's own earlier rates. No credential, no bank account, no provider data, no amount: the model is shown the text and the names. The model is asked outside any transaction, by the API.
 // Nothing is written here and nothing is issued.
 import { sql } from 'kysely';
-import { zEInvoicePreviousInput, zEInvoiceSuggestInput, type EInvoicePrevious } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money, salesVatRatesOn } from '@crove/l10n-vn';
+import { zEInvoicePreviousInput, zEInvoiceSuggestInput, type EInvoicePrevious } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money, salesVatRatesOn } from '@ludy/l10n-vn';
 import { invoiceSourceText, type SourceLine } from './domain/einvoice-source.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

@@ -4,7 +4,7 @@
 // The holder, the account number, the bank and the remark are string cells with the Text format (setTextCell), so a name such as `=HYPERLINK(...)` or `+84...` stays inert and an account number
 // keeps its leading zeros; the amount is a money cell (setMoneyCell: a number with its format, or the exact decimal as text when Excel cannot hold it). No cell is ever a formula. The file is built
 // whole after the caller has its audit row and markers, from a list bounded by SUPPLIER_PAYMENT_BANK_FILE_MAX, and nothing of it is stored.
-import type { SupplierPaymentBankFile } from '@crove/kernel-contract';
+import type { SupplierPaymentBankFile } from '@ludy/kernel-contract';
 import { setMoneyCell, setTextCell } from './export.ts';
 import { streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 

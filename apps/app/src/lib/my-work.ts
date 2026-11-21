@@ -15,7 +15,7 @@ import {
   type TodoRecurrence,
   type TodoStep,
   type TodoSummary,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { FORMAT_LOCALE, type Locale } from '../i18n/locale.ts';
 
 export interface TodoGroup {

@@ -405,7 +405,7 @@ describe('the files of the minutes webhook (#3164)', () => {
       // The stored body is read once, as `const { body: stored } = delivery;`, the way the wake-up does; it is the receiver's answer that is never looked at.
       expect(text, `${file} reads nothing of the receiver's answer`).not.toMatch(/JSON\.parse|\.json\(|\.text\(|\b(answer|response|res|reply)\.body\b/);
       expect(text, `${file} logs no body, address, payload or secret`).not.toMatch(/console\.[a-z]+\([^;]*\b(body|url|payload|secret|sealed|signature)\b/);
-      expect(text, `${file} makes no model call`).not.toMatch(/@(?:crove|ludy)\/agent|from ['"]ai['"]|@ai-sdk|generateText|generateObject|streamText|member-vy|runAgent/);
+      expect(text, `${file} makes no model call`).not.toMatch(/@ludy\/agent|from ['"]ai['"]|@ai-sdk|generateText|generateObject|streamText|member-vy|runAgent/);
       expect(text, `${file} has no test-only hook around the guard`).not.toMatch(/anyPort|hostAllowed|allowPrivate|skipGuard/);
     }
   });
@@ -413,8 +413,8 @@ describe('the files of the minutes webhook (#3164)', () => {
   it('the filters bite (hostile source is found)', () => {
     const signs = /createHmac|Ludy-Signature|egressFetch|guardedRequest|guardedFetch|node:https?|node:net|node:dns|\bfetch\(/;
     for (const line of ["createHmac('sha256', s)", "'Ludy-Signature': x", 'await fetch(url)', "import https from 'node:https'", 'egressFetch({})']) expect(signs.test(line), line).toBe(true);
-    const model = /@(?:crove|ludy)\/agent|from ['"]ai['"]|@ai-sdk|generateText|generateObject|streamText|member-vy|runAgent/;
-    for (const line of ["import { x } from '@crove/agent'", "import { x } from '@ludy/agent'", `import { generateText } from '${'a'}i'`, 'runAgent(x)']) expect(model.test(line), line).toBe(true);
+    const model = /@ludy\/agent|from ['"]ai['"]|@ai-sdk|generateText|generateObject|streamText|member-vy|runAgent/;
+    for (const line of ["import { x } from '@ludy/agent'", `import { generateText } from '${'a'}i'`, 'runAgent(x)']) expect(model.test(line), line).toBe(true);
     const logs = /console\.[a-z]+\([^;]*\b(body|url|payload|secret|sealed|signature)\b/;
     for (const line of ['console.warn(`failed ${url}`)', "console.log('x', delivery.body)"]) expect(logs.test(line), line).toBe(true);
     expect(logs.test("console.warn('[meeting-hook] not delivered', codeOf(error));"), 'a code is not a body').toBe(false);

@@ -2,7 +2,7 @@
 // files lock the same file rows in the same order whatever their directories say, and the first copy in an archive
 // is the one filed.
 import { describe, expect, it } from 'vitest';
-import { archiveIngestOrder, type ArchiveEntryInput } from '@crove/kernel';
+import { archiveIngestOrder, type ArchiveEntryInput } from '@ludy/kernel';
 import { entryName, truncateText } from '../src/archive.ts';
 
 const stored = (name: string, sha: string): ArchiveEntryInput => ({

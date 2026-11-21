@@ -9,15 +9,15 @@ import {
   type MemberRole,
   type SignEnvelopeStatus,
   type SignSealStatus,
-} from '@crove/db';
+} from '@ludy/db';
 import {
   SIGN_BY_SOURCE_MAX,
   zId,
   zSignDrafterRenderPdfInput,
   type SignDrafterRenderPdfResult,
   type SignEnvelopeBySourceItem,
-} from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { isSignAiStoppedOnTrx } from './ai.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
 import type { SigningEventChainRow } from './events.ts';

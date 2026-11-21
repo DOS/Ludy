@@ -5,8 +5,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_MAX_SIDE, QUOTE_LOGO_TYPES } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_MAX_SIDE, QUOTE_LOGO_TYPES } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, fetchFile, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { ClientError } from '../lib/errors.ts';

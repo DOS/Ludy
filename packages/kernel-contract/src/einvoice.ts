@@ -314,7 +314,7 @@ export const zEInvoiceStatus = z.object({ sandbox: z.boolean() });
 // The connection to a provider (#2501, ADR-0044 point 2)
 // ---------------------------------------------------------------------------
 
-// What a connection test answers: a state, never the provider's own text. The same list the port (`@crove/einvoice`) and the database's CHECK keep.
+// What a connection test answers: a state, never the provider's own text. The same list the port (`@ludy/einvoice`) and the database's CHECK keep.
 export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
 export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
 

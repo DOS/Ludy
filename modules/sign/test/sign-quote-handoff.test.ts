@@ -12,13 +12,13 @@ import {
   type Transaction,
 } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { Database } from '@crove/db';
+import type { Database } from '@ludy/db';
 import {
   SIGN_BY_SOURCE_MAX,
   zSignEnvelopeBySourceInput,
   zSignEnvelopeBySourceResult,
-} from '@crove/kernel-contract';
-import { eventPayloadProblem, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { eventPayloadProblem, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { envelopeSealComplete } from '../src/commands.ts';
 import { envelopeBySource, selectLatestEnvelopesBySource, type SourceEnvelopeCandidate } from '../src/queries.ts';
 

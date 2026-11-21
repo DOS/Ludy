@@ -8,8 +8,8 @@
 // (tenant_default_entity_tax_code, #1316), and a code another legal entity of the org holds is refused. A 12-digit code
 // makes the default entity a household business unless an owner or an admin chose its kind (#1317).
 import { z } from 'zod';
-import { VAT_FILING_PERIODS, auditValue, normalizeTaxCode } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { VAT_FILING_PERIODS, auditValue, normalizeTaxCode } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { assertOrgTaxCodeFree, defaultKindForTaxCode, onWrite, setDefaultEntityTaxCode } from './legal-entities.ts';
 import { kernelManifest } from './manifest.ts';
 

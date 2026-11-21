@@ -12,8 +12,8 @@
 // A result is marked done once recorded or once nothing can be recorded for it; one whose recording met an outage is left, and taken again after five minutes (recording is idempotent). A failure logs one
 // fixed code: nothing of a result, a refid or MISA's text.
 import { sql } from 'kysely';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import type { Db } from '@crove/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import type { Db } from '@ludy/db';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
 export const MISA_AMIS_CALLBACK_CLAIM = 100;

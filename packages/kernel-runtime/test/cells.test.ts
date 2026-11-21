@@ -14,7 +14,7 @@ import {
   type QueryResult,
 } from 'kysely';
 import { z } from 'zod';
-import { singleCell, type CellResolver, type Database, type Db } from '@crove/db';
+import { singleCell, type CellResolver, type Database, type Db } from '@ludy/db';
 import { Runtime, defineCommand, defineQuery, type UserActor } from '../src/runtime.ts';
 
 const ORG = '01900000-0000-7000-8000-000000000001';

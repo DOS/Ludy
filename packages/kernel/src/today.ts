@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Hôm nay cần bạn" on Home (issue #2383): what needs the member today across the apps. There is no store of its own
 // and nothing is written. Each line exposes one small read that returns TodayItems (`<module>.today`; the shape is
-// @crove/kernel-contract's today.ts), and this query runs the ones that are registered, in the member's own transaction
+// @ludy/kernel-contract's today.ts), and this query runs the ones that are registered, in the member's own transaction
 // and role, so every line's own rules decide what the member sees: the list shows only what they could open on that
 // line's screens. A line whose read is not registered yet (its issue has not landed, or its module is off) adds
 // nothing, so a line joins the list by registering its read, with no change here.
@@ -9,9 +9,9 @@
 // An item that does not match the shape is dropped and counted, never shown. Nothing here approves, sends or changes
 // anything: an item only links to the screen where it is acted on.
 import { z } from 'zod';
-import { TODAY_ITEMS_MAX, sortTodayItems, zTodayItem, type TodayCoworkers, type TodayItem, type TodayList } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { TODAY_ITEMS_MAX, sortTodayItems, zTodayItem, type TodayCoworkers, type TodayItem, type TodayList } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { coworkerNames } from './coworker-names.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

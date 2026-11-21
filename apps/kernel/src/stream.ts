@@ -29,8 +29,8 @@
 // so a burst of hints for a busy org never takes more than that many connections of the API pool.
 import { createHash, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint, type StreamHintType } from '@crove/kernel-contract';
-import { DomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
+import { STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint, type StreamHintType } from '@ludy/kernel-contract';
+import { DomainError, type Aal, type UserActor } from '@ludy/kernel-runtime';
 
 export const STREAM_CHANNEL = 'crove_stream';
 // The query every check runs (packages/kernel/src/queries.ts).

@@ -8,10 +8,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { ConversationEvent, ConversationIngested, Deal, Quote } from '@crove/kernel-contract';
-import { kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import type { ConversationEvent, ConversationIngested, Deal, Quote } from '@ludy/kernel-contract';
+import { kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { ADMIN, ENGAGE_SCOPE, startHarness, type Harness } from './engage-proposals-harness.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

@@ -4,10 +4,10 @@
 // looking at, reads the catalogue pages that hold them through the client of the connection's product (MISA AMIS Kế toán or MISA ASP, #4152), matches them in memory (modules/finance misa-amis-matching.ts) and records only what it found: for each party and item whether one active
 // entry matched (and its code and id), none did, or several did. The catalogue pages live in this function's variables and nowhere else: no name, address or tax code of a catalogue entry is recorded, put in a
 // job's output, an audit row or an error, or logged. The log carries the connection's first eight characters, the state and the adapter's error kind.
-import { AmisError, type AmisClient, type AmisConnection } from '@crove/misa-amis';
-import { MISA_AMIS_MATCH_RESULTS_MAX, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@crove/kernel-contract';
-import { amisContextOf, loadAmisEntries, misaChannelProvider, type MisaAmisMatchTarget } from '@crove/mod-finance';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AmisError, type AmisClient, type AmisConnection } from '@ludy/misa-amis';
+import { MISA_AMIS_MATCH_RESULTS_MAX, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@ludy/kernel-contract';
+import { amisContextOf, loadAmisEntries, misaChannelProvider, type MisaAmisMatchTarget } from '@ludy/mod-finance';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { matchCatalogue, TooLarge } from './misa-amis-catalogue.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };

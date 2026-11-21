@@ -2,8 +2,8 @@
 // The tools an AI app asks a person with (epic #3857, E4, issue #3863): who is offered which, that each is a strict, not-read-only descriptor over the proposal-only twin of one command, and that a call
 // hands the twin `{ payload }` and nothing else. The database and end-to-end tests of the twins (engage-proposals.db.test.ts) run what a call does.
 import { describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import { ENGAGE_PROPOSALS } from '@ludy/kernel-contract';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor } from '../src/mcp-endpoint.ts';

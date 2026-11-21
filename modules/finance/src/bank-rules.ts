@@ -15,9 +15,9 @@
 // definer alone.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zId, type BankPartyRule } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { voucherCode, zId, type BankPartyRule } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { bankLineKey } from './domain/bank-rule-key.ts';
 import { mappedAccounts } from './account-number.ts';

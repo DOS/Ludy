@@ -14,11 +14,11 @@
 //      the grant; the key is noted in the transaction that stores the event, so two sweeps never both send it.
 // A failure for one grant never stops the others, and a failure of the queue leaves the delivery stored, to be handed over again.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelQueries } from '@crove/kernel';
-import type { TodayItem } from '@crove/kernel-contract';
-import type { McpWakeLinePlan } from '@crove/kernel';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelQueries } from '@ludy/kernel';
+import type { TodayItem } from '@ludy/kernel-contract';
+import type { McpWakeLinePlan } from '@ludy/kernel';
 import { LINE_WAKE_EVENTS, WAKE_ITEMS_MAX, WAKE_RULES, wakeEvent, type LineWakeRegistry, type WakeItem } from './mcp-wake-body.ts';
 import type { WakeJob } from './mcp-wake.ts';
 

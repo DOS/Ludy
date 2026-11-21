@@ -8,10 +8,10 @@
 // error here means the booking is decided on the stored blocks, as before. One short call per connection, all in
 // parallel, so a booking waits on Google for the timeout at most. It never renews a token (the sweep does) and sends
 // nothing but the window of the slot: the answer is busy intervals only.
-import { calendarBinding, type CalendarProvider } from '@crove/kernel-contract';
-import type { CalendarAdapter } from '@crove/channel';
-import type { CredentialBroker, Runtime, SystemActor } from '@crove/kernel-runtime';
-import type { SealedCalendarCredential } from '@crove/kernel';
+import { calendarBinding, type CalendarProvider } from '@ludy/kernel-contract';
+import type { CalendarAdapter } from '@ludy/channel';
+import type { CredentialBroker, Runtime, SystemActor } from '@ludy/kernel-runtime';
+import type { SealedCalendarCredential } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.calendar.live' };
 // How long one provider call may take: a booking never waits on Google longer.

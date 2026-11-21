@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The posting proposal of an approved pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4 and row 18, ADR-0046). `hr.payroll.posting.prepare` is the preparer of
 // kernel.proposal.request for `finance.payroll_posting.record` (the finance proposal path): it reads the frozen run in the requester's context (owners and admins only, the people tables
-// are never read as the system actor or the worker), builds the entry from stored figures with the account map of the entity's chart (@crove/l10n-vn, every row of it still `commentary`
+// are never read as the system actor or the worker), builds the entry from stored figures with the account map of the entity's chart (@ludy/l10n-vn, every row of it still `commentary`
 // until the accountant confirms row 18, #2535), checks it as a general journal voucher through finance's own check (`finance.payroll_posting.check`, regime-aware), and returns the draft. It writes nothing. A person approves the
 // proposal; nothing here posts. The lines are one per account, never per person: the detail stays on the run, and Kế toán approves from the totals by account.
 //
 // No model call is made: everything here is deterministic over stored facts, and the posting works with AI off.
-import { PAYROLL_REGIMES, PAYROLL_POSTING_COMMAND, zHrPostingRequest, JOURNAL_VOUCHER_KIND, type PayrollPostingProposal } from '@crove/kernel-contract';
-import { PAY_FUNCTIONS, PAYROLL_POSTING_MAPS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@crove/l10n-vn';
+import { PAYROLL_REGIMES, PAYROLL_POSTING_COMMAND, zHrPostingRequest, JOURNAL_VOUCHER_KIND, type PayrollPostingProposal } from '@ludy/kernel-contract';
+import { PAY_FUNCTIONS, PAYROLL_POSTING_MAPS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;

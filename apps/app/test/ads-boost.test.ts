@@ -3,7 +3,7 @@
 // link, the Page it went out on), the defaults, the posts the AI coworker suggests (a ranking of counts Ludy already reads: no model call), and the words for each
 // state, goal and audience in both languages.
 import { describe, expect, it } from 'vitest';
-import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_BOOST_STATES, ADS_PLAN_LIMITS } from '@crove/kernel-contract';
+import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_BOOST_STATES, ADS_PLAN_LIMITS } from '@ludy/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
   audienceText,

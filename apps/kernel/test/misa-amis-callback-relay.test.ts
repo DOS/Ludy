@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type Driver, type QueryResult } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { MISA_AMIS_CALLBACK_CLAIM, answerableLater, moveFor, runMisaAmisCallbacks, type ClaimedCallback } from '../src/misa-amis-callback-relay.ts';
 
 const CODE = `ludy-${'a'.repeat(32)}`;

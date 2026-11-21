@@ -3,9 +3,9 @@
 // runtime records what the worker asks of the finance module. What the command does with the lines (the mapping, the
 // dedupe keys, nothing written for an unmapped account) is covered on PostgreSQL in finance-bank.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { readStatementFile, statementFileRows, type StatementStageOutcome } from '@crove/mod-finance';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { readStatementFile, statementFileRows, type StatementStageOutcome } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { STATEMENT_ACCOUNT, statementCsv, statementRows, statementXlsx } from '../../extract/test/statement-fixture.ts';
 import { buildXlsx } from '../../extract/test/xlsx-fixture.ts';

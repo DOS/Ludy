@@ -430,7 +430,7 @@ The owner renamed the product on 2026-10-28 ([#1682](https://github.com/DOS/Ludy
 - "AI" stays where it labels the technology rather than the coworker: the badges and marks on AI-written content, the kill switch, AI budgets, a server's AI configuration, the "AI agent" label every agent in the org chart carries, and platform labels such as TikTok's AI-generated content.
 - Products and landing-page Apps are named "Ludy" and the App area: **Ludy Teamwork** / **Ludy Cộng tác**, **Ludy Finance** / **Ludy Tài chính** (also **Ludy Kế toán** / **Ludy Accounting** in accounting copy), **Ludy Engage**, **Ludy HR** / **Ludy Nhân sự**, **Ludy eSign**, and **Ludy AI** (plus **Ludy Notes** when naming the notes capability). App messages write the brand as a placeholder, so a deployment's own name carries over. The short label under an app's icon in the switcher stays the App name alone.
 - **Ludy Cloud** is the hosted edition, not live yet; copy says "coming soon" and promises nothing more (6.4). DOS-only services belong to the private cloud layer (ADR-0027), never to this repository's copy.
-- Domains: ludy.vn (canonical) and ludy.so for the landing page, app.ludy.vn for the hosted app (2026-10-30, ADR-0027). The repository is `DOS/Ludy`. Code identifiers keep the code name `crove` (`@crove/*`, `crove_*`, `CROVE_*`, file names, the `[Crove]` log prefix), as the README says; users never see it.
+- Domains: ludy.vn (canonical) and ludy.so for the landing page, app.ludy.vn for the hosted app (2026-10-30, ADR-0027). The repository is `DOS/Ludy`. Workspace packages use `@ludy/*`; remaining internal identifiers (`crove_*`, `CROVE_*`, compose services/images, and log prefixes) are migrating to `ludy` per the README and [#1682](https://github.com/DOS/Ludy/issues/1682); users never see them.
 - **Four-tier naming hierarchy** (`packages/kernel-contract/src/apps.ts`, [#3796](https://github.com/DOS/Ludy/issues/3796)):
   1. **Suite**: **Ludy** (internal code name `crove`).
   2. **App (Ứng dụng)**: top-level workspaces in the app switcher and on `ludy.vn`: **Cộng tác / Teamwork** (`teamwork`), **Tài chính / Finance** (`finance`), **Engage** (`engage`), **Nhân sự / HR** (`hr`), **eSign** (`sign`), and **Ludy AI** (`ai`).
@@ -464,7 +464,7 @@ The mark is interim: the owner is still choosing among the round-2 options of th
 
 All colors are tokens in [packages/ui/src/styles/globals.css](packages/ui/src/styles/globals.css) (OKLCH, light on `:root`, dark on `.dark`). The marketing site has its own token file, [apps/web/src/app/globals.css](apps/web/src/app/globals.css), with names of its own (`bg`, `surface`, `fg`, `line`, `accent`, `ok`, `warn`, `bad`); its values equal the app's counterparts in both themes, except `fg`, the primary text, which is a little softer (light `oklch(0.2 0.02 285)` against the app's `oklch(0.141 0.004 285.8)`, dark `oklch(0.97 0.003 285)` against white). The `parity` map of the token block lists the counterparts and `tools/test/design-tokens.test.ts` holds them equal. The exact values of every token, per theme and role, are in the token block at the top of this file; the CSS files stay the source of truth.
 
-Components use token classes only; `pnpm lint` rejects palette classes and literal colors in `apps/app` and `packages/ui` ([tools/ui-colors.mjs](tools/ui-colors.mjs)). `apps/web` follows the same rule by convention until it moves onto `@crove/ui`.
+Components use token classes only; `pnpm lint` rejects palette classes and literal colors in `apps/app` and `packages/ui` ([tools/ui-colors.mjs](tools/ui-colors.mjs)). `apps/web` follows the same rule by convention until it moves onto `@ludy/ui`.
 
 Roles (app token names; the marketing counterparts are in the token block):
 
@@ -744,7 +744,7 @@ SEO trade-off: with one URL per page, search engines see one language, Vietnames
 - Raw palette classes or literal colors in components; colors live in the token file.
 - Fonts without the Vietnamese subset, headings tracked tighter than -0.025em, all-caps Vietnamese sentences.
 - Hype copy ("siêu", "đột phá", "supercharge"), "not X but Y" slogans, em dashes.
-- Heavy UI kits (Material UI, Ant Design). Build on `@crove/ui`.
+- Heavy UI kits (Material UI, Ant Design). Build on `@ludy/ui`.
 - A claim on a marketing page with no merged PR behind it, or a planned feature named outside the "coming soon" strip.
 - Shipping a screen that has not been checked at 360px, in both themes, and with the keyboard.
 

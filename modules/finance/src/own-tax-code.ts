@@ -2,8 +2,8 @@
 // issues invoices from a branch prints `<its 10-digit code>-NNN` as the seller, and those are its own sales. Both codes
 // are compared normalized (parseTaxCode, as kernel.org.set_tax_code stores the org's). An org whose own code is a
 // branch code owns only that code: the head office and the other branches are other taxpayers in its books.
-import type { QueryContext } from '@crove/kernel-runtime';
-import { parseTaxCode } from '@crove/l10n-vn';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { parseTaxCode } from '@ludy/l10n-vn';
 
 export function isOwnTaxCode(code: string | null | undefined, orgTaxCode: string | null | undefined): boolean {
   const party = parseTaxCode(code);

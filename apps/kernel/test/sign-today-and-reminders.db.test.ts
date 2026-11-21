@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { SIGN_TOKEN_PATTERN, todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@crove/kernel-contract';
-import { DomainError, Runtime, fileKey, putFile, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { SIGN_TOKEN_PATTERN, todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@ludy/kernel-contract';
+import { DomainError, Runtime, fileKey, putFile, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import {
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE,
@@ -24,7 +24,7 @@ import {
   hashSigningToken,
   signCommands,
   signQueries,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import { AVAILABLE_MODULES } from '../src/config.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { signMailTemplates } from '../src/sign-mail.ts';

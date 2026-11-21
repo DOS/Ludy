@@ -20,8 +20,8 @@ import {
   zGlossaryUpdate,
   zMeetingRef,
   type GlossaryTerms,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];

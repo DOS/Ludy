@@ -8,9 +8,9 @@
 // names in each org, and marks the request completed; the status page Meta shows the person reads it by the code.
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
-import { platformUserHash } from '@crove/ad-platform';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { platformUserHash } from '@ludy/ad-platform';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 // A signed request is a few hundred bytes; this bounds what the API reads before checking its signature.
 export const MAX_ADS_DELETION_BYTES = 8 * 1024;

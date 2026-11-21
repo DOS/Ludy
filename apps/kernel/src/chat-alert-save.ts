@@ -4,10 +4,10 @@
 // the API seals, only the worker opens): a test line is only asked for here, and the worker sends it
 // (apps/kernel/src/chat-alerts.ts).
 import { randomUUID } from 'node:crypto';
-import { checkTelegramChat, connectDiscord, ConnectorError, discordLogin, telegramChatLogin, type DiscordChatTarget, type Fetch, type TelegramChatTarget } from '@crove/channel';
-import type { MemberRole } from '@crove/db';
-import { CHAT_ALERT_PROVIDER, type ChatAlertKind } from '@crove/mod-social';
-import { DomainError, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { checkTelegramChat, connectDiscord, ConnectorError, discordLogin, telegramChatLogin, type DiscordChatTarget, type Fetch, type TelegramChatTarget } from '@ludy/channel';
+import type { MemberRole } from '@ludy/db';
+import { CHAT_ALERT_PROVIDER, type ChatAlertKind } from '@ludy/mod-social';
+import { DomainError, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { RateLimiter } from './rate-limit.ts';
 
 export type ChatAlertSaveInput = { kind: 'telegram'; botToken: string; chatId: string; events: ChatAlertKind[] } | { kind: 'discord'; webhookUrl: string; events: ChatAlertKind[] };

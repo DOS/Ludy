@@ -3,7 +3,7 @@
 // Settings lands on the tab that holds it.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { MODULE_SCREENS } from '@crove/kernel-contract';
+import { MODULE_SCREENS } from '@ludy/kernel-contract';
 import { createMemoryHistory, createRouter } from '@tanstack/react-router';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';

@@ -9,8 +9,8 @@
 // A member fetches at most perUserPerMinute URLs a minute and an org perOrgPerHour an hour, in this process's memory
 // like the stock photo budget; a member runs one batch at a time and the process two, each fetching two images at
 // once, so at most four images are held in memory at once.
-import { MAX_UPLOAD_BYTES, type SOCIAL_MEDIA_URL_PROBLEMS } from '@crove/kernel-contract';
-import { DomainError, EgressError, guardedFetch, type BlobStore, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { MAX_UPLOAD_BYTES, type SOCIAL_MEDIA_URL_PROBLEMS } from '@ludy/kernel-contract';
+import { DomainError, EgressError, guardedFetch, type BlobStore, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { ConcurrencyLimiter } from './concurrency.ts';
 import { photoType, storePhoto } from './image-ingest.ts';
 import { RateLimiter } from './rate-limit.ts';

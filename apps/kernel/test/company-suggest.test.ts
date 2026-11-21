@@ -2,7 +2,7 @@
 // The rules that point a person to a company (#2438): which address says something about a company, the word at the heart of a domain, and the tax codes written in
 // a text.
 import { describe, expect, it } from 'vitest';
-import { domainLabelOf, emailDomainOf, taxCodesIn } from '@crove/mod-crm';
+import { domainLabelOf, emailDomainOf, taxCodesIn } from '@ludy/mod-crm';
 
 // An address is made from its parts: the domains here are the ones the rules know (a free mail, a public suffix), not anyone's address.
 const at = (user: string, domain: string) => `${user}@${domain}`;

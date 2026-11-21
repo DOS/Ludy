@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_BANK_NOTE_MAX, QUOTE_PHONE_MAX, QUOTE_TEXT_MAX, QUOTE_VALID_DAYS_MAX, QUOTE_VALID_DAYS_MIN, type Quote, type QuoteLinkCreated, type QuoteSummary } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { QUOTE_BANK_NOTE_MAX, QUOTE_PHONE_MAX, QUOTE_TEXT_MAX, QUOTE_VALID_DAYS_MAX, QUOTE_VALID_DAYS_MIN, type Quote, type QuoteLinkCreated, type QuoteSummary } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { QuoteLogoField } from './quote-logo.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';

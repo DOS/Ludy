@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The recorder's Vy summary of a meeting, end to end against a FAKE model (#3805, part 3). This spec runs only in the AI job (`pnpm --filter @crove/e2e stack:up:ai`, then `test:ai`), on a stack that has
+// The recorder's Vy summary of a meeting, end to end against a FAKE model (#3805, part 3). This spec runs only in the AI job (`pnpm --filter @ludy/e2e stack:up:ai`, then `test:ai`), on a stack that has
 // MEETINGS_SUMMARY on and a fixed-answer model service (e2e/fake-model); the default stack has no model and its specs rely on that. The meeting and its three-line transcript are stored directly (speech
 // to text has its own tests); the model's answer is fixed, and the app's checks run on it as they would on a real one. The recorder asks Vy, is told it is ready, copies the result into their own draft,
 // cannot share it until they have read what Vy wrote, edits it, shares it, and has the "draft ready" notice in the notifications. Its own user, created confirmed without the sign-up form.

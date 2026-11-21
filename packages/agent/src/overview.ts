@@ -4,7 +4,7 @@
 // the prompt to follow. Its answer is tainted and checked after the call, whatever the instructions say: a sentence that writes a number the figures do not
 // hold (a digit, an amount with its unit, a number said in words, a number scaled to thousands or millions), a link, or that is empty or too long is no
 // sentence, and the screen shows the figures alone. Nothing is cut or repaired. Amounts are decimal strings and go through decimal.js, never JS numbers.
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 
 export const OVERVIEW_SENTENCE_MAX = 320;

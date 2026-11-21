@@ -2,7 +2,7 @@
 // The projects module's manifest (plan docs/plan/projects.md sections 4.1 and 6, ADR-0048): the three tables of
 // crove_projects and the class of every column. Project name and description are free text a member writes, which may
 // name people, so pii: audit rows keep a marker for them (auditValue), never the text.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const projectsManifest = defineModule({
   id: 'projects',

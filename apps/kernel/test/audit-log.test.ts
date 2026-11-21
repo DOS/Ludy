@@ -1,6 +1,6 @@
 // The audit log's display rules (#672): which detail keys are hidden, how a detail reads on one line, and CSV cells.
 import { describe, expect, it } from 'vitest';
-import { auditCsv, auditDetailLine, auditVia, csvCell, hiddenKey } from '@crove/kernel';
+import { auditCsv, auditDetailLine, auditVia, csvCell, hiddenKey } from '@ludy/kernel';
 
 describe('audit detail', () => {
   it('hides keys that name a secret, by word', () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The audio extraction call of crove-media (#3337): a recording that may carry a video track goes in, mono Opus comes out. It is its own
-// entry (`@crove/media-contract/extract`) on purpose: the kernel's measure-only entry (measure.ts) stays narrow, with no call that returns
+// entry (`@ludy/media-contract/extract`) on purpose: the kernel's measure-only entry (measure.ts) stays narrow, with no call that returns
 // media, and only the one module that extracts audio from an uploaded video imports this one.
 import { MEDIA_LIMITS, MEDIA_TIMING, zMediaNormalizeResult } from './types.ts';
 import { createTransport, MediaClientError } from './transport.ts';

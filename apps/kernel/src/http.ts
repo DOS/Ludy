@@ -7,7 +7,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import type pg from 'pg';
-import { schemaMissing } from '@crove/db/migrate';
+import { schemaMissing } from '@ludy/db/migrate';
 import {
   brandSlug,
   ACCEPTED_ARCHIVE_TYPES,
@@ -55,7 +55,7 @@ import {
   type StockReportRow,
   type UploadPurpose,
   zMeetingTranscriptImport,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   BlobConflictError,
   BlobIntegrityError,
@@ -82,8 +82,8 @@ import {
   type MediaKeyBinding,
   type Runtime,
   type UserActor,
-} from '@crove/kernel-runtime';
-import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
+} from '@ludy/kernel-runtime';
+import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@ludy/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
   MISA_SME_BANK_CREDIT,
@@ -125,9 +125,9 @@ import {
   type SalesVoucher,
   type VatDeclaration,
   type VatReport,
-} from '@crove/mod-finance';
-import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
-import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
+} from '@ludy/mod-finance';
+import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@ludy/mod-crm';
+import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@ludy/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
@@ -168,8 +168,8 @@ import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
-import type { AmisCallbackKey } from '@crove/misa-amis';
-import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import type { AmisCallbackKey } from '@ludy/misa-amis';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZOOM_WEBHOOK_PATH, ZoomReplayCache, acceptZoomWebhook, type ZoomWebhookConfig } from './zoom-webhook.ts';
 import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
@@ -177,7 +177,7 @@ import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, 
 import { WHATSAPP_SIGNATURE_HEADER, WHATSAPP_WEBHOOK_PATH, WhatsAppReplayCache, acceptWhatsAppWebhook, verifyWhatsAppWebhookChallenge, type WhatsAppWebhookConfig } from './whatsapp-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
-import type { BankFeedProvider } from '@crove/bank-feed';
+import type { BankFeedProvider } from '@ludy/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
 import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
@@ -252,7 +252,7 @@ import { WEB_MANIFEST_PATH, brandedManifest } from './web-manifest.ts';
 import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
-import type { AiMeter } from '@crove/agent';
+import type { AiMeter } from '@ludy/agent';
 import type { ModelPort } from './member-vy-ports.ts';
 import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';

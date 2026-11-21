@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A table's totals (DESIGN.md §4.3, #2002): the totals row sits in a <tfoot>, which screen readers announce as the
 // table's footer, under a rule stronger than the hairline between rows, so the total is set apart by more than a color.
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 

@@ -36,10 +36,10 @@ import {
   type ImportReason,
   type ImportRowInput,
   type ImportStatus,
-} from '@crove/kernel-contract';
-import { checkPartyFields } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { checkPartyFields } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

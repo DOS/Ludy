@@ -3,7 +3,7 @@
 // Runs inside crove-extract's sandboxed parser process: opens the ZIP directory via readZipParts
 // with strict entry/byte limits, refuses DOCTYPE/ENTITY declarations, and extracts WordprocessingML
 // text runs in linear O(n) time without regex backtracking.
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { readZipParts, type ZipLimits } from './zip.ts';
 
 export class DocxError extends Error {

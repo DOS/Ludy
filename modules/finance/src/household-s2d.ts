@@ -9,10 +9,10 @@
 // - A quarter or a year is not offered: chaining the months or one whole-period average is the accountant's question (#2520, B5).
 // - Nothing in it is AI: quantities and values are stock facts.
 // Amounts and quantities are decimal strings through decimal.js, never JS numbers.
-import { zHouseholdS2d, zHouseholdS2dGet, type HouseholdS2d, type HouseholdS2dItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { zHouseholdS2d, zHouseholdS2dGet, type HouseholdS2d, type HouseholdS2dItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { plainQuantity } from './domain/stock.ts';
 import { HOUSEHOLD_S1A_ROW_LIMIT, householdBookWindow } from './household-books.ts';

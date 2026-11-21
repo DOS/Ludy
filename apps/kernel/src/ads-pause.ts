@@ -13,9 +13,9 @@
 //    listed in full and every object was paused, or is due again, or Ludy gives up and the person is told to pause by hand at the platform.
 // The platform is never called inside a command, so a platform that is down cannot stop a stop; the secret lives in this function's scope and is never logged, never put in
 // an error, and never sent to a command.
-import type { AdPauser } from '@crove/ad-platform';
-import type { PauseBegin, PauseRecorded, PauseResultInput } from '@crove/mod-ads';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { AdPauser } from '@ludy/ad-platform';
+import type { PauseBegin, PauseRecorded, PauseResultInput } from '@ludy/mod-ads';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { pauseWork } from './ads-pause-run.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.pause' };

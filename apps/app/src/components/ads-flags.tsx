@@ -5,7 +5,7 @@
 // shows a skeleton and a failed one says so, with a retry.
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { flagKey, flagText } from '../lib/ads-flags.ts';
 import { orpc } from '../lib/api.ts';

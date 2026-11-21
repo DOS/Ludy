@@ -3,9 +3,9 @@
 // due date or a new assignee arms the due date reminders again (#1359), each once.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { refusePostOutside } from './channel-access.ts';
 
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The languages a member may translate a meeting into (E3, #3186): the picker's pure parts, shared by the summary card and the transcript panel and their tests.
-import type { TranslationTarget } from '@crove/kernel-contract';
+import type { TranslationTarget } from '@ludy/kernel-contract';
 
 // The BCP 47 tag of a translated text, so a browser picks a font and line breaking for it: Chinese here is Simplified (the server asks the model for Simplified Chinese), the others are their own tags.
 export function langTag(to: string): string {

@@ -26,8 +26,8 @@ import {
   type ProjectTemplateListResult,
   type ProjectTemplateSummary,
   type ProjectTemplateTaskItem,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
 import { addLocalDays, daysBetweenLocalDates } from './recurring.ts';
 import {

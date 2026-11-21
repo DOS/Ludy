@@ -6,9 +6,9 @@
 // Every posted entry counts, reversals included; the opening balance is every entry dated before the period.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAccountCode, zId, zLedgerPeriod } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAccountCode, zId, zLedgerPeriod } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { mergeChart, type OrgAccountRow, type Tt133AccountRow } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import {

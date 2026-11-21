@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_LABEL_COLORS } from '@crove/kernel-contract';
+import { SOCIAL_LABEL_COLORS } from '@ludy/kernel-contract';
 import { LABEL_SWATCH, LABEL_TONE, MAX_LABELS_PER_POST, isLabelColor, labelsOf, toggleLabel } from '../src/lib/social-labels.ts';
 
 describe('post labels (#639)', () => {

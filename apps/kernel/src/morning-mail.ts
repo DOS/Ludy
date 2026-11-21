@@ -2,7 +2,7 @@
 // The morning mail of the day's meetings (#3955, template meetings.morning): a fixed line with the number of meetings and the link that opens the meetings page, nothing else. No title, name, time or
 // word of a brief is in the merge data (meetings.morning.notice stores none), so none can be in the mail, and none is left to erase; the merge data is parsed strictly, so a stored extra key is
 // refused rather than rendered.
-import { zMorningMail } from '@crove/kernel-contract';
+import { zMorningMail } from '@ludy/kernel-contract';
 import type { MailTemplate } from './mail-queue.ts';
 
 const COPY = {

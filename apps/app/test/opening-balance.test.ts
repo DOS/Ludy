@@ -2,7 +2,7 @@
 // parts, shared strings, number cells, namespace prefixes) and the rows sent to the kernel.
 import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { OPENING_BALANCE_MAX_ROWS } from '@crove/kernel-contract';
+import { OPENING_BALANCE_MAX_ROWS } from '@ludy/kernel-contract';
 import { buildTemplate, PARTY_HEADERS, sheetToRows, TEMPLATE_HEADERS } from '../src/lib/opening-balance.ts';
 import { crc32, MAX_XLSX_BYTES, readFirstSheet, XlsxError, zipStored, type SheetRows } from '../src/lib/xlsx.ts';
 

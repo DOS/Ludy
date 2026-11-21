@@ -4,18 +4,18 @@ import { useIsMutating, useMutation, useQueries, useQuery } from '@tanstack/reac
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
-import { cn } from '@crove/ui/lib/utils';
-import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@crove/mod-social/contract';
-import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@crove/mod-social/contract';
-import { SOCIAL_RECURRENCE_TIMES_MAX } from '@crove/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { cn } from '@ludy/ui/lib/utils';
+import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@ludy/mod-social/contract';
+import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@ludy/mod-social/contract';
+import { SOCIAL_RECURRENCE_TIMES_MAX } from '@ludy/kernel-contract';
 import { BoostCard } from '../components/ads-boost.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { LeavePageDialog } from '../components/leave-page-dialog.tsx';
@@ -532,7 +532,7 @@ function NamesField({ label, hint, names, max, onChange, disabled }: { label: st
 // A WordPress name as the site compares it (#981): spaces collapsed, case ignored.
 const termKeyOf = (name: string) => name.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
 // The most options a list keeps and the bytes they may take (CHANNEL_OPTIONS_MAX and CHANNEL_OPTIONS_BYTES_MAX in
-// @crove/channel, which the browser does not import).
+// @ludy/channel, which the browser does not import).
 const CHANNEL_OPTIONS_LISTED_MAX = 500;
 const CHANNEL_OPTIONS_LISTED_BYTES = 131_072;
 // Room for one more option of the longest kind (a 200-character name of 4-byte characters, its id and taxonomy).

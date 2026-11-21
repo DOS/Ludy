@@ -7,9 +7,9 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import { createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 

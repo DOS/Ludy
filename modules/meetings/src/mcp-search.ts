@@ -2,7 +2,7 @@
 // The pure part of the Meetings MCP search (#4030): how the typed words are folded and bounded, how a line is matched, and how the snippet is cut. No database, no clock, no I/O. The query string is turned
 // into at most MCP_SEARCH_WORDS_MAX plain words here and never reaches SQL, so there is nothing to inject and nothing to log. The fold is the one of `crove_kernel.search_fold` (marks and đ removed, lower
 // case, anything but a-z and 0-9 is a separator), done per character so the position of a match in the original line is known for the snippet.
-import { MCP_SEARCH_WORDS_MAX, MCP_SNIPPET_MAX } from '@crove/kernel-contract';
+import { MCP_SEARCH_WORDS_MAX, MCP_SNIPPET_MAX } from '@ludy/kernel-contract';
 
 export interface SearchToken {
   /** The folded word: only a-z and 0-9. */

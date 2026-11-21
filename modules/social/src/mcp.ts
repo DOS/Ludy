@@ -14,9 +14,9 @@
 // other orgs' rows out.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { plainLine, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { plainLine, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { channelScope, connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
 import { withSignature } from './domain/signature.ts';
 import { postFilterQuery } from './post-filter.ts';

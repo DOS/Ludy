@@ -4,8 +4,8 @@
 // for `crm.quote.get`. The bytes are made from this by `renderQuotePdf`, in the HTTP route for the download and later by the mail template of Q2.
 //
 // `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; `renderQuotePdf(document)` is a pure function of its input.
-import { defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { vietnamToday, zQuoteRef } from '@crove/kernel-contract';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { vietnamToday, zQuoteRef } from '@ludy/kernel-contract';
 import { loadQuote, logoFileOf, type QuoteLogoFile, type Reader } from './quotes.ts';
 import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
 

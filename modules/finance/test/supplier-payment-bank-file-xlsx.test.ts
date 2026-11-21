@@ -3,7 +3,7 @@
 // would read as a formula stays inert, an account number keeps its leading zeros), the amount is a money cell, and no cell is a formula.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { SupplierPaymentBankFile } from '@crove/kernel-contract';
+import type { SupplierPaymentBankFile } from '@ludy/kernel-contract';
 import { buildSupplierPaymentBankFileWorkbook } from '../src/supplier-payment-bank-file-xlsx.ts';
 
 const DANGEROUS = ['=HYPERLINK("http://evil.test","x")', '+84 Trần Văn Hai', '-Lê Thu Cúc', '@SUM(A1)', '=1+1'];

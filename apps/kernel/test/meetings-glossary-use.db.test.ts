@@ -9,14 +9,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { AiMeter } from '@crove/agent';
-import { GLOSSARY_LINE, type ModelPort } from '@crove/agent/member-vy';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Chapters, GlossaryTerms, TranscriptTranslated, TranscriptTranslationView, Translations } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import type { AiMeter } from '@ludy/agent';
+import { GLOSSARY_LINE, type ModelPort } from '@ludy/agent/member-vy';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Chapters, GlossaryTerms, TranscriptTranslated, TranscriptTranslationView, Translations } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import {
   runMeetingChapters,

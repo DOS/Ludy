@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Vy AI contract review panel with budget meter, clause risk jump links, proposal controls, and AI-off parity (#3325).
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
 import type { SignAiAnalysis, SignProposedField } from '../../lib/sign-api.ts';
 import { AiMeter } from '../ai-meter.tsx';
 

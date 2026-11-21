@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comparableText } from '@crove/channel';
+import { comparableText } from '@ludy/channel';
 import { duplicateText, newestDuplicate, refusesDuplicates, styleSelection, styleText, type DuplicateCandidate } from '../src/contract.ts';
 
 describe('duplicateText (#1156)', () => {

@@ -3,8 +3,8 @@
 // blockers. A fake query stands in for the runtime, so this needs no database.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, zMisaAmisPreview } from '@crove/kernel-contract';
-import { NO_MATCH_RESULTS, type CashVoucher, type MisaAmisMatchResults, type PurchaseVoucher, type SalesVoucher } from '@crove/mod-finance';
+import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, zMisaAmisPreview } from '@ludy/kernel-contract';
+import { NO_MATCH_RESULTS, type CashVoucher, type MisaAmisMatchResults, type PurchaseVoucher, type SalesVoucher } from '@ludy/mod-finance';
 import { misaAmisPreview, type MisaAmisPreviewQuery } from '../src/misa-amis-preview.ts';
 
 const CHART = [

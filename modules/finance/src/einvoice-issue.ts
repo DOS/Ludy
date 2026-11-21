@@ -10,10 +10,10 @@
 // Agents never run either: neither declares an agent surface.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, ORDER_SOURCE_KIND, auditValue, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, ORDER_SOURCE_KIND, auditValue, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { loadDraft } from './einvoice-drafts.ts';
 import { connectionFor } from './einvoice-job.ts';

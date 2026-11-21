@@ -10,10 +10,10 @@
 // Nothing is written here, no agent runs it (it is not in the agent's allowlist), and it leaves no audit row: a read of the member's own records. The model is asked outside any transaction, by the API.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zonedDate, zoneOffsetMs } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { money } from '@crove/l10n-vn';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId, zonedDate, zoneOffsetMs } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { money } from '@ludy/l10n-vn';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { readableBooking } from './bookings.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];

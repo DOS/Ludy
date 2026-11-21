@@ -9,12 +9,12 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { agentCommands, createOrg, decideApproval, eligibleApprovers, kernelCommands, kernelManifest, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
-import { tableWrite } from '@crove/kernel-contract';
-import { DomainError, Runtime, defineCommand, defineQuery, type Actor, type AgentActor, type AgentApprovers, type AgentRuntime, type CommandDef, type CommandWrite, type QueryDef, type Risk } from '@crove/kernel-runtime';
-import { financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { agentCommands, createOrg, decideApproval, eligibleApprovers, kernelCommands, kernelManifest, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { tableWrite } from '@ludy/kernel-contract';
+import { DomainError, Runtime, defineCommand, defineQuery, type Actor, type AgentActor, type AgentApprovers, type AgentRuntime, type CommandDef, type CommandWrite, type QueryDef, type Risk } from '@ludy/kernel-runtime';
+import { financeCommands, financeManifest, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 

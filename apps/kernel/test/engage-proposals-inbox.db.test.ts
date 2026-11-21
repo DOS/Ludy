@@ -4,8 +4,8 @@
 // counts for nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { upsertIdentity } from '@crove/kernel';
-import type { ConversationEvent, ConversationIngested } from '@crove/kernel-contract';
+import { upsertIdentity } from '@ludy/kernel';
+import type { ConversationEvent, ConversationIngested } from '@ludy/kernel-contract';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
 const suite = ADMIN ? describe : describe.skip;

@@ -14,10 +14,10 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zVatPeriod, MAX_PORTAL_LISTS_PER_PERIOD, PORTAL_XML_PER_SYNC } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { parseTaxCode } from '@crove/l10n-vn';
+import { zId, zVatPeriod, MAX_PORTAL_LISTS_PER_PERIOD, PORTAL_XML_PER_SYNC } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { parseTaxCode } from '@ludy/l10n-vn';
 import { portalPeriodLock, reconcilePeriod } from './portal-list.ts';
 import { defaultLegalEntityId, legalEntityNotAllowed } from './legal-entity.ts';
 import { PORTAL_SYNC_CONTENT_TYPE, XML_CHECK_RESULT } from './domain/portal-api.ts';

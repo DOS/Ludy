@@ -9,8 +9,8 @@ import {
   NOTE_ATTACHMENT_MAX_BYTES,
   type NoteAttachment,
   type NoteAttachmentCreated,
-} from '@crove/kernel-contract';
-import type { NoteAttachmentDownloadMeta } from '@crove/mod-notes';
+} from '@ludy/kernel-contract';
+import type { NoteAttachmentDownloadMeta } from '@ludy/mod-notes';
 import {
   BlobNotFoundError,
   DomainError,
@@ -19,7 +19,7 @@ import {
   sha256Hex,
   type BlobStore,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { actorOf, type AuthUser } from './auth.ts';
 
 export const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';

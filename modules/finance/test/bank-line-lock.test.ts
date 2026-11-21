@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { lockBankLine } from '../src/bank-match.ts';
 
 // The key of the lock a bank line's writers take is built from the line's id: the database builds it from the uuid's own text (lower case), and a stored proposal may carry the id in another case

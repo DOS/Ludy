@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The previous invoice to the same customer copied into the draft form by code, with no model (#2721). No browser or API imports, so it is unit tested.
-import { EINVOICE_DRAFT_MAX_LINES, type BuyerIdentityKind, type BuyerKind, type EInvoicePrevious } from '@crove/kernel-contract';
+import { EINVOICE_DRAFT_MAX_LINES, type BuyerIdentityKind, type BuyerKind, type EInvoicePrevious } from '@ludy/kernel-contract';
 
 interface CopyLine {
   description: string;

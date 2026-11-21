@@ -24,7 +24,7 @@ export type HrContractAlertCode = (typeof HR_CONTRACT_ALERT_CODES)[number];
 // The wage regions of Decree 74/2024 (the minimum wage by workplace).
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type HrRegion = (typeof HR_REGIONS)[number];
-// What a person's work is for: it picks the expense account of the pay in the posting (the accounts per regime are data in @crove/l10n-vn, whose PAY_FUNCTIONS this list equals).
+// What a person's work is for: it picks the expense account of the pay in the posting (the accounts per regime are data in @ludy/l10n-vn, whose PAY_FUNCTIONS this list equals).
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
 export type HrPayFunction = (typeof HR_PAY_FUNCTIONS)[number];
 export const HR_RELATIONS = ['child', 'spouse', 'parent', 'other'] as const;
@@ -145,7 +145,7 @@ export const zHrEmployeeInitialEmployment = zHrEmploymentTerms.extend({
 export type HrEmployeeInitialEmployment = z.infer<typeof zHrEmployeeInitialEmployment>;
 
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
-// The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @crove/l10n-vn (VN_BANKS). The shape is checked here and in the database;
+// The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @ludy/l10n-vn (VN_BANKS). The shape is checked here and in the database;
 // that the code is in the list is checked by the command, so this package needs no copy of the list.
 export const zHrBankCode = z.string().regex(/^[A-Z0-9]{2,12}$/, 'bank code: 2 to 12 capital letters or digits');
 
@@ -300,7 +300,7 @@ export const zHrEmployeeErased = z.object({
 });
 export type HrEmployeeErased = z.infer<typeof zHrEmployeeErased>;
 
-// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @crove/l10n-vn).
+// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @ludy/l10n-vn).
 export const zHrLaborRuleRef = z.object({
   id: z.string(),
   planRow: z.number().int(),
@@ -310,7 +310,7 @@ export const zHrLaborRuleRef = z.object({
 });
 export type HrLaborRuleRef = z.infer<typeof zHrLaborRuleRef>;
 
-// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @crove/l10n-vn).
+// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @ludy/l10n-vn).
 export const HR_SEVERANCE_TERMINATION_REASONS = [
   'contract_expired',
   'task_completed',
@@ -375,7 +375,7 @@ export const zHrEmployeeSeveranceResult = z.object({
 });
 export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;
 
-// Statutory job-loss allowance termination & ineligibility codes (equal to JOB_LOSS_TERMINATION_REASONS / JobLossIneligibleReason in @crove/l10n-vn).
+// Statutory job-loss allowance termination & ineligibility codes (equal to JOB_LOSS_TERMINATION_REASONS / JobLossIneligibleReason in @ludy/l10n-vn).
 export const HR_JOB_LOSS_TERMINATION_REASONS = [
   'organizational_restructuring',
   'economic_reasons',

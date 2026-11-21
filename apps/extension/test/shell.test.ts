@@ -3,7 +3,7 @@
 // capture contract reads nothing without a click.
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { EXTENSION_SCOPE_IDS } from '@crove/kernel-contract';
+import { EXTENSION_SCOPE_IDS } from '@ludy/kernel-contract';
 import { FEATURES, visibleFeatures } from '../src/features.ts';
 import { AGENDA_SCOPE } from '../src/agenda.ts';
 import { activeAccount, emptyState, readState, withAccount, withAddress, withFeature, withoutAccount } from '../src/state.ts';

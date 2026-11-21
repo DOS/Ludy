@@ -33,10 +33,10 @@ import {
   type HrRunPaymentAmounts,
   type PayrollPaymentKind,
   type VoucherType,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { Decimal } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { Decimal } from '@ludy/l10n-vn';
 import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';

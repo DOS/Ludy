@@ -6,9 +6,9 @@
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { addDays, costPerResult, resultsText, spendText, todayIn } from './domain.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

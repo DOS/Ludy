@@ -1,6 +1,6 @@
 // The queue editor's helpers stop at the server's 100-slot limit (#1172).
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_QUEUE_SLOTS_MAX } from '@crove/kernel-contract';
+import { SOCIAL_QUEUE_SLOTS_MAX } from '@ludy/kernel-contract';
 import { queueRoom, slotsToAdd } from '../src/lib/social-queue-slots.ts';
 
 // n distinct slots: every day of the week, a minute apart.

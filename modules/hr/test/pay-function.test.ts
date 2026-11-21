@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { HR_PAY_FUNCTIONS, zHrEmploymentTerms } from '@crove/kernel-contract';
-import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS } from '@crove/l10n-vn';
+import { HR_PAY_FUNCTIONS, zHrEmploymentTerms } from '@ludy/kernel-contract';
+import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS } from '@ludy/l10n-vn';
 
 describe('the pay function of an employment (#2532)', () => {
   it('is the list the posting maps hold an expense account for, in both charts', () => {

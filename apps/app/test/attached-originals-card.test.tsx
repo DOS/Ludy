@@ -5,7 +5,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { InboxOriginal } from '@crove/kernel-contract';
+import type { InboxOriginal } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('../src/lib/api.ts', () => ({ errorMessage: (e: unknown) => String(e), fetchFile: () => Promise.reject(new Error('never called')) }));

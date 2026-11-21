@@ -2,8 +2,8 @@
 // "theo lượt hiển thị" under it when it is over impressions because nothing counted reports reach, and "-" without
 // either. The rate itself comes from the Social contract (engagementRateOf), the same on every screen and in the export.
 import { useTranslations } from 'use-intl';
-import { engagementRate, engagementRatePercent, type EngagementRate } from '@crove/mod-social/contract';
-import { cn } from '@crove/ui/lib/utils';
+import { engagementRate, engagementRatePercent, type EngagementRate } from '@ludy/mod-social/contract';
+import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
 
 /** "3,45%" (vi) or "3.45%" (en) for a rate, "-" for none. */

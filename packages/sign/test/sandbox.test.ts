@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Unit tests for @crove/sign offline sandbox CA adapter: capabilities, reconcile_only idempotencyKey
+// Unit tests for @ludy/sign offline sandbox CA adapter: capabilities, reconcile_only idempotencyKey
 // deduplication, scripted async/failure/lost_answer states, DER CMS output, and USB-token refusal.
 import { describe, expect, it } from 'vitest';
 import {

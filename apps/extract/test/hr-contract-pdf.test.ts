@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash } from 'node:crypto';
-import { encodePdfSealInput } from '@crove/extract-contract';
+import { encodePdfSealInput } from '@ludy/extract-contract';
 import { describe, expect, it } from 'vitest';
 import { renderLaborContractPdf } from '../../../modules/hr/src/contract-pdf.ts';
 import { inspectPdf, sealPdf } from '../src/seal.ts';

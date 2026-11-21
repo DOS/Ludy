@@ -4,8 +4,8 @@
 // check against the catalogue says when an item is not there, by line.
 import { useMutation } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { MisaAmisDefaultItem } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import type { MisaAmisDefaultItem } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';
 

@@ -2,7 +2,7 @@
 // Live notes in the offscreen capture (ADR-0052 L4a, #3109): a recording without the tick makes no second recorder and
 // sends no live request; a ticked one sends its pieces and finishes them before the final upload, which still runs when
 // the live requests fail. The browser's recorder and audio context are stubs.
-import type { ChunkStore, RecordingMeta } from '@crove/meeting-recorder';
+import type { ChunkStore, RecordingMeta } from '@ludy/meeting-recorder';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LudyError, type Client } from '../src/api.ts';
 import { reportEnded, startCapture, type CaptureDeps, type CaptureParams } from '../src/capture-run.ts';

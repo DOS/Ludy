@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   EXPORT_TABLE_NAMES,
   createOrg,
@@ -22,7 +22,7 @@ import {
   kernelQueries,
   upsertIdentity,
   type OrgExportView,
-} from '@crove/kernel';
+} from '@ludy/kernel';
 import type {
   PersonalDataErasure,
   PersonalDataResult,
@@ -30,10 +30,10 @@ import type {
   ProjectCandidateTask,
   ProjectDetail,
   ProjectListResult,
-} from '@crove/kernel-contract';
-import { Runtime, type AgentActor, type BlobStore, sha256Hex } from '@crove/kernel-runtime';
-import { financeCommands } from '@crove/mod-finance';
-import { projectsCommands, projectsQueries } from '@crove/mod-projects';
+} from '@ludy/kernel-contract';
+import { Runtime, type AgentActor, type BlobStore, sha256Hex } from '@ludy/kernel-runtime';
+import { financeCommands } from '@ludy/mod-finance';
+import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ExportSealer, exportAad } from '../src/export-seal.ts';

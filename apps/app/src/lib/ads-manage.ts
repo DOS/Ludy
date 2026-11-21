@@ -12,7 +12,7 @@ import {
   type AdsManageState,
   type AdsManageSuggestion,
   type AdsManageStateView,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { toUnits } from './decimal.ts';
 import { parseMoneyInput } from './money-input.ts';

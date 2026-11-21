@@ -24,7 +24,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: {}, queryClient: client.current, errorMessage: (e: unknown) => String(e), fetchFile: () => Promise.reject(new Error('not fetched')), uploadFiles: () => Promise.reject(new Error('not uploaded')) };
 });
 
-const { engagementRateOf, rateBasesOf } = await import('@crove/mod-social/contract');
+const { engagementRateOf, rateBasesOf } = await import('@ludy/mod-social/contract');
 const { EngagementRateItem } = await import('../src/components/social-engagement-rate.tsx');
 const { ChannelTotals, EngagementRateCard } = await import('../src/components/social-growth.tsx');
 const { WhatWorks } = await import('../src/components/social-insights.tsx');

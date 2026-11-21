@@ -6,20 +6,20 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { AiMeter } from '@crove/agent';
-import type { ModelPort } from '@crove/agent/member-vy';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import type { AiMeter } from '@ludy/agent';
+import type { ModelPort } from '@ludy/agent/member-vy';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
   DEFAULT_TIME_ZONE,
   addTodoLocalDays,
   zonedDate,
   type NoteOrganizeResult,
   type TodoPlanResult,
-} from '@crove/kernel-contract';
-import { Runtime, type UserActor } from '@crove/kernel-runtime';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+} from '@ludy/kernel-contract';
+import { Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runNotesOrganize, runNotesTodoPlan, type MeetingSummaryDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';

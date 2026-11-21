@@ -3,10 +3,10 @@
 // kernel, and how it ends a connection the provider refused. No database, no network.
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { CalendarAdapter, CalendarWriteResult } from '@crove/channel';
-import { busyPieces, cutOut } from '@crove/kernel';
-import { calendarBinding } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
+import type { CalendarAdapter, CalendarWriteResult } from '@ludy/channel';
+import { busyPieces, cutOut } from '@ludy/kernel';
+import { calendarBinding } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, parseVaultKey, type Runtime } from '@ludy/kernel-runtime';
 import { runCalendarDisconnect, runCalendarSync, runCalendarWriteBack, syncCalendars } from '../src/calendar-sync.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';

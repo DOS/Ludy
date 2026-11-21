@@ -3,9 +3,9 @@
 // recorder summary/transcript translations read `meetings.glossary.for_meeting` and apply glossary spelling/checks, while non-recorder summary/transcript translations never read
 // `meetings.glossary.for_meeting` or receive any glossary terms, prompt-injection/invisible-char inputs stay JSON data only, and AI-off exits before querying the glossary.
 import { describe, expect, it } from 'vitest';
-import type { AiMeter } from '@crove/agent';
-import { GLOSSARY_LINE, type ModelPort } from '@crove/agent/member-vy';
-import type { Runtime, UserActor } from '@crove/kernel-runtime';
+import type { AiMeter } from '@ludy/agent';
+import { GLOSSARY_LINE, type ModelPort } from '@ludy/agent/member-vy';
+import type { Runtime, UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import {
   runMeetingChapters,
