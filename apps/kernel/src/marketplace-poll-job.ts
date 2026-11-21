@@ -13,8 +13,10 @@ import {
   MARKETPLACE_PLATFORM_LIMITS,
   MarketplaceProviderError,
   SANDBOX_MARKETPLACE_SECRET,
+  marketplaceCsvRows,
   marketplaceOrdersCsv,
   ordersSpan,
+  parseMarketplaceOrderPage,
   splitWritableOrders,
   type MarketplaceOrder,
   type MarketplacePollEnding,
@@ -88,9 +90,9 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     }
   }
 
-  let page;
+  let given;
   try {
-    page = await provider.listOrders(secret, target.platform, target.cursor);
+    given = await provider.listOrders(secret, target.platform, target.cursor);
   } catch (error) {
     // The cursor stays where it was: the next poll asks for the same orders again.
     // Anything that is not the port's own error is made one of its kind here: its message (which a client library may fill with a URL or a header) is neither kept nor logged, and pg-boss
@@ -101,9 +103,18 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     return { state, orders: 0, staged: false };
   }
 
-  // A page past what the intake accepts is recorded as such and never ingested; the cursor stays, so an owner sees it rather than a silent gap.
+  // The page is checked before anything of it is used (#2840 point 2): decimal strings, real days, known stages, bounded lengths and no field the port does not name. A page that fails is the
+  // state `not_recognized`, the cursor stays and nothing is written; its content is never kept or logged, so a provider's text cannot reach pg-boss's error or the log.
+  const page = parseMarketplaceOrderPage(given);
+  if (page === null) {
+    await record({ state: 'not_recognized' });
+    console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: not_recognized`);
+    return { state: 'not_recognized', orders: 0, staged: false };
+  }
+  // A page past what the intake accepts is recorded as such and never ingested; the cursor stays, so an owner sees it rather than a silent gap. The limit is on ORDERS, counted by order number: a
+  // platform that keeps the state of each item (Lazada) answers an order whose items are in different states as one port order for each state.
   const limit = MARKETPLACE_PLATFORM_LIMITS[target.platform];
-  if (page.orders.length > limit.pageSize) {
+  if (new Set(page.orders.map((order) => order.orderNo)).size > limit.pageSize) {
     await record({ state: 'too_large' });
     return { state: 'too_large', orders: page.orders.length, staged: false };
   }
@@ -120,10 +131,22 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     await record({ state: 'not_recognized', ...cursor });
     return { state: 'not_recognized', orders: 0, staged: false };
   }
-  const csv = marketplaceOrdersCsv(target.platform, writable, job.connectionId);
+  // The rows are counted BEFORE any is built (#2840 point 1): a few lines with huge quantities on a platform that writes a row for each unit are refused here, never materialised.
+  if (marketplaceCsvRows(target.platform, writable) > EXTRACT_LIMITS.maxOrderLines) {
+    await record({ state: 'too_large' });
+    return { state: 'too_large', orders: page.orders.length, staged: false };
+  }
+  let csv: string;
+  try {
+    csv = marketplaceOrdersCsv(target.platform, writable, job.connectionId);
+  } catch {
+    // The writer refused a page it cannot carry; its message is not kept, and the cursor stays.
+    await record({ state: 'not_recognized' });
+    return { state: 'not_recognized', orders: 0, staged: false };
+  }
   const bytes = new TextEncoder().encode(csv);
-  const lineCount = csv.split('\n').length - 2;
-  if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes || lineCount > EXTRACT_LIMITS.maxOrderLines) {
+  // The rows were counted exactly above (the connection row and the head row are not order lines), so only the size is checked here.
+  if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes) {
     await record({ state: 'too_large' });
     return { state: 'too_large', orders: page.orders.length, staged: false };
   }
