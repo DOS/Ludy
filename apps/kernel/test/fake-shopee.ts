@@ -148,7 +148,19 @@ const returnJson = (r: FakeShopeeReturn, detail: boolean): Record<string, unknow
     : {}),
 });
 
-export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]; returns?: FakeShopeeReturn[] }) {
+// One released escrow in the shape of the list and the detail pages. `income` holds the order_income amounts as RAW number text (`'4503599627370497.5'`, `'10.0'`), written into the answer as JSON numbers, so a test can
+// plant a value a float would round. The buyer's name and payment info, the order adjustments and the item list are there on purpose and are never read.
+export interface FakeShopeeEscrow {
+  orderSn: string;
+  releaseMs: number;
+  // The list's payout_amount as raw number text.
+  payout: string;
+  income: Record<string, string>;
+  // Extra raw members of order_income (a text member, e.g. `"tax_registration_code":"8881234567-888"`), written as given.
+  extraIncome?: string[];
+}
+
+export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]; returns?: FakeShopeeReturn[]; escrows?: FakeShopeeEscrow[] }) {
   // `raws`: the orders the list and detail calls answer from, built with fakeShopeeOrder (which carries a buyer's data on purpose, returned only when a call asks for it).
   const calls: FakeShopeeCall[] = [];
   const nowMs = options.now ?? (() => Date.now());
@@ -160,6 +172,7 @@ export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]
   let replacedAccess: { token: string; untilMs: number } | null = null;
   const raws = options.raws ?? [];
   const returns = options.returns ?? [];
+  const escrows = options.escrows ?? [];
   const authorizationEndsAtMs = options.authorizationEndsAtMs ?? nowMs() + 200 * 86_400_000;
 
   const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -269,6 +282,26 @@ export function fakeShopee(options: FakeShopeeOptions & { raws?: FakeShopeeRaw[]
       const found = returns.find((r) => r.returnSn === query.return_sn);
       if (!found) return failure('error_param', 'The information you queried is not found.');
       return text(`{"request_id":"rid","error":"","message":"","response":${JSON.stringify(returnJson(found, true))}}`);
+    }
+    if (url.pathname === '/api/v2/payment/get_escrow_list') {
+      const from = Number(query.release_time_from);
+      const to = Number(query.release_time_to);
+      const size = Number(query.page_size);
+      const pageNo = Number(query.page_no);
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from >= to) return failure('error_param', 'Wrong parameters, detail: release_time.');
+      if (!Number.isInteger(size) || size < 1 || size > 100 || !Number.isInteger(pageNo) || pageNo < 1) return failure('error_param', 'Wrong parameters, detail: page.');
+      const matching = escrows.filter((e) => e.releaseMs >= from * 1000 && e.releaseMs <= to * 1000).sort((a, b) => a.releaseMs - b.releaseMs);
+      const offset = (pageNo - 1) * size;
+      const page = matching.slice(offset, offset + size);
+      const rows = page.map((e) => `{"order_sn":${JSON.stringify(e.orderSn)},"payout_amount":${e.payout},"escrow_release_time":${Math.floor(e.releaseMs / 1000)}}`).join(',');
+      return text(`{"request_id":"rid","error":"","message":"","response":{"more":${offset + size < matching.length},"escrow_list":[${rows}]}}`);
+    }
+    if (url.pathname === '/api/v2/payment/get_escrow_detail') {
+      const found = escrows.find((e) => e.orderSn === query.order_sn);
+      if (!found) return failure('error_param', 'The information you queried is not found.');
+      const income = Object.entries(found.income).map(([k, v]) => `${JSON.stringify(k)}:${v}`);
+      const members = [...income, ...(found.extraIncome ?? []), '"items":[{"item_id":1,"item_name":"x","original_price":1.5}]', '"order_adjustment":[{"amount":-1.0,"date":1700000000,"currency":"VND","adjustment_reason":"x"}]', '"buyer_payment_info":{"buyer_payment_method":"Bank","buyer_total_amount":99.0}'];
+      return text(`{"request_id":"rid","error":"","message":"","response":{"order_sn":${JSON.stringify(found.orderSn)},"buyer_user_name":"nguyenvanthu_buyer","return_order_sn_list":[],"order_income":{${members.join(',')}}}}`);
     }
     return failure('error_param', 'unknown path', 404);
   };
