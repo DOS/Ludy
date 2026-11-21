@@ -5781,7 +5781,7 @@ export const vi = {
       upstream: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng trả lời không đúng. Hệ thống sẽ tự thử lại.',
       config: 'Lần lấy giao dịch gần nhất đã dừng: kết nối đã lưu chưa được thiết lập đúng. Hãy kết nối lại bên dưới.',
       bad_page: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng gửi một giao dịch mà tài khoản này không lưu được.',
-      bad_page_item: 'Lần lấy giao dịch gần nhất đã dừng: giao dịch thứ {item} trong trang của ngân hàng không lưu được.',
+      bad_page_item: 'Lần lấy giao dịch gần nhất đã dừng: giao dịch thứ {item} của lần lấy này không lưu được.',
       too_many_lines: 'Lần lấy giao dịch gần nhất đã dừng: ngân hàng gửi nhiều giao dịch trong một ngày hơn mức một lần lấy nhận được.',
     },
     gone: 'Ngân hàng không còn liệt kê tài khoản này. Các giao dịch đã lưu vẫn giữ; hãy gỡ liên kết nếu không cần nữa.',

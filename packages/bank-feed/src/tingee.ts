@@ -51,7 +51,7 @@ export type TingeeErrorKind =
   | 'config';
 
 // An error about a call or a page. Its message carries Tingee's numeric code and the position of a bad item, never the credential, a response body or a transaction's text.
-// `itemIndex` is that position as a number (0-based, within the page Tingee answered; null when the error is not about one item), so a screen can show it without reading the message.
+// `itemIndex` is that position as a number (0-based, counted across the whole pull window, not within one page; null when the error is not about one item), so a screen can show it without reading the message.
 export class TingeeError extends Error {
   readonly kind: TingeeErrorKind;
   readonly tingeeCode: string | null;

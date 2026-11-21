@@ -728,7 +728,7 @@ suite('bank statement import (#326)', () => {
       await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, ...bad }, system)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     // Only the system records it: a person cannot, whatever their role.
-    await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'clock' }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId })).rejects.toBeDefined();
+    await expect(worker.execute('finance.bank_feed.record_outcome', { connectionId, kind: 'clock' }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     // A good pull clears it, in the same step that moves the cursor.
     await sync(connectionId);
