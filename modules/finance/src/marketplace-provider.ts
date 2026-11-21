@@ -305,7 +305,7 @@ const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
 // A free-text cell (a product name the seller chose) as plain text: a leading = + - @, tab or carriage return would start a formula in a spreadsheet, so it gets a ' in front. Only
 // names go through this; an SKU, an order number, a day or an amount is written as it is, because the parsing sandbox reads those back exactly and no spreadsheet ever opens the file.
 const FORMULA_START = /^[=+\-@\t\r]/;
-const plainText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
+export const marketplaceCellText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
 // The reader takes one point followed by exactly three digits for a thousands group ("125.125" is read as 125125). Four digits are never grouped, and the reader gives the value back
 // without the extra zero, so a number with three decimals is written with a zero added.
 const decimal = (value: string): string => value.replace(/\.(\d{3})$/, (_, digits: string) => `.${digits}0`);
@@ -356,7 +356,7 @@ export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: r
   for (const order of orders) {
     for (const line of order.lines) {
       if (!layout.rowPerUnit) {
-        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, plainText));
+        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, marketplaceCellText));
         continue;
       }
       const units = wholeUnits(line.quantity);
@@ -366,7 +366,7 @@ export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: r
       const share = total.dividedBy(units).toDecimalPlaces(4, 1);
       const last = total.minus(share.times(units - 1));
       for (let unit = 1; unit <= units; unit += 1) {
-        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, plainText));
+        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, marketplaceCellText));
       }
     }
   }

@@ -172,6 +172,17 @@ export function shopeeCaller(options: ShopeeOptions): ShopeeCaller {
   };
 }
 
+// The fields whose number is kept as the exact text Shopee wrote (an amount, and ids that can pass 2^53); every other number stays a number.
+const EXACT_KEYS: ReadonlySet<string> = new Set(['model_original_price', 'model_discounted_price', 'item_id', 'model_id']);
+
+// An answer as JSON in which an amount and an id are kept as the EXACT text Shopee wrote (a JSON number is a float in JS, and a float would round a long amount or turn a long id into another one). The amount
+// then has to be a plain decimal string to be taken (marketplaceMoney): an exponent or more than four decimals refuses the page. Every other number stays a number.
+export function parseShopeeAnswer(text: string): unknown {
+  const reviver = (key: string, value: unknown, context?: { source?: string }): unknown =>
+    EXACT_KEYS.has(key) && typeof value === 'number' && typeof context?.source === 'string' ? context.source : value;
+  return JSON.parse(text, reviver as unknown as Parameters<typeof JSON.parse>[1]);
+}
+
 export interface ShopeeShopInfo {
   name: string;
   // Two letters, upper case: the shop's market.
