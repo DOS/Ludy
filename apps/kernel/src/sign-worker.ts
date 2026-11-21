@@ -25,6 +25,7 @@ import {
   generateCertificateCode,
   verifyEventChain,
   type SignInspectJobData,
+  type SignPreExpirySweepResult,
   type SignSealJobData,
 } from '@crove/mod-sign';
 
@@ -355,6 +356,52 @@ export async function sweepSignExpire(deps: SignSweepDeps): Promise<number> {
     }
   }
   return total;
+}
+
+export interface SignPreExpirySweepTotals {
+  orgs: number;
+  envelopes: number;
+  remindedSigners: number;
+  queuedEmails: number;
+  suppressedEmails: number;
+}
+
+// ADR-0053 'work': sends at most one 24h pre-expiry reminder email per eligible active email signer
+// when org_app_on(org_id, 'sign') is true. Unlike sweepSignExpire ('keeping'), disabled orgs never send mail.
+export async function sweepSignPreExpiryReminders(deps: SignSweepDeps): Promise<SignPreExpirySweepTotals> {
+  const log = deps.log ?? console;
+  const { rows: orgs } = await sql<{ org_id: string }>`
+    SELECT org_id
+    FROM crove_sign.pre_expiry_remind_due_orgs(${SWEEP_ORG_BATCH}, ${deps.now ?? null}::timestamptz)
+    ORDER BY org_id ASC
+  `.execute(deps.workerDb);
+  const totals: SignPreExpirySweepTotals = {
+    orgs: 0,
+    envelopes: 0,
+    remindedSigners: 0,
+    queuedEmails: 0,
+    suppressedEmails: 0,
+  };
+  for (const row of orgs) {
+    try {
+      if (!(await deps.runtime.appOn(row.org_id, 'sign', { fresh: true }))) {
+        continue;
+      }
+      const res = await deps.runtime.execute<SignPreExpirySweepResult>(
+        'sign.envelope.pre_expiry_remind_sweep',
+        deps.now ? { now: deps.now.toISOString() } : {},
+        { actor: SIGN_ACTOR, orgId: row.org_id },
+      );
+      totals.orgs += 1;
+      totals.envelopes += res.envelopesReminded;
+      totals.remindedSigners += res.remindedSigners;
+      totals.queuedEmails += res.queuedEmails;
+      totals.suppressedEmails += res.suppressedEmails;
+    } catch (error) {
+      log.error(`[sign-pre-expiry-remind] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+    }
+  }
+  return totals;
 }
 
 export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{

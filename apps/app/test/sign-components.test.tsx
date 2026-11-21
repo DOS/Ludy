@@ -64,7 +64,12 @@ const { isCurrentPdfTargetRendered } = await import('../src/components/sign/pdf-
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
-const { filterPendingProposalsForSigners, SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
+const {
+  filterPendingProposalsForSigners,
+  fromDatetimeLocalValue,
+  SignEnvelopeDetailPage,
+  toDatetimeLocalValue,
+} = await import('../src/routes/sign-envelope-detail.tsx');
 const {
   buildSignSubmitPayload,
   canSubmitCeremony,
@@ -1292,5 +1297,185 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
 
     const enHtml = renderEn(<SignEnvelopeDetailPage />, qc);
     expect(enHtml).toContain('Apply 3 tag fields');
+  });
+
+  it('renders 24h pre-expiry auto-remind toggle on draft envelopes and declined reason + pre-expiry badge on signers (#3813)', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const envId = routerState.id;
+
+    expect(toDatetimeLocalValue(null)).toBe('');
+    expect(fromDatetimeLocalValue('')).toBeNull();
+    const roundTripIso = fromDatetimeLocalValue(toDatetimeLocalValue('2026-11-20T09:30:00Z'));
+    expect(roundTripIso).toBe('2026-11-20T09:30:00.000Z');
+
+    qc.setQueryData(['sign', 'envelope', envId], {
+      envelope: {
+        id: envId,
+        title: 'Hợp đồng dịch vụ cần nhắc hạn',
+        subject: null,
+        message: null,
+        status: 'draft' as const,
+        routingMode: 'sequential' as const,
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-000000000077',
+        sourceSha256: 'a'.repeat(64),
+        inspectStatus: 'passed' as const,
+        inspectError: null,
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: '2026-11-20T08:00:00Z',
+        autoRemindBeforeExpiry: true,
+        sentAt: null,
+        completedAt: null,
+        declinedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 1,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-19T00:00:00Z',
+        updatedAt: '2026-11-19T00:00:00Z',
+      },
+      signers: [SIGNER_1],
+      fields: [],
+    });
+    qc.setQueryData(['sign', 'ai', envId], {
+      status: 'disabled',
+      summaryText: null,
+      riskLevel: null,
+      proposedFields: [],
+      riskClauses: [],
+    } satisfies SignAiAnalysis);
+
+    const draftVi = renderVi(<SignEnvelopeDetailPage />, qc);
+    expect(draftVi).toContain('data-testid="env-auto-remind-checkbox"');
+    expect(draftVi).toContain('Tự động nhắc qua email trước 24 giờ khi sắp hết hạn');
+    expect(draftVi).toContain('id="env-expires-at-input"');
+    expect(draftVi).toContain('max-md:min-h-11');
+
+    const draftEn = renderEn(<SignEnvelopeDetailPage />, qc);
+    expect(draftEn).toContain('Send automatic 24-hour pre-expiry email reminder');
+    expect(draftEn).toContain('Signing deadline (optional)');
+
+    // Declined unacknowledged envelope shows Acknowledge decline action in PageHeader.
+    const declinedQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    declinedQc.setQueryData(['sign', 'envelope', envId], {
+      envelope: {
+        id: envId,
+        title: 'Hợp đồng bị từ chối',
+        subject: null,
+        message: null,
+        status: 'declined' as const,
+        routingMode: 'parallel' as const,
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-000000000077',
+        sourceSha256: 'a'.repeat(64),
+        inspectStatus: 'passed' as const,
+        inspectError: null,
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: null,
+        autoRemindBeforeExpiry: true,
+        sentAt: '2026-11-19T01:00:00Z',
+        completedAt: null,
+        declinedAt: '2026-11-19T02:00:00Z',
+        declineAcknowledgedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 2,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-19T00:00:00Z',
+        updatedAt: '2026-11-19T02:00:00Z',
+      },
+      signers: [SIGNER_1],
+      fields: [],
+    });
+    const declinedVi = renderVi(<SignEnvelopeDetailPage />, declinedQc);
+    expect(declinedVi).toContain('data-testid="sign-ack-decline-btn"');
+    expect(declinedVi).toContain('Đã nắm / Ẩn khỏi Hôm nay');
+
+    const activePanelVi = renderVi(
+      <SignerPanel
+        envelopeStatus="declined"
+        routingMode="sequential"
+        signers={[
+          {
+            ...SIGNER_1,
+            id: 'signer-reminded',
+            status: 'viewed',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'sent',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-queued',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'queued',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-failed',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'failed',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-suppressed',
+            status: 'pending',
+            deliveryMode: 'email',
+            preExpiryRemindedAt: '2026-11-19T12:00:00Z',
+            preExpiryRemindStatus: 'suppressed',
+          },
+          {
+            ...SIGNER_1,
+            id: 'signer-declined',
+            name: 'Lê Văn C',
+            status: 'declined',
+            declinedAt: '2026-11-19T13:00:00Z',
+            declineReason: 'Cần điều chỉnh điều khoản thanh toán đợt 2',
+          },
+        ]}
+        activeSignerId="signer-reminded"
+        onSelectSigner={vi.fn()}
+        onChangeRoutingMode={vi.fn()}
+        onAddSigner={vi.fn()}
+        onRemoveSigner={vi.fn()}
+        onMoveSigner={vi.fn()}
+      />,
+    );
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-reminded-signer-reminded"');
+    expect(activePanelVi).toContain('Đã gửi nhắc trước hạn');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-queued-signer-queued"');
+    expect(activePanelVi).toContain('Đang chờ gửi nhắc trước hạn');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-failed-signer-failed"');
+    expect(activePanelVi).toContain('Gửi nhắc trước hạn thất bại');
+    expect(activePanelVi).toContain('data-testid="signer-pre-expiry-suppressed-signer-suppressed"');
+    expect(activePanelVi).toContain('Email nhắc hạn bị chặn');
+    expect(activePanelVi).toContain('data-testid="signer-decline-reason-signer-declined"');
+    expect(activePanelVi).toContain('Lý do từ chối: Cần điều chỉnh điều khoản thanh toán đợt 2');
   });
 });

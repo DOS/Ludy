@@ -18,6 +18,7 @@ export const SIGN_OTP_MAIL_SOURCE = 'sign.public.request_otp';
 export const SIGN_DIRECT_OTP_MAIL_SOURCE = 'sign.direct.request_otp';
 export const SIGN_COMPLETED_MAIL_SOURCE = 'sign.envelope.seal_complete';
 export const SIGN_REMIND_MAIL_SOURCE = 'sign.envelope.remind';
+export const SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE = 'sign.envelope.pre_expiry_remind_sweep';
 
 export const zSignInviteMailPayload = z.strictObject({
   lang: z.literal('vi'),
@@ -27,6 +28,7 @@ export const zSignInviteMailPayload = z.strictObject({
   docTitle: z.string().min(1).max(300),
   roleLabel: z.string().min(1).max(120),
   signerRole: z.enum(['signer', 'approver']).optional(),
+  preExpiry: z.boolean().optional(),
   expiresAt: z.string().min(1).max(64).nullable(),
 });
 
@@ -117,6 +119,7 @@ export function renderSignInviteMail(
     signerRole?: 'signer' | 'approver';
     message?: string | null;
     isReminder?: boolean;
+    preExpiry?: boolean;
   },
 ): RenderedSignMail {
   const mail = zSignInviteMailPayload.parse(raw);
@@ -128,6 +131,7 @@ export function renderSignInviteMail(
   const title = oneLine(mail.docTitle, 300);
   const roleLabel = oneLine(mail.roleLabel, 120);
   const isApprover = (context.signerRole ?? mail.signerRole) === 'approver';
+  const isPreExpiry = Boolean(context.preExpiry ?? mail.preExpiry);
   const signerName = context.signerName ? oneLine(context.signerName, 200) : null;
   const note = context.message ? oneLine(context.message, 1000) : null;
   const expiryTime = formatViTime(mail.expiresAt);
@@ -146,6 +150,11 @@ export function renderSignInviteMail(
   const htmlActionLine = isApprover
     ? `<strong>${escapeHtml(orgName)}</strong> gui ban xem va phe duyet tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`
     : `<strong>${escapeHtml(orgName)}</strong> gui ban xem va ky tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`;
+  const preExpiryLine = isPreExpiry
+    ? isApprover
+      ? 'Luu y: Tai lieu nay sap den han phe duyet trong vong 24 gio toi. Vui long xem va hoan tat truoc han ben duoi.'
+      : 'Luu y: Tai lieu nay sap den han ky trong vong 24 gio toi. Vui long xem va hoan tat truoc han ben duoi.'
+    : null;
   const expiryLabel = isApprover ? 'Han phe duyet den' : 'Han ky den';
   const openLine = isApprover ? `Mo tai lieu de xem va phe duyet: ${url}` : `Mo tai lieu de ky: ${url}`;
   const ctaLabel = isApprover ? 'Xem va phe duyet tai lieu' : 'Xem va ky tai lieu';
@@ -158,6 +167,7 @@ export function renderSignInviteMail(
     '',
     greeting,
     actionLine,
+    ...(preExpiryLine ? ['', preExpiryLine] : []),
     ...(note ? ['', `Loi nhan: ${note}`] : []),
     ...(expiryTime ? [`${expiryLabel}: ${expiryTime} (gio Viet Nam)`] : []),
     '',
@@ -172,6 +182,7 @@ export function renderSignInviteMail(
     <h1 style="margin:0 0 16px;font-size:20px;line-height:1.35;color:#0f172a">${escapeHtml(heading)}</h1>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6">${escapeHtml(greeting)}</p>
     <p style="margin:0 0 16px;font-size:15px;line-height:1.6">${htmlActionLine}</p>
+    ${preExpiryLine ? `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#9a3412">${escapeHtml(preExpiryLine)}</p>` : ''}
     ${note ? `<div style="margin:0 0 16px;padding:12px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;font-size:14px;color:#334155">${escapeHtml(note)}</div>` : ''}
     ${expiryTime ? `<p style="margin:0 0 20px;font-size:13px;color:#475569">${escapeHtml(expiryLabel)}: <strong>${escapeHtml(expiryTime)} (gio Viet Nam)</strong></p>` : ''}
     <p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">${ctaLabel}</a></p>
@@ -323,6 +334,7 @@ export async function queueSignInviteEmail(
     envelopeId: string;
     signerId: string;
     signerRole?: 'signer' | 'approver';
+    preExpiry?: boolean;
     to: string;
     docTitle: string;
     roleLabel: string;
@@ -335,6 +347,7 @@ export async function queueSignInviteEmail(
     envelopeId: input.envelopeId,
     signerId: input.signerId,
     ...(input.signerRole ? { signerRole: input.signerRole } : {}),
+    ...(input.preExpiry ? { preExpiry: true } : {}),
     docTitle: oneLine(input.docTitle, 300) || 'Tai lieu',
     roleLabel: oneLine(input.roleLabel, 120) || (input.signerRole === 'approver' ? 'Nguoi duyet' : 'Nguoi ky'),
     expiresAt: input.expiresAt,
