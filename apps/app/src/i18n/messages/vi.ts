@@ -530,6 +530,9 @@ export const vi = {
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
+      mcp_engage_reads: 'Các ứng dụng AI bạn đã kết nối trước đây có quyền “Chỉ đọc”, và quyền đó nay còn đọc được Hộp thư Engage (bình luận, tin nhắn riêng và email của khách), cơ hội bán hàng và báo giá, lịch hẹn, kết quả bài đăng Social và quảng cáo. Mở Kết nối AI để xem từng ứng dụng và ngắt kết nối nếu bạn không muốn. Ludy không tự đổi gì ở kết nối của bạn.',
+      mcp_engage_reads_member: 'Các ứng dụng AI bạn kết nối riêng cho mình trước đây có quyền “Chỉ đọc”, và quyền đó nay còn đọc được những gì bạn đọc được trong Hộp thư Engage (tin nhắn riêng và email chỉ khi bạn được đọc), cùng cơ hội bán hàng và báo giá của cả tổ chức. Mở Kết nối AI để xem và ngắt kết nối nếu bạn không muốn. Ludy không tự đổi gì ở kết nối của bạn.',
+      mcp_engage_reads_both: 'Các ứng dụng AI bạn đã kết nối trước đây có quyền “Chỉ đọc”, và quyền đó nay còn đọc được Hộp thư Engage (bình luận, tin nhắn riêng và email; với kết nối riêng của bạn, chỉ những gì bạn được đọc), cơ hội bán hàng và báo giá. Kết nối của công ty còn đọc lịch hẹn, kết quả bài đăng Social và quảng cáo. Mở Kết nối AI để xem từng ứng dụng và ngắt kết nối nếu bạn không muốn. Ludy không tự đổi gì ở kết nối của bạn.',
       personal_data_notice: 'Theo yêu cầu xóa dữ liệu của một người, {items} của bạn có thông tin của họ và sắp bị xóa. Hãy chép lại phần bạn cần, bỏ thông tin của người đó ra.',
       personal_data_notice_meetings: 'Có yêu cầu xóa dữ liệu của một người: {count, plural, other {# cuộc họp bạn ghi}} có nhắc đến họ. Sau 24 giờ, chủ sở hữu có thể xóa phần nhắc đó khỏi nội dung họp; phần còn lại của cuộc họp giữ nguyên. Bạn cũng có thể tự xóa cuộc họp.',
       other: 'Có thông báo mới',
@@ -15888,6 +15891,7 @@ export const vi = {
         conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
         conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
         about: 'Cho ứng dụng AI xem tên tổ chức và quyền kết nối của nó',
+        engage_reads_notify: 'Báo một lần cho người đã kết nối ứng dụng AI từ trước rằng ứng dụng đó nay còn đọc được Hộp thư, lịch hẹn và quảng cáo',
         grant: {
           approve: 'Cho phép một ứng dụng AI đọc dữ liệu tổ chức',
           list: 'Xem các ứng dụng AI đã kết nối',

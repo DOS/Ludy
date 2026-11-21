@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
+import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -2309,6 +2309,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const mcpProposalNoticeTimer = setInterval(() => void mcpProposalNoticeSweep(), MCP_PROPOSAL_NOTICE_SWEEP_MS);
   void mcpProposalNoticeSweep();
 
+  // The Engage reads of an AI app (#4069): a person who connected one before the consent screen named them is told once, in the app.
+  let engageNoticing = false;
+  const mcpEngageReadsNoticeSweep = async () => {
+    if (engageNoticing) return;
+    engageNoticing = true;
+    try {
+      const done = await sweepMcpEngageReadsNotices({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (done > 0) console.log(`[mcp-engage-reads-notice] told ${done} person(s) about the Engage reads`);
+    } catch (error) {
+      console.error('[mcp-engage-reads-notice] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      engageNoticing = false;
+    }
+  };
+  const mcpEngageReadsNoticeTimer = setInterval(() => void mcpEngageReadsNoticeSweep(), MCP_ENGAGE_READS_NOTICE_SWEEP_MS);
+  void mcpEngageReadsNoticeSweep();
+
   // Detective security alerts (#996, plan §7.8): every 5 minutes, the signals worth an alert are logged and posted.
   let watching = false;
   const securitySweep = async () => {
@@ -3497,6 +3514,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(mcpProposalNoticeTimer);
+    clearInterval(mcpEngageReadsNoticeTimer);
     clearInterval(securityTimer);
     if (closingTimer) clearInterval(closingTimer);
     if (reportTimer) clearInterval(reportTimer);

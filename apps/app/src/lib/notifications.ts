@@ -30,8 +30,9 @@ type Underscored<K extends string> = K extends `${infer M}.${infer N}` ? `${M}_$
 export const kindKey = (kind: KnownNotificationKind) => kind.replace('.', '_') as Underscored<KnownNotificationKind>;
 
 // Kinds shown but never turned off, so not in the settings: a notice an action waits on (#1678: a personal-data erasure
-// deletes the private items it names once their authors were told).
-export const REQUIRED_NOTIFICATION_KINDS = ['kernel.personal_data_notice'] as const;
+// deletes the private items it names once their authors were told; #4069: an AI app connected before its Engage reads existed can now read the Hộp thư, bookings and ads, and its owner is
+// told once whatever they muted, because it is about their own consent).
+export const REQUIRED_NOTIFICATION_KINDS = ['kernel.personal_data_notice', 'kernel.mcp_engage_reads'] as const;
 type ShownNotificationKind = KnownNotificationKind | (typeof REQUIRED_NOTIFICATION_KINDS)[number];
 
 export const isKnownKind = (kind: string): kind is ShownNotificationKind =>
@@ -53,7 +54,8 @@ export type NotificationTarget =
   | { to: 'meeting'; id: string }
   | { to: 'meetings' }
   | { to: 'ads' }
-  | { to: 'agents' };
+  | { to: 'agents' }
+  | { to: 'aiConnections' };
 
 // What an item opens: the proposal waiting for approval, the Inbox (where a file that failed to read is listed), the
 // bank account with lines to look at, the tax-portal check, the ledger, where the period is locked, or My work, where
@@ -95,6 +97,9 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
     // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.
     case 'kernel.ai_budget':
       return { to: 'agents' };
+    // The Engage reads notice (#4069) opens the AI connections screen, where each connected app is listed and can be disconnected.
+    case 'kernel.mcp_engage_reads':
+      return { to: 'aiConnections' };
     default:
       return null;
   }

@@ -25,11 +25,17 @@ describe('notificationKinds', () => {
     }
     expect(isKnownKind('finance.period_closing')).toBe(true);
     expect(isKnownKind('social.comment')).toBe(false);
+    // The Engage reads notice (#4069) is shown but never listed among the kinds a member turns off: it is about their own consent.
+    expect(isKnownKind('kernel.mcp_engage_reads')).toBe(true);
+    expect(notificationKinds(['finance', 'notes', 'ads', 'projects', 'meetings'])).not.toContain('kernel.mcp_engage_reads');
   });
 });
 
 describe('notificationTarget', () => {
   const id = '00000000-0000-4000-8000-000000000001';
+  it('opens the AI connections screen from the Engage reads notice (#4069)', () => {
+    expect(notificationTarget({ kind: 'kernel.mcp_engage_reads', subjectId: null, detail: { grants: 'company' } })).toEqual({ to: 'aiConnections' });
+  });
   it('opens what the notification is about', () => {
     expect(notificationTarget({ kind: 'kernel.approval_waiting', subjectId: id, detail: {} })).toEqual({ to: 'proposal', id });
     expect(notificationTarget({ kind: 'kernel.file_unreadable', subjectId: id, detail: {} })).toEqual({ to: 'inbox' });
