@@ -301,6 +301,21 @@ describe('the capture of a call', () => {
     expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'setup' });
   });
 
+  it('ends the capture and cleans up when recorder.start throws after the meeting is made', async () => {
+    const { client, deps } = setup();
+    const originalStart = FakeRecorder.prototype.start;
+    FakeRecorder.prototype.start = function () {
+      throw new Error('recorder start failed');
+    };
+    try {
+      expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'setup' });
+      expect(client.captureHeartbeat).toHaveBeenCalledWith({ meetingId: 'm1', end: true });
+      expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', reason: 'unknown', lengthSeconds: 0 });
+    } finally {
+      FakeRecorder.prototype.start = originalStart;
+    }
+  });
+
   it('never waits for the end of the capture: a stalled network does not hold up the stop or the upload', async () => {
     const { client, deps, calls } = setup();
     client.captureHeartbeat.mockImplementation(() => new Promise<{ open: boolean }>(() => undefined));

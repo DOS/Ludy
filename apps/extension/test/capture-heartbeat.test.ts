@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { createClient, LudyError } from '../src/api.ts';
 import { heldOf } from '../src/capture-run.ts';
+import { FEATURES, permissionsToRemove } from '../src/features.ts';
 import { parseCaptureStart, parseStartRequest, tabAddress } from '../src/messages.ts';
 import { ENGLISH, VIETNAMESE } from '../src/strings.ts';
 
@@ -87,5 +88,16 @@ describe('the refusal in words', () => {
       expect(Object.keys(strings.captureKinds).sort()).toEqual(['app', 'extension']);
     }
     expect(VIETNAMESE.blockers.captureRunning.replace('{kind}', VIETNAMESE.captureKinds.app).replace('{time}', '14:02')).toBe('Ứng dụng Ludy đang ghi cuộc họp này từ 14:02. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.');
+  });
+});
+
+describe('activeTab permission for reading meeting tab URLs', () => {
+  it('requests activeTab when meetings turns on and keeps it while the other feature stays enabled', () => {
+    const meetings = FEATURES.find((f) => f.id === 'meetings')!;
+    expect(meetings.permissions).toContain('activeTab');
+    expect(permissionsToRemove('meetings', { meetings: true }).sort()).toEqual(['activeTab', 'offscreen', 'tabCapture']);
+    expect(permissionsToRemove('meetings', { meetings: true, clipper: true }).sort()).toEqual(['offscreen', 'tabCapture']);
+    expect(permissionsToRemove('clipper', { clipper: true }).sort()).toEqual(['activeTab', 'scripting']);
+    expect(permissionsToRemove('clipper', { clipper: true, meetings: true })).toEqual(['scripting']);
   });
 });

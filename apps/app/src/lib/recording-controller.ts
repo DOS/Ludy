@@ -326,8 +326,13 @@ export async function startRecording(input: StartInput): Promise<void> {
     // Leaving the recorder screen does not abort a start; only stopAndSave (sign-out, another org) does.
     unmounted: () => abortStart,
   });
-  // The meeting was made (and its capture opened) but the recorder never started: the call is free again at once, not 90 seconds from now. The meeting stays cached for a retry, as before.
-  if (result.status !== 'ready' && createdMeetingId !== null) beat(createdMeetingId, true);
+  // The meeting was made (and its capture opened) but the recorder never started: free the call at once, and drop the cached meeting so a retry calls meetings.create again for a live capture check.
+  if (result.status !== 'ready' && createdMeetingId !== null) {
+    beat(createdMeetingId, true);
+    createdMeetingId = null;
+    linkedMeetingId = null;
+    createdFor = '';
+  }
   if (result.status === 'aborted') {
     patch({ phase: 'idle', slug: null });
     return;
@@ -383,8 +388,11 @@ export async function startRecording(input: StartInput): Promise<void> {
     linkedMeetingId = null;
     patch({ phase: 'recording', stream: withVideo ? stream : null });
   } catch (err) {
-    // The recorder never ran: the call is free again at once, not 90 seconds from now.
+    // The recorder never ran: free the call at once and drop the cached meeting so a retry opens a fresh live capture.
     endCapture(l);
+    createdMeetingId = null;
+    linkedMeetingId = null;
+    createdFor = '';
     releaseDevices(l, true);
     patch({ phase: 'idle', slug: null, error: errorMessage(err), stream: null });
   }

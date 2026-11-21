@@ -176,7 +176,15 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
     ),
   );
   recorder.addEventListener('error', () => fireLost('unknown'));
-  recorder.start(5000);
+  try {
+    recorder.start(5000);
+  } catch {
+    for (const track of stream.getTracks()) track.stop();
+    for (const cleanup of cleanups) cleanup();
+    void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
+    await client.recordingStopped({ meetingId, reason: 'unknown', lengthSeconds: 0 }).catch(() => undefined);
+    return { ok: false, reason: 'setup' };
+  }
   // The capture tells the server it is alive; an answer of "not open" (another capture took the call over after a long silence) never stops this recording, and a failed beat is only missed.
   const heartbeat = setInterval(() => void client.captureHeartbeat({ meetingId }).catch(() => undefined), HEARTBEAT_MS);
   // Live notes: never fails the recording; null when not ticked or when the live recorder cannot start.
