@@ -247,6 +247,7 @@ export async function runSignPdfSealJob(
       completedAtIso,
       eventChainTipHash: chain.tipHash,
       signers,
+      events,
     });
     sealInputBytes = buildPdfSealInputBytes({
       sourcePdfBytes,

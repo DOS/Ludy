@@ -97,6 +97,10 @@ export interface SignSignerRecord {
   otpVerifiedAt: string | null;
   signatureKind: string | null;
   consentAcceptedAt: string | null;
+  delegatedFromName?: string | null | undefined;
+  delegatedFromEmail?: string | null | undefined;
+  delegationReason?: string | null | undefined;
+  delegationCount?: number | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -283,8 +287,17 @@ export type PublicSignViewState =
       pageDimensions?: Array<{ pageNumber: number; widthPt: number; heightPt: number }>;
       requireEmailOtp?: boolean;
       otpVerified?: boolean;
+      allowDelegation?: boolean | undefined;
+      delegationCount?: number | undefined;
+      delegatedFromName?: string | null | undefined;
       fields: readonly PublicSignField[];
       sharedSummary?: SignSharedSummary | null;
+    }
+  | {
+      state: 'delegated';
+      title: string;
+      delegateName: string;
+      maskedDelegateEmail: string | null;
     }
   | {
       state: 'otp_required';
@@ -349,6 +362,7 @@ export const signApi = {
     subject?: string;
     message?: string;
     routingMode: SignRoutingMode;
+    allowDelegation?: boolean;
     sourceFileId: string;
     expiresAt?: string | null;
     autoRemindBeforeExpiry?: boolean;
@@ -360,6 +374,7 @@ export const signApi = {
     subject?: string | null;
     message?: string | null;
     routingMode?: SignRoutingMode;
+    allowDelegation?: boolean;
     expiresAt?: string | null;
     autoRemindBeforeExpiry?: boolean;
   }) => client.sign.envelope.update({ ...input, idempotencyKey: crypto.randomUUID() }),
@@ -393,6 +408,15 @@ export const signApi = {
     client.sign.signer.reorder({ envelopeId, orders, idempotencyKey: crypto.randomUUID() }),
   createSignerLink: (envelopeId: string, signerId: string, expiresInHours?: number) =>
     client.sign.signer.create_link({ envelopeId, signerId, ...(expiresInHours ? { expiresInHours } : {}) }),
+  correctSignerRecipient: (input: {
+    envelopeId: string;
+    signerId: string;
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    deliveryMode: SignDeliveryMode;
+    requireEmailOtp?: boolean;
+  }) => client.sign.signer.correct_recipient(input),
   setFields: (
     envelopeId: string,
     fields: Array<{
@@ -778,6 +802,11 @@ export const publicSignApi = {
         ...(Array.isArray(raw.pageDimensions) ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> } : {}),
         ...(typeof raw.requireEmailOtp === 'boolean' ? { requireEmailOtp: raw.requireEmailOtp } : {}),
         ...(typeof raw.otpVerified === 'boolean' ? { otpVerified: raw.otpVerified } : {}),
+        ...(typeof raw.allowDelegation === 'boolean' ? { allowDelegation: raw.allowDelegation } : {}),
+        ...(typeof raw.delegationCount === 'number' ? { delegationCount: raw.delegationCount } : {}),
+        ...(raw.delegatedFromName === null || typeof raw.delegatedFromName === 'string'
+          ? { delegatedFromName: raw.delegatedFromName as string | null }
+          : {}),
         fields: rawFields.map(normalizePublicField),
         ...(sharedSummary ? { sharedSummary } : {}),
       };
@@ -824,6 +853,15 @@ export const publicSignApi = {
       '/api/sign/decline',
       input,
     ),
+
+  delegate: (input: { token: string; delegateName: string; delegateEmail: string; reason: string }) =>
+    postPublicJson<{
+      signerId: string;
+      delegateName: string;
+      maskedDelegateEmail: string | null;
+      delegationCount: number;
+      delegatedAt: string;
+    }>('/api/sign/delegate', input),
 
   verifyPublic: async (input: { certificateCode: string; fileSha256: string }): Promise<PublicCertificateVerifyResponse> => {
     const response = await postPublicResponse('/api/sign/verify', input);
