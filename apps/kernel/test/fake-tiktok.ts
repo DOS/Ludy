@@ -2,7 +2,8 @@
 // A made-up TikTok Shop Open Platform for the T1 tests (#2524, #4256): an in-process `fetch` that answers the two hosts the adapter uses, in the shape of the OFFICIAL Partner Center pages read on
 // 2026-11-21 (authorization-overview-202407, sign-your-api-request, common-parameters, common-errors, get-authorized-shops-202309):
 //   - auth.tiktok-shops.com: GET /api/v2/token/get (authorization code, single use, 30 minutes) and GET /api/v2/token/refresh (rotating, the authorization end does not move), the parameters in the query;
-//   - open-api.tiktokglobalshop.com: GET /authorization/202309/shops and a signed POST /order/202309/orders/search whose answer is empty (it exists to prove the body is signed as sent).
+//   - open-api.tiktokglobalshop.com: GET /authorization/202309/shops, the signed POST /order/202309/orders/search and POST /return_refund/202602/returns/search (filtered by `update_time_ge` in the signed body, ascending by
+//     update time, paged by an opaque token) and GET /order/202507/orders (by `ids`), answering the made-up orders and returns the test hands in.
 // It verifies the signature with its OWN implementation of the rule (written again, over the raw query text, not the adapter's function), checks the timestamp window (5 minutes back, 30 seconds ahead) and
 // the `x-tts-access-token` header, and refuses `shop_cipher` where the endpoint does not take it. Its answers carry a seller's name and an owner e-mail on purpose, so the tests can show none of it is kept.
 // No network.
@@ -40,6 +41,9 @@ export interface FakeTiktokOptions {
   // The one date the seller's authorization ends at, in ms (a refresh does not move it).
   authorizationEndsAtMs?: number;
   userType?: number;
+  // The raw orders and returns the order, detail and return calls answer from, in TikTok's own shape (a test builds them with fakeOrder, fakeLine and fakeReturn, which carry a buyer's data on purpose).
+  orders?: Array<Record<string, unknown>>;
+  returns?: Array<Record<string, unknown>>;
   now?: () => number;
   // Crafts an answer instead of the fake's own (a refusal, a throttle, a hostile or malformed body); returns undefined to let the fake answer.
   intercept?: (host: string, path: string, query: Record<string, string>) => Response | undefined;
@@ -144,8 +148,40 @@ export function fakeTiktok(options: FakeTiktokOptions) {
         data: { shops: shops.map((s) => ({ id: s.id, name: s.name, region: s.region, seller_type: s.sellerType, cipher: s.cipher, code: s.code, owner_email: 'chu.shop@example.test' })) },
       });
     }
-    if (url.pathname === '/order/202309/orders/search' && method === 'POST') {
-      return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000AE', data: { next_page_token: '', total_count: 0, orders: [] } });
+    // The search calls take the shop and a page size; the body holds the filter and is the exact text that was signed.
+    if ((url.pathname === '/order/202309/orders/search' || url.pathname === '/return_refund/202602/returns/search') && method === 'POST') {
+      if (!query.shop_cipher) return failure(36009004, 'Missing identifier. The `shop_cipher` query parameter is required for this request.', 400);
+      const isOrders = url.pathname === '/order/202309/orders/search';
+      const size = Number(query.page_size);
+      const [low, high] = isOrders ? [1, 100] : [10, 50];
+      if (!Number.isInteger(size) || size < low || size > high) return failure(12052000, 'Invalid page size.', 400);
+      let filter: Record<string, unknown>;
+      try {
+        filter = JSON.parse(body ?? '') as Record<string, unknown>;
+      } catch {
+        return failure(12052001, 'Invalid body.', 400);
+      }
+      const ge = typeof filter.update_time_ge === 'number' ? filter.update_time_ge : 0;
+      const source = (isOrders ? options.orders : options.returns) ?? [];
+      const matching = source
+        .filter((r) => !(Number(r.update_time) < ge))
+        .sort((a, b) => (Number(a.update_time) || 0) - (Number(b.update_time) || 0) || String(a.id ?? a.return_id).localeCompare(String(b.id ?? b.return_id)));
+      let offset = 0;
+      if (query.page_token) {
+        const decoded = /^o(\d{1,6})$/.exec(Buffer.from(query.page_token, 'base64').toString('utf8'));
+        if (!decoded) return failure(12052002, 'Invalid page token.', 400);
+        offset = Number(decoded[1]);
+      }
+      const page = matching.slice(offset, offset + size);
+      const next = offset + size < matching.length ? Buffer.from(`o${offset + size}`).toString('base64') : '';
+      const list = isOrders ? { orders: page } : page.length === 0 ? {} : { return_orders: page };
+      return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000AE', data: { next_page_token: next, total_count: matching.length, ...list } });
+    }
+    if (url.pathname === '/order/202507/orders' && method === 'GET') {
+      if (!query.shop_cipher) return failure(36009004, 'Missing identifier. The `shop_cipher` query parameter is required for this request.', 400);
+      const ids = (query.ids ?? '').split(',').filter((id) => id !== '');
+      if (ids.length < 1 || ids.length > 50) return failure(12052003, 'Invalid ids.', 400);
+      return reply({ code: 0, message: 'Success', request_id: '2026112107000000000000000000AF', data: { orders: (options.orders ?? []).filter((o) => ids.includes(String(o.id))) } });
     }
     return failure(36009009, 'Invalid path. The specified path does not match any available endpoint.', 404);
   };
@@ -160,4 +196,63 @@ export function fakeTiktok(options: FakeTiktokOptions) {
 
 export function fakeShop(over: Partial<FakeTiktokShop> = {}): FakeTiktokShop {
   return { id: '7000714532876273420', name: 'Cửa hàng mẫu', region: 'VN', sellerType: 'LOCAL', cipher: 'GCP_XF90igAAAABh00qsWgtvOiGFNqyubMt3', code: 'VNLCBA4LLU8', ...over };
+}
+
+let orderSeq = 0;
+
+// A line item of an order in TikTok's shape: a Vietnam dong line with a SKU, and a buyer-side field planted on purpose (the adapter must drop it).
+export function fakeLine(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    id: `5770865121237${String(orderSeq).padStart(5, '0')}`,
+    sku_id: '2729382476852921560',
+    seller_sku: 'MAU-001',
+    product_name: 'Áo thun mẫu',
+    sku_name: 'Đen, L',
+    display_status: 'AWAITING_SHIPMENT',
+    sale_price: '150000',
+    original_price: '180000',
+    platform_discount: '20000',
+    seller_discount: '10000',
+    currency: 'VND',
+    package_status: 'TO_FULFILL',
+    buyer_note_on_item: 'giao giờ hành chính cho Nguyễn Văn Thử',
+    ...over,
+  };
+}
+
+// An order in TikTok's shape with a recipient, a buyer e-mail and a nickname planted on purpose. `update_time` and `create_time` are Unix seconds.
+export function fakeOrder(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    id: `5764614130387${String(orderSeq).padStart(5, '0')}`,
+    status: 'AWAITING_SHIPMENT',
+    create_time: 1_795_000_000,
+    update_time: 1_795_000_100,
+    line_items: [fakeLine()],
+    payment: { currency: 'VND', total_amount: '150000' },
+    recipient_address: { name: 'Nguyễn Văn Thử', phone_number: '(+84)90***1234', full_address: '1 Đường Thử, Quận 1, TP.HCM' },
+    buyer_email: 'v2b2V5@chat.seller.tiktok.test',
+    buyer_message: 'Giao nhanh giúp mình',
+    buyer_nickname: 'thu_nguyen_vn',
+    user_id: '7021436810468230477',
+    ...over,
+  };
+}
+
+// A return in TikTok's shape, with the buyer's reason text planted on purpose.
+export function fakeReturn(over: Record<string, unknown> = {}): Record<string, unknown> {
+  orderSeq += 1;
+  return {
+    order_id: '576461413038700001',
+    return_id: `4035318504086${String(orderSeq).padStart(5, '0')}`,
+    return_type: 'RETURN_AND_REFUND',
+    return_status: 'RETURN_OR_REFUND_REQUEST_SUCCESS',
+    update_time: 1_795_000_200,
+    create_time: 1_795_000_000,
+    return_reason_text: 'Không vừa, liên hệ Nguyễn Văn Thử',
+    role: 'BUYER',
+    return_line_items: [{ return_line_item_id: '4035227657962164811', order_line_item_id: '577086512123700001', sku_id: '2729382476852921560' }],
+    ...over,
+  };
 }
