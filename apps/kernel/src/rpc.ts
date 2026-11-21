@@ -3,7 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
-import { sandboxBankFeed } from '@crove/bank-feed';
+import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank-feed';
+import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
@@ -11,7 +12,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -77,6 +78,7 @@ import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './
 import { MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
+import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
@@ -84,6 +86,7 @@ import { misaCheck } from './misa-check.ts';
 import { explainMisaAmisBlockers, misaAmisBlockerNotesAi } from './finance-misa-amis-blocker-notes-ai.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
 import { misaAmisPreview } from './misa-amis-preview.ts';
+import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -98,6 +101,21 @@ import type { InviteRole, SendInviteMail } from './invite-mail.ts';
 import type { Delivery, DeliveryResult } from './mail.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
 import type { PortalSync } from './portal-sync.ts';
+
+// What a refused Tingee test call says to the owner (#2045): a fixed sentence per kind, never Tingee's own text, the Client ID or the Secret Token.
+function tingeeConnectError(error: unknown): DomainError {
+  if (!(error instanceof TingeeError)) return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  switch (error.kind) {
+    case 'credentials':
+      return new DomainError('BANK_FEED_CREDENTIALS', 422, 'Tingee không chấp nhận Client ID hoặc Secret Token này; hãy kiểm tra lại trong cổng Tingee');
+    case 'clock':
+      return new DomainError('BANK_FEED_CLOCK', 422, 'Giờ của máy chủ lệch quá xa so với Tingee; hãy chỉnh lại giờ máy chủ rồi thử lại');
+    case 'rate_limited':
+      return new DomainError('BANK_FEED_RATE_LIMITED', 429, 'Tingee báo gọi quá nhanh; hãy thử lại sau ít phút');
+    default:
+      return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  }
+}
 
 export interface RpcContext {
   user: AuthUser;
@@ -296,6 +314,8 @@ export interface RpcChannels {
   wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
+  // The real bank feed adapters this deployment offers, by provider id (BANK_FEED_TINGEE, #2045): the connect call tests a credential once through the adapter, then seals it; the worker alone opens it.
+  bankFeedHosted?: Readonly<Record<string, BankFeedProvider>>;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
   einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
   // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the offline sandbox when MARKETPLACE_PROVIDERS names it.
@@ -421,6 +441,10 @@ export function createRpcHandler(
   signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Connecting a Tingee account makes one signed read call from this server's address, and Tingee allows 20 calls in 10 seconds per address (#2045): an org may try a few times a minute, and the whole
+  // deployment a few more, so a loop of made-up credentials cannot use up the budget the workers' syncs share.
+  const tingeeConnectsPerOrg = new RateLimiter({ perMinute: 5 });
+  const tingeeConnectsAll = new RateLimiter({ perMinute: 30, maxKeys: 1 });
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
@@ -459,6 +483,9 @@ export function createRpcHandler(
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
   const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's first mapping for the columns of an unrecognised order report (#4036): told the masked sheet the worker recorded (header texts and the shapes of a few values) and nothing else; a budget of its own.
+  const financeMarketplaceColumnsAi = marketplaceColumnsAi(conversationReader?.marketplaceColumns ? { marketplaceColumns: conversationReader.marketplaceColumns.bind(conversationReader) } : null, suggestionBudget());
+  const financeBankCandidatesLineAi = bankCandidatesLineAi(conversationReader?.bankCandidatesLineSentence ? { bankCandidatesLineSentence: conversationReader.bankCandidatesLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
@@ -1160,6 +1187,7 @@ export function createRpcHandler(
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
       get: os.notes.get.handler(notesQuery('notes.note.get')),
+      backlinks: os.notes.backlinks.handler(notesQuery('notes.note.backlinks')),
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
@@ -1168,6 +1196,8 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
+      versions: os.notes.versions.handler(notesQuery('notes.note.versions')),
+      restoreVersion: os.notes.restoreVersion.handler(notesCommand('notes.note.restore_version')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),
       unpin: os.notes.unpin.handler(notesCommand('notes.note.unpin')),
@@ -1176,6 +1206,16 @@ export function createRpcHandler(
       delete: os.notes.delete.handler(notesCommand('notes.note.delete')),
       linkAdd: os.notes.linkAdd.handler(notesCommand('notes.link.add')),
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
+      attachments: {
+        list: os.notes.attachments.list.handler(notesQuery('notes.attachment.list')),
+        delete: os.notes.attachments.delete.handler(notesCommand('notes.attachment.delete')),
+      },
+      notebooks: {
+        list: os.notes.notebooks.list.handler(notesQuery('notes.notebook.list')),
+        create: os.notes.notebooks.create.handler(notesCommand('notes.notebook.create')),
+        update: os.notes.notebooks.update.handler(notesCommand('notes.notebook.update')),
+        delete: os.notes.notebooks.delete.handler(notesCommand('notes.notebook.delete')),
+      },
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
       vyStatus: os.notes.vyStatus.handler(({ context }) =>
@@ -1195,6 +1235,12 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
       ),
       acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
+      templates: {
+        list: os.notes.templates.list.handler(notesQuery('notes.template.list')),
+        create: os.notes.templates.create.handler(notesCommand('notes.template.create')),
+        update: os.notes.templates.update.handler(notesCommand('notes.template.update')),
+        delete: os.notes.templates.delete.handler(notesCommand('notes.template.delete')),
+      },
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
@@ -3527,6 +3573,22 @@ export function createRpcHandler(
           return explainMarketplaceFees(financeMarketplaceFeeNoteAi, orgId, actor.userId, balance, MARKETPLACE_FEE_CYCLE_DAYS, lang ?? 'vi');
         }),
       ),
+      // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read by the worker through the extract sandbox, which the API cannot reach: a check is a request row and a job.
+      columnsCheck: os.marketplace.columnsCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_check', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columnsFiles: os.marketplace.columnsFiles.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_files', {}, { actor, orgId }))),
+      columns: os.marketplace.columns.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns', input, { actor, orgId }))),
+      // Ly's first mapping, from the masked sheet the worker recorded (read again here in the caller's own context, so the model is told what the file shows, never what the caller says); a read that stores nothing.
+      columnsProposal: os.marketplace.columnsProposal.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const status = await runtime.query<MarketplaceColumnsStatus>('finance.marketplace.columns', { fileId: input.fileId }, { actor, orgId });
+          return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
+        }),
+      ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -3924,6 +3986,14 @@ export function createRpcHandler(
           return explainPayrollMatch(financePayrollMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
         }),
       ),
+      // The line and its candidates are read again here in the caller's own transaction, so the facts the model is told come from the matcher and the books, never from the caller; the sentence is a read and picks nothing.
+      candidatesLine: os.bank.candidatesLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, bankLineId } = input;
+          const read = await runtime.query<BankLineVoucher>('finance.bank.line_voucher', { bankLineId }, { actor, orgId });
+          return explainBankCandidatesLine(financeBankCandidatesLineAi, orgId, actor.userId, read, lang ?? 'vi');
+        }),
+      ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
       ),
@@ -3954,6 +4024,39 @@ export function createRpcHandler(
             provider: login.provider,
             externalAccountId: login.externalAccountId,
             displayName: login.displayName,
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          return { connectionId };
+        }),
+      ),
+      connectTingee: os.bankFeeds.connectTingee.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nguồn giao dịch ngân hàng');
+          const hosted = channels?.bankFeedHosted;
+          if (!channels || !hosted || !Object.hasOwn(hosted, 'bank_tingee')) throw new DomainError('BANK_FEED_TINGEE_DISABLED', 404, 'Nguồn giao dịch Tingee chưa được bật trên máy chủ này');
+          if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          const provider = hosted.bank_tingee as BankFeedProvider;
+          // The org's own credential, as the one value the worker opens (the adapter reads it back). One read call tests it before anything is sealed; its answer is dropped, the worker lists the accounts.
+          const secret = JSON.stringify({ clientId: input.clientId, secretToken: input.secretToken });
+          // The org's ticket first: a refused org must not spend the deployment's. Both limits are per process (a deployment with several API instances allows up to that many times each).
+          const own = tingeeConnectsPerOrg.take(orgId);
+          const ticket = own.allowed ? [tingeeConnectsAll.take('all')].find((t) => !t.allowed) : own;
+          if (ticket) throw new DomainError('RATE_LIMITED', 429, 'Đã thử kết nối Tingee nhiều lần trong phút này, hãy đợi một lát rồi thử lại', { retryAfterSeconds: ticket.retryAfterSeconds });
+          try {
+            // One cheap read call (a page of one account) when the adapter has one, else its account list.
+            await (provider.check ? provider.check(secret) : provider.accounts(secret));
+          } catch (error) {
+            throw tingeeConnectError(error);
+          }
+          const sealed = channels.broker.seal(secret, { orgId, provider: provider.id, externalAccountId: input.clientId });
+          const command: ChannelConnectInput = {
+            provider: provider.id,
+            externalAccountId: input.clientId,
+            displayName: input.displayName ?? 'Tingee',
             scopes: [],
             expiresAt: null,
             credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },

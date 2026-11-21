@@ -36,6 +36,7 @@ import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceF
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
 import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
 import { checkEInvoiceReason, einvoiceReasonInstructions, einvoiceReasonPrompt, type EInvoiceReasonFacts, type EInvoiceReasonResult } from './einvoice-reason.ts';
+import { bankCandidatesLineInstructions, bankCandidatesLinePrompt, checkBankCandidatesLineSentence, type BankCandidatesLineFacts, type BankCandidatesLineResult } from './bank-candidates-line.ts';
 import { checkSupplierPayableLineSentence, supplierPayableLineInstructions, supplierPayableLinePrompt, type SupplierPayableLineFacts, type SupplierPayableLineResult } from './supplier-payable-line.ts';
 import { checkEInvoiceRate, einvoiceRateInstructions, einvoiceRatePrompt, type EInvoiceRateFacts, type EInvoiceRateResult } from './einvoice-rate.ts';
 import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, type StockSurplusFacts, type StockSurplusResult } from './stock-surplus-note.ts';
@@ -174,6 +175,10 @@ export type MarketplaceColumnsGenerator = (args: { system: string; prompt: strin
 export type MarketplaceFeeNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceFeeNotesOut> | null; usage?: AiUsage }>;
 export type MisaAmisBlockerNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaAmisBlockerNotesOut> | null; usage?: AiUsage }>;
 export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
+const zBankCandidatesLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on why this bank line needs a person to choose between candidates, citing only the date, amount and count given, each written exactly as given'),
+});
+export type BankCandidatesLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zBankCandidatesLineOut> | null; usage?: AiUsage }>;
 export type SupplierPayableLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSupplierPayableLineOut> | null; usage?: AiUsage }>;
 const zEInvoiceRateOut = z.object({
   sentence: z.string().describe('One or two plain Vietnamese sentences on why the correcting invoice keeps or changes the VAT rate, citing only the dates and rates given, each written exactly as given'),
@@ -294,6 +299,7 @@ export class InboxReader {
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
+  private readonly generateBankCandidatesLine: BankCandidatesLineGenerator;
   private readonly generateMisaCheckLine: MisaCheckLineGenerator;
   private readonly generateMisaAmisBlockerNotes: MisaAmisBlockerNotesGenerator;
   private readonly generateMarketplaceFeeNotes: MarketplaceFeeNotesGenerator;
@@ -311,7 +317,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -457,6 +463,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.supplier_payable_line', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zSupplierPayableLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateBankCandidatesLine =
+      generators.bankCandidatesLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.bank_match_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zBankCandidatesLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -711,6 +725,14 @@ export class InboxReader {
     const { output, usage } = await this.generateSupplierPayableLine({ system: supplierPayableLineInstructions(facts.language), prompt: supplierPayableLinePrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkSupplierPayableLineSentence(facts, output);
+  }
+
+  /** The finance coworker's one sentence on a bank line the matcher could not settle (#4219), from the date, amount, direction and candidate count only, or why there is none: refused when it states a figure the
+   * facts do not hold, a link, advice, a pick of one candidate, or says something was matched, posted, approved or paid (bank-candidates-line.ts). Metered under finance.bank_match_explain. */
+  async bankCandidatesLineSentence(facts: BankCandidatesLineFacts, onUsage?: (usage: AiUsage) => void): Promise<BankCandidatesLineResult> {
+    const { output, usage } = await this.generateBankCandidatesLine({ system: bankCandidatesLineInstructions(facts.language), prompt: bankCandidatesLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkBankCandidatesLineSentence(facts, output);
   }
 
   /** The finance coworker's one line on why a bank statement line may be a payroll payment (#2532), from the kind, month, amount and date of the payment only, or why there is none: the text is

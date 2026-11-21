@@ -414,6 +414,11 @@ const schema = z.object({
   // The secret the sandbox bank feed's signed notices are checked with (POST /api/bank-feed/bank_sandbox/webhook); unset:
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
+  // The Tingee bank feed (ADR-0039, #2045): off unless asked for, so a deployment reaches no bank service and shows no Tingee connect until it has one. Each org registers its own Tingee account and
+  // gives its Client ID and Secret Token (sealed per org, never in this configuration); this switch only turns the adapter on. It needs the credential key (CREDENTIAL_KEY).
+  BANK_FEED_TINGEE: z.enum(['true', 'false']).default('false'),
+  // Points the Tingee adapter at Tingee's UAT host instead of production, for the UAT run (S5): only with BANK_FEED_TINGEE=true, never on a public deployment.
+  BANK_FEED_TINGEE_UAT: z.enum(['true', 'false']).default('false'),
   // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
   // platform account. Left out, it is on for a local PUBLIC_URL and off for a public one (compose passes it through empty). Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
@@ -990,6 +995,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.BANK_FEED_SANDBOX !== 'true') throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET is set without BANK_FEED_SANDBOX=true');
     if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET.length < 32) throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET must be at least 32 characters');
   }
+  if (config.BANK_FEED_TINGEE_UAT === 'true' && config.BANK_FEED_TINGEE !== 'true') throw new Error('BANK_FEED_TINGEE_UAT=true is set without BANK_FEED_TINGEE=true');
+  if (config.BANK_FEED_TINGEE === 'true' && config.CREDENTIAL_KEY === undefined && config.CREDENTIAL_KEY_FILE === undefined) {
+    throw new Error('BANK_FEED_TINGEE=true seals each org\'s Tingee credential: set CREDENTIAL_KEY (or CREDENTIAL_KEY_FILE)');
+  }
   if (Boolean(config.CHANNEL_ZALO_APP_ID) !== Boolean(config.CHANNEL_ZALO_APP_SECRET)) throw new Error('set both CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET, or neither');
   if (config.CHANNEL_ZALO_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_ZALO_APP_ID)) throw new Error('CHANNEL_ZALO_APP_ID is the numeric id of the Zalo app');
   if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS !== undefined) {
@@ -1106,6 +1115,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     if (config.AUTH_AUTOCONFIRM === 'true') {
       throw new Error('AUTH_AUTOCONFIRM=true lets anyone claim any email address; set it to false and configure SMTP');
+    }
+    // The Tingee UAT host answers with test data, so a public deployment keeps to production.
+    if (config.BANK_FEED_TINGEE_UAT === 'true') {
+      throw new Error('BANK_FEED_TINGEE_UAT=true reads Tingee\'s test environment; it is for the UAT run only');
     }
     // ADR-0039 point 3: the sandbox feed writes made-up bank lines, so it stays on development deployments.
     if (config.BANK_FEED_SANDBOX === 'true') {

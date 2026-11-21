@@ -14,7 +14,7 @@ import {
   type TodoAcceptSuggestionsResult,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { assertAuthor, assertNotInTrash, loadForChange } from './notes.ts';
+import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
 import { detailsOf, due, ownKeys, placeBetween, remindAt } from './todos.ts';
 
 const MODULE = 'notes';
@@ -246,6 +246,10 @@ export const noteAcceptSummary = defineCommand({
           : section;
     if (nextBody.length > NOTE_BODY_MAX) {
       throw new DomainError('NOTE_TOO_LONG', 422, 'Nội dung ghi chú sau khi chèn vượt quá giới hạn cho phép');
+    }
+
+    if (nextBody !== before.body) {
+      await recordNoteVersionSnapshot(ctx, before);
     }
 
     const row = await ctx.trx
