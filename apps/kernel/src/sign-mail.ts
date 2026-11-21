@@ -6,15 +6,18 @@ import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@crove/kern
 import type { MailAttachment } from '@crove/mail';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_DELEGATED_MAIL_TEMPLATE,
   SIGN_DIRECT_OTP_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_OTP_MAIL_TEMPLATE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
+  renderSignDelegatedMail,
   renderSignDirectOtpMail,
   renderSignInviteMail,
   renderSignOtpMail,
   zSignCompletedMailPayload,
+  zSignDelegatedMailPayload,
   zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,
@@ -211,10 +214,41 @@ const signDirectOtpTemplate: MailTemplate = {
   },
 };
 
+const signDelegatedTemplate: MailTemplate = {
+  async render(input) {
+    if (!input.subject) return null;
+    const parsed = zSignDelegatedMailPayload.parse(input.payload);
+    const data = await input.execute<{
+      orgSlug: string;
+      fromName: string;
+      fromEmail: string | null;
+      delegateName: string;
+      delegateEmail: string;
+      reason: string | null;
+    } | null>('sign.signer.delegated_mail_data', {
+      envelopeId: parsed.envelopeId,
+      signerId: parsed.signerId,
+    });
+    if (!data) return null;
+    const rendered = renderSignDelegatedMail(parsed, {
+      publicUrl: input.publicUrl,
+      brand: input.brand,
+      orgSlug: data.orgSlug,
+      fromName: data.fromName,
+      fromEmail: data.fromEmail,
+      delegateName: data.delegateName,
+      delegateEmail: data.delegateEmail,
+      reason: data.reason,
+    });
+    return { subject: input.subject, ...rendered };
+  },
+};
+
 export const signMailTemplates: MailTemplates = {
   [SIGN_INVITE_MAIL_TEMPLATE]: signInviteTemplate(false),
   [SIGN_REMIND_MAIL_TEMPLATE]: signInviteTemplate(true),
   [SIGN_OTP_MAIL_TEMPLATE]: signOtpTemplate,
   [SIGN_DIRECT_OTP_MAIL_TEMPLATE]: signDirectOtpTemplate,
   [SIGN_COMPLETED_MAIL_TEMPLATE]: signCompletedTemplate,
+  [SIGN_DELEGATED_MAIL_TEMPLATE]: signDelegatedTemplate,
 };

@@ -253,6 +253,23 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
           expiresAt: '2026-11-23T00:00:00.000Z',
         };
       }
+      if (name === 'sign.signer.correct_recipient') {
+        return {
+          envelopeId: ENVELOPE_ID,
+          signerId: SIGNER_ID,
+          status: 'pending',
+          deliveryMode: 'link',
+          version: 3,
+          revokedTokens: 1,
+          mailStatus: null,
+          link: {
+            signerId: SIGNER_ID,
+            tokenId: TOKEN_ID,
+            token: 'T'.repeat(43),
+            expiresAt: '2026-11-23T00:00:00.000Z',
+          },
+        };
+      }
       if (name === 'sign.template.create') {
         return { templateId: TEMPLATE_ID, status: 'draft', inspectStatus: 'pending', version: 1 };
       }
@@ -508,5 +525,212 @@ describe('os.sign RPC handlers (#3325)', () => {
       idempotencyKey: KEY_ID,
     });
     expect(rejectedInst.status).toBe(400);
+  });
+
+  it('wires os.sign.signer.correct_recipient with module gate and noIdempotency, and maps POST /api/sign/delegate HTTP responses (#3819)', async () => {
+    const { app: disabledApp } = createSignTestApp({ signInstalled: false });
+    const offCorrect = await callRpc(disabledApp, '/sign/signer/correct_recipient', {
+      envelopeId: ENVELOPE_ID,
+      signerId: SIGNER_ID,
+      name: 'Nguyen Van Moi',
+      email: 'moi@example.com',
+      deliveryMode: 'link',
+    });
+    expect(offCorrect.status).toBe(404);
+
+    const offDelegate = await disabledApp.request('/api/sign/delegate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: 'A'.repeat(43),
+        delegateName: 'Tran Thi Uy Quyen',
+        delegateEmail: 'delegate@example.com',
+        reason: 'Di cong tac',
+      }),
+    });
+    expect(offDelegate.status).toBe(404);
+
+    const { app, executed } = createSignTestApp({ signInstalled: true });
+    const okCorrect = await callRpc(app, '/sign/signer/correct_recipient', {
+      envelopeId: ENVELOPE_ID,
+      signerId: SIGNER_ID,
+      name: 'Nguyen Van Moi',
+      email: 'moi@example.com',
+      deliveryMode: 'link',
+    });
+    expect(okCorrect.status).toBe(200);
+    expect(executed.at(-1)).toMatchObject({
+      name: 'sign.signer.correct_recipient',
+      opts: { actor: { type: 'user', userId: USER_ID }, orgId: ORG_ID },
+    });
+
+    const rejectedCorrectIdem = await callRpc(app, '/sign/signer/correct_recipient', {
+      envelopeId: ENVELOPE_ID,
+      signerId: SIGNER_ID,
+      name: 'Nguyen Van Moi',
+      email: 'moi@example.com',
+      deliveryMode: 'link',
+      idempotencyKey: KEY_ID,
+    });
+    expect(rejectedCorrectIdem.status).toBe(400);
+
+    // Build an HTTP app with a programmable orgless executor to test POST /api/sign/delegate edge outcomes.
+    let nextResolved: unknown = {
+      orgId: ORG_ID,
+      orgName: 'Acme',
+      envelopeId: ENVELOPE_ID,
+      signerId: SIGNER_ID,
+      tokenId: TOKEN_ID,
+      tokenUsed: false,
+      envelopeStatus: 'sent',
+      signerStatus: 'pending',
+      signerRole: 'signer',
+      routingOrder: 1,
+      minPendingOrder: 1,
+      requireEmailOtp: false,
+      otpVerified: false,
+      allowDelegation: true,
+      delegationCount: 0,
+      delegatedFromName: null,
+      title: 'Service Contract',
+      message: null,
+      signerName: 'Signer One',
+      roleLabel: 'Party A',
+      expiresAt: '2027-02-01T00:00:00.000Z',
+      pageCount: 1,
+      pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842 }],
+      sourceFileId: FILE_ID,
+      fields: [],
+    };
+    let nextDelegateRow: unknown = {
+      status: 'ok',
+      signerId: SIGNER_ID,
+      delegateName: 'Tran Thi Uy Quyen',
+      maskedDelegateEmail: 'd***e@example.com',
+      delegationCount: 1,
+      delegatedAt: '2026-11-21T10:00:00.000Z',
+    };
+
+    const orglessDb = {
+      getExecutor: () => ({
+        transformQuery: (node: unknown) => node,
+        compileQuery: (node: unknown) => ({ query: node, sql: JSON.stringify(node), parameters: [] }),
+        executeQuery: async (compiled: { sql: string }) => {
+          if (compiled.sql.includes('public_token_resolve')) {
+            return { rows: [{ resolved: nextResolved }] };
+          }
+          if (compiled.sql.includes('public_delegate')) {
+            return { rows: [{ result: nextDelegateRow }] };
+          }
+          return { rows: [] };
+        },
+      }),
+    };
+
+    const delegateRuntime = {
+      installed: (name: string) => name === 'kernel' || name === 'sign',
+      modules: () => ['kernel', 'sign'],
+      orgless: async <T>(fn: (db: never) => Promise<T>) => fn(orglessDb as never),
+    } as unknown as Runtime;
+
+    const delegateApp = createHttpApp({
+      config: buildConfig(),
+      runtime: delegateRuntime,
+      store: {} as BlobStore,
+      authenticate: async () => buildUser(),
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+      aiMeter: () => ({ admit: async () => {}, record: async () => {} }),
+    });
+
+    const postDelegate = (body: unknown, ip = '203.0.113.55') =>
+      delegateApp.request('/api/sign/delegate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+        body: JSON.stringify(body),
+      });
+
+    // 1. Success -> 200
+    const res200 = await postDelegate({
+      token: 'B'.repeat(43),
+      delegateName: 'Tran Thi Uy Quyen',
+      delegateEmail: 'delegate@example.com',
+      reason: 'Di cong tac tuan nay',
+    });
+    expect(res200.status).toBe(200);
+    expect(await res200.json()).toEqual({
+      signerId: SIGNER_ID,
+      delegateName: 'Tran Thi Uy Quyen',
+      maskedDelegateEmail: 'd***e@example.com',
+      delegationCount: 1,
+      delegatedAt: '2026-11-21T10:00:00.000Z',
+    });
+
+    // 2. Malformed token -> 404 SIGN_LINK_INVALID
+    const res404 = await postDelegate({
+      token: 'short-token',
+      delegateName: 'Tran Thi Uy Quyen',
+      delegateEmail: 'delegate@example.com',
+      reason: 'Di cong tac',
+    });
+    expect(res404.status).toBe(404);
+
+    // 3. Domain errors mapped to HTTP statuses (403 OTP, 403 disabled, 409 limit, 422 same email, 409 already used)
+    nextDelegateRow = {
+      status: 'error',
+      code: 'SIGN_OTP_REQUIRED',
+      httpStatus: 403,
+      message: 'Email OTP verification is required before delegating',
+    };
+    expect(
+      (
+        await postDelegate({
+          token: 'C'.repeat(43),
+          delegateName: 'Tran Thi Uy Quyen',
+          delegateEmail: 'delegate@example.com',
+          reason: 'Di cong tac',
+        })
+      ).status,
+    ).toBe(403);
+
+    nextDelegateRow = {
+      status: 'error',
+      code: 'SIGN_DELEGATION_DISABLED',
+      httpStatus: 403,
+      message: 'Delegation is not enabled for this envelope',
+    };
+    const resDisabled = await postDelegate({
+      token: 'D'.repeat(43),
+      delegateName: 'Tran Thi Uy Quyen',
+      delegateEmail: 'delegate@example.com',
+      reason: 'Di cong tac',
+    });
+    expect(resDisabled.status).toBe(403);
+    expect(await resDisabled.json()).toMatchObject({ code: 'SIGN_DELEGATION_DISABLED' });
+
+    nextDelegateRow = {
+      status: 'error',
+      code: 'SIGN_DELEGATION_LIMIT_REACHED',
+      httpStatus: 409,
+      message: 'This signer slot has reached the maximum of 2 delegations',
+    };
+    const resLimit = await postDelegate({
+      token: 'E'.repeat(43),
+      delegateName: 'Tran Thi Uy Quyen',
+      delegateEmail: 'delegate@example.com',
+      reason: 'Di cong tac',
+    });
+    expect(resLimit.status).toBe(409);
+    expect(await resLimit.json()).toMatchObject({ code: 'SIGN_DELEGATION_LIMIT_REACHED' });
+
+    nextDelegateRow = { status: 'already_used' };
+    const resUsed = await postDelegate({
+      token: 'F'.repeat(43),
+      delegateName: 'Tran Thi Uy Quyen',
+      delegateEmail: 'delegate@example.com',
+      reason: 'Di cong tac',
+    });
+    expect(resUsed.status).toBe(409);
+    expect(await resUsed.json()).toMatchObject({ code: 'SIGN_ALREADY_SUBMITTED' });
   });
 });

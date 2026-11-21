@@ -20,6 +20,10 @@ export interface RuleSource {
 export const REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type Region = (typeof REGIONS)[number];
 
+/** The insurance funds, in the order a breakdown lists them. */
+export const INSURANCE_FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
+export type InsuranceFund = (typeof INSURANCE_FUNDS)[number];
+
 /** A rate or multiple travels as a decimal string. A percent is written as a percent ("1.5" is 1.5%). */
 export type Percent = string;
 
@@ -49,10 +53,12 @@ export type OvertimeExemptionMode = 'premium_only' | 'whole_pay';
  * - `insurance_wage_bounds`: the insurance wage base ('social' or 'unemployment').
  * - `insurance_rate`: the fund (retirement_death, sickness_maternity, work_accident, health, unemployment).
  * - `union_fee`: 'employer'.
- * - `insurance_suspension`: 'unpaid_leave'.
+ * - `insurance_suspension`: 'unpaid_leave', 'sickness_leave', 'maternity_leave'.
+ * - `foreign_insurance`: 'default'.
  * - `pit_brackets`: 'resident_monthly'.
  * - `pit_deduction`: personal, dependent, dependent_income_limit, voluntary_pension_cap.
  * - `pit_withholding`: 'no_or_short_contract'.
+ * - `pit_non_resident`: 'default'.
  * - `pit_meal_cash_cap`, `pit_overtime_exemption`, `overtime_multiples`, `night_premium`, `deduction_cap`,
  *   `standard_hours`, `annual_leave`, `overtime_caps`: 'default'.
  */
@@ -63,9 +69,11 @@ export interface RuleValues {
   insurance_rate: { employerPercent: Percent; employeePercent: Percent; wageBase: InsuranceWageBase };
   union_fee: { employerPercent: Percent; wageBase: InsuranceWageBase };
   insurance_suspension: { unpaidWorkingDays: string };
+  foreign_insurance: { minContractMonths: number; exemptFunds: readonly InsuranceFund[] };
   pit_brackets: { brackets: readonly PitBracket[] };
   pit_deduction: { monthly: Money };
   pit_withholding: { percent: Percent; paymentThreshold: Money; progressiveFromContractMonths: number };
+  pit_non_resident: { percent: Percent };
   pit_meal_cash_cap: { monthly: Money };
   pit_overtime_exemption: { mode: OvertimeExemptionMode };
   overtime_multiples: { normal_day: string; weekly_rest_day: string; holiday: string };
@@ -80,6 +88,8 @@ export interface RuleValues {
     seniorityExtraDays: string;
     halfMonthWorkingDaysRatio: string;
     approvedUnpaidMonthsAllowance: string;
+    sicknessMonthsAllowance?: string;
+    maternityMonthsAllowancePerEvent?: string;
   };
   overtime_caps: { monthlyHours: string; annualHours: string };
 }

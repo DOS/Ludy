@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { ErrorText, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import {
   publicDirectSignApi,
@@ -290,6 +291,14 @@ export function SignDirectReadyView({
           </CardContent>
         ) : null}
       </Card>
+
+      {viewState.sharedSummary ? (
+        <CounterpartySummaryBanner
+          sharedSummary={viewState.sharedSummary}
+          pageCount={viewState.pageCount}
+          onJumpToPage={onPageChange}
+        />
+      ) : null}
 
       <Card>
         <CardHeader className="pb-3">

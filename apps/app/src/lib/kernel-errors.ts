@@ -283,6 +283,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_RECRUITING_TRANSITION_REFUSED',
   'HR_INTERVIEW_DURATION_INVALID',
   'HR_INTERVIEW_SLOT_TAKEN',
+  'HR_INTERVIEWER_INVALID',
   // The posting of an approved run (#2532).
   'HR_RUN_NOT_APPROVED',
   'HR_POSTING_OPEN',
@@ -737,6 +738,8 @@ export const KERNEL_ERROR_CODES = [
   'ADS_CONNECTION_NOT_FOUND',
   'ADS_CONNECTION_INACTIVE',
   'ADS_CONNECTION_STILL_OPEN',
+  // An AI coworker's ask to cancel a waiting ad change (#4181): the approval refuses a change that would not raise spend.
+  'ADS_CANCEL_NOT_OPENING',
   'ADS_SYNC_TOO_SOON',
   'ADS_SYNC_ON_HOLD',
   'ADS_RANGE_INVALID',
@@ -1424,6 +1427,18 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_TEMPLATE_NOT_FOUND',
   'SIGN_TEMPLATE_NOT_INSPECTED',
   'SIGN_UNKNOWN_ROLE_KEY',
+  // eSign Slice 2c Vietnam CA settings & PAdES (#3554).
+  'SIGN_CA_CONNECTION_NOT_FOUND',
+  'SIGN_CA_CREDENTIALS_REQUIRED',
+  'SIGN_CA_NOT_CONFIGURED',
+  'SIGN_CA_PROVIDER_NOT_READY',
+  'SIGN_ENVELOPE_NOT_SEALED',
+  'SIGN_LIVE_CA_GATED',
+  // eSign Slice 4c in-flight recipient correction & audited signer delegation (#3819).
+  'SIGN_DELEGATE_SAME_EMAIL',
+  'SIGN_DELEGATION_DISABLED',
+  'SIGN_DELEGATION_LIMIT_REACHED',
+  'SIGN_SIGNER_ALREADY_COMPLETED',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

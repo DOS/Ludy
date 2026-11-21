@@ -1,5 +1,5 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
@@ -7,6 +7,9 @@ import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
+import { assertSignCaProviderAllowed } from '@crove/mod-sign';
+import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@crove/sign';
+import type { SignCaConnectionRecord, SignCaSettingsResult } from '@crove/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
@@ -72,7 +75,13 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
+import {
+  compareSignPdfVersions,
+  proposeEnvelopeAnalysis,
+  proposeSignContractDraftClauses,
+  signAi,
+  type SignAi,
+} from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
@@ -565,6 +574,8 @@ export function createRpcHandler(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
     suggestionBudget(),
   );
+  const signDiffCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
+  const signDrafterCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -1123,6 +1134,7 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
           severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
+          job_loss: os.hr.payroll.employees.job_loss.handler(hrQuery('hr.payroll.employee.job_loss')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -1182,8 +1194,14 @@ export function createRpcHandler(
           edit: os.hr.recruiting.candidates.edit.handler(hrCommand('hr.recruiting.candidate.edit')),
           moveStage: os.hr.recruiting.candidates.moveStage.handler(hrCommand('hr.recruiting.candidate.move_stage')),
           scheduleInterview: os.hr.recruiting.candidates.scheduleInterview.handler(hrCommand('hr.recruiting.candidate.schedule_interview')),
+          cancelInterview: os.hr.recruiting.candidates.cancelInterview.handler(hrCommand('hr.recruiting.candidate.cancel_interview')),
           hire: os.hr.recruiting.candidates.hire.handler(hrCommand('hr.recruiting.candidate.hire')),
           erase: os.hr.recruiting.candidates.erase.handler(hrCommand('hr.recruiting.candidate.erase')),
+        },
+        interviewers: {
+          list: os.hr.recruiting.interviewers.list.handler(({ context }) =>
+            inHr(context, (orgId, actor) => runtime.query('hr.recruiting.interviewers.list', {}, { actor, orgId })),
+          ),
         },
         interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
         brief: os.hr.recruiting.brief.handler(({ context, input }) =>
@@ -3509,13 +3527,13 @@ export function createRpcHandler(
                 displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
                 credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
                 // The App Key is a public identifier, stored in the clear beside the sealed secret it belongs to (the same handler makes both, so they never disagree).
-                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields.appKey } : {}),
+                ...(isMarketplaceAuthorized(input.adapter) ? { appKey: input.fields[provider.authorizePublicField ?? 'appKey'] } : {}),
               },
               { actor, orgId },
             );
             // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
             // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
-            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+            if (provider.hosts.length > 0 && isMarketplaceAuthorized(input.adapter)) {
               await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
             }
             return { id: connected.id };
@@ -4523,6 +4541,7 @@ export function createRpcHandler(
         verify: os.sign.envelope.verify.handler(signQuery('sign.envelope.verify')),
         create: os.sign.envelope.create.handler(signCommand('sign.envelope.create')),
         update: os.sign.envelope.update.handler(signCommand('sign.envelope.update')),
+        shared_summary_set: os.sign.envelope.shared_summary_set.handler(signCommand('sign.envelope.shared_summary_set')),
         send: os.sign.envelope.send.handler(signNoIdempotencyCommand('sign.envelope.send')),
         remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
         void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
@@ -4533,6 +4552,7 @@ export function createRpcHandler(
         remove: os.sign.signer.remove.handler(signCommand('sign.signer.remove')),
         reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
         create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
+        correct_recipient: os.sign.signer.correct_recipient.handler(signNoIdempotencyCommand('sign.signer.correct_recipient')),
       },
       field: {
         set: os.sign.field.set.handler(signCommand('sign.field.set')),
@@ -4570,6 +4590,37 @@ export function createRpcHandler(
           ),
         ),
       },
+      diff: {
+        compare: os.sign.diff.compare.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            compareSignPdfVersions({
+              ai: signDiffCoworker,
+              runtime,
+              orgId,
+              actor,
+              input,
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+      },
+      drafter: {
+        proposeClauses: os.sign.drafter.proposeClauses.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeSignContractDraftClauses({
+              ai: signDrafterCoworker,
+              runtime,
+              orgId,
+              actor,
+              input,
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        renderPdf: os.sign.drafter.renderPdf.handler(signQuery('sign.drafter.render_pdf')),
+      },
       template: {
         list: os.sign.template.list.handler(signQuery('sign.template.list')),
         get: os.sign.template.get.handler(({ context, input }) =>
@@ -4587,12 +4638,116 @@ export function createRpcHandler(
         ),
         create: os.sign.template.create.handler(signCommand('sign.template.create')),
         update: os.sign.template.update.handler(signCommand('sign.template.update')),
+        shared_summary_set: os.sign.template.shared_summary_set.handler(signCommand('sign.template.shared_summary_set')),
         roles_set: os.sign.template.roles_set.handler(signCommand('sign.template.roles_set')),
         fields_set: os.sign.template.fields_set.handler(signCommand('sign.template.fields_set')),
         archive: os.sign.template.archive.handler(signCommand('sign.template.archive')),
         instantiate: os.sign.template.instantiate.handler(signNoIdempotencyCommand('sign.template.instantiate')),
         direct_link_set: os.sign.template.direct_link_set.handler(signNoIdempotencyCommand('sign.template.direct_link_set')),
         direct_link_rotate: os.sign.template.direct_link_rotate.handler(signNoIdempotencyCommand('sign.template.direct_link_rotate')),
+      },
+      ca: {
+        settings: os.sign.ca.settings.handler(({ context }) =>
+          inSign(context, (orgId, actor) => runtime.query<SignCaSettingsResult>('sign.ca.settings', {}, { actor, orgId })),
+        ),
+        save_connection: os.sign.ca.save_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấu hình được chữ ký số');
+            assertSignCaProviderAllowed(input.provider);
+            const certRef = input.certRef?.trim() || (input.provider === 'sandbox' ? 'sandbox-default' : `${input.provider}-default`);
+            if (input.provider === 'sandbox') {
+              return runtime.execute<SignCaConnectionRecord>(
+                'sign.ca.connection.save',
+                {
+                  provider: 'sandbox',
+                  label: input.label,
+                  certRef,
+                  status: input.status,
+                  keyId: 'sandbox-local',
+                  secretEnvelope: 'sandbox-offline',
+                },
+                { actor, orgId },
+              );
+            }
+            if (input.status === 'disabled') {
+              return runtime.execute<SignCaConnectionRecord>(
+                'sign.ca.connection.save',
+                {
+                  provider: input.provider,
+                  label: input.label,
+                  certRef,
+                  status: 'disabled',
+                  keyId: 'disabled',
+                  secretEnvelope: 'disabled',
+                },
+                { actor, orgId },
+              );
+            }
+            if (!input.credentials || input.credentials.provider !== input.provider) {
+              throw new DomainError('SIGN_CA_CREDENTIALS_REQUIRED', 422, 'Provider credentials matching the selected CA are required');
+            }
+            if (!channels?.broker) {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Credential broker is not configured');
+            }
+            const lookup = await runtime.query<{ id: string | null }>(
+              'sign.ca.connection.lookup_id',
+              { provider: input.provider },
+              { actor, orgId },
+            );
+            const targetId = lookup.id ?? randomUUID();
+            const { provider: _providerTag, ...credentialFields } = input.credentials;
+            const sealed = channels.broker.seal(JSON.stringify(credentialFields), {
+              orgId,
+              provider: `sign_ca:${input.provider}`,
+              externalAccountId: targetId,
+            });
+            return runtime.execute<SignCaConnectionRecord>(
+              'sign.ca.connection.save',
+              {
+                id: targetId,
+                provider: input.provider,
+                label: input.label,
+                certRef,
+                status: input.status,
+                keyId: sealed.keyId,
+                secretEnvelope: sealed.envelope.toString('base64'),
+              },
+              { actor, orgId },
+            );
+          }),
+        ),
+        disable_connection: os.sign.ca.disable_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tắt được kết nối chữ ký số');
+            return runtime.execute<SignCaConnectionRecord>('sign.ca.connection.disable', input, { actor, orgId });
+          }),
+        ),
+        test_connection: os.sign.ca.test_connection.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối chữ ký số');
+            const settings = await runtime.query<SignCaSettingsResult>('sign.ca.settings', {}, { actor, orgId });
+            const conn = settings.connections.find((c) => c.id === input.connectionId);
+            if (!conn) {
+              throw new DomainError('SIGN_CA_CONNECTION_NOT_FOUND', 404, 'CA connection not found');
+            }
+            assertSignCaProviderAllowed(conn.provider);
+            if (conn.provider !== 'sandbox') {
+              throw new DomainError(
+                'SIGN_CA_PROVIDER_NOT_READY',
+                503,
+                'Live CA connection checks run through the background worker once #62 is enabled',
+              );
+            }
+            const state = await createSandboxCaAdapter().adapter.testConnection(SANDBOX_CA_SECRET);
+            return runtime.execute<SignCaConnectionRecord>(
+              'sign.ca.connection.record_test',
+              { connectionId: conn.id, state },
+              { actor, orgId },
+            );
+          }),
+        ),
+        list_requests: os.sign.ca.list_requests.handler(signQuery('sign.ca.requests.by_envelope')),
+        initiate_request: os.sign.ca.initiate_request.handler(signCommand('sign.ca.request.initiate')),
       },
     },
   });

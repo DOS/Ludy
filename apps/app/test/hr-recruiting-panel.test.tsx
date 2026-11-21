@@ -8,6 +8,7 @@ import {
   HR_RECRUITING_BRIEF_REASONS,
   type HrCandidateView,
   type HrDepartmentView,
+  type HrInterviewerOption,
   type HrOpeningView,
   type LegalEntity,
 } from '@crove/kernel-contract';
@@ -47,7 +48,7 @@ vi.mock('../src/lib/api.ts', async () => {
       hr: {
         recruiting: {
           openings: { add: vi.fn(), edit: vi.fn(), close: vi.fn() },
-          candidates: { add: vi.fn(), edit: vi.fn(), moveStage: vi.fn(), scheduleInterview: vi.fn(), hire: vi.fn(), erase: vi.fn() },
+          candidates: { add: vi.fn(), edit: vi.fn(), moveStage: vi.fn(), scheduleInterview: vi.fn(), cancelInterview: vi.fn(), hire: vi.fn(), erase: vi.fn() },
           brief: vi.fn(),
         },
       },
@@ -64,14 +65,17 @@ const {
   CandidateForm,
   HireCandidatePanel,
   HrRecruitingPage,
+  InterviewSchedulePanel,
   OpeningForm,
   RecruitingBriefPanel,
   buildHireDefaults,
+  buildInterviewSlotsInput,
   flattenCandidatePages,
   formatLocalDateTimeInput,
   mergeHireDraft,
   nextCandidateCursor,
   parseSkillsInput,
+  resolveDefaultInterviewerId,
 } = await import('../src/routes/hr-recruiting.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
@@ -80,6 +84,8 @@ const ENTITY_ID = '00000000-0000-7000-8000-000000000001';
 const DEPT_ID = '00000000-0000-7000-8000-000000000011';
 const OPENING_ID = '00000000-0000-7000-8000-000000000021';
 const CANDIDATE_ID = '00000000-0000-7000-8000-000000000031';
+const OWNER_USER_ID = '00000000-0000-7000-8000-000000000051';
+const MEMBER_USER_ID = '00000000-0000-7000-8000-000000000052';
 const NOW_ISO = '2026-11-16T08:00:00.000Z';
 
 function wrap(ui: React.ReactNode, locale: 'vi' | 'en' = 'vi') {
@@ -130,6 +136,8 @@ const sampleCandidate: HrCandidateView = {
   interviewEventId: '00000000-0000-7000-8000-000000000041',
   interviewStartsAt: '2026-11-20T02:00:00.000Z',
   interviewEndsAt: '2026-11-20T02:45:00.000Z',
+  interviewerUserId: OWNER_USER_ID,
+  interviewerName: 'Lê Hoàng Minh',
   hiredEmployeeId: null,
   erasedAt: null,
   createdAt: NOW_ISO,
@@ -190,6 +198,7 @@ describe('HR recruiting UI (#3425)', () => {
       'HR_RECRUITING_TRANSITION_REFUSED',
       'HR_INTERVIEW_DURATION_INVALID',
       'HR_INTERVIEW_SLOT_TAKEN',
+      'HR_INTERVIEWER_INVALID',
     ] as const;
     for (const code of codes) {
       const err = { code, status: 422, message: viMessages.kernelErrors.codes[code] };
@@ -347,5 +356,97 @@ describe('HR recruiting UI (#3425)', () => {
       payFunction: 'overhead',
       jobTitle: 'Kế toán trưởng',
     });
+  });
+
+  it('supports interviewer picker defaults, exceptEventId scoping, assigned interviewer display, and standalone cancel button (#4299)', () => {
+    expect(viMessages.commands.hr.recruiting.candidate.cancel_interview).toBeTruthy();
+    expect(en.commands.hr.recruiting.candidate.cancel_interview).toBeTruthy();
+    expect(viMessages.commands.hr.recruiting.interviewers.list).toBeTruthy();
+    expect(en.commands.hr.recruiting.interviewers.list).toBeTruthy();
+
+    const interviewers: HrInterviewerOption[] = [
+      { userId: OWNER_USER_ID, displayName: 'Lê Hoàng Minh', role: 'owner' },
+      { userId: MEMBER_USER_ID, displayName: 'Trần Thu Trang', role: 'member' },
+    ];
+
+    // Defaults to assigned interviewer when rescheduling, else current user, else first eligible interviewer.
+    expect(resolveDefaultInterviewerId(sampleCandidate, interviewers, MEMBER_USER_ID)).toBe(OWNER_USER_ID);
+    expect(resolveDefaultInterviewerId({ interviewerUserId: null }, interviewers, MEMBER_USER_ID)).toBe(MEMBER_USER_ID);
+    expect(resolveDefaultInterviewerId({ interviewerUserId: '00000000-0000-7000-8000-000000000099' }, interviewers, MEMBER_USER_ID)).toBe(MEMBER_USER_ID);
+    expect(resolveDefaultInterviewerId({ interviewerUserId: null }, interviewers, null)).toBe(OWNER_USER_ID);
+
+    // Passes exceptEventId only when querying slots for the candidate's current active interviewer.
+    expect(
+      buildInterviewSlotsInput({
+        candidate: sampleCandidate,
+        interviewerUserId: OWNER_USER_ID,
+        durationMinutes: 45,
+      }),
+    ).toEqual({
+      interviewerUserId: OWNER_USER_ID,
+      durationMinutes: 45,
+      maxSlots: 8,
+      exceptEventId: sampleCandidate.interviewEventId,
+    });
+    expect(
+      buildInterviewSlotsInput({
+        candidate: sampleCandidate,
+        interviewerUserId: MEMBER_USER_ID,
+        durationMinutes: 45,
+      }),
+    ).toEqual({
+      interviewerUserId: MEMBER_USER_ID,
+      durationMinutes: 45,
+      maxSlots: 8,
+    });
+
+    // Shows assigned interviewer name and standalone cancel button (>= 44px min-h-11) with inline confirm box.
+    const scheduledVi = wrap(<InterviewSchedulePanel candidate={sampleCandidate} />, 'vi');
+    expect(scheduledVi).toContain('Lê Hoàng Minh');
+    expect(scheduledVi).toContain('hr-interview-interviewer');
+    expect(scheduledVi).toContain('hr-interview-cancel-ask');
+    expect(scheduledVi).toContain(viMessages.hrRecruiting.interview.cancelAction);
+    expect(scheduledVi).toContain('min-h-11');
+
+    const confirmEn = wrap(<InterviewSchedulePanel candidate={sampleCandidate} initialConfirmCancel={true} />, 'en');
+    expect(confirmEn).toContain('hr-interview-cancel-confirm-box');
+    expect(confirmEn).toContain('hr-interview-cancel-confirm');
+    expect(confirmEn).toContain('hr-interview-cancel-keep');
+    expect(confirmEn).toContain(en.hrRecruiting.interview.cancelConfirmButton);
+
+    // Unscheduled candidate does not show cancel button; hired candidate hides both toggle and cancel.
+    const unscheduledHtml = wrap(
+      <InterviewSchedulePanel
+        candidate={{ ...sampleCandidate, interviewEventId: null, interviewStartsAt: null, interviewEndsAt: null, interviewerUserId: null, interviewerName: null }}
+      />,
+      'vi',
+    );
+    expect(unscheduledHtml).not.toContain('hr-interview-cancel-ask');
+    expect(unscheduledHtml).toContain('hr-interview-toggle');
+
+    const hiredHtml = wrap(<InterviewSchedulePanel candidate={{ ...sampleCandidate, stage: 'hired' }} />, 'vi');
+    expect(hiredHtml).not.toContain('hr-interview-toggle');
+    expect(hiredHtml).not.toContain('hr-interview-cancel-ask');
+
+    // Open slot picker renders interviewer selector options and slots from cached interviewer list.
+    cache.current.setQueryData(['me', 'get', {}], { userId: OWNER_USER_ID, email: 'owner@example.vn', displayName: 'Lê Hoàng Minh', orgs: [] });
+    cache.current.setQueryData(['hr', 'recruiting', 'interviewers', 'list', {}], interviewers);
+    cache.current.setQueryData(
+      ['hr', 'recruiting', 'interviewSlots', buildInterviewSlotsInput({ candidate: sampleCandidate, interviewerUserId: OWNER_USER_ID, durationMinutes: 45 })],
+      {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hoursSaved: true,
+        slots: [{ startIso: '2026-11-22T02:00:00.000Z', endIso: '2026-11-22T02:45:00.000Z' }],
+      },
+    );
+    const pickerVi = wrap(<InterviewSchedulePanel candidate={sampleCandidate} initialOpen={true} />, 'vi');
+    expect(pickerVi).toContain('hr-interview-interviewer-select');
+    expect(pickerVi).toContain('Lê Hoàng Minh (Chủ sở hữu)');
+    expect(pickerVi).toContain('Trần Thu Trang (Thành viên)');
+    expect(pickerVi).toContain('hr-interview-slot');
+
+    const pickerEn = wrap(<InterviewSchedulePanel candidate={sampleCandidate} initialOpen={true} />, 'en');
+    expect(pickerEn).toContain('Lê Hoàng Minh (Owner)');
+    expect(pickerEn).toContain('Trần Thu Trang (Member)');
   });
 });

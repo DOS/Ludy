@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import {
+  JOB_LOSS_TERMINATION_REASONS,
   PROBATION_CAPS,
+  calculateJobLossAllowance,
   calculateSeveranceAllowance,
   calculateThirteenthMonthSalary,
   countCompletedCalendarMonths,
@@ -659,6 +661,174 @@ describe('calculateSeveranceAllowance (Labor Code 2019 Art. 46 & Decree 145 Art.
         totalWorkedMonths: 24,
         sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
       }),
+    ).toThrow(/all 6 consecutive/);
+  });
+});
+
+describe('calculateJobLossAllowance (Labor Code 2019 Arts. 42, 43, 47 & Decree 145 Art. 8)', () => {
+  it('exports the expected Art. 42/43 and non-Art. 42/43 termination reasons', () => {
+    expect(JOB_LOSS_TERMINATION_REASONS).toEqual([
+      'organizational_restructuring',
+      'economic_reasons',
+      'merger_division_transfer',
+      'other_non_art42_art43',
+    ]);
+  });
+
+  it('awards the 2-month minimum floor for all eligible Art. 42/43 reasons, even with 0 qualifying months due to BHTN', () => {
+    const wages = ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'];
+
+    for (const terminationReason of ['organizational_restructuring', 'economic_reasons', 'merger_division_transfer'] as const) {
+      const zeroQualifying = calculateJobLossAllowance({
+        totalWorkedMonths: 24,
+        unemploymentInsuredMonths: 24,
+        sixMonthWages: wages,
+        terminationReason,
+      });
+      expect(zeroQualifying).toMatchObject({
+        eligible: true,
+        reason: null,
+        qualifyingMonths: 0,
+        qualifyingYears: '0',
+        averageWage: '10000000',
+        amount: '20000000',
+        minimumFloorApplied: true,
+        pitExemptAmount: '20000000',
+        taxableExcess: '0',
+      });
+    }
+
+    // 1.5 qualifying years (< 2 months) still triggers the 2-month floor with decimal.js ROUND_HALF_UP.
+    // Avg = (10M * 5 + 10,000,002) / 6 = 10,000,000.3333... -> 2 * avg = 20,000,000.6666... -> 20000001.
+    const floorWithPrecision = calculateJobLossAllowance({
+      totalWorkedMonths: 36,
+      unemploymentInsuredMonths: 18,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000002'],
+    });
+    expect(floorWithPrecision).toMatchObject({
+      eligible: true,
+      qualifyingMonths: 18,
+      qualifyingYears: '1.5',
+      amount: '20000001',
+      minimumFloorApplied: true,
+    });
+    expect(floorWithPrecision.rulesUsed.map((r) => [r.id, r.confidence, r.status])).toEqual([
+      ['job_loss.labor_code_art47@2021-01-01', 'primary', 'commentary'],
+      ['job_loss.decree145_art8@2021-02-01', 'commentary', 'commentary'],
+      ['severance.pit_exemption@2026-01-01', 'commentary', 'commentary'],
+    ]);
+    expect(floorWithPrecision.rulesUsed.every((r) => r.cite.includes('#2535'))).toBe(true);
+  });
+
+  it('beats the 2-month floor when qualifyingYears > 2 and splits PIT exempt vs taxable excess', () => {
+    // 2 years exact (24 qualifying months) matches the 2-month floor without floor override.
+    const exactTwoYears = calculateJobLossAllowance({
+      totalWorkedMonths: 24,
+      unemploymentInsuredMonths: 0,
+      sixMonthWages: ['12000000', '12000000', '12000000', '12000000', '12000000', '12000000'],
+      terminationReason: 'economic_reasons',
+    });
+    expect(exactTwoYears).toMatchObject({
+      eligible: true,
+      qualifyingYears: '2',
+      amount: '24000000',
+      minimumFloorApplied: false,
+    });
+
+    // 40 worked - 12 BHTN - 2 settled = 26 qualifying months -> 2.5 years.
+    // Avg = (10M * 5 + 10,000,001) / 6 = 10,000,000.16666... -> 2.5 * avg = 25,000,000.4166... -> 25000000.
+    const overFloor = calculateJobLossAllowance({
+      totalWorkedMonths: 40,
+      unemploymentInsuredMonths: 12,
+      priorSettledMonths: 2,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000001'],
+      paidAmount: '30000000',
+      terminationReason: 'merger_division_transfer',
+    });
+    expect(overFloor).toMatchObject({
+      eligible: true,
+      qualifyingMonths: 26,
+      qualifyingYears: '2.5',
+      amount: '25000000',
+      minimumFloorApplied: false,
+      paidAmount: '30000000',
+      pitExemptAmount: '25000000',
+      taxableExcess: '5000000',
+    });
+
+    // Paying less than statutory keeps full paid amount PIT-exempt with 0 taxable excess.
+    const underPaid = calculateJobLossAllowance({
+      totalWorkedMonths: 30,
+      unemploymentInsuredMonths: 0,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+      paidAmount: '18000000',
+    });
+    expect(underPaid).toMatchObject({
+      amount: '25000000',
+      minimumFloorApplied: false,
+      pitExemptAmount: '18000000',
+      taxableExcess: '0',
+    });
+  });
+
+  it('returns ineligible when totalWorkedMonths < 12 or termination reason is not Art. 42/43', () => {
+    const under12 = calculateJobLossAllowance({
+      totalWorkedMonths: 11,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+      paidAmount: '15000000',
+    });
+    expect(under12).toMatchObject({
+      eligible: false,
+      reason: 'worked_under_12_months',
+      qualifyingYears: '0',
+      amount: '0',
+      minimumFloorApplied: false,
+      pitExemptAmount: '0',
+      taxableExcess: '15000000',
+    });
+
+    const nonArt42 = calculateJobLossAllowance({
+      totalWorkedMonths: 36,
+      sixMonthWages: ['12000000', '12000000', '12000000', '12000000', '12000000', '12000000'],
+      terminationReason: 'other_non_art42_art43',
+      paidAmount: '12000000',
+    });
+    expect(nonArt42).toMatchObject({
+      eligible: false,
+      reason: 'not_job_loss_reason',
+      qualifyingYears: '0',
+      amount: '0',
+      minimumFloorApplied: false,
+      pitExemptAmount: '0',
+      taxableExcess: '12000000',
+    });
+
+    const under6 = calculateJobLossAllowance({
+      totalWorkedMonths: 4,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000'],
+    });
+    expect(under6).toMatchObject({
+      eligible: false,
+      reason: 'worked_under_12_months',
+      averageWage: '10000000',
+      amount: '0',
+      minimumFloorApplied: false,
+    });
+  });
+
+  it('rejects invalid month counts, unknown reasons, or partial wage history', () => {
+    expect(() =>
+      calculateJobLossAllowance({ totalWorkedMonths: -1, sixMonthWages: ['10000000'] }),
+    ).toThrow(/non-negative integer/);
+    expect(() =>
+      calculateJobLossAllowance({
+        totalWorkedMonths: 24,
+        sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+        terminationReason: 'unknown_reason' as never,
+      }),
+    ).toThrow(/Unknown terminationReason/);
+    expect(() =>
+      calculateJobLossAllowance({ totalWorkedMonths: 12, sixMonthWages: ['10000000'] }),
     ).toThrow(/all 6 consecutive/);
   });
 });

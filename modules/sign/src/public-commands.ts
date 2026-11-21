@@ -204,13 +204,19 @@ export const signerMailData = defineCommand({
 
     const signer = await ctx.trx
       .selectFrom('crove_sign.signer')
-      .select(['id', 'name', 'signer_role', 'status'])
+      .select(['id', 'name', 'signer_role', 'status', 'delivery_mode', 'email'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', envelope.id)
       .where('id', '=', input.signerId)
       .forUpdate()
       .executeTakeFirst();
-    if (!signer || signer.signer_role === 'cc' || (signer.status !== 'pending' && signer.status !== 'viewed')) {
+    if (
+      !signer ||
+      signer.signer_role === 'cc' ||
+      (signer.status !== 'pending' && signer.status !== 'viewed') ||
+      signer.delivery_mode !== 'email' ||
+      !signer.email
+    ) {
       return null;
     }
 
@@ -322,8 +328,58 @@ export const envelopeCompletedMailData = defineCommand({
   },
 });
 
+export const signerDelegatedMailData = defineCommand({
+  name: 'sign.signer.delegated_mail_data',
+  input: z.strictObject({
+    envelopeId: zId,
+    signerId: zId,
+  }),
+  risk: 'R0',
+  sideEffect: 'none',
+  access: 'system',
+  handler: async (
+    ctx,
+    input,
+  ): Promise<{
+    orgSlug: string;
+    fromName: string;
+    fromEmail: string | null;
+    delegateName: string;
+    delegateEmail: string;
+    reason: string | null;
+  } | null> => {
+    assertSystem(ctx);
+    const [tenant, signer] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_kernel.tenant')
+        .select(['slug'])
+        .where('org_id', '=', ctx.orgId)
+        .executeTakeFirst(),
+      ctx.trx
+        .selectFrom('crove_sign.signer')
+        .select(['name', 'email', 'delegated_from_name', 'delegated_from_email', 'delegation_reason'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', input.envelopeId)
+        .where('id', '=', input.signerId)
+        .executeTakeFirst(),
+    ]);
+    if (!tenant || !signer || !signer.delegated_from_name || !signer.email) {
+      return null;
+    }
+    return {
+      orgSlug: tenant.slug,
+      fromName: signer.delegated_from_name,
+      fromEmail: signer.delegated_from_email,
+      delegateName: signer.name,
+      delegateEmail: signer.email,
+      reason: signer.delegation_reason,
+    };
+  },
+});
+
 export const signPublicCommands = [
   publicOtpMailData,
   signerMailData,
+  signerDelegatedMailData,
   envelopeCompletedMailData,
 ] as const;

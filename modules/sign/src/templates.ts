@@ -15,6 +15,7 @@ import {
   zSignTemplateInstantiateInput,
   zSignTemplateListInput,
   zSignTemplateRolesSetInput,
+  zSignSharedSummary,
   zSignTemplateUpdateInput,
   type zSignTemplateDirectLinkDetail,
   type zSignTemplateDirectLinkSummary,
@@ -40,7 +41,9 @@ import {
   normalizeNormalizedFieldBoxes,
   parseDetectedTags,
   parsePageDimensions,
+  parseSharedSummary,
   requireSignSourceFile,
+  sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
   toSignMicroNorm,
   userIdOf,
@@ -362,6 +365,7 @@ export const templateGet = defineQuery({
         title: tpl.title,
         description: tpl.description,
         routingMode: tpl.routing_mode,
+        allowDelegation: tpl.allow_delegation,
         subject: tpl.subject,
         message: tpl.message,
         expiresInHours: tpl.expires_in_hours,
@@ -373,6 +377,8 @@ export const templateGet = defineQuery({
         pageCount: tpl.page_count,
         pageDimensions: parsePageDimensions(tpl.page_dimensions_json),
         detectedTags: parseDetectedTags(tpl.detected_tags_json, tpl.page_count),
+        shareSummaryWithSigners: Boolean(tpl.share_summary_with_signers),
+        sharedSummary: parseSharedSummary(tpl.shared_summary_json, tpl.page_count),
         version: tpl.version,
         archivedAt: tpl.archived_at ? new Date(tpl.archived_at).toISOString() : null,
         createdBy: tpl.created_by,
@@ -452,6 +458,7 @@ export const templateCreate = defineCommand({
       'title',
       'description',
       'routing_mode',
+      'allow_delegation',
       'subject',
       'message',
       'expires_in_hours',
@@ -506,6 +513,7 @@ export const templateCreate = defineCommand({
       sourceGeneration: string;
       sourceSha256: string;
       routingMode: 'parallel' | 'sequential';
+      allowDelegation: boolean;
       subject: string | null;
       message: string | null;
       inspectStatus: 'pending' | 'passed';
@@ -523,6 +531,7 @@ export const templateCreate = defineCommand({
           'source_kind',
           'created_by',
           'routing_mode',
+          'allow_delegation',
           'subject',
           'message',
           'source_file_id',
@@ -569,6 +578,7 @@ export const templateCreate = defineCommand({
         sourceGeneration: env.source_generation,
         sourceSha256: env.source_sha256,
         routingMode: input.routingMode ?? env.routing_mode,
+        allowDelegation: input.allowDelegation ?? env.allow_delegation,
         subject: input.subject !== undefined ? input.subject : env.subject,
         message: input.message !== undefined ? input.message : env.message,
         inspectStatus: reused ? 'passed' : 'pending',
@@ -601,6 +611,7 @@ export const templateCreate = defineCommand({
         sourceGeneration: file.generation,
         sourceSha256: file.sha256,
         routingMode: input.routingMode ?? 'parallel',
+        allowDelegation: input.allowDelegation ?? false,
         subject: input.subject ?? null,
         message: input.message ?? null,
         inspectStatus: reused ? 'passed' : 'pending',
@@ -623,6 +634,7 @@ export const templateCreate = defineCommand({
         title: input.title,
         description: input.description ?? null,
         routing_mode: sourceMeta.routingMode,
+        allow_delegation: sourceMeta.allowDelegation,
         subject: sourceMeta.subject,
         message: sourceMeta.message,
         expires_in_hours: input.expiresInHours ?? null,
@@ -879,6 +891,7 @@ export const templateUpdate = defineCommand({
       'title',
       'description',
       'routing_mode',
+      'allow_delegation',
       'subject',
       'message',
       'expires_in_hours',
@@ -909,6 +922,7 @@ export const templateUpdate = defineCommand({
         title: input.title ?? row.title,
         description: input.description === undefined ? row.description : input.description,
         routing_mode: input.routingMode ?? row.routing_mode,
+        allow_delegation: input.allowDelegation ?? row.allow_delegation,
         subject: input.subject === undefined ? row.subject : input.subject,
         message: input.message === undefined ? row.message : input.message,
         expires_in_hours: input.expiresInHours === undefined ? row.expires_in_hours : input.expiresInHours,
@@ -1484,6 +1498,7 @@ export const templateInstantiate = defineCommand({
       'message',
       'status',
       'routing_mode',
+      'allow_delegation',
       'source_kind',
       'source_id',
       'source_file_id',
@@ -1494,6 +1509,8 @@ export const templateInstantiate = defineCommand({
       'page_count',
       'page_dimensions_json',
       'detected_tags_json',
+      'share_summary_with_signers',
+      'shared_summary_json',
       'expires_at',
       'sent_at',
       'version',
@@ -1654,6 +1671,9 @@ export const templateInstantiate = defineCommand({
       }
     }
 
+    const inheritedSummary = parseSharedSummary(tpl.shared_summary_json, tpl.page_count);
+    const inheritedShareFlag = Boolean(tpl.share_summary_with_signers && inheritedSummary !== null);
+
     const env = await ctx.trx
       .insertInto('crove_sign.envelope')
       .values({
@@ -1663,6 +1683,7 @@ export const templateInstantiate = defineCommand({
         message: input.message === undefined ? tpl.message : input.message,
         status: 'draft',
         routing_mode: tpl.routing_mode,
+        allow_delegation: input.allowDelegation ?? tpl.allow_delegation,
         source_kind: sourceKind,
         source_id: sourceId,
         source_file_id: tpl.source_file_id,
@@ -1670,6 +1691,8 @@ export const templateInstantiate = defineCommand({
         source_generation: tpl.source_generation,
         source_sha256: tpl.source_sha256,
         inspect_status: 'pending',
+        share_summary_with_signers: inheritedShareFlag,
+        shared_summary_json: inheritedSummary ? JSON.stringify(inheritedSummary) : null,
         expires_at: expiresAt,
         created_by: userId,
         created_at: ctx.now,
@@ -1822,10 +1845,76 @@ export const templateInstantiate = defineCommand({
   },
 });
 
+export const templateSharedSummarySet = defineCommand({
+  name: 'sign.template.shared_summary_set',
+  input: z.strictObject({
+    templateId: zId,
+    shareSummaryWithSigners: z.boolean(),
+    sharedSummary: zSignSharedSummary.nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: SIGN_WRITERS,
+  target: templateTarget,
+  writes: [
+    tableWrite(signManifest.tables, 'crove_sign', 'template', [
+      'share_summary_with_signers',
+      'shared_summary_json',
+      'version',
+      'updated_at',
+    ]),
+  ],
+  handler: async (ctx, input) => {
+    const userId = userIdOf(ctx);
+    const row = await lockTemplate(ctx, input.templateId);
+    assertTemplateEditable(row.status);
+    if (ctx.role !== 'owner' && ctx.role !== 'admin' && row.created_by !== userId) {
+      throw new DomainError(
+        'SIGN_FORBIDDEN',
+        403,
+        'Only the template creator, organization owner, or admin can update the counterparty summary',
+      );
+    }
+
+    const cleanSummary = sanitizeSharedSummaryForWrite(input.sharedSummary, row.page_count);
+    if (input.shareSummaryWithSigners && cleanSummary === null) {
+      throw new DomainError('VALIDATION', 422, 'sharedSummary is required when shareSummaryWithSigners is true');
+    }
+
+    const nextVersion = row.version + 1;
+    await ctx.trx
+      .updateTable('crove_sign.template')
+      .set({
+        share_summary_with_signers: input.shareSummaryWithSigners,
+        shared_summary_json: cleanSummary ? JSON.stringify(cleanSummary) : null,
+        version: nextVersion,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', row.id)
+      .execute();
+
+    ctx.audit({
+      templateId: row.id,
+      shareSummaryWithSigners: input.shareSummaryWithSigners,
+      keyTermCount: cleanSummary?.keyTerms.length ?? 0,
+      version: nextVersion,
+    });
+
+    return {
+      templateId: row.id,
+      shareSummaryWithSigners: input.shareSummaryWithSigners,
+      sharedSummary: cleanSummary,
+      version: nextVersion,
+    };
+  },
+});
+
 export const signTemplateCommands = [
   templateCreate,
   templateInspectComplete,
   templateUpdate,
+  templateSharedSummarySet,
   templateRolesSet,
   templateFieldsSet,
   templateArchive,

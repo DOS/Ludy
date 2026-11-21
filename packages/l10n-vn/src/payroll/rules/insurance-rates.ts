@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { defineRule, type PayrollRule, type RuleRow } from '../rule-types.ts';
+import { INSURANCE_FUNDS, defineRule, type InsuranceFund, type PayrollRule, type RuleRow } from '../rule-types.ts';
 
 // Insurance rates by fund, in percent of the contribution wage (plan section 5, rows 2, 7 and 8). No rate changed in 2026
 // in any source read; the draft decree that would reduce the work accident rate to 0.3% until 2027-12-31 is unverified
 // and not encoded (a new rate would be a new row).
 
-/** The funds, in the order a breakdown lists them. */
-export const INSURANCE_FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
-export type InsuranceFund = (typeof INSURANCE_FUNDS)[number];
+export { INSURANCE_FUNDS, type InsuranceFund };
 
 const SOCIAL_LAW = 'Law 41/2024/QH15 on Social Insurance (in force 2025-07-01; consolidated 19/VBHN-VPQH)';
 
@@ -83,6 +81,47 @@ export const INSURANCE_SUSPENSION_RULES: readonly RuleRow<'insurance_suspension'
     },
     value: { unpaidWorkingDays: '14' },
   }),
+  defineRule({
+    kind: 'insurance_suspension',
+    key: 'sickness_leave',
+    effectiveFrom: '2025-07-01',
+    status: 'commentary',
+    source: {
+      cite: `${SOCIAL_LAW} Art. 33(5): a month with 14 or more working days of sickness leave under the social insurance regime has no compulsory insurance contribution from either side; pending accountant confirmation (#2535)`,
+      confidence: 'primary',
+    },
+    value: { unpaidWorkingDays: '14' },
+  }),
+  defineRule({
+    kind: 'insurance_suspension',
+    key: 'maternity_leave',
+    effectiveFrom: '2025-07-01',
+    status: 'commentary',
+    source: {
+      cite: `${SOCIAL_LAW} Arts. 33(5) and 34(3): a month with 14 or more working days of maternity leave has no compulsory insurance contribution from either side and still counts as social insurance contribution time; pending accountant confirmation (#2535)`,
+      confidence: 'primary',
+    },
+    value: { unpaidWorkingDays: '14' },
+  }),
 ];
 
-export const INSURANCE_RULES: readonly PayrollRule[] = [...INSURANCE_RATE_RULES, ...UNION_FEE_RULES, ...INSURANCE_SUSPENSION_RULES];
+export const FOREIGN_INSURANCE_RULES: readonly RuleRow<'foreign_insurance'>[] = [
+  defineRule({
+    kind: 'foreign_insurance',
+    key: 'default',
+    effectiveFrom: '2025-07-01',
+    status: 'commentary',
+    source: {
+      cite: `Decree 143/2018/ND-CP and ${SOCIAL_LAW} Art. 2(2) (plan section 5, row 7): foreign employees working in Vietnam with a work permit or practice certificate on an indefinite or >= 12-month contract participate in compulsory BHXH and BHYT, exempt from unemployment insurance (BHTN); intra-company transferees and employees at or above retirement age are exempt; pending accountant confirmation (#2535)`,
+      confidence: 'commentary',
+    },
+    value: { minContractMonths: 12, exemptFunds: ['unemployment'] },
+  }),
+];
+
+export const INSURANCE_RULES: readonly PayrollRule[] = [
+  ...INSURANCE_RATE_RULES,
+  ...UNION_FEE_RULES,
+  ...INSURANCE_SUSPENSION_RULES,
+  ...FOREIGN_INSURANCE_RULES,
+];

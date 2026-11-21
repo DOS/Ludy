@@ -2,18 +2,26 @@
 // Worker handlers and scheduled sweeps for @crove/mod-sign (#3323, ADR-0053).
 // Inspect and seal jobs check runtime.appOn(orgId, 'sign', { fresh: true }) (ADR-0053 'work'); expiry and
 // cleanup sweeps run across all active orgs (ADR-0053 'keeping') so sent envelopes expire and stale secrets prune when disabled.
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { EXTRACT_LIMITS, INPUT_ERROR_CODES, type ExtractClient } from '@crove/extract-contract';
+import {
+  EXTRACT_LIMITS,
+  INPUT_ERROR_CODES,
+  encodePdfEmbedCmsInput,
+  type ExtractClient,
+} from '@crove/extract-contract';
 import {
   BlobIntegrityError,
   BlobTooLargeError,
+  CredentialError,
   DomainError,
   fileKey,
   putFile,
   readVerified,
   sha256Hex,
   type BlobStore,
+  type CredentialBroker,
   type Runtime,
 } from '@crove/kernel-runtime';
 import {
@@ -24,10 +32,21 @@ import {
   buildPdfSealInputBytes,
   generateCertificateCode,
   verifyEventChain,
+  type SealedCaConnectionSecret,
+  type SignCaJobBeginResult,
+  type SignCaJobRecordResult,
   type SignInspectJobData,
   type SignPreExpirySweepResult,
   type SignSealJobData,
 } from '@crove/mod-sign';
+import {
+  CaProviderError,
+  SANDBOX_CA_SECRET,
+  createSandboxCaAdapter,
+  type CaProviderId,
+  type CaSignSession,
+  type CaSigningAdapter,
+} from '@crove/sign';
 
 export const SIGN_ACTOR = { type: 'system' as const, component: 'sign.worker' };
 export const SIGN_EXPIRE_SWEEP_CRON = '*/5 * * * *';
@@ -38,6 +57,11 @@ const SWEEP_ORG_BATCH = 100;
 export interface SignEnvelopeJob {
   orgId: string;
   envelopeId: string;
+}
+
+export interface SignCaReconcileJob {
+  orgId: string;
+  requestId: string;
 }
 
 export interface SignTemplateInspectJob {
@@ -58,6 +82,13 @@ export interface SignWorkerDeps {
   store: BlobStore;
   extract: ExtractClient;
 }
+
+export interface SignCaWorkerDeps extends SignWorkerDeps {
+  broker?: CredentialBroker | undefined;
+  caAdapters?: Partial<Record<CaProviderId, CaSigningAdapter>> | undefined;
+}
+
+const defaultSandboxCaAdapter = createSandboxCaAdapter().adapter;
 
 export type SignSweepDeps = Pick<SignWorkerDeps, 'workerDb' | 'runtime'> & {
   log?: Pick<Console, 'error'>;
@@ -216,6 +247,7 @@ export async function runSignPdfSealJob(
       completedAtIso,
       eventChainTipHash: chain.tipHash,
       signers,
+      events,
     });
     sealInputBytes = buildPdfSealInputBytes({
       sourcePdfBytes,
@@ -452,6 +484,481 @@ interface TemplateRecoveryCursor {
   templateId: string;
 }
 
+interface CaRecoveryCursor {
+  dueAt: string;
+  orgId: string;
+  requestId: string;
+}
+
+const PADES_PLACEHOLDER_BYTES = 32_768;
+const PLACEHOLDER_DER_SEQUENCE_BASE64 = 'MAA=';
+
+function padesSubFilterForProvider(provider: CaProviderId): 'ETSI.CAdES.detached' | 'adbe.pkcs7.detached' {
+  return provider === 'sandbox' ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached';
+}
+
+function byteRangeSha256Hex(pdfBytes: Uint8Array, byteRange: readonly [number, number, number, number]): string {
+  const [b0, len0, b2, len2] = byteRange;
+  return createHash('sha256')
+    .update(pdfBytes.subarray(b0, b0 + len0))
+    .update(pdfBytes.subarray(b2, b2 + len2))
+    .digest('hex');
+}
+
+function resolveCaAdapter(
+  provider: CaProviderId,
+  overrides?: Partial<Record<CaProviderId, CaSigningAdapter>>,
+): CaSigningAdapter {
+  const custom = overrides?.[provider];
+  if (custom) return custom;
+  if (provider === 'sandbox') return defaultSandboxCaAdapter;
+  throw new DomainError(
+    'SIGN_LIVE_CA_GATED',
+    422,
+    'Live external Vietnam CA signing is gated pending #62 legal review and worker egress wiring',
+  );
+}
+
+export async function runSignCaReconcileJob(
+  deps: SignCaWorkerDeps,
+  job: SignCaReconcileJob,
+): Promise<{
+  status: 'skipped_app_off' | 'skipped' | 'pending' | 'signed' | 'failed';
+  reason?: string;
+  padesFileId?: string;
+  pollAttempts?: number;
+  nextPollAt?: string | null;
+}> {
+  if (!(await deps.runtime.appOn(job.orgId, 'sign', { fresh: true }))) {
+    return { status: 'skipped_app_off' };
+  }
+
+  const options = { actor: SIGN_ACTOR, orgId: job.orgId };
+  let begin = await deps.runtime.execute<SignCaJobBeginResult>(
+    'sign.ca.request.job_begin',
+    { requestId: job.requestId, prepareOnly: true },
+    options,
+  );
+  if (begin.action === 'none') {
+    return { status: 'skipped', reason: begin.reason };
+  }
+
+  const recordTerminalFailure = async (errorCode: string, txId?: string | null): Promise<{ status: 'failed'; reason: string }> => {
+    if (begin.action === 'none') return { status: 'failed', reason: errorCode };
+    await deps.runtime.execute(
+      'sign.ca.request.job_record',
+      {
+        requestId: begin.requestId,
+        callKey: begin.callKey,
+        outcome: 'terminal_failure',
+        status: 'failed',
+        errorCode: errorCode.slice(0, 128),
+        ...(txId ? { externalTxId: txId } : {}),
+      },
+      options,
+    );
+    return { status: 'failed', reason: errorCode };
+  };
+
+  let cachedSealedPdfBytes: Uint8Array | null = null;
+  const loadSealedPdfBytes = async (): Promise<Uint8Array> => {
+    if (cachedSealedPdfBytes) return cachedSealedPdfBytes;
+    if (begin.action === 'none') throw new Error('unreachable');
+    cachedSealedPdfBytes = await readVerified(
+      deps.store,
+      {
+        key: begin.sealedStorageKey,
+        generation: begin.sealedGeneration,
+        sha256: begin.sealedSha256,
+      },
+      EXTRACT_LIMITS.maxFileBytes,
+    );
+    return cachedSealedPdfBytes;
+  };
+
+  if (begin.action === 'prepare') {
+    let sealedPdfBytes: Uint8Array;
+    try {
+      sealedPdfBytes = await loadSealedPdfBytes();
+    } catch (error) {
+      if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+        return recordTerminalFailure(error instanceof BlobTooLargeError ? 'BLOB_TOO_LARGE' : 'BLOB_INTEGRITY_ERROR');
+      }
+      throw error;
+    }
+    const subFilter = padesSubFilterForProvider(begin.provider);
+    const signerName = `Crove eSign (${begin.provider})`;
+    const reason = `PAdES seal for ${begin.envelopeTitle.slice(0, 120)}`;
+    const fieldName = `CroveCA_${begin.requestId.replace(/-/g, '').slice(0, 16)}`;
+    const prepPayload = encodePdfEmbedCmsInput({
+      pdfBase64: Buffer.from(sealedPdfBytes).toString('base64'),
+      cmsDerBase64: PLACEHOLDER_DER_SEQUENCE_BASE64,
+      placeholderBytes: PADES_PLACEHOLDER_BYTES,
+      signerName,
+      reason,
+      signedAtIso: begin.requestCreatedAtIso,
+      fieldName,
+      subFilter,
+    });
+    const prepResult = await deps.extract.extract('pdf_embed_cms', prepPayload);
+    if (!prepResult.ok) {
+      if (INPUT_ERROR_CODES.includes(prepResult.code)) {
+        return recordTerminalFailure(`PDF_EMBED_${prepResult.code}`);
+      }
+      throw new Error(`pdf_embed_cms placeholder transient failure (${prepResult.code}): ${prepResult.message}`);
+    }
+    const prepBytes = Uint8Array.from(Buffer.from(prepResult.pdfBase64, 'base64'));
+    const computedByteRangeSha256 = byteRangeSha256Hex(prepBytes, prepResult.byteRange);
+    begin = await deps.runtime.execute<SignCaJobBeginResult>(
+      'sign.ca.request.job_begin',
+      { requestId: job.requestId, byteRangeDigestSha256: computedByteRangeSha256 },
+      options,
+    );
+    if (begin.action === 'none') {
+      return { status: 'skipped', reason: begin.reason };
+    }
+  }
+
+  let secret = SANDBOX_CA_SECRET;
+  if (begin.provider !== 'sandbox') {
+    if (!deps.broker) {
+      const rec = await deps.runtime.execute<SignCaJobRecordResult>(
+        'sign.ca.request.job_record',
+        {
+          requestId: begin.requestId,
+          callKey: begin.callKey,
+          outcome: 'transient_retry',
+          errorCode: 'BROKER_NOT_CONFIGURED',
+        },
+        options,
+      );
+      return rec.status === 'failed'
+        ? { status: 'failed', reason: 'broker_unavailable' }
+        : { status: 'pending', reason: 'broker_unavailable', pollAttempts: rec.pollAttempts, nextPollAt: rec.nextPollAt };
+    }
+    try {
+      const sealed = await deps.runtime.query<SealedCaConnectionSecret>(
+        'sign.ca.connection.secret',
+        { connectionId: begin.caConnectionId },
+        options,
+      );
+      secret = deps.broker.open(
+        {
+          keyId: sealed.keyId,
+          envelope: Buffer.from(sealed.secretEnvelope, 'base64'),
+        },
+        {
+          orgId: job.orgId,
+          provider: `sign_ca:${sealed.provider}`,
+          externalAccountId: sealed.id,
+        },
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof DomainError &&
+        (error.code === 'SIGN_CA_CONNECTION_OWNER_LEFT' ||
+          error.code === 'SIGN_CA_CONNECTION_DISABLED' ||
+          error.code === 'SIGN_CA_CONNECTION_NOT_FOUND')
+      ) {
+        if (begin.action !== 'ask') {
+          await deps.runtime.execute(
+            'sign.ca.request.job_record',
+            {
+              requestId: begin.requestId,
+              callKey: begin.callKey,
+              outcome: 'terminal_failure',
+              status: 'failed',
+              errorCode: error.code,
+            },
+            options,
+          );
+          return { status: 'failed', reason: error.code };
+        }
+        const rec = await deps.runtime.execute<SignCaJobRecordResult>(
+          'sign.ca.request.job_record',
+          {
+            requestId: begin.requestId,
+            callKey: begin.callKey,
+            outcome: 'transient_retry',
+            errorCode: error.code,
+          },
+          options,
+        );
+        return rec.status === 'failed'
+          ? { status: 'failed', reason: error.code }
+          : { status: 'pending', reason: error.code, pollAttempts: rec.pollAttempts, nextPollAt: rec.nextPollAt };
+      }
+      if (error instanceof CredentialError) {
+        await deps.runtime.execute(
+          'sign.ca.request.job_record',
+          {
+            requestId: begin.requestId,
+            callKey: begin.callKey,
+            outcome: 'terminal_failure',
+            status: 'failed',
+            errorCode: 'CREDENTIAL_UNSEAL_FAILED',
+          },
+          options,
+        );
+        return { status: 'failed', reason: 'CREDENTIAL_UNSEAL_FAILED' };
+      }
+      throw error;
+    }
+  }
+
+  const adapter = resolveCaAdapter(begin.provider, deps.caAdapters);
+  let externalTxId = begin.externalTxId;
+  let signedAtIso: string | undefined;
+
+  if (begin.action !== 'embed') {
+    let session: CaSignSession;
+    try {
+      if (begin.action === 'initiate') {
+        session = await adapter.initiateSign(secret, {
+          idempotencyKey: begin.idempotencyKey,
+          digestSha256: begin.digestSha256,
+          certRef: begin.certRef,
+          documentName: begin.envelopeTitle,
+          signerReason: 'Ludy eSign PAdES seal',
+        });
+      } else if (begin.action === 'ask') {
+        session = await adapter.pollStatus(secret, { idempotencyKey: begin.idempotencyKey });
+      } else {
+        session = await adapter.pollStatus(secret, {
+          externalTxId: begin.externalTxId,
+          idempotencyKey: begin.idempotencyKey,
+        });
+      }
+    } catch (error: unknown) {
+      if (error instanceof CaProviderError) {
+        if (error.kind === 'lost_answer' || error.kind === 'timeout' || error.kind === 'unreachable' || error.kind === 'unavailable') {
+          const rec = await deps.runtime.execute<SignCaJobRecordResult>(
+            'sign.ca.request.job_record',
+            {
+              requestId: begin.requestId,
+              callKey: begin.callKey,
+              outcome: error.kind === 'lost_answer' ? 'lost_answer' : 'transient_retry',
+              errorCode: `CA_${error.kind.toUpperCase()}`,
+            },
+            options,
+          );
+          return rec.status === 'failed'
+            ? { status: 'failed', reason: error.kind }
+            : { status: 'pending', reason: error.kind, pollAttempts: rec.pollAttempts, nextPollAt: rec.nextPollAt };
+        }
+        await deps.runtime.execute(
+          'sign.ca.request.job_record',
+          {
+            requestId: begin.requestId,
+            callKey: begin.callKey,
+            outcome: 'terminal_failure',
+            status: 'failed',
+            errorCode: `CA_${error.kind.toUpperCase()}`,
+          },
+          options,
+        );
+        return { status: 'failed', reason: error.kind };
+      }
+      throw error;
+    }
+
+    if (session.status === 'pending') {
+      const rec = await deps.runtime.execute<SignCaJobRecordResult>(
+        'sign.ca.request.job_record',
+        {
+          requestId: begin.requestId,
+          callKey: begin.callKey,
+          outcome: 'pending',
+          externalTxId: session.externalTxId,
+          challengeCode: session.challengeCode ?? null,
+        },
+        options,
+      );
+      return rec.status === 'expired'
+        ? { status: 'failed', reason: 'expired' }
+        : { status: 'pending', pollAttempts: rec.pollAttempts, nextPollAt: rec.nextPollAt };
+    }
+
+    if (session.status === 'rejected' || session.status === 'expired' || session.status === 'failed') {
+      await deps.runtime.execute(
+        'sign.ca.request.job_record',
+        {
+          requestId: begin.requestId,
+          callKey: begin.callKey,
+          outcome: 'terminal_failure',
+          status: session.status,
+          errorCode: session.errorCode ?? `CA_${session.status.toUpperCase()}`,
+          externalTxId: session.externalTxId,
+        },
+        options,
+      );
+      return { status: 'failed', reason: session.status };
+    }
+
+    externalTxId = session.externalTxId;
+    signedAtIso = session.signedAt ?? new Date().toISOString();
+    await deps.runtime.execute(
+      'sign.ca.request.job_record',
+      {
+        requestId: begin.requestId,
+        callKey: begin.callKey,
+        outcome: 'signed_session',
+        externalTxId,
+        signedAtIso,
+      },
+      options,
+    );
+  }
+
+  if (!externalTxId) {
+    return { status: 'failed', reason: 'missing_external_tx_id' };
+  }
+
+  let signedCms: Awaited<ReturnType<CaSigningAdapter['fetchSignedCms']>>;
+  try {
+    signedCms = await adapter.fetchSignedCms(secret, {
+      externalTxId,
+      certRef: begin.certRef,
+    });
+  } catch (error: unknown) {
+    if (error instanceof CaProviderError) {
+      if (error.kind === 'timeout' || error.kind === 'unreachable' || error.kind === 'unavailable' || error.kind === 'not_signed') {
+        const rec = await deps.runtime.execute<SignCaJobRecordResult>(
+          'sign.ca.request.job_record',
+          {
+            requestId: begin.requestId,
+            callKey: begin.callKey,
+            outcome: 'transient_retry',
+            errorCode: `CA_CMS_${error.kind.toUpperCase()}`,
+          },
+          options,
+        );
+        return rec.status === 'failed'
+          ? { status: 'failed', reason: error.kind }
+          : { status: 'pending', reason: error.kind, pollAttempts: rec.pollAttempts, nextPollAt: rec.nextPollAt };
+      }
+      await deps.runtime.execute(
+        'sign.ca.request.job_record',
+        {
+          requestId: begin.requestId,
+          callKey: begin.callKey,
+          outcome: 'terminal_failure',
+          status: 'failed',
+          errorCode: `CA_CMS_${error.kind.toUpperCase()}`,
+          externalTxId,
+        },
+        options,
+      );
+      return { status: 'failed', reason: error.kind };
+    }
+    throw error;
+  }
+
+  const subFilter = padesSubFilterForProvider(begin.provider);
+  let sealedPdfBytes: Uint8Array;
+  try {
+    sealedPdfBytes = await loadSealedPdfBytes();
+  } catch (error) {
+    if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+      return recordTerminalFailure(
+        error instanceof BlobTooLargeError ? 'BLOB_TOO_LARGE' : 'BLOB_INTEGRITY_ERROR',
+        externalTxId,
+      );
+    }
+    throw error;
+  }
+
+  let embedPayload: Uint8Array;
+  try {
+    embedPayload = encodePdfEmbedCmsInput({
+      pdfBase64: Buffer.from(sealedPdfBytes).toString('base64'),
+      cmsDerBase64: Buffer.from(signedCms.cmsDer).toString('base64'),
+      placeholderBytes: PADES_PLACEHOLDER_BYTES,
+      signerName: `Crove eSign (${begin.provider})`,
+      reason: `PAdES seal for ${begin.envelopeTitle.slice(0, 120)}`,
+      signedAtIso: begin.requestCreatedAtIso,
+      fieldName: `CroveCA_${begin.requestId.replace(/-/g, '').slice(0, 16)}`,
+      subFilter,
+      ...(signedCms.timestampTokenDer
+        ? { timestampTokenBase64: Buffer.from(signedCms.timestampTokenDer).toString('base64') }
+        : {}),
+      ...(signedCms.ocspResponsesDer && signedCms.ocspResponsesDer.length > 0
+        ? { ocspResponsesBase64: signedCms.ocspResponsesDer.map((item) => Buffer.from(item).toString('base64')) }
+        : {}),
+    });
+  } catch (error) {
+    if (error instanceof BlobTooLargeError) {
+      return recordTerminalFailure('BLOB_TOO_LARGE', externalTxId);
+    }
+    throw error;
+  }
+
+  const embedResult = await deps.extract.extract('pdf_embed_cms', embedPayload);
+  if (!embedResult.ok) {
+    if (INPUT_ERROR_CODES.includes(embedResult.code)) {
+      return recordTerminalFailure(`PDF_EMBED_${embedResult.code}`, externalTxId);
+    }
+    throw new Error(`pdf_embed_cms transient failure (${embedResult.code}): ${embedResult.message}`);
+  }
+
+  const padesBytes = Uint8Array.from(Buffer.from(embedResult.pdfBase64, 'base64'));
+  const padesSha256 = sha256Hex(padesBytes);
+  if (padesSha256 !== embedResult.signedSha256) {
+    throw new Error(`pdf_embed_cms sha256 mismatch: computed ${padesSha256}, reported ${embedResult.signedSha256}`);
+  }
+  const actualByteRangeSha256 = byteRangeSha256Hex(padesBytes, embedResult.byteRange);
+  if (actualByteRangeSha256 !== begin.digestSha256) {
+    throw new Error(
+      `pdf_embed_cms ByteRange digest mismatch: embedded ${actualByteRangeSha256}, signed ${begin.digestSha256}`,
+    );
+  }
+  if (padesBytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {
+    return recordTerminalFailure('PADES_BLOB_TOO_LARGE', externalTxId);
+  }
+
+  const padesStorageKey = fileKey(job.orgId, padesSha256);
+  const padesGeneration = await putFile(
+    deps.store,
+    padesStorageKey,
+    padesBytes,
+    'application/pdf',
+    padesSha256,
+  );
+
+  const base = safeArtifactBase(begin.envelopeTitle);
+  const padesIngest = await deps.runtime.execute<{ fileId: string }>(
+    'kernel.file.ingest',
+    {
+      filename: `${base}-pades.pdf`,
+      contentType: 'application/pdf',
+      sizeBytes: padesBytes.byteLength,
+      sha256: padesSha256,
+      storageKey: padesStorageKey,
+      generation: padesGeneration,
+      source: 'sign_sealed',
+    },
+    options,
+  );
+
+  const completedSignedAtIso = signedCms.signedAt ?? signedAtIso ?? begin.requestCreatedAtIso;
+  await deps.runtime.execute(
+    'sign.ca.request.job_complete',
+    {
+      requestId: begin.requestId,
+      externalTxId,
+      subFilter,
+      padesFileId: padesIngest.fileId,
+      padesStorageKey,
+      padesGeneration,
+      padesSha256,
+      signedAtIso: completedSignedAtIso,
+    },
+    options,
+  );
+
+  return { status: 'signed', padesFileId: padesIngest.fileId };
+}
+
 async function fetchSignRecoveryPage(
   workerDb: Db,
   olderThan: Date,
@@ -503,19 +1010,47 @@ async function fetchTemplateRecoveryPage(
   return rows;
 }
 
+async function fetchCaRecoveryPage(
+  workerDb: Db,
+  olderThan: Date,
+  batchSize: number,
+  orgId: string | null,
+  after: CaRecoveryCursor | null,
+) {
+  const { rows } = await sql<{
+    org_id: string;
+    request_id: string;
+    due_at_cursor: string;
+  }>`
+    SELECT org_id, request_id, due_at::text AS due_at_cursor
+    FROM crove_sign.ca_work_recovery_candidates(
+      ${olderThan}::timestamptz,
+      ${batchSize},
+      ${orgId}::uuid,
+      ${after?.dueAt ?? null}::timestamptz,
+      ${after?.orgId ?? null}::uuid,
+      ${after?.requestId ?? null}::uuid
+    )
+  `.execute(workerDb);
+  return rows;
+}
+
 export interface SignPendingWorkDeps {
   workerDb: Db;
   appOn?: (orgId: string) => Promise<boolean>;
   enqueueInspect: (orgId: string, envelopeId: string) => Promise<void>;
   enqueueSeal: (orgId: string, envelopeId: string) => Promise<void>;
   enqueueTemplateInspect?: (orgId: string, templateId: string) => Promise<void>;
+  enqueueCaReconcile?: (orgId: string, requestId: string) => Promise<void>;
   orgId?: string;
   olderThan?: Date;
   batchSize?: number;
   maxPages?: number;
 }
 
-export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{ inspect: number; seal: number }> {
+export async function sweepSignPendingWork(
+  deps: SignPendingWorkDeps,
+): Promise<{ inspect: number; seal: number; caReconcile: number }> {
   const olderThan = deps.olderThan ?? new Date(Date.now() - 60_000);
   const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
   const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
@@ -530,6 +1065,7 @@ export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{
   };
   let inspect = 0;
   let seal = 0;
+  let caReconcile = 0;
   let after: RecoveryCursor | null = null;
   for (let page = 0; page < maxPages; page += 1) {
     const rows = await fetchSignRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
@@ -561,5 +1097,19 @@ export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{
       tplAfter = { updatedAt: last.updated_at_cursor, orgId: last.org_id, templateId: last.template_id };
     }
   }
-  return { inspect, seal };
+  if (deps.enqueueCaReconcile) {
+    let caAfter: CaRecoveryCursor | null = null;
+    for (let page = 0; page < maxPages; page += 1) {
+      const caRows = await fetchCaRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, caAfter);
+      for (const row of caRows) {
+        if (!(await isEnabled(row.org_id))) continue;
+        await deps.enqueueCaReconcile(row.org_id, row.request_id);
+        caReconcile += 1;
+      }
+      const last = caRows.at(-1);
+      if (!last || caRows.length < batchSize) break;
+      caAfter = { dueAt: last.due_at_cursor, orgId: last.org_id, requestId: last.request_id };
+    }
+  }
+  return { inspect, seal, caReconcile };
 }
