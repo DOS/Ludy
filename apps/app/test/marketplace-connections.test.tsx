@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LegalEntity, MarketplaceConnection, MarketplaceProviders } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown, pollStateKey, testStateKey } from '../src/lib/marketplace-connections.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, marketplaceCardShown, pollStateKey, REAUTHORIZE_NOTICE_DAYS, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../src/lib/marketplace-connections.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -290,5 +290,69 @@ describe('the card\'s messages', () => {
     const { vi: vietnamese } = await import('../src/i18n/messages/vi.ts');
     const shape = (value: unknown): unknown => (value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, shape(v)])) : typeof value);
     expect(shape(vietnamese.marketplaceConnections)).toEqual(shape(en.marketplaceConnections));
+  });
+});
+
+describe('the re-authorize notice (#4240 S3b)', () => {
+  const NOW = new Date('2026-11-21T08:00:00.000Z');
+  const inDays = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
+  const authorized = (reauthorizeBy: string | null, over: Partial<MarketplaceConnection> = {}) => connection({ provider: 'marketplace_lazada', platform: 'lazada', authorizeState: 'authorized', reauthorizeBy, ...over });
+
+  it('says nothing until 14 days before the date, `soon` from then, and `ended` once it has passed', () => {
+    expect(REAUTHORIZE_NOTICE_DAYS).toBe(14);
+    expect(reauthorizeNotice(authorized(inDays(60)), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(14.01)), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(14)), NOW)).toBe('soon');
+    expect(reauthorizeNotice(authorized(inDays(1)), NOW)).toBe('soon');
+    expect(reauthorizeNotice(authorized(inDays(0)), NOW)).toBe('ended');
+    expect(reauthorizeNotice(authorized(inDays(-3)), NOW)).toBe('ended');
+  });
+
+  it('has no notice without a date, for a connection that was not authorized, a disconnected one, or a date that is no date', () => {
+    expect(reauthorizeNotice(authorized(null), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(3), { authorizeState: null }), NOW)).toBeNull();
+    for (const state of ['pending', 'refused', 'failed'] as const) expect(reauthorizeNotice(authorized(inDays(3), { authorizeState: state }), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized(inDays(3), { status: 'revoked' }), NOW)).toBeNull();
+    expect(reauthorizeNotice(authorized('not a date'), NOW)).toBeNull();
+    // An expired connection (the sweep refused its token) still tells the seller to authorize again once the date has passed.
+    expect(reauthorizeNotice(authorized(inDays(-1), { status: 'expired' }), NOW)).toBe('ended');
+  });
+
+  it('tells a connection that cannot be authorized again (it has stopped) to disconnect and connect again, not to press a button the card does not show', () => {
+    expect(reauthorizeNoticeKey('soon', true)).toBe('reauthorizeSoon');
+    expect(reauthorizeNoticeKey('ended', true)).toBe('reauthorizeEnded');
+    expect(reauthorizeNoticeKey('soon', false)).toBe('reauthorizeReconnect');
+    expect(reauthorizeNoticeKey('ended', false)).toBe('reauthorizeReconnect');
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    // The sweep marked it expired (the platform refused the refresh token): no Authorize button, so the notice says to connect again.
+    const expired = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
+    expect(expired).toContain(esc('cannot be authorized again'));
+    expect(expired).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
+    expect(expired).not.toContain(esc('press Authorize again'));
+    const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
+    expect(vi).toContain('ngắt kết nối rồi kết nối lại');
+  });
+
+  it('sends `deleteStaged` only when the member ticked it and orders are waiting', () => {
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 3 }, true)).toEqual({ id: 'k1', deleteStaged: true });
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 3 }, false)).toEqual({ id: 'k1' });
+    expect(disconnectInput({ id: 'k1', ordersWaiting: 0 }, true)).toEqual({ id: 'k1' });
+  });
+
+  it('shows the notice on the card in both languages, and only when there is one', () => {
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    const soon = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(soon).toContain('data-testid="reauthorize-notice"');
+    expect(soon).toContain(esc('The authorization given to the marketplace ends on'));
+    const ended = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString())] });
+    expect(ended).toContain(esc('The authorization given to the marketplace ended on'));
+    const vi = card('owner', { ...lazada, locale: 'vi', connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(vi).toContain('Quyền cấp cho sàn sẽ hết hạn ngày');
+    const far = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() + 90 * 86_400_000).toISOString())] });
+    expect(far).not.toContain('reauthorize-notice');
+    // A member reads the notice too (the date is not a secret), but is not offered the button.
+    const member = card('member', { ...lazada, connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
+    expect(member).toContain('data-testid="reauthorize-notice"');
+    expect(member).not.toContain(`>${en.marketplaceConnections.authorizeAgain}<`);
   });
 });

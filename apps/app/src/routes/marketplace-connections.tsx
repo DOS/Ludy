@@ -11,13 +11,14 @@ import type { LegalEntity, MarketplaceAdapterInfo, MarketplaceConnection, Market
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
+import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, testStateKey } from '../lib/marketplace-connections.ts';
+import { adapterIdOf, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -36,6 +37,9 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
   const t = useTranslations('marketplaceConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
+  // "Also discard what is still waiting" (#4240 S3b): off until the member ticks it.
+  const [discard, setDiscard] = useState(false);
+  const discardId = useId();
   // Each queued answer starts a new window (`round`), so a second click is watched for the full time; `silent` is a window that ended with no answer.
   const [watching, setWatching] = useState(false);
   const [round, setRound] = useState(0);
@@ -85,6 +89,7 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
   );
   const entity = entities.length > 1 ? entities.find((e) => e.id === connection.legalEntityId) : undefined;
   const live = connection.status === 'active';
+  const notice = reauthorizeNotice(connection, new Date());
   return (
     <li className="py-3" data-testid="marketplace-connection">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -108,7 +113,7 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
             </Button>
           )}
           {canAuthorize(connection, adapters) && (
-            <Button loading={authorize.isPending} size="sm" variant="outline" onClick={() => authorize.mutate({ id: connection.id })}>
+            <Button loading={authorize.isPending} size="sm" variant={notice ? 'default' : 'outline'} onClick={() => authorize.mutate({ id: connection.id })}>
               {t(connection.authorizeState === 'authorized' ? 'authorizeAgain' : 'authorize')}
             </Button>
           )}
@@ -120,10 +125,23 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           {confirming ? (
             <>
               <span className="self-center text-xs text-muted-foreground">{t('disconnectConfirm')}</span>
-              <Button loading={disconnect.isPending} size="sm" variant="destructive" onClick={() => disconnect.mutate({ id: connection.id })}>
+              {connection.ordersWaiting > 0 && (
+                <label htmlFor={discardId} className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox id={discardId} checked={discard} onCheckedChange={(checked) => setDiscard(checked === true)} />
+                  {t('discardWaiting', { count: String(connection.ordersWaiting) })}
+                </label>
+              )}
+              <Button loading={disconnect.isPending} size="sm" variant="destructive" onClick={() => disconnect.mutate(disconnectInput(connection, discard))}>
                 {t('disconnectYes')}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setConfirming(false);
+                  setDiscard(false);
+                }}
+              >
                 {t('keep')}
               </Button>
             </>
@@ -150,6 +168,11 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
         </p>
       )}
       {connection.authorizeState && <p role="status" className="mt-1 text-sm text-muted-foreground">{t(AUTHORIZE_STATE_KEYS[connection.authorizeState] as never)}{connection.authorizeState === 'authorized' && connection.reauthorizeBy ? ` · ${t('reauthorizeBy', { when: f.dateTime(connection.reauthorizeBy) })}` : ''}</p>}
+      {notice && connection.reauthorizeBy && (
+        <p role="status" className="mt-1 text-sm font-medium" data-testid="reauthorize-notice">
+          {t(reauthorizeNoticeKey(notice, canAuthorize(connection, adapters)), { when: f.dateTime(connection.reauthorizeBy) })}
+        </p>
+      )}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
       {authorize.error && <ErrorText>{errorMessage(authorize.error)}</ErrorText>}
       {pull.error && <ErrorText>{errorMessage(pull.error)}</ErrorText>}
