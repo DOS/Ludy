@@ -204,7 +204,13 @@ BEGIN
       CONTINUE;
     END IF;
 
-    v_tax_hint := v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:mst|mã số thuế|ma so thue|tax[' || v_inline || '_-]*code|tax[' || v_inline || '_-]*id|tin)[' || v_inline || ':#.-]*(?:số|so)?[' || v_inline || ':#.-]*$');
+    v_tax_hint := (
+      v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:mst|mã số thuế|ma so thue|tax[' || v_inline || '_-]*code|tax[' || v_inline || '_-]*id)[' || v_inline || ':#.-]*(?:số|so)?[' || v_inline || ':#.-]*$')
+      OR (
+        pg_catalog.normalize(v_line_before, 'NFC') ~ ('(?:^|[^A-Za-z0-9' || v_letters || '])TIN[' || v_inline || ':#.-]*(?:số|so|SỐ|SO|no|No|NO|#)?[' || v_inline || ':#.-]*$')
+        AND pg_catalog.normalize(v_line_before, 'NFC') !~ ('(?:^|[^A-Za-z0-9' || v_letters || '])(?:THÔNG|NHẮN|BẢN|TÍN)[' || v_inline || ']+TIN[' || v_inline || ':#.-]*$')
+      )
+    );
     v_id_hint := v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:cccd|cmnd|căn cước|can cuoc|chứng minh|chung minh|national[' || v_inline || '_-]*id|id[' || v_inline || '_-]*card|số định danh|so dinh danh)(?:[' || v_inline || ':#.-]+(?:công dân|cong dan|nhân dân|nhan dan|số|so|cũ|cu|mới|moi)){0,2}[' || v_inline || ':#.-]*$');
     v_bank_hint := v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:stk|số tài khoản|so tai khoan|tài khoản|tai khoan|tk|số thẻ|so the|thẻ|visa|mastercard|napas|atm|iban|bank[' || v_inline || '_-]*account|account[' || v_inline || '_-]*(?:no|number|#)?|card[' || v_inline || '_-]*(?:no|number|#)?|acct)(?:[' || v_inline || ':#.-]+(?:ngân hàng|ngan hang|số|so|acb|vcb|vietcombank|tcb|techcombank|bidv|ctg|vietinbank|mb|mbbank|vpb|vpbank|tpb|tpbank|stb|sacombank|agribank|vib|hdbank|ocb|shb|msb|eximbank|seabank|vnd|usd)){0,2}[' || v_inline || ':#.-]*$');
     v_phone_hint := v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:sđt|sdt|điện thoại|dien thoai|số điện thoại|so dien thoai|zalo|hotline|tel|phone|mobile|call|gọi|goi|liên hệ|lien he|alô|alo)[' || v_inline || ':#.-]*(?:số|so)?[' || v_inline || ':#.-]*$');
@@ -213,8 +219,11 @@ BEGIN
     IF (NOT v_has_plus OR NOT v_phone_hint) AND (
       v_prev1 IN ('$', '€', '£', '¥', '₫')
       OR (NOT v_bank_hint AND NOT v_tax_hint AND v_ctx_before ~ ('(?:^|[^a-z0-9' || v_letters || '])(?:usd|vnd|vnđ|eur|jpy|gbp|krw|aud|sgd|cny|rmb)[' || v_inline || ':]*$'))
-      OR (pg_catalog.left(v_digits, 1) <> '0' AND v_ctx_after ~ ('^[' || v_inline || ']*(?:₫|\$|€|£|¥|(?:vnd|vnđ|đồng|đ|usd|eur|jpy|gbp|krw|aud|sgd|cny|rmb|triệu|tỷ|tỉ|nghìn|ngàn|xu)(?![a-z0-9_' || v_letters || ']))'))
-      OR (pg_catalog.left(v_digits, 1) = '0' AND v_ctx_after ~ ('^[' || v_inline || ']*(?:₫|\$|€|£|¥|(?:vnd|vnđ|đồng|đ|usd|eur|jpy|gbp|krw|aud|sgd|cny|rmb)(?![a-z0-9_' || v_letters || ']))'))
+      OR (
+        NOT (v_bank_hint OR v_tax_hint OR v_id_hint OR v_phone_hint)
+        AND pg_catalog.left(v_digits, 1) <> '0'
+        AND v_ctx_after ~ ('^[' || v_inline || ']*(?:₫|\$|€|£|¥|(?:vnd|vnđ|đồng(?![' || v_inline || ']+(?:ý|thời|nghiệp|hồ)(?![a-z0-9_' || v_letters || ']))|đ|usd|eur|jpy|gbp|krw|aud|sgd|cny|rmb|triệu|tỷ|tỉ|nghìn|ngàn|xu)(?![a-z0-9_' || v_letters || ']))')
+      )
     ) THEN
       CONTINUE;
     END IF;

@@ -64,9 +64,9 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     expected: [{ kind: 'email', matchText: '0912345678@congty.example' }],
   },
   {
-    name: 'email with punycode TLD',
-    text: 'Liên hệ admin@xn--ng-jia.xn--p1ai để kiểm tra.',
-    expected: [{ kind: 'email', matchText: 'admin@xn--ng-jia.xn--p1ai' }],
+    name: 'email with punycode label on reserved example TLD',
+    text: 'Liên hệ admin@xn--ng-jia.example để kiểm tra.',
+    expected: [{ kind: 'email', matchText: 'admin@xn--ng-jia.example' }],
   },
 
   // --- Vietnamese & international phones ---
@@ -225,6 +225,28 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     ],
   },
   {
+    name: 'explicitly hinted currency-suffixed and Vietnamese dong-compound spans stay detected',
+    text: 'STK 19034567890123 VND, Tài khoản 108001234567 USD, STK 0011001234567 VND, SĐT 0912 345 678 đồng ý chưa, CCCD 079091001234 đồng thời gửi mail, STK 19034567890123 đồng ý chuyển, 108001234567 đồng hồ.',
+    expected: [
+      { kind: 'bank_account', matchText: '19034567890123' },
+      { kind: 'bank_account', matchText: '108001234567' },
+      { kind: 'bank_account', matchText: '0011001234567' },
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'bank_account', matchText: '19034567890123' },
+      { kind: 'bank_account', matchText: '108001234567' },
+    ],
+  },
+  {
+    name: 'Vietnamese tin prose does not trigger tax_code while uppercase TIN does',
+    text: 'Nhắn tin 0912 345 678, Thông tin 079091001234, TIN 12345678.',
+    expected: [
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'tax_code', matchText: '12345678' },
+    ],
+  },
+  {
     name: '11-digit number does not extract a 10-digit phone inside it',
     text: 'Mã 09123456789 và 10912345678.',
     expected: [
@@ -248,7 +270,12 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
   // --- Near-misses: MUST return empty ---
   {
     name: 'near-miss: prices with dot thousands, comma thousands, positive deltas, and currency units',
-    text: 'Tổng 100.000.000, +100.000.000, hợp đồng 1.250.000.000 đ, +100.000.000 đ, tạm ứng 50,000 VND, 50000000 VND, +50000000 VND, 100000000, +100000000, 15000000đ, $123456789, VND 123456789, USD +12345678, 100 000 000.',
+    text: 'Tổng 100.000.000, +100.000.000, hợp đồng 1.250.000.000 đ, +100.000.000 đ, tạm ứng 50,000 VND, 50000000 VND, +50000000 VND, 100000000, +100000000, 15000000đ, 15000000 đồng, $123456789, VND 123456789, USD +12345678, 100 000 000.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: Vietnamese thong tin prefix before near-misses stays ignored',
+    text: 'Thông tin 100.000.000, Thông tin 100000000, Thông tin 192.168.1.100, Thông tin 12345678, Thông tin 20261121132157, THÔNG TIN 100000000.',
     expected: [],
   },
   {
