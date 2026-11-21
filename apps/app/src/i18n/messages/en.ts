@@ -5656,7 +5656,7 @@ export const en = {
     authorizeAgain: 'Authorize again',
     reauthorizeBy: 'authorize again before {when}',
     authorizeStates: {
-      pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds.',
+      pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',
       refused: 'The marketplace refused the authorization code (wrong, already used or expired). Press Authorize again.',
       failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.',

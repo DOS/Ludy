@@ -5653,7 +5653,7 @@ export const vi = {
     authorizeAgain: 'Cấp quyền lại',
     reauthorizeBy: 'cần cấp quyền lại trước {when}',
     authorizeStates: {
-      pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại.',
+      pending: 'Đã nhận quyền từ sàn, hệ thống đang hoàn tất. Vài giây nữa hãy tải lại; sau 15 phút mà chưa xong thì sẽ báo lỗi và bạn bấm Cấp quyền lại.',
       authorized: 'Đã cấp quyền',
       refused: 'Sàn từ chối mã cấp quyền (mã sai, đã dùng hoặc hết hạn). Hãy bấm Cấp quyền lại.',
       failed: 'Chưa hoàn tất được việc cấp quyền. Hãy bấm Cấp quyền lại; nếu vẫn lỗi, báo người quản trị hệ thống.',
