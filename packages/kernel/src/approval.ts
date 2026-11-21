@@ -159,7 +159,8 @@ export function liveApprovalCommands(): string[] {
 // 17: a resume, a raised daily budget and a longer schedule of a running ad (ads.object.resume, ads.budget.raise, ads.schedule.extend, #3835) were given their approval policy (the launch's).
 // 18: the proposal-only twins of the Engage commands an AI coworker asks for (a reply, a private reply, hiding a comment, sending a quote, moving or cancelling a booking, submitting or scheduling a post, and the ads
 // that only stop or reduce spend; E4 #3863, ENGAGE_PROPOSALS) were given their approval policy.
-export const APPROVAL_POLICY_VERSION = 18;
+// 19: the proposal-only twin that cancels a queued change of a running ad that would start or raise spend (ads.manage.cancel_approved, #4181, in ENGAGE_PROPOSALS) was given its approval policy.
+export const APPROVAL_POLICY_VERSION = 19;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

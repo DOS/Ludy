@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Ads twins an AI coworker asks with (epic #3857, E4, issue #3863; ADR-0051 decision 10; docs/plan/ads-write.md section 3.1): stopping a launch, the kill switch, and pausing, archiving, lowering the budget
-// of or shortening a running ad. Only what STOPS or REDUCES spend has a twin. For each: the call leaves one pending, tainted proposal and changes nothing; a rejection changes nothing, ever; an approval runs the
+// of or shortening a running ad, and cancelling a waiting change that would raise spend (#4181). Only what STOPS or REDUCES spend has a twin. For each: the call leaves one pending, tainted proposal and changes nothing; a rejection changes nothing, ever; an approval runs the
 // original command once, as the approver, with every check it has judged then, on what stands then; a proposal the original refuses stays pending. The fixture is the live launch the invariants of the changes of a
 // running ad build (apps/kernel/test/invariant/ads-manage.db.test.ts), copied here: a launch of 100 000 a day that began three days ago and ends in ten, with its campaign, ad set and one ad recorded.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -221,6 +221,84 @@ suite('the Ads proposal twins (#3863)', () => {
     expect(await h.executions(c.original, again.proposalId)).toBe(0);
   });
 
+  // A raise a person's approved proposal queued, as the table holds it: the insert guard asks the raise's own approved proposal, so it is set aside for the one statement (the cancel's checks are the cancel's own).
+  async function queuedRaise(r: Rig): Promise<string> {
+    const id = randomUUID();
+    await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
+      await c.query(
+        `INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, proposal_id, requested_by, state)
+         VALUES ($1, $2, $3, $4, 'budget_raise', 'ad_set', 'ad_set', $5, 100000, 150000, $6, $7, 'queued')`,
+        [h.orgId, id, r.account, r.launch, `set-${id.slice(0, 8)}`, randomUUID(), h.owner],
+      );
+    });
+    return id;
+  }
+  const stateOf = async (id: string) => (await h.q<{ state: string }>('SELECT state FROM crove_ads.ad_manage_change WHERE org_id = $1 AND id = $2', [h.orgId, id])).rows[0]?.state;
+
+  it('ads.manage.cancel: waits, is never run by a rejection, and cancels a queued raise once when approved; a settled change and an unknown one are refused at the approval (#4181)', async () => {
+    const c: Case = { twin: 'ads.manage.cancel_approved', original: 'ads.manage.cancel', kind: 'ads.manage_cancel' };
+    const r = await rig();
+    const raise = await queuedRaise(r);
+    // (a) Proposal only: the change stays queued, the original never ran.
+    const made = await asked(c.twin, { changeId: raise });
+    expect(made.status).toBe('pending');
+    expect(await h.proposal(made.proposalId)).toMatchObject({ status: 'pending', command: c.twin, kind: c.kind, tainted: true, payload: { changeId: raise } });
+    expect(await h.ran(c.original)).toBe(0);
+    expect(await stateOf(raise)).toBe('queued');
+    // (c) Rejected: nothing is cancelled, ever, and a later approval is refused.
+    const rejected = await asked(c.twin, { changeId: raise });
+    await h.reject(rejected.proposalId);
+    await expect(h.approve(rejected.proposalId)).rejects.toBeDefined();
+    expect(await h.executions(c.original, rejected.proposalId)).toBe(0);
+    expect(await stateOf(raise)).toBe('queued');
+    // (b) Approved: the original runs once, as the person; the raise no longer waits.
+    await h.approve(made.proposalId);
+    expect((await h.proposal(made.proposalId)).status).toBe('executed');
+    expect(await h.executions(c.original, made.proposalId)).toBe(1);
+    expect(await stateOf(raise)).toBe('cancelled');
+    await expect(h.approve(made.proposalId)).rejects.toMatchObject({ status: expect.any(Number) });
+    expect(await h.executions(c.original, made.proposalId)).toBe(1);
+    // (d) The change is settled now: a second ask is refused by the original (ADS_CHANGE_SETTLED), stays pending and cancels nothing.
+    const again = await asked(c.twin, { changeId: raise });
+    await expect(h.approve(again.proposalId)).rejects.toMatchObject({ code: 'ADS_CHANGE_SETTLED', status: 409 });
+    expect((await h.proposal(again.proposalId)).status).toBe('pending');
+    expect(await h.executions(c.original, again.proposalId)).toBe(0);
+    // A change nobody made is left to the original too (ADS_CHANGE_NOT_FOUND).
+    const unknown = await asked(c.twin, { changeId: randomUUID() });
+    await expect(h.approve(unknown.proposalId)).rejects.toMatchObject({ code: 'ADS_CHANGE_NOT_FOUND', status: 404 });
+    // A change the job already begun (its call was recorded) may have landed: the original refuses it.
+    const begun = await queuedRaise(await rig());
+    await h.q(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'ads', 'sandboxwrite_ads', 'manage_budget_raise', 'reconcile_only')`, [h.orgId, `ads.manage:${begun}:apply`]);
+    const late = await asked(c.twin, { changeId: begun });
+    await expect(h.approve(late.proposalId)).rejects.toMatchObject({ code: 'ADS_CHANGE_BEGUN', status: 409 });
+    expect((await h.proposal(late.proposalId)).status).toBe('pending');
+    expect(await stateOf(begun)).toBe('queued');
+  });
+
+  it('ads.manage.cancel: never cancels a waiting change that would REDUCE spend: a pause, a lower budget and a shorter schedule stay queued and the proposal stays pending (#4181)', async () => {
+    const c: Case = { twin: 'ads.manage.cancel_approved', original: 'ads.manage.cancel', kind: 'ads.manage_cancel' };
+    const r = await rig();
+    const ranBefore = await h.ran(c.original);
+    // The three reductions a person queues from the Campaigns screen (the original commands, as the owner).
+    await h.runtime.execute('ads.object.pause', { launchId: r.launch, slot: 'ad_1' }, { actor: h.person(h.owner), orgId: h.orgId });
+    await h.runtime.execute('ads.budget.lower', { launchId: r.launch, dailyBudget: '60000' }, { actor: h.person(h.owner), orgId: h.orgId });
+    await h.runtime.execute('ads.schedule.shorten', { launchId: r.launch, endOn: D(5) }, { actor: h.person(h.owner), orgId: h.orgId });
+    const queued = (await h.q<{ id: string; kind: string }>(`SELECT id, kind FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND state = 'queued'`, [h.orgId, r.launch])).rows;
+    expect(queued.map((x) => x.kind).sort()).toEqual(['budget_lower', 'pause', 'schedule_shorten']);
+    for (const change of queued) {
+      const made = await asked(c.twin, { changeId: change.id });
+      expect(made.status).toBe('pending');
+      await expect(h.approve(made.proposalId), change.kind).rejects.toMatchObject({ code: 'ADS_CANCEL_NOT_OPENING', status: 409 });
+      expect((await h.proposal(made.proposalId)).status).toBe('pending');
+      expect(await h.executions(c.original, made.proposalId)).toBe(0);
+      expect(await stateOf(change.id)).toBe('queued');
+    }
+    expect(await h.ran(c.original)).toBe(ranBefore);
+    // The person's own cancel from the screen is unchanged: the original still cancels a reduction.
+    await h.runtime.execute('ads.manage.cancel', { changeId: (queued[0] as { id: string }).id }, { actor: h.person(h.owner), orgId: h.orgId });
+    expect(await stateOf((queued[0] as { id: string }).id)).toBe('cancelled');
+  });
+
   it('a call outside the contract is refused: an undeclared key, a person calling a twin, a grant without the Ads scope', async () => {
     const r = await rig();
     const { actor } = await h.grant();
@@ -238,6 +316,7 @@ suite('the Ads proposal twins (#3863)', () => {
       ['ads.object.archive_approved', { launchId: r.launch, slot: 'ad_1' }],
       ['ads.budget.lower_approved', { launchId: r.launch, dailyBudget: '60000' }],
       ['ads.schedule.shorten_approved', { launchId: r.launch, endOn: D(5) }],
+      ['ads.manage.cancel_approved', { changeId: randomUUID() }],
     ] as const) {
       await expect(h.runtime.execute(twin, { payload }, { actor: h.person(h.owner, true), orgId: h.orgId }), twin).rejects.toMatchObject({ status: 403 });
     }
