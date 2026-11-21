@@ -416,7 +416,7 @@ export const mcpEngageReadsNotify = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  target: (input) => ({ type: 'kernel.member', id: input.userId }),
+  target: (input) => ({ type: 'kernel.user', id: input.userId }),
   handler: async (ctx, input) => {
     const { rows } = await sql<{ company: number; member: number }>`SELECT company, member FROM crove_kernel.mcp_engage_reads_claim(${input.userId}::uuid)`.execute(ctx.trx);
     const company = rows[0]?.company ?? 0;
