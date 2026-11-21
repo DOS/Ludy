@@ -273,10 +273,11 @@ describe('the closed status table', () => {
     ['unpaid', 'placed'], ['pending', 'placed'], ['topack', 'placed'],
     ['ready_to_ship', 'shipped'], ['toship', 'shipped'], ['packed', 'shipped'], ['shipped', 'shipped'], ['shipping', 'shipped'],
     ['delivered', 'completed'],
-    ['canceled', 'cancelled'], ['failed', 'cancelled'], ['lost', 'cancelled'],
+    ['canceled', 'cancelled'], ['failed', 'cancelled'],
     ['returned', 'returned'],
-    // The seven words the official GetOrders page adds (#2522, read 2026-11-21); the stages are the PO's to confirm.
-    ['failed_delivery', 'cancelled'], ['lost_by_3pl', 'cancelled'], ['damaged_by_3pl', 'cancelled'], ['package_scrapped', 'cancelled'],
+    // Goods lost, damaged or scrapped, or a delivery that failed and is on its way back, stay shipped: a `cancelled` line brings its stock back (moveLineStock), which would put goods that are gone back
+    // into stock. The words after `lost` are the ones the official GetOrders page adds (#2522, read 2026-11-21); the stages are the PO's to confirm.
+    ['lost', 'shipped'], ['lost_by_3pl', 'shipped'], ['damaged_by_3pl', 'shipped'], ['package_scrapped', 'shipped'], ['failed_delivery', 'shipped'],
     ['shipped_back', 'shipped'], ['shipped_back_failed', 'shipped'], ['shipped_back_success', 'returned'],
   ];
 

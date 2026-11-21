@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Lazada token API (#2524, S3a = #4240; design https://github.com/DOS/Ludy/issues/4240#issuecomment-7057958649): the authorization code traded for a token pair (`createLazadaToken`, called once by the
 // authorize step) and the refresh of a connection's tokens (`LazadaRefresher`, run by the worker's channel refresh sweep). Built from Lazada Open Platform's documentation as mirrored on open.alitrip.com
-// (articleId 108260 seller authorization and token fields, 121098 apps and token lifetimes, 108068 signature) and read 2026-11-21: open.lazada.com itself could not be read, so the hosts, the method, the
-// field names and the error words below are pointers for the live check (#2522), not verified ones. That check must pass before a deployment names `lazada` in MARKETPLACE_PROVIDERS.
+// (articleId 108260 seller authorization and token fields, 121098 apps and token lifetimes, 108068 signature), then checked against the OFFICIAL pages of open.lazada.com, which load in a headless browser
+// (read 2026-11-21; the table of what matched is https://github.com/DOS/Ludy/issues/2522#issuecomment-7058540099): the host (auth.lazada.com for both calls), the paths, the parameters, the answer fields
+// and the refusal code `IllegalRefreshToken` were confirmed. Not confirmed, for the live check (#2522): that a form body is accepted (the official demo puts the parameters in the address), the token
+// lifetimes, and the code a used authorization code gets. That check must pass before a deployment names `lazada` in MARKETPLACE_PROVIDERS.
 //
 // What the documents say: an access token lives 30 days (a test app 7) and its refresh token 180 (a test app 14 or 30: the two pages disagree); a refresh returns a NEW access token AND a new refresh token,
 // resets the access duration and does NOT reset the refresh duration; a refresh token cannot itself be refreshed, so after it expires the seller authorizes again. The worker's refresh sweep
@@ -47,8 +49,9 @@ const lifetime = (v: unknown): number | null => {
 const safeCode = (code: string, otherwise: string): string => (/^[A-Za-z0-9_.-]{1,40}$/.test(code) ? code : otherwise);
 
 // A refusal is decided by the answer's CODE alone, never by its free text (a message that names the refresh token in a bad-request or signature answer must not expire a healthy connection): a code
-// that names the refresh token (or, for a create, the authorization code) as illegal, invalid, expired, used or revoked, or the OAuth word `invalid_grant`. The official error table could not be read, so
-// the list is what the live check confirms; an unknown code is a failure.
+// that names the refresh token (or, for a create, the authorization code) as illegal, invalid, expired, used or revoked, or the OAuth word `invalid_grant`. Only `IllegalRefreshToken` is on an official page
+// (RefreshAccessToken: "The specified refresh token is invalid or expired"); the rest is what the live check confirms; an unknown code is a failure. `AUTH_TYPE_UNSUPPORTED` (an app on the Service Market:
+// its token is bound to the subscription and is not refreshed) is a failure here and would be retried at every sweep; that is the Cloud app's case, not the self-hosted one.
 const REFRESH_REFUSED = /^(illegal|invalid|expired|revoked)[ _]?refresh[ _]?token$/i;
 const CODE_REFUSED = /^(illegal|invalid|expired|used|revoked)[ _]?(authori[sz]ation[ _]?)?code$/i;
 const refusedBy = (answer: Record<string, unknown>, code: string, pattern: RegExp): boolean => pattern.test(code) || answer.error === 'invalid_grant';
