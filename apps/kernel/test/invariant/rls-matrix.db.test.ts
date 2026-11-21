@@ -120,6 +120,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
+  'crove_sign.envelope_obligation',
+  'crove_sign.member_signature',
+  'crove_sign.org_stamp',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -221,6 +224,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_notes.notebook', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
   ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
   ['crove_notes.todo_list', () => 'false'], // A personal to-do list is its owner's alone (ADR-0037).
+  ['crove_sign.member_signature', () => 'false'], // A member's own saved signature and initials (#3817); read in a user context only.
+  ['crove_sign.org_stamp', () => 'false'], // Org stamps require a user context of an org member (#3817); an agent context reads none.
   ['crove_social.notification', () => 'false'], // Per member.
   ['crove_social.notification_mail_off', () => 'false'], // Per member.
   ['crove_social.notification_mute', () => 'false'], // Per member.
@@ -349,6 +354,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_notes.todo', 'false'],
   // A personal to-do list is its owner's alone, the system context's included (ADR-0037).
   ['crove_notes.todo_list', 'false'],
+  // A member's saved signature and initials (#3817): read and written by that member alone in a user context; the system context sees and changes none of it.
+  ['crove_sign.member_signature', 'false'],
 ]);
 // Tables whose nullable legal_entity_id scopes a row to an entity, NULL being an org-level row every member reads
 // (#1716). The value makes a row of org A's default entity: the table's trigger gives it the entity of the record it
@@ -3416,6 +3423,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
   'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 4e (#3821): post-signature agreement terms, renewal notice windows, and milestone obligations bound to an envelope.
+  'crove_sign.envelope_obligation': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          counterparty_name: 'Cong ty TNHH Doi Tac Mau',
+          effective_date: '2026-11-01',
+          expiry_date: '2027-10-31',
+          renewal_notice_days: 30,
+          contract_value: '24000000.0000',
+          currency: 'VND',
+          obligations_json: '[]',
+          status: 'confirmed',
+          confirmed_by: o.owner,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
   // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
   'crove_sign.field': {
     make: (o) => {
@@ -3442,6 +3473,42 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // eSign Slice 4a (#3817): a member's own saved handwritten or typed signature and initials (one row per member and kind), read and written by that member alone in a user context.
+  'crove_sign.member_signature': {
+    noInsertControl:
+      'one saved row per member and kind (UNIQUE (org_id, user_id, kind)); a member writes their own through sign.member_signature.upsert (stamps-and-saved-signatures.db.test.ts tests it)',
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        kind: 'signature',
+        signature_kind: 'draw',
+        signature_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        image_sha256: hex64(),
+        width_px: 1,
+        height_px: 1,
+      },
+    }),
+  },
+  // eSign Slice 4a (#3817): corporate or title stamp image managed by owners and admins and readable by org members and the system export context.
+  'crove_sign.org_stamp': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix stamp ${tag()}`,
+        stamp_kind: 'company',
+        file_id: o.file,
+        stamp_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        image_sha256: hex64(),
+        width_px: 1,
+        height_px: 1,
+        status: 'active',
+        created_by: o.owner,
+      },
+    }),
   },
   // eSign Slice 1 (#3330 / #3323): recipient required to sign an envelope.
   'crove_sign.signer': {
