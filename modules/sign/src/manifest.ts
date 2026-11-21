@@ -122,6 +122,7 @@ export const SIGN_EVENT_TABLE = columns(
     'id',
     'envelope_id',
     'signer_id',
+    'host_user_id',
     'seq',
     'event_type',
     'actor_type',
@@ -223,7 +224,7 @@ export const signManifest = defineModule({
         { email: 'contact', otp_sha256: 'sensitive', claim_sha256: 'sensitive' },
       ),
       signing_token: columns(
-        ['org_id', 'id', 'envelope_id', 'signer_id', 'expires_at', 'revoked_at', 'revoked_by', 'used_at', 'last_viewed_at', 'created_by', 'created_at'],
+        ['org_id', 'id', 'envelope_id', 'signer_id', 'expires_at', 'revoked_at', 'revoked_by', 'used_at', 'last_viewed_at', 'in_person_host_user_id', 'created_by', 'created_at'],
         { token_sha256: 'sensitive' },
       ),
       template: columns([
@@ -262,6 +263,7 @@ export const signManifest = defineModule({
           'template_id',
           'enabled',
           'require_email_otp',
+          'listed_on_public_hub',
           'max_uses',
           'uses_count',
           'expires_at',
