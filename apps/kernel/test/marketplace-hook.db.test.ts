@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The push hook of a marketplace connection (#4316, S1 of #4315), on a real PostgreSQL 17, at the level of the SQL definers (the route is S2, the worker relay and the owner's command are S3): the lookup by the
-// hash of a key (an unknown key, another adapter's key and the offline adapter all find nothing), the put (accepted, a repeated dedupe key is a no-op, a retired key stores nothing, the backlog bound), the login roles'
+// hash of a key (an unknown key, another adapter's key and the offline adapter all find nothing), the put (accepted, a repeated dedupe key is a no-op, a retired key stores nothing, a put deleting its hook's stale pushes, the backlog bound), the login roles'
 // grants (both tables are definer-only; the API puts, the worker claims), the claim (deletes as it hands out and returns the bytes), the ten-minute sweep, ten refused pushes stopping a hook, the body found nowhere
-// but its own row (no outbox, audit or job row ever holds it), erasure, and that the org purge names both tables.
+// but its own row (no outbox, audit or job row ever holds it), and that the org purge names both tables. The owner's side (set, status) and the erasure need a sealed context, so they are tested with the command that
+// calls them (S3); here the API login is shown to be refused them without one.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -239,6 +240,13 @@ suite('Marketplace push hook (#4316)', () => {
     expect(await waiting()).toEqual([]);
   });
 
+  it('deletes what its own hook holds past ten minutes on the next put, even with no claim', async () => {
+    await rows("INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('stale'), HEADER, BODY]);
+    expect(await put(hookId, sha(key), sha('fresh'))).toBe('accepted');
+    expect(await waiting()).toEqual([{ hook_id: hookId, dedupe_key: sha('fresh') }]);
+    expect((await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).length).toBe(1);
+  });
+
   it('bounds the backlog: twenty waiting for a hook, then busy; a retry of one that waits is still acknowledged', async () => {
     for (let n = 0; n < 20; n++) expect(await put(hookId, sha(key), sha(`bulk-${n}`))).toBe('accepted');
     expect(await put(hookId, sha(key), sha('bulk-extra'))).toBe('busy');
@@ -261,7 +269,8 @@ suite('Marketplace push hook (#4316)', () => {
     await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)');
     const tables = await rows<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'pgboss') AND table_type = 'BASE TABLE'");
     for (const { table_schema, table_name } of tables) {
-      const found = await rows<{ hit: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table_schema}.${table_name} t WHERE t::text LIKE $1) AS hit`, [`%${CANARY}%`]);
+      // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.
+      const found = await rows<{ hit: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table_schema}.${table_name} t WHERE t::text LIKE $1 OR t::text LIKE $2) AS hit`, [`%${CANARY}%`, `%${Buffer.from(CANARY).toString('hex')}%`]);
       expect({ table: `${table_schema}.${table_name}`, hit: found[0]?.hit }).toEqual({ table: `${table_schema}.${table_name}`, hit: false });
     }
   });
@@ -295,7 +304,7 @@ suite('Marketplace push hook (#4316)', () => {
 
   it('names both tables in the org purge', async () => {
     const [purge] = await rows<{ ok: boolean }>(
-      "SELECT pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook_notice' AND pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook' AS ok",
+      "SELECT pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook_notice' AND pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook[^_]' AS ok",
     );
     expect(purge?.ok).toBe(true);
   });

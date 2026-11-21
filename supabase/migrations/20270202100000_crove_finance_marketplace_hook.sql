@@ -13,7 +13,7 @@
 --
 -- THE CARRIER OF THE RAW BODY IS THIS ONE TABLE ROW AND NOTHING ELSE: never job data (pg-boss keeps completed jobs in its archive), never an outbox or event row, never an audit row, an error or a log line. The wake-up
 -- is pg_notify('crove_outbox', '') with an EMPTY payload. The body leaves the table when the worker claims it (before it is verified, so it then lives only in the worker's memory for one HMAC check), a push older than
--- ten minutes is deleted by the next claim and by the nightly marketplace_hook_sweep, at most 20 wait for a hook and 10,000 in all, the table goes with its hook, its connection and the org (org_purge, the next file), and an
+-- ten minutes is deleted by the next put for its hook, the next claim and the nightly marketplace_hook_sweep, at most 20 wait for a hook and 10,000 in all, the table goes with its hook, its connection and the org (org_purge, the next file), and an
 -- erasure (personal_data_erase_marketplace_hook_notice) deletes a push whose text mentions the value. The bodies of the subscribed order, return and authorization topics hold ids, statuses and times; the table is treated as
 -- if it held personal data because a seller can subscribe more (chat and address topics).
 --
@@ -116,6 +116,8 @@ BEGIN
   IF v_org IS NULL THEN
     RETURN 'gone';
   END IF;
+  -- The ten-minute limit does not wait for the worker: a put also deletes what this hook still holds older than that, so the retention holds even before the relay and the nightly sweep exist.
+  DELETE FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook AND n.received_at < pg_catalog.clock_timestamp() - interval '10 minutes';
   -- A retry of a push that is already waiting is acknowledged whatever the backlog (the platform stops retrying).
   IF EXISTS (SELECT 1 FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook AND n.dedupe_key = p_dedupe_key) THEN
     RETURN 'duplicate';
@@ -261,21 +263,33 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- Erasure (kernel.personal_data.erase, R3, owners): the pushes of the caller's org whose raw body mentions the value are deleted (the matching is crove_kernel.text_mentions, the finder's own, over the body as
--- escaped text). Answers how many went. A kind or a value of the wrong shape is refused (22023) before any row is read.
+-- Erasure (kernel.personal_data.erase, R3, owners): the pushes of the caller's org whose raw body mentions the value are deleted (the matching is crove_kernel.text_mentions, the finder's own, over the body as text, or as escaped bytes when it
+-- is not valid UTF-8). Answers how many went. A kind or a value of the wrong shape is refused (22023) before any row is read.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION crove_finance.personal_data_erase_marketplace_hook_notice(p_kind text, p_value text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
-  v_rows integer;
+  v_rows integer := 0;
+  v_text text;
+  r record;
 BEGIN
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR (crove_kernel.ctx_verified() ->> 'role') IS DISTINCT FROM 'owner' THEN
     RAISE EXCEPTION 'PERSONAL_DATA_OWNER_ONLY' USING ERRCODE = '42501';
   END IF;
   PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
-  DELETE FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND crove_kernel.text_mentions(pg_catalog.encode(n.body, 'escape'), p_kind, p_value);
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  -- A body that is valid UTF-8 is read as the text it is (so a phone after a Vietnamese letter, or with no-break spaces, is found); only a body that is not valid UTF-8 is read as escaped bytes.
+  FOR r IN SELECT n.id, n.body FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org LOOP
+    BEGIN
+      v_text := pg_catalog.convert_from(r.body, 'UTF8');
+    EXCEPTION WHEN character_not_in_repertoire OR untranslatable_character OR invalid_text_representation THEN
+      v_text := pg_catalog.encode(r.body, 'escape');
+    END;
+    IF crove_kernel.text_mentions(v_text, p_kind, p_value) THEN
+      DELETE FROM crove_finance.marketplace_hook_notice n WHERE n.org_id = v_org AND n.id = r.id;
+      v_rows := v_rows + 1;
+    END IF;
+  END LOOP;
   RETURN v_rows;
 END $$;
 
