@@ -98,15 +98,14 @@ describe('the trade of the code and the choice of the shop', () => {
     }
   });
 
-  it('authorizes again onto the same shop but refuses another shop, storing nothing (#4273 for TikTok)', async () => {
-    const { provider } = setup({ codes: ['CODE1', 'CODE2'] });
-    const same = await provider.authorize!(JSON.stringify({ ...APP, serviceId: '7000000000001', shopId: fakeShop().id, shopCipher: fakeShop().cipher }), 'CODE1');
-    expect('granted' in same).toBe(true);
-    const other = await provider.authorize!(JSON.stringify({ ...APP, serviceId: '7000000000001', shopId: '7000714532876273999', shopCipher: 'GCP_other' }), 'CODE2');
-    expect(other).toEqual({ failed: 'SHOP_CHANGED' });
-    expect(leaks(other)).toEqual([]);
-    // A secret that never had a shop (the first authorization) is not a change.
-    expect('granted' in (await setup().provider.authorize!(TYPED, 'CODE1'))).toBe(true);
+  it('names the shop as the seller reference, so the finance command can refuse an authorization onto another shop (#4285)', async () => {
+    const { provider } = setup();
+    const result = await provider.authorize!(TYPED, 'CODE1');
+    if (!('granted' in result)) throw new Error('not granted');
+    expect(result.granted.sellerRef).toBe(fakeShop().id);
+    // The reference is a plain id of the shape the command accepts, and it is the same one the sealed secret keeps.
+    expect(result.granted.sellerRef).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(JSON.parse(result.granted.secret).shopId).toBe(result.granted.sellerRef);
   });
 
   it('says `failed` when the shop list cannot be read, and refused for a code TikTok does not accept (used, or not a seller\'s)', async () => {

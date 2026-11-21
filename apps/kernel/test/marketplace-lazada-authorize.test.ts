@@ -44,6 +44,9 @@ describe('the trade of the code', () => {
     if (!('granted' in result)) throw new Error('not granted');
     expect(JSON.parse(result.granted.secret)).toMatchObject({ appKey: '123456', appSecret: APP.appSecret, accessToken: expect.any(String), refreshToken: expect.any(String) });
     expect(result.granted.refreshExpiresAt).toEqual(new Date(NOW + 150 * 86_400_000));
+    // The seller who authorized (a short id of Lazada's answer, never a name or an e-mail) goes to the command that refuses a different seller (#4285); the secret keeps it beside the tokens for the next authorization.
+    expect(result.granted.sellerRef).toBe('1000100');
+    expect(JSON.parse(result.granted.secret).sellerId).toBe('1000100');
     // One call, to the token host; the code goes in the form body, not in the address.
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]?.host).toBe('auth.lazada.com');

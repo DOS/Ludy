@@ -33,8 +33,9 @@ export const testStateKey = (adapterId: string, state: MarketplaceConnectionStat
 };
 
 // The words for where an authorization stands: the generic ones, or the adapter's own where it has them (TikTok's failure names the shops).
-export const authorizeStateKey = (adapterId: string, state: 'pending' | 'authorized' | 'refused' | 'failed'): string => {
+export const authorizeStateKey = (adapterId: string, state: 'pending' | 'authorized' | 'refused' | 'failed' | 'shop_changed'): string => {
   const own = OWN_WORDS[adapterId];
+  if (state === 'shop_changed') return 'authorizeStates.shopChanged';
   return own && state === 'failed' ? `${own.authorize}.failed` : `authorizeStates.${state}`;
 };
 

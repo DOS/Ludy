@@ -5658,13 +5658,14 @@ export const en = {
     authorizeStatesLazada: { failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.' },
     reauthorizeSoon: 'The authorization given to the marketplace ends on {when}. An owner or admin should press Authorize again before then so Ludy keeps pulling orders.',
     reauthorizeEnded: 'The authorization given to the marketplace ended on {when}, so Ludy cannot pull new orders. An owner or admin should press Authorize again.',
-    reauthorizeReconnect: 'The authorization given to the marketplace has ended or is about to end ({when}) and this connection cannot be authorized again. An owner or admin should disconnect it and connect again.',
+    reauthorizeReconnect: 'The authorization given to the marketplace has ended or is about to end ({when}) and this connection cannot be authorized again right away. Re-enter your App Key and Secret, then authorize again: the connection, its orders and its poll position are kept, so there is no need to disconnect.',
     discardWaiting: 'Also discard the orders of this connection still waiting for confirmation ({count}): nothing is posted, the originals are deleted on the retention that already applies',
     authorizeStates: {
       pending: 'Authorization received from the marketplace; it is being completed. Reload in a few seconds; after 15 minutes without a result it shows as failed and you press Authorize again.',
       authorized: 'Authorized',
       refused: 'The marketplace refused the authorization code (wrong, already used or expired). Press Authorize again.',
       failed: 'The authorization could not be completed. Press Authorize again; if it keeps failing, tell the system administrator.',
+      shopChanged: 'The seller who just authorized is not the seller of this connection, so nothing was changed. Authorize with the seller account that was connected. To read another shop\'s orders, disconnect this one and make a new connection.',
     },
     oauth: {
       title: 'Authorize a marketplace connection',
@@ -5710,7 +5711,7 @@ export const en = {
     },
     pollStatesTiktok: { not_authorized: 'The app is not authorized on TikTok Shop yet, so no orders can be read' },
     authorizeStatesTiktok: {
-      failed: 'The authorization could not be completed. It can be a passing TikTok problem, so try Authorize again; if it fails again, check that the app is bound to exactly one shop, a Vietnam shop with a local seller (none, several, or a cross-border shop is not accepted). A connection stays on its first shop: to use another shop, disconnect and connect it as a new connection. If it keeps failing, tell the system administrator.',
+      failed: 'The authorization could not be completed. It can be a passing TikTok problem, so try Authorize again; if it fails again, check that the app is bound to exactly one shop, a Vietnam shop with a local seller (none, several, or a cross-border shop is not accepted). If it keeps failing, tell the system administrator.',
     },
     pollStatesLazada: { not_authorized: 'The app is not authorized on Lazada yet, so no orders can be read' },
     pollStates: {

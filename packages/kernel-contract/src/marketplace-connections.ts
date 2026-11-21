@@ -8,7 +8,8 @@ import { zId } from './schemas.ts';
 // What a connection test answers and how a poll ended: states, never the platform's own text. The same lists the port, the database's CHECKs and @crove/db keep.
 export const MARKETPLACE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export const MARKETPLACE_POLL_STATE_KEYS = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
-export const MARKETPLACE_AUTHORIZE_STATE_KEYS = ['pending', 'authorized', 'refused', 'failed'] as const;
+// `shop_changed`: the seller who authorized is not the seller this connection was authorized for (#4285): nothing was replaced, and a different seller needs a new connection.
+export const MARKETPLACE_AUTHORIZE_STATE_KEYS = ['pending', 'authorized', 'refused', 'failed', 'shop_changed'] as const;
 export const zMarketplaceAuthorizeState = z.enum(MARKETPLACE_AUTHORIZE_STATE_KEYS);
 export type MarketplaceAuthorizeState = z.infer<typeof zMarketplaceAuthorizeState>;
 export const zMarketplaceConnectionState = z.enum(MARKETPLACE_CONNECTION_STATES);
@@ -95,6 +96,8 @@ export const zMarketplaceConnectionRecordPoll = z.strictObject({
   cursor: z.string().min(1).max(200).nullable().optional(),
 });
 
+const zMarketplaceSellerRef = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+
 // The seller's authorization of a connection (#4238): a state the API makes (random, only its hash is stored), the one-time code the callback brings (sealed at the API edge) and what the worker records.
 export const zMarketplaceStateHash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 export const zMarketplaceAuthorizeBegin = z.strictObject({ id: zId, stateHash: zMarketplaceStateHash });
@@ -113,6 +116,10 @@ export const zMarketplaceAuthorizeComplete = z.strictObject({
   expiresAt: z.iso.datetime({ offset: true }),
   reauthorizeBy: z.iso.datetime({ offset: true }).nullable(),
   credential: z.strictObject({ keyId: z.string().min(1).max(64), envelope: z.string().min(1).max(8000) }),
+  // The platform's id of the seller who authorized (a short word the token answer carries; never a name or an e-mail), and the one the connection's previous secret named, if it did (the worker reads it from
+  // the secret it opens: a connection authorized before the seller was kept has no stored one yet). The command compares them with the stored one; it never opens a secret.
+  sellerRef: zMarketplaceSellerRef.nullable().optional(),
+  priorSellerRef: zMarketplaceSellerRef.nullable().optional(),
 });
 
 // The seller's browser, on its way out and back (#4238): the address of the platform's consent page, and what the platform returns the seller to the app with (the state it was given and the one-time code).
