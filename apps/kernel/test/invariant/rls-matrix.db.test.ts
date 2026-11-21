@@ -104,8 +104,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_hook',
-  'crove_finance.marketplace_hook_notice',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -1707,7 +1705,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #4316: a marketplace connection's push hook key, one per connection: the SHA-256 (hex) of 128 random bits that the route's URL carries, the dates, and the count of refused pushes. Definer-only, in MACHINERY. Its
-  // factory lands before the table (step 1 of 2), so PENDING_TABLES holds it until the migration of step 2.
+  // table landed in #4316 (step 2), which removed it from PENDING_TABLES.
   'crove_finance.marketplace_hook': {
     make: (o) => {
       const provider = `marketplace_s${marketplaceSeq++}`;
