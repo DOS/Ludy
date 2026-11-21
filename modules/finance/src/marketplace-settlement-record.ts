@@ -23,7 +23,8 @@ import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { householdTaxRate } from './marketplace-household-tax.ts';
 import { postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
-import { settlementProposal, type SettlementProposal } from './marketplace-settlement-posting.ts';
+import { settlementProposal, type SettlementProposal, type SettlementVatRate, type SettlementVatRates } from './marketplace-settlement-posting.ts';
+import { vatRatesOfMonth } from './marketplace-settlement-vat.ts';
 import { booksOn } from './payroll-posting.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 
@@ -107,7 +108,11 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   // A household seller's withheld tax is split by its one line of business's rate pair (read only when something was withheld); any other seller has no tax lines.
   const withheld = months.some((m) => m.lines.some((l) => money(l.taxWithheld ?? '0').greaterThan(0)));
   const tax = withheld ? await householdTaxRate(ctx, settlement.legal_entity_id, periodTo) : null;
-  const proposals = months.map((m) =>
+  // The VAT rate in force on the delivery day of each piece (marketplaceVatRateAt, the one function of the rate table); a day with no row holds the settlement back (the proposal refuses it).
+  const vatMemo = new Map<string, SettlementVatRate | null>();
+  const vatRates: SettlementVatRates[] = [];
+  for (const m of months) vatRates.push(await vatRatesOfMonth(ctx, settlement.legal_entity_id, m, vatMemo));
+  const proposals = months.map((m, i) =>
     settlementProposal(
       {
         regime: map.regime,
@@ -119,6 +124,7 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
         partyId: link?.id ?? null,
         lines: m.lines,
         tax,
+        vatRates: vatRates[i] ?? {},
       },
       maps,
     ),

@@ -50,7 +50,7 @@ const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => (
   halfReversed: [],
   accruals: [],
   accrualReversals: [],
-  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, proposalId: null }],
+  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, waitingVatMonths: [], proposalId: null }],
   payouts: [
     {
       settlementId,
@@ -144,6 +144,21 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html.match(/data-testid="marketplace-post"/g)).toHaveLength(1);
     expect(html).toContain('marketplace-post-waiting');
     expect(html).toContain('Waiting for the delivery day');
+  });
+
+  it('shows a settlement whose sales lack a VAT rate for their delivery day as waiting, with a link to the setting and no button', () => {
+    const base = FULL();
+    const one = base.settlements[0]!;
+    const waiting = { ...base, settlements: [{ ...one, months: ['2026-09', '2026-10'], waitingVatMonths: ['2026-10'] }] };
+    const html = render(waiting);
+    expect(html).toContain('data-testid="marketplace-post-waiting-vat"');
+    expect(html).toContain('Waiting for the VAT rate of 2026-10.');
+    expect(html).toContain('/settings/accounting');
+    expect(html).toContain('2026-09, 2026-10');
+    expect(html).not.toContain('data-testid="marketplace-post"');
+    expect(render(waiting, 'vi')).toContain('Chờ thuế suất GTGT của 2026-10.');
+    // The same settlement with every day covered has its button again.
+    expect(render({ ...base, settlements: [{ ...one, months: ['2026-09', '2026-10'] }] })).toContain('data-testid="marketplace-post"');
   });
 
   it('lists a half-reversed settlement with how many months still stand, in both languages, with no button', () => {

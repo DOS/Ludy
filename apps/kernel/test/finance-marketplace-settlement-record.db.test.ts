@@ -26,7 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.');
 
@@ -75,6 +75,8 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
+    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -475,5 +477,76 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     // A voucher naming a settlement is no closing, no count, no pay run posting, and names a proposal.
     await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, settlement_id) VALUES ($1, '2026-10-15', 'x', $2)`, [o.orgId, randomUUID()])).rejects.toBeTruthy();
     await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, closing_year) VALUES ($1, '2026-10-15', 'x', $2, $3, 2025)`, [o.orgId, proposalId, randomUUID()])).rejects.toBeTruthy();
+  });
+  // Output VAT of the sales (#4303 S3b, research rule 1): the rate comes from crove_finance.marketplace_vat_rate through marketplaceVatRateAt, on the delivery day of each line.
+  async function setRate(o: Org, rows: Array<{ from: string; method: 'deduction' | 'none'; percent: string | null }>, replaceAll = false) {
+    await withAdmin(async (c) => {
+      if (replaceAll) await c.query('DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
+      for (const r of rows) await c.query('INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.entity, r.from, r.method, r.percent]);
+    });
+  }
+
+  it('splits the sales into revenue and 33311 at the rate in force on each delivery day, rounded once, and posts one balanced voucher per month', async () => {
+    const o = await org();
+    // 8% until the end of 2026 and 10% from 2027 (data, set by a person); one sale delivered in each of two months, in one settlement.
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }, { from: '2027-01-01', method: 'deduction', percent: '10' }], true);
+    const settlement = await seed(o, 'shopee', '2026-12-20', '2027-01-10', [
+      { sales: '1080000', discount: '0', delivered: '2026-12-28' },
+      { sales: '1100000', discount: '0', delivered: '2027-01-03' },
+    ]);
+    const { proposalId } = await ask(o, settlement);
+    const stored = await payloadOf(o, proposalId);
+    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([
+      ['131', '1080000', '0'], ['5111', '0', '1000000'], ['33311', '0', '80000'],
+      ['131', '1100000', '0'], ['5111', '0', '1000000'], ['33311', '0', '100000'],
+    ]);
+    const done = await approve(o, proposalId);
+    expect(done.voucherId).toBeTruthy();
+    const posted = await rows<{ account_code: string; debit: string; credit: string }>(
+      `SELECT l.account_code, sum(l.debit)::bigint::text AS debit, sum(l.credit)::bigint::text AS credit FROM crove_finance.journal_line l JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
+       JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id AND e.source_type = 'finance.journal_voucher' WHERE v.org_id = $1 AND v.settlement_id = $2 GROUP BY l.account_code ORDER BY l.account_code`,
+      [o.orgId, settlement],
+    );
+    expect(posted.map((r) => [r.account_code, r.debit, r.credit])).toEqual([['131', '2180000', '0'], ['33311', '0', '180000'], ['5111', '0', '2000000']]);
+  });
+
+  it('holds a settlement back with words when a delivery day has no rate row, shows what it waits for on the Sàn read, and posts once the row is entered', async () => {
+    const o = await org();
+    // No row at all: the settlement waits (nothing is guessed), at the request and in the list.
+    await setRate(o, [], true);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1080000', discount: '0', delivered: '2026-10-05' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE', status: 422, details: { dates: ['2026-10-05'] } });
+    const wait = await rt.query<{ settlements: Array<{ months: string[]; waitingVatMonths: string[]; proposalId: string | null }> }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(wait.settlements[0]).toMatchObject({ months: ['2026-10'], waitingVatMonths: ['2026-10'], proposalId: null });
+    // A row that starts AFTER the delivery day still does not cover it.
+    await setRate(o, [{ from: '2026-10-06', method: 'deduction', percent: '8' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE', status: 422 });
+    // A row from the start of the year covers it; the list stops waiting and the proposal is made.
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }]);
+    const { proposalId } = await ask(o, settlement);
+    expect((await payloadOf(o, proposalId))?.lines.map((l) => [l.account, l.credit])).toEqual([['131', '0'], ['5111', '1000000'], ['33311', '80000']]);
+    const after = await rt.query<{ settlements: Array<{ waitingVatMonths: string[] }> }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(after.settlements[0]?.waitingVatMonths).toEqual([]);
+  });
+
+  it('adds no VAT line for method none, and a wrong row is corrected by a later entry for the same date, the latest entry winning', async () => {
+    const o = await org();
+    await setRate(o, [{ from: '2026-01-01', method: 'none', percent: null }], true);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1080000', discount: '0', delivered: '2026-10-05' }]);
+    expect((await payloadOf(o, (await ask(o, settlement)).proposalId))?.lines.map((l) => l.account)).toEqual(['131', '5111']);
+    // The first entry of the date said 80 by mistake; entering the date again corrects it.
+    const other = await org();
+    await setRate(other, [{ from: '2026-01-01', method: 'deduction', percent: '80' }], true);
+    await setRate(other, [{ from: '2026-01-01', method: 'deduction', percent: '8' }]);
+    const again = await seed(other, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1080000', discount: '0', delivered: '2026-10-05' }]);
+    expect((await payloadOf(other, (await ask(other, again)).proposalId))?.lines.map((l) => [l.account, l.credit])).toEqual([['131', '0'], ['5111', '1000000'], ['33311', '80000']]);
+  });
+
+  it('takes a refund of the sale at the sale\'s rate: Dr 131 net, Cr 5111 and 33311 net of the refund (TT133)', async () => {
+    const o = await org();
+    await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '8' }], true);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1080000', discount: '0', refund: '108000', delivered: '2026-10-05' }]);
+    const lines = (await payloadOf(o, (await ask(o, settlement)).proposalId))?.lines.map((l) => [l.account, l.debit, l.credit]);
+    expect(lines).toEqual([['131', '972000', '0'], ['5111', '0', '900000'], ['33311', '0', '72000']]);
   });
 });

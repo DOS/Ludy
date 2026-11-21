@@ -28,7 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.');
 
@@ -82,6 +82,8 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
+    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
@@ -224,6 +226,29 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await post(e, s2);
     const l2 = await bankLine(e, '2026-10-20', RECEIVED);
     await expect(ask(e, s2, l2)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422 });
+  });
+
+  it('leaves the output VAT of the sales (33311) alone at the payout: it debits only the VAT the platform withheld on 3331, though 33311 sits under it', async () => {
+    // A household on the deduction method: the settlement credits 33311 for the output VAT (#4303 S3b) and 3331 / 3335 for what the platform withheld; the payout debits the withheld tax exactly.
+    const o = await org();
+    await withAdmin(async (c) => {
+      await c.query('DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
+      await c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, '2026-01-01', 'deduction', 8)", [o.orgId, o.entity]);
+    });
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', PAID);
+    await post(o, settlement);
+    const line = await bankLine(o, '2026-10-20', RECEIVED);
+    await approve(o, (await ask(o, settlement, line)).proposalId);
+    const totals = await rows<{ account_code: string; debit: string; credit: string }>(
+      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '33311') GROUP BY 1 ORDER BY 1",
+      [o.orgId],
+    );
+    const byAccount = Object.fromEntries(totals.map((t) => [t.account_code, [t.debit, t.credit]]));
+    // The withheld VAT and PIT net to zero as before; the output VAT is credited and never debited by the payout.
+    expect(byAccount['3331']).toEqual(['2000', '2000']);
+    expect(byAccount['3335']).toEqual(['1000', '1000']);
+    expect(byAccount['33311']?.[0]).toBe('0');
+    expect(Number(byAccount['33311']?.[1])).toBeGreaterThan(0);
   });
 
   // Reversing a settlement's or a payout's entry through the generic reversal (#3329, option C): the request, its title for the approver, and the entries of a settlement.

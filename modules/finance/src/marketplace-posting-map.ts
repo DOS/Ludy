@@ -125,14 +125,14 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
   },
 });
 
-// The postings a map gates, each with the rows it posts to (#3711 slice 1). `sales`: the settlement voucher without household tax (131 against 511, a refund reducing 511). `payout`: the money received
+// The postings a map gates, each with the rows it posts to (#3711 slice 1). `sales`: the settlement voucher without household tax (131 against 511 and the output VAT on 33311, #4303 S3b; a refund reducing 511). `payout`: the money received
 // (cash, fees against the platform's 331, 131 cleared). `fee_accrual`: the month-end accrual of fees not yet invoiced (expense against 335). `household_tax`: the VAT and PIT a platform withheld for a
 // household seller, in the settlement voucher and again in the payout; its debit side is the owner's equity (pitOwnerEquity), not an expense. 333 and the retired 1388 row belong to no path.
 export type MarketplacePath = 'sales' | 'payout' | 'fee_accrual' | 'household_tax';
 type MarketplaceRow = 'receivable' | 'revenue' | 'salesReturn' | 'cash' | 'feePayable' | 'feeAwaitingInvoice' | 'taxWithheld' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity' | 'feeExpense' | 'accruedExpense' | 'outputVat' | 'feeInputVat' | 'otherReceivable' | 'assetAwaitingHandling' | 'costOfGoods' | 'otherIncome' | 'otherExpense';
 
 export const MARKETPLACE_PATH_ROWS: Readonly<Record<MarketplacePath, readonly MarketplaceRow[]>> = Object.freeze({
-  sales: Object.freeze<MarketplaceRow[]>(['receivable', 'revenue', 'salesReturn']),
+  sales: Object.freeze<MarketplaceRow[]>(['receivable', 'revenue', 'salesReturn', 'outputVat']),
   payout: Object.freeze<MarketplaceRow[]>(['receivable', 'cash', 'feePayable']),
   fee_accrual: Object.freeze<MarketplaceRow[]>(['feeExpense', 'accruedExpense']),
   household_tax: Object.freeze<MarketplaceRow[]>(['vatPayable', 'pitPayable', 'pitOwnerEquity']),

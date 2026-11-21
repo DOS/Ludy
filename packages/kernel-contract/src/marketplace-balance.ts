@@ -63,7 +63,7 @@ export type MarketplaceLine = z.infer<typeof zMarketplaceLine>;
 // call and no buyer data. Each item is one proposal a person can ask for (finance.marketplace_settlement.record, finance.marketplace_payout.record, finance.marketplace_fee_clearing.record); nothing
 // is posted by reading them. `postingConfirmed` is the gate: false while the accountant has not confirmed the account map of an entity in view (#2520), when every request would be refused.
 // A settlement to post: a stored settlement that stands and has no posting voucher. It posts as one voucher per month of delivery (#2516 rework slice C1), all by one proposal; `months` are those months and
-// `net` the sum of what their entries post (sales less seller discounts less refunds). A settlement with a sale that has no delivery day yet waits (`waitingLines` of them, no month), nothing to ask for.
+// `net` the sum of what their entries post (sales less seller discounts less refunds). A settlement with a sale that has no delivery day yet waits (`waitingLines` of them, no month), nothing to ask for; one whose sales lack a VAT rate for their delivery day waits too (`waitingVatMonths`).
 export const zMarketplaceSettlementToPost = z.object({
   id: zId,
   legalEntityId: zId,
@@ -75,6 +75,9 @@ export const zMarketplaceSettlementToPost = z.object({
   months: z.array(zMonth),
   net: zMoney,
   waitingLines: z.number().int().min(0),
+  // The months (YYYY-MM) of a settlement that has its delivery days but whose sales have no VAT rate row for the day they were delivered (#4303 S3b): it waits, with nothing to ask for, until the rate is
+  // entered in Settings (Kế toán). Empty when every day has a row (or the entity is not on the deduction method).
+  waitingVatMonths: z.array(zMonth),
   // A proposal for it already waits in the Inbox: the screen links to it instead of offering a second request.
   proposalId: zId.nullable(),
 });

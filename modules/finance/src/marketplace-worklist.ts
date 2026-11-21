@@ -21,7 +21,9 @@ import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type Marketpl
 import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
 import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
+import type { SettlementVatRate } from './marketplace-settlement-posting.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
+import { vatRateGaps } from './marketplace-settlement-vat.ts';
 import { booksOn } from './payroll-posting.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -80,9 +82,13 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       ).rows;
       const monthsOf = await settlementMonthsFor(ctx, standingRows.map((s) => ({ id: s.id, periodEnd: s.period_end })));
       const settlements: MarketplaceWorklist['settlements'] = [];
+      // The VAT rate of each delivery day, asked of the rate table once per entity and day for the whole list.
+      const vatMemo = new Map<string, SettlementVatRate | null>();
       for (const s of standingRows) {
         const m = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
         if (m.months.length === 0 && m.waiting === 0) continue;
+        // A settlement whose sales have a delivery day but no VAT rate row for it waits too (#4303 S3b): the months it waits for, nothing to ask for.
+        const vatGaps = m.waiting > 0 ? [] : await vatRateGaps(ctx, s.legal_entity_id, m.months, vatMemo);
         settlements.push({
           id: s.id,
           legalEntityId: s.legal_entity_id,
@@ -93,7 +99,8 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
           months: m.waiting > 0 ? [] : m.months.map((x) => x.month),
           net: m.waiting > 0 ? '0' : toMoney(sum(m.months.map((x) => x.net))),
           waitingLines: m.waiting,
-          proposalId: m.waiting > 0 ? null : await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
+          waitingVatMonths: vatGaps,
+          proposalId: m.waiting > 0 || vatGaps.length > 0 ? null : await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
         });
       }
 

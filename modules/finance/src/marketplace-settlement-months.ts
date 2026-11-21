@@ -8,6 +8,8 @@
 // - a refund belongs to the month of the settlement's last day (the refund reduces revenue in the period it occurs, PO decision 2026-11-08);
 // - a line refunded at least as much as it sold needs no delivery day: it is the refund in the month of the settlement's last day, sale and refund together;
 // - the tax the platform withheld on a line goes with the piece that holds the line's sale (the month of its delivery, or the refund month for a line refunded at least as much as it sold);
+// - each piece carries `rateDate`, the day whose VAT rate applies (#4303 S3b): the delivery day of a sale and of the refund of that sale; a line refunded at least as much as it sold has no usable delivery day, so its
+//   piece has none and takes the date of the entry;
 // - a month whose net is zero has no entry and is not listed, unless tax was withheld on its lines (then it is listed and posts only that tax); a month with a negative net runs the entry the other way (the platform owing less).
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import type { QueryContext } from '@crove/kernel-runtime';
@@ -58,7 +60,7 @@ export function settlementMonthsOf(lines: readonly SettlementMonthLine[], period
     const sale = money(l.sales).minus(money(l.sellerDiscount));
     if (money(l.refund).greaterThanOrEqualTo(sale)) {
       // Refunded at least as much as it sold: no delivery day is needed, the whole line is the refund in the settlement's own month.
-      put(endMonth, { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: l.refund, taxWithheld: l.taxWithheld });
+      put(endMonth, { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: l.refund, taxWithheld: l.taxWithheld, rateDate: null });
       continue;
     }
     // A delivery after the settlement's last day cannot be what the platform paid for: the day is not usable, the line waits.
@@ -66,8 +68,9 @@ export function settlementMonthsOf(lines: readonly SettlementMonthLine[], period
       waiting += 1;
       continue;
     }
-    put(l.deliveredOn.slice(0, 7), { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: '0', taxWithheld: l.taxWithheld });
-    if (!money(l.refund).isZero()) put(endMonth, { sales: '0', sellerDiscount: '0', refund: l.refund, taxWithheld: '0' });
+    put(l.deliveredOn.slice(0, 7), { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: '0', taxWithheld: l.taxWithheld, rateDate: l.deliveredOn });
+    // The refund of this sale takes the rate of the sale it reverses.
+    if (!money(l.refund).isZero()) put(endMonth, { sales: '0', sellerDiscount: '0', refund: l.refund, taxWithheld: '0', rateDate: l.deliveredOn });
   }
   const months: SettlementMonth[] = [];
   for (const month of [...buckets.keys()].sort()) {
@@ -147,7 +150,7 @@ export const settlementPosted = (postings: readonly SettlementPostings[]): boole
 
 // The VAT and the PIT the settlement's vouchers credited to the two tax accounts (slice C2), exactly as posted: the sums of the credits of their entries' lines on the accounts the map names (a
 // sub-account counts with its parent). The payout debits these amounts, so the accounts net to zero whatever rounding each month's split did. Zero when the settlement credited none.
-export async function postedSettlementTax(ctx: Ctx, settlementId: string, vatCode: string, pitCode: string): Promise<{ vat: string; pit: string }> {
+export async function postedSettlementTax(ctx: Ctx, settlementId: string, vatCode: string, pitCode: string, outputVatCode?: string): Promise<{ vat: string; pit: string }> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.journal_voucher as j')
     .innerJoin('crove_finance.journal_entry as e', (join) =>
@@ -164,6 +167,8 @@ export async function postedSettlementTax(ctx: Ctx, settlementId: string, vatCod
   let vat = money('0');
   let pit = money('0');
   for (const r of rows) {
+    // The output VAT of the sales (33311, #4303 S3b) is a sub-account of the withheld-VAT account but is VAT the seller owes the tax office: the payout never debits it, so it is not counted here.
+    if (outputVatCode && r.account_code.startsWith(outputVatCode)) continue;
     if (r.account_code.startsWith(vatCode)) vat = vat.plus(money(r.credit));
     else pit = pit.plus(money(r.credit));
   }

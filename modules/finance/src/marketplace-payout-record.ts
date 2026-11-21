@@ -131,7 +131,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .executeTakeFirst();
   if (!link) throw notPostable('Không tìm thấy đối tượng của sàn mà kỳ đối soát đã tạo khi ghi sổ', { reason: 'PARTY' });
   // The tax the settlement's vouchers credited to 3331 and 3335 (a household seller): the payout debits exactly that, or none when it credited none.
-  const taxPosted = await postedSettlementTax(ctx, settlement.id, map.vatPayable.code, map.pitPayable.code);
+  const taxPosted = await postedSettlementTax(ctx, settlement.id, map.vatPayable.code, map.pitPayable.code, map.outputVat.code);
   const proposal = payoutProposal(
     {
       regime: map.regime,

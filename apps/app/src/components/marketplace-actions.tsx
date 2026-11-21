@@ -64,6 +64,9 @@ const period = (from: string, to: string) => (from === to ? from : `${from} - ${
 function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: boolean }) {
   const t = useTranslations('marketplaceActions');
   const f = useFormat();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  // Its sales have a delivery day but no VAT rate row for it (#4303 S3b): nothing to ask for until the rate is entered in Settings.
+  const waitingVat = s.months.length > 0 && s.waitingVatMonths.length > 0;
   return (
     <TableRow data-testid="marketplace-action-settlement">
       <TableCell className="px-4 py-3">{s.platformName}</TableCell>
@@ -73,6 +76,13 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
       <TableCell className="px-4 py-3 text-right">
         {s.months.length === 0 ? (
           <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting">{t('waitingDelivery')}</span>
+        ) : waitingVat ? (
+          <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting-vat">
+            {t('waitingVatRate', { months: s.waitingVatMonths.join(', ') })}{' '}
+            <Link to="/o/$slug/settings/accounting" params={{ slug }} className="font-medium text-foreground underline">
+              {t('setVatRate')}
+            </Link>
+          </span>
         ) : (
           <AskButton
             label={t('post')}
