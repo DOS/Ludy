@@ -40,7 +40,6 @@ export const financeManifest = defineModule({
       fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id']),
       household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
       household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
-      marketplace_vat_rate: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'method', 'vat_percent', 'created_by', 'created_at']),
       household_profile: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'vat_cut_eligible', 'created_by', 'created_at'], { representative_name: 'pii' }),
       household_return_form_version: columns(['form', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
       household_tax_reduction: columns(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']),
@@ -58,6 +57,7 @@ export const financeManifest = defineModule({
       // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and a time only.
       marketplace_connection_file: columns(['org_id', 'id', 'marketplace_connection_id', 'file_id', 'created_at']),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
+      marketplace_vat_rate: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'method', 'vat_percent', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),
       // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
