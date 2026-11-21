@@ -215,20 +215,24 @@ suite('Marketplace push hook (#4316)', () => {
 
   it('claims the waiting pushes with their bytes and deletes them as it hands them out, one push for each org', async () => {
     const URL_SIGNED = 'https://example.test/api/marketplace/shopee/webhook/the-key-in-the-address';
+    // A TikTok Shop hook is sent an address too (a wrong or careless caller): it is dropped, because only Shopee signs the address. The Shopee hook keeps its own.
     expect(await put(otherHookId, sha(otherKey), sha('other'), BODY, URL_SIGNED)).toBe('accepted');
+    expect(await put(hookId, sha(key), sha('shopee-with-address'), BODY, URL_SIGNED)).toBe('accepted');
     const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null }>(
       'SELECT * FROM crove_finance.marketplace_hook_claim(10)',
     );
     expect(claimed.map((c) => [c.org_id, c.hook_id, c.marketplace_connection_id, c.adapter, c.platform, c.dedupe_key]).sort()).toEqual(
       [
         [orgId, hookId, connectionId, 'shopee', 'shopee', sha('one')],
+        [orgId, hookId, connectionId, 'shopee', 'shopee', sha('shopee-with-address')],
         [otherOrgId, otherHookId, otherConnectionId, 'tiktok_shop', 'tiktok_shop', sha('other')],
       ].sort(),
     );
-    const mine = claimed.find((c) => c.hook_id === hookId);
-    // The address is kept only where the push was stored with one, and comes back with the claim.
+    const mine = claimed.find((c) => c.hook_id === hookId && c.dedupe_key === sha('one'));
+    // The address is kept only for a Shopee hook that was sent one, and comes back with the claim; a TikTok Shop hook never keeps it (20270207100000).
     expect(mine?.request_url).toBeNull();
-    expect(claimed.find((c) => c.hook_id === otherHookId)?.request_url).toBe(URL_SIGNED);
+    expect(claimed.find((c) => c.dedupe_key === sha('shopee-with-address'))?.request_url).toBe(URL_SIGNED);
+    expect(claimed.find((c) => c.hook_id === otherHookId)?.request_url).toBeNull();
     expect(Buffer.compare(mine?.body ?? Buffer.alloc(0), BODY)).toBe(0);
     expect(await waiting()).toEqual([]);
     expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);
