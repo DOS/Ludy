@@ -58,7 +58,7 @@ export const LABOR_CODE_RULES: readonly PayrollRule[] = [
     effectiveFrom: '2021-01-01',
     status: 'commentary',
     source: {
-      cite: `${CODE} Art. 113 and Art. 114 and Decree 145/2020/ND-CP Art. 65(4) and Art. 66: 12 working days a year in normal conditions, 14 for heavy or hazardous work, 16 for specially heavy or hazardous work, plus 1 extra day for every full 5 years worked for the employer; employer-approved unpaid leave up to 1 month/year counts as working time (approvedUnpaidMonthsAllowance 1), and a hire, end, or remaining unpaid month with at least 50% of working days (halfMonthWorkingDaysRatio 0.5) counts toward annual leave`,
+      cite: `${CODE} Art. 113 and Art. 114 and Decree 145/2020/ND-CP Art. 65(4), (5), (6) and Art. 66: 12 working days a year in normal conditions, 14 for heavy or hazardous work, 16 for specially heavy or hazardous work, plus 1 extra day for every full 5 years worked for the employer; employer-approved unpaid leave up to 1 month/year (approvedUnpaidMonthsAllowance 1), accumulated sickness leave up to 2 months/year (sicknessMonthsAllowance 2), and maternity leave up to 6 months per event (maternityMonthsAllowancePerEvent 6) count as working time, and a hire, end, or remaining unpaid month with at least 50% of working days (halfMonthWorkingDaysRatio 0.5) counts toward annual leave; pending accountant confirmation (#2535)`,
       confidence: 'commentary',
     },
     value: {
@@ -69,6 +69,8 @@ export const LABOR_CODE_RULES: readonly PayrollRule[] = [
       seniorityExtraDays: '1',
       halfMonthWorkingDaysRatio: '0.5',
       approvedUnpaidMonthsAllowance: '1',
+      sicknessMonthsAllowance: '2',
+      maternityMonthsAllowancePerEvent: '6',
     },
   }),
 ];

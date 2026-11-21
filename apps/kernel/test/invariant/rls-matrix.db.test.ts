@@ -453,7 +453,8 @@ interface RowFactory {
   updatesBySystemOnly?: string;
   // For a role that may update some columns but not org_id: the assignment (and extra row filter) the update
   // probes use, when a no-op assignment would be refused by a trigger. Defaults to "<first column> = <itself>".
-  update?: { set: string; where?: string };
+  // blindSet assigns a constant without reading any column (used for blind UPDATE sweeps when org_id and updated_at are not updatable).
+  update?: { set: string; where?: string; blindSet?: string };
 }
 
 const hex64 = () => randomBytes(32).toString('hex');
@@ -2173,7 +2174,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
   // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
   'crove_hr.payroll_dependent': {
-    update: { set: 'ended_on = ended_on' },
+    update: { set: 'ended_on = ended_on', blindSet: "display_name = 'RLS matrix blind'" },
     make: (o) => {
       const employee = randomUUID();
       return {
@@ -5223,6 +5224,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       if (table.startsWith('crove_hr.')) {
         it('is for owners and admins only: a plain member and a viewer reach no row, and an admin does what the owner does', async () => {
           const factory = factoryFor(table);
+          // Prove plainMember and viewerPerson have unrestricted entity scope ('*'), so le_scope cannot be what hides crove_hr rows (#2717 G2).
+          for (const who of [plainMember, viewerPerson]) {
+            const scope = expectRows(await probe(who, (c) => c.query('SELECT crove_kernel.ctx_le_scope() AS scope')), `${who.name} (le_scope)`);
+            expect(scope.rows, `${who.name}: le_scope on ${table}`).toEqual([{ scope: ['*'] }]);
+          }
           const readOwn = async (actor: Actor) => expectRows(await probe(actor, (c) => c.query(`SELECT org_id::text AS org FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${actor.name} (read)`);
           const ownerRead = await readOwn(member);
           expect(ownerRead.rows.length, `${table}: the owner reads the seeded rows of org A`).toBeGreaterThan(0);
@@ -5262,6 +5268,58 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             const run = (who: Actor) => probe(who, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id]));
             expect(shape(await run(adminPerson)), `${adminPerson.name} deleting from ${table}, as the owner does`).toEqual(shape(await run(member)));
             for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (delete)`).rowCount, `${who.name}: rows of ${table} deleted`).toBe(0);
+          }
+
+          // Blind UPDATE and DELETE sweeps (#2717 G1): run with no WHERE clause and assign constants without reading columns so SELECT policies
+          // cannot mask an UPDATE-only or DELETE-only RLS gap (while staying compatible with per-command policies).
+          if (cols.length > 0) {
+            const blind = cols.includes('org_id')
+              ? { sql: `UPDATE ${table} SET org_id = $1`, params: [orgs.A.id] }
+              : factory.update?.blindSet
+                ? { sql: `UPDATE ${table} SET ${factory.update.blindSet}`, params: [] }
+                : cols.includes('updated_at')
+                  ? { sql: `UPDATE ${table} SET updated_at = $1::timestamptz`, params: ['2026-11-01T00:00:00Z'] }
+                  : undefined;
+            if (!blind) {
+              throw new Error(`${table} has updatable columns (${cols.join(', ')}) without org_id or updated_at: add update.blindSet (constant assignment with no column read) to ROW_FACTORIES`);
+            }
+            if (can(table, 'crove_app', 'SELECT')) {
+              if (!factory.update?.where) {
+                const ownerSweep = await sweepRun(member, table, blind.sql, blind.params);
+                expect(ownerSweep, `${member.name} blind-updating ${table} (control)`).toMatchObject({ ok: true });
+                if (ownerSweep.ok) expect(ownerSweep.changed, `${member.name}: blind update control on ${table}`).toBeGreaterThan(0);
+              }
+              for (const who of [plainMember, viewerPerson]) {
+                const swept = await sweepRun(who, table, blind.sql, blind.params);
+                expect(swept, `${who.name} blind-updating ${table} without WHERE`).toEqual({ ok: true, visible: 0, changed: 0 });
+              }
+            } else {
+              for (const who of [plainMember, viewerPerson]) {
+                const outcome = await probe(who, (c) => c.query(blind.sql, blind.params));
+                expect(expectRows(outcome, `${who.name} (blind update)`).rowCount, `${who.name}: blind update on ${table}`).toBe(0);
+              }
+            }
+          } else {
+            for (const who of [plainMember, viewerPerson]) {
+              expectDenied(await probe(who, (c) => c.query(`UPDATE ${table} SET org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who.name} blind-updating ${table}`);
+            }
+          }
+          if (can(table, 'crove_app', 'DELETE')) {
+            if (can(table, 'crove_app', 'SELECT')) {
+              for (const who of [plainMember, viewerPerson]) {
+                const swept = await sweepRun(who, table, `DELETE FROM ${table}`, []);
+                expect(swept, `${who.name} blind-deleting from ${table} without WHERE`).toEqual({ ok: true, visible: 0, changed: 0 });
+              }
+            } else {
+              for (const who of [plainMember, viewerPerson]) {
+                const outcome = await probe(who, (c) => c.query(`DELETE FROM ${table}`));
+                expect(expectRows(outcome, `${who.name} (blind delete)`).rowCount, `${who.name}: blind delete on ${table}`).toBe(0);
+              }
+            }
+          } else {
+            for (const who of [plainMember, viewerPerson]) {
+              expectDenied(await probe(who, (c) => c.query(`DELETE FROM ${table}`)), PRIVILEGE_DENIED, `${who.name} blind-deleting from ${table}`);
+            }
           }
         });
       }

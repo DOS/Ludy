@@ -97,6 +97,9 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/attachment': 'public eSign verified signer supporting attachment upload (#3818, Slice 4b): active signing token is the credential; enforces org_app_on and entitlement with opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), IP + token rate limits, 10 MB size cap, magic-byte check (PDF/PNG/JPEG only), and SHA-256 audit event',
+  '/api/sign/delegate': 'public eSign audited signer delegation (#3819, Slice 4c): single-use fragment token is the credential in the JSON body; enforces org_app_on and entitlement with opaque 404, allow_delegation = true, delegation_count < 2 cap, single-mailbox validation, mail_suppression check, IP + token rate limits, and atomic token consume',
+  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820, Slice 4d): lists only active public-hub-opted-in 1-signer templates for an org with org_app_on and entitlement opaque 404 and per-IP rate limiting',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
