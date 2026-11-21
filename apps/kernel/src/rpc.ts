@@ -1183,8 +1183,14 @@ export function createRpcHandler(
           edit: os.hr.recruiting.candidates.edit.handler(hrCommand('hr.recruiting.candidate.edit')),
           moveStage: os.hr.recruiting.candidates.moveStage.handler(hrCommand('hr.recruiting.candidate.move_stage')),
           scheduleInterview: os.hr.recruiting.candidates.scheduleInterview.handler(hrCommand('hr.recruiting.candidate.schedule_interview')),
+          cancelInterview: os.hr.recruiting.candidates.cancelInterview.handler(hrCommand('hr.recruiting.candidate.cancel_interview')),
           hire: os.hr.recruiting.candidates.hire.handler(hrCommand('hr.recruiting.candidate.hire')),
           erase: os.hr.recruiting.candidates.erase.handler(hrCommand('hr.recruiting.candidate.erase')),
+        },
+        interviewers: {
+          list: os.hr.recruiting.interviewers.list.handler(({ context }) =>
+            inHr(context, (orgId, actor) => runtime.query('hr.recruiting.interviewers.list', {}, { actor, orgId })),
+          ),
         },
         interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
         brief: os.hr.recruiting.brief.handler(({ context, input }) =>
