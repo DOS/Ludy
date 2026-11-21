@@ -18,7 +18,7 @@ Approved on 2026-11-14, as the report recommended:
 | **D. The extension on Edge** | Publish on Microsoft Edge Add-ons and review the extension against the Chrome Web Store 2026 policy | section 7 |
 | **E. Translation** (added later on 2026-11-14) | A reader of a meeting, or the recorder before publishing, clicks "Dịch sang ..." on the transcript or the summary; Vietnamese to English and English to Vietnamese first; Chinese, Japanese and Korean later | section 7a |
 
-**Not now** (the owner said so; section 8, with the later parts of group E): a desktop app, a native mobile app, meeting bots, Zoom RTMS live and Teams live transcripts (watch only).
+**After Slice 1 (#4123):** `Ludy Desktop` (Platform-owned Electron shell for meeting capture, Windows first, [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md) Accepted 2026-11-20 UTC / 2026-11-21 +07:00). **Not now** (the owner said so; section 8, with the later parts of group E): a native mobile app, meeting bots (ADR-0052 questions 2, 3, 4, 6, 7, 8 remain open), Zoom RTMS live and Teams live transcripts (watch only).
 
 ## 2. The scope gate, applied once to the whole plan
 
@@ -260,7 +260,7 @@ Candidate 4 of the survey on #932. An owner or admin keeps a list of up to 60 te
 
 ## 8. Not now (said so)
 
-- **A desktop app.** Not planned (meetings.md section 11, owner 2026-11-03). It would be the only way to catch Zalo PC calls, Slack huddles, Firefox and Safari, and it is the largest piece of work in the research (two audio back ends, code signing, notarization); the extension, the in-app recorder and the upload cover the cases.
+- **A desktop app (`Ludy Desktop`, accepted direction under [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md), 2026-11-20 UTC / 2026-11-21 +07:00).** Reverses the 2026-11-03 "not planned" rule, gated in order: finish Slice 1 ([#4123](https://github.com/DOS/Ludy/issues/4123), the one-meeting deduplication rule on existing capture paths) first, then build `Ludy Desktop` as a Platform-owned (`line:platform`) Electron shell (Slice 2, coordinated with the Platform PO before opening signing accounts) and meeting capture on Windows first then macOS (Slice 3, gated on the non-bot capture legal answers in [#2585](https://github.com/DOS/Ludy/issues/2585) / [#62](https://github.com/DOS/Ludy/issues/62)). Until it ships, the extension, the in-app recorder and the upload cover the cases.
 - **A native mobile app.** The in-app recorder in a phone browser exists; a native app waits.
 - **Bots that join calls.** Not built. No auto-join, no auto-email of summaries to every invitee, no sign-up wall for recipients: the research found these are the main complaints and a point in the Otter lawsuit. ADR-0052 L4b stays in the Icebox.
 - **Translation of the live preview, a translated follow-up mail, publishing a translation to every reader, a translated biên bản page and languages beyond vi and en** (E3 is its Icebox step): later parts of group E, each a step in which a person reads and approves the translated text.
