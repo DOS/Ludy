@@ -1444,6 +1444,11 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_DELEGATION_DISABLED',
   'SIGN_DELEGATION_LIMIT_REACHED',
   'SIGN_SIGNER_ALREADY_COMPLETED',
+  // eSign Slice 4b choice fields & signer supporting attachments (#3818).
+  'SIGN_ATTACHMENT_BUSY',
+  'SIGN_ATTACHMENT_RATE_LIMITED',
+  'SIGN_ATTACHMENT_REQUIRED',
+  'SIGN_INVALID_FIELD_OPTION',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

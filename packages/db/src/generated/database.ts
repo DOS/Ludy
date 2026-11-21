@@ -3893,6 +3893,12 @@ export interface SignFieldTable {
   filled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
+  attachment_file_id: string | null;
+  attachment_filename: string | null;
+  attachment_content_type: string | null;
+  attachment_size_bytes: number | null;
+  attachment_sha256: string | null;
 }
 
 /** crove_sign.signer */
@@ -3948,6 +3954,7 @@ export interface SignSigningEventTable {
   ip_hash: ColumnType<string | null, string | null, NotGranted>;
   user_agent: ColumnType<string | null, string | null, NotGranted>;
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  host_user_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_sign.template_field */
@@ -3967,6 +3974,7 @@ export interface SignTemplateFieldTable {
   font_size_pt: number | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_sign.template_role */

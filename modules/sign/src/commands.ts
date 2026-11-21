@@ -15,11 +15,18 @@ import {
   type SignSignerStatus,
 } from '@ludy/db';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
-import { tableWrite, zId, zSignSharedSummary, zSignSignerCorrectRecipientInput } from '@ludy/kernel-contract';
+import {
+  tableWrite,
+  zId,
+  zSignFieldOptions,
+  zSignSharedSummary,
+  zSignSignerCorrectRecipientInput,
+} from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext, type ErrorStatus } from '@ludy/kernel-runtime';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import { signInPersonCommands } from './in-person.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken, maskEmail } from './sealing.ts';
@@ -40,6 +47,7 @@ import {
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
+  serializeFieldOptionsForType,
   zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
@@ -741,8 +749,17 @@ const zFieldItem = z
     required: z.boolean().default(true),
     proposedByAi: z.boolean().default(false),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, issueCtx) => {
+    const isChoice = item.fieldType === 'dropdown' || item.fieldType === 'radio';
+    if (isChoice) {
+      if (!item.options || item.options.length === 0) {
+        issueCtx.addIssue({ code: 'custom', path: ['options'], message: 'dropdown and radio fields require at least one option' });
+      }
+    } else if (item.options !== undefined && item.options !== null) {
+      issueCtx.addIssue({ code: 'custom', path: ['options'], message: 'options are only valid on dropdown and radio fields' });
+    }
     const x = toMicroNorm(item.xNorm);
     const y = toMicroNorm(item.yNorm);
     const w = toMicroNorm(item.wNorm);
@@ -794,6 +811,7 @@ export const fieldSet = defineCommand({
       'required',
       'proposed_by_ai',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -859,6 +877,7 @@ export const fieldSet = defineCommand({
             required: f.required,
             proposed_by_ai: f.proposedByAi,
             font_size_pt: f.fontSizePt ?? null,
+            options_json: serializeFieldOptionsForType(f.fieldType, f.options),
             created_at: ctx.now,
             updated_at: ctx.now,
           })),
@@ -1903,4 +1922,5 @@ export const signCommands = [
   ...signDirectPublicCommands,
   ...signTemplateCommands,
   ...signCaCommands,
+  ...signInPersonCommands,
 ];

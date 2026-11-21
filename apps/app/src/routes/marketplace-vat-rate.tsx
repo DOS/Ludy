@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The VAT card of marketplace sales in Settings (#4303 S3a, parent #2520): the method and rate an entity's marketplace sales carry, as dated rows. Owners and admins confirm the suggested schedule in one click or
-// add a row; every member reads. Nothing is applied until a person saves it, and a change is a later row, never an edit. The sales posting (S3b) reads these rows; until a row covers a month, that month is
+// add a row. The card is theirs alone: the entity list it needs is an owner and admin read, so a member sees no card (the rate list itself is readable by every member). Nothing is applied until a person saves it, and a change is a later row, never an edit. The sales posting (S3b) reads these rows; until a row covers a month, that month is
 // held back with words instead of posted with a guessed rate. One rate per entity: a shop selling goods at different rates waits for the accountant.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
@@ -12,7 +12,6 @@ import { Input } from '@ludy/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { marketplaceCardShown } from '../lib/marketplace-connections.ts';
 import { currentSchedule, draftProblem, draftToRow, rowInForce, showPercent, suggestedRows, suggestionOffered, type DraftRow, type SuggestMethod } from '../lib/marketplace-vat-rate.ts';
 import type { Role } from '../lib/members.ts';
 
@@ -105,7 +104,7 @@ function Rows({ legalEntityId, entities, canManage }: { legalEntityId: string; e
             </ul>
           )}
           <p className="mt-1 text-xs text-muted-foreground">{t('suggestionNote')}</p>
-          <Button type="button" className="mt-2 min-h-11" disabled={set.isPending || suggestion.length === 0} onClick={() => save(suggestion)}>
+          <Button type="button" className="mt-2 min-h-11" loading={set.isPending} disabled={suggestion.length === 0} onClick={() => save(suggestion)}>
             {t('confirmSuggestion')}
           </Button>
         </div>
@@ -129,7 +128,7 @@ function Rows({ legalEntityId, entities, canManage }: { legalEntityId: string; e
               <Input id={rateId} inputMode="decimal" className="min-h-11 w-28" value={draft.vatPercent} onChange={(e) => setDraft({ ...draft, vatPercent: e.target.value })} />
             </label>
           )}
-          <Button type="submit" variant="outline" className="min-h-11" disabled={set.isPending}>
+          <Button type="submit" variant="outline" className="min-h-11" loading={set.isPending}>
             {t('add')}
           </Button>
         </form>
@@ -158,19 +157,17 @@ function Status({ legalEntityId }: { legalEntityId: string }) {
   );
 }
 
-// Closed by default: a setting an owner touches once, so it takes one line of the Accounting tab until opened.
+// Closed by default: a setting an owner touches once, so it takes one line of the Accounting tab until opened. Shown to owners and admins whether the sales come by connection or by report file.
 export function MarketplaceVatRateCard({ role }: { role: Role }) {
   const t = useTranslations('marketplaceVatRate');
   const headingId = useId();
   const canManage = role === 'owner' || role === 'admin';
-  const providers = useQuery(orpc.marketplace.providers.queryOptions());
-  const connections = useQuery(orpc.marketplace.connections.list.queryOptions());
-  const entities = useQuery(orpc.legalEntities.list.queryOptions());
+  // The entity list is an owner and admin read (kernel.legal_entity.list), so the card is theirs; a member has no way to learn the entity id.
+  const entities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: canManage });
   const [chosen, setChosen] = useState('');
   const list = entities.data ?? [];
   const entity = list.find((e) => e.id === chosen) ?? list[0];
-  // Only where marketplace sales can exist: an adapter is on or the org already has a connection.
-  if (!marketplaceCardShown(providers.data?.adapters, connections.data)) return null;
+  if (!canManage) return null;
   return (
     <Card role="group" aria-labelledby={headingId} className="block p-4">
       <details data-testid="marketplace-vat-card">

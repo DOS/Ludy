@@ -25,6 +25,7 @@ import {
   ORG_HEADER,
   SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
+  SIGN_PUBLIC_HUB_PAGE_PREFIX,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
   LIVE_CHUNK_MAX_BYTES,
@@ -208,12 +209,25 @@ import {
   runSignDirectView,
 } from './sign-direct-link.ts';
 import {
+  SIGN_PUBLIC_HUB_ACTIONS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_EMAIL_OTP_REQUESTS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_LISTS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_TEMPLATE_ACTIONS_PER_MINUTE,
+  resolvePublicHubPdf,
+  runSignPublicHubAction,
+  runSignPublicHubList,
+} from './sign-public-hub.ts';
+import {
+  SIGN_ATTACHMENT_MAX_BYTES,
+  SIGN_ATTACHMENT_UPLOADS_MAX,
+  SIGN_ATTACHMENTS_PER_MINUTE,
   SIGN_DELEGATES_PER_MINUTE,
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
   SIGN_PDF_READS_MAX,
   SIGN_PDFS_PER_MINUTE,
   SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_ATTACHMENTS_PER_MINUTE,
   SIGN_TOKEN_DELEGATES_PER_MINUTE,
   SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
   SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
@@ -224,6 +238,7 @@ import {
   SIGN_VIEWS_PER_MINUTE,
   readPublicPdfBytes,
   resolvePublicPdf,
+  runSignAttachmentUpload,
   runSignDecline,
   runSignDelegate,
   runSignOtpRequest,
@@ -402,6 +417,9 @@ export interface HttpDeps {
     tokenSubmit: RateLimiter;
     delegate: RateLimiter;
     tokenDelegate: RateLimiter;
+    attachment: RateLimiter;
+    tokenAttachment: RateLimiter;
+    attachmentUploads: ConcurrencyLimiter;
     verify: RateLimiter;
   }>;
   // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
@@ -417,6 +435,13 @@ export interface HttpDeps {
     tokenOtpVerify: RateLimiter;
     start: RateLimiter;
     tokenStart: RateLimiter;
+  }>;
+  // Per-client and per-template/email rate limiters for the public self-service template hub (#3820).
+  signPublicHubLimits?: Partial<{
+    lists: RateLimiter;
+    actions: RateLimiter;
+    templateActions: RateLimiter;
+    emailOtpRequest: RateLimiter;
   }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
@@ -1544,6 +1569,9 @@ export function createHttpApp(deps: HttpDeps) {
     const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
     const signDelegateLimit = deps.signLimits?.delegate ?? new RateLimiter({ perMinute: SIGN_DELEGATES_PER_MINUTE });
     const signTokenDelegateLimit = deps.signLimits?.tokenDelegate ?? new RateLimiter({ perMinute: SIGN_TOKEN_DELEGATES_PER_MINUTE });
+    const signAttachmentLimit = deps.signLimits?.attachment ?? new RateLimiter({ perMinute: SIGN_ATTACHMENTS_PER_MINUTE });
+    const signTokenAttachmentLimit = deps.signLimits?.tokenAttachment ?? new RateLimiter({ perMinute: SIGN_TOKEN_ATTACHMENTS_PER_MINUTE });
+    const signAttachmentUploads = deps.signLimits?.attachmentUploads ?? new ConcurrencyLimiter({ total: SIGN_ATTACHMENT_UPLOADS_MAX, perKey: SIGN_ATTACHMENT_UPLOADS_MAX });
     const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
 
     const setSignSecurityHeaders = (c: Context) => {
@@ -1691,6 +1719,74 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
+    app.post('/api/sign/attachment', signEdgeGuard(signAttachmentLimit), signBodyLimit(SIGN_ATTACHMENT_MAX_BYTES + 4 * 1024 * 1024), async (c) => {
+      const release = signAttachmentUploads.tryAcquire('sign-attachment');
+      if (!release) {
+        c.header('retry-after', '2');
+        return c.json({ code: 'SIGN_ATTACHMENT_BUSY', message: 'Máy chủ đang xử lý nhiều tệp đính kèm, hãy thử lại sau vài giây' }, 503);
+      }
+      try {
+        const ct = (c.req.header('content-type') ?? '').toLowerCase();
+        let token: unknown = null;
+        let fieldId: unknown = null;
+        let filename: unknown = null;
+        let bytes: Uint8Array | null = null;
+        let oversize = false;
+        let invalidEncoding = false;
+        if (ct.includes('multipart/form-data')) {
+          const form = await c.req.parseBody().catch(() => null);
+          if (!form) return signOpaqueNotFound(c);
+          token = form.token;
+          fieldId = form.fieldId;
+          const file = form.file;
+          if (file instanceof File) {
+            filename = file.name;
+            if (file.size > SIGN_ATTACHMENT_MAX_BYTES) {
+              oversize = true;
+            } else {
+              bytes = new Uint8Array(await file.arrayBuffer());
+            }
+          }
+        } else {
+          const json = await c.req.json().catch(() => null);
+          if (!json || typeof json !== 'object') return signOpaqueNotFound(c);
+          const payload = json as Record<string, unknown>;
+          token = payload.token;
+          fieldId = payload.fieldId;
+          filename = payload.filename;
+          if (typeof payload.contentBase64 === 'string') {
+            const cleanBase64 = payload.contentBase64.replace(/\s+/g, '');
+            const maxBase64Chars = Math.ceil((SIGN_ATTACHMENT_MAX_BYTES * 4) / 3) + 16;
+            if (cleanBase64.length > maxBase64Chars) {
+              oversize = true;
+            } else if (cleanBase64.length > 0) {
+              if (cleanBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+                invalidEncoding = true;
+              } else {
+                bytes = new Uint8Array(Buffer.from(cleanBase64, 'base64'));
+              }
+            }
+          }
+        }
+        const res = await runSignAttachmentUpload(
+          runtime,
+          store,
+          signBilling,
+          { token, fieldId, filename, bytes, oversize, invalidEncoding },
+          signMeta(c),
+          (hash) => signTokenAttachmentLimit.take(hash),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      } finally {
+        release();
+      }
+    });
+
     app.post('/api/sign/verify', signEdgeGuard(signVerifyLimit), signBodyLimit(2048), async (c) => {
       try {
         const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
@@ -1795,6 +1891,72 @@ export function createHttpApp(deps: HttpDeps) {
         if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
         if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
         return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    const signPublicHubListLimit = deps.signPublicHubLimits?.lists ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_LISTS_PER_MINUTE });
+    const signPublicHubActionLimit = deps.signPublicHubLimits?.actions ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_ACTIONS_PER_MINUTE });
+    const signPublicHubTemplateLimit = deps.signPublicHubLimits?.templateActions ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_TEMPLATE_ACTIONS_PER_MINUTE });
+    const signPublicHubEmailOtpLimit = deps.signPublicHubLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_EMAIL_OTP_REQUESTS_PER_MINUTE });
+
+    app.get('/api/sign/public-hub/:orgSlug', signEdgeGuard(signPublicHubListLimit), async (c) => {
+      try {
+        const res = await runSignPublicHubList(runtime, signBilling, c.req.param('orgSlug'));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        return c.json(res.hub);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/public-hub/:orgSlug', signEdgeGuard(signPublicHubActionLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const rawBody = await c.req.json().catch(() => null);
+        if (rawBody && typeof rawBody === 'object' && (rawBody as Record<string, unknown>).action === 'pdf') {
+          const lookup = await resolvePublicHubPdf(runtime, signBilling, orgSlug, rawBody, (bucket) => signPublicHubTemplateLimit.take(bucket));
+          if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+          if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+          if (lookup.status === 'otp_required') {
+            return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+          }
+          const release = signPdfReads.tryAcquire('sign-pdf');
+          if (!release) {
+            c.header('retry-after', '2');
+            return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+          }
+          try {
+            const bytes = await readPublicPdfBytes(store, lookup.source);
+            return new Response(body(bytes), {
+              headers: {
+                'content-type': 'application/pdf',
+                'content-disposition': 'inline; filename="document.pdf"',
+                'cache-control': 'no-store',
+                'referrer-policy': 'no-referrer',
+                'x-content-type-options': 'nosniff',
+                'content-security-policy': "default-src 'none'; sandbox",
+              },
+            });
+          } finally {
+            release();
+          }
+        }
+
+        const res = await runSignPublicHubAction(runtime, signBilling, orgSlug, rawBody, signMeta(c), {
+          limitTemplate: (bucket) => signPublicHubTemplateLimit.take(bucket),
+          limitEmail: (bucket) => signPublicHubEmailOtpLimit.take(bucket),
+        });
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.status === 'otp_verify_result') {
+          if (res.result.ok) return c.json(res.result, 200);
+          if (res.result.locked) return c.json(res.result, 423);
+          return c.json(res.result, 401);
+        }
+        return c.json(res.data);
       } catch (error) {
         return problem(c, error);
       }
@@ -2766,11 +2928,16 @@ export function createHttpApp(deps: HttpDeps) {
       }
       // A large body keeps its slot until it is handed to the connection (or the client goes away).
       const payload = releaseLarge ? held(bytes, releaseLarge) : body(bytes);
+      const isSignAttachment = file.source === 'sign_attachment';
       return new Response(payload, {
         headers: {
           'content-type': file.content_type,
-          'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
-          'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+          'content-disposition': isSignAttachment
+            ? `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`
+            : `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+          'content-security-policy': isSignAttachment
+            ? "default-src 'none'; sandbox"
+            : "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           'x-content-type-options': 'nosniff',
           'cache-control': 'private, no-store',
         },
@@ -4787,7 +4954,8 @@ export function createHttpApp(deps: HttpDeps) {
         c.req.path === SIGN_PAGE_PATH ||
         c.req.path.startsWith(`${SIGN_PAGE_PATH}/`) ||
         c.req.path === SIGN_DIRECT_PAGE_PATH ||
-        c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`);
+        c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`) ||
+        c.req.path.startsWith(`${SIGN_PUBLIC_HUB_PAGE_PREFIX}/`);
       c.header('content-security-policy', isSignPage ? signCsp : csp);
       if (isSignPage) {
         c.header('referrer-policy', 'no-referrer');

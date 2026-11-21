@@ -13,6 +13,7 @@ import {
   tableWrite,
   zSignDetectedTag,
   zSignEnvelopePageDimension,
+  zSignFieldOptions,
   zSignSharedSummary,
   type SignDetectedTag,
   type SignSharedKeyTerm,
@@ -42,6 +43,7 @@ export const SIGNING_EVENT_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'org_id',
   'envelope_id',
   'signer_id',
+  'host_user_id',
   'seq',
   'event_type',
   'actor_type',
@@ -64,6 +66,7 @@ export const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'expires_at',
   'revoked_at',
   'revoked_by',
+  'in_person_host_user_id',
   'created_by',
   'created_at',
 ]);
@@ -171,7 +174,10 @@ export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: s
     .executeTakeFirst();
   if (!file) throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
   if (
-    (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate') &&
+    (file.source === 'sign_document' ||
+      file.source === 'sign_sealed' ||
+      file.source === 'sign_certificate' ||
+      file.source === 'sign_attachment') &&
     ctx.actor.type !== 'system' &&
     !isHrPrivilegedRole(ctx.role)
   ) {
@@ -341,6 +347,42 @@ export function parseSharedSummary(raw: unknown, pageCount?: number | null): Sig
   }
   if (summaryText === null && keyTerms.length === 0) return null;
   return { summaryText, keyTerms };
+}
+
+export function parseFieldOptions(raw: unknown): string[] | null {
+  let candidate: unknown = raw;
+  if (candidate === null || candidate === undefined) return null;
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const parsed = zSignFieldOptions.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+export function serializeFieldOptionsForType(
+  fieldType: string,
+  options: readonly string[] | null | undefined,
+): string | null {
+  const isChoice = fieldType === 'dropdown' || fieldType === 'radio';
+  if (!isChoice) {
+    if (options !== undefined && options !== null) {
+      throw new DomainError('SIGN_INVALID_FIELD', 422, 'Field options are only supported on dropdown and radio fields');
+    }
+    return null;
+  }
+  const parsed = zSignFieldOptions.safeParse(options);
+  if (!parsed.success) {
+    throw new DomainError(
+      'SIGN_INVALID_FIELD',
+      422,
+      parsed.error.issues[0]?.message ?? 'Dropdown and radio fields require between 1 and 50 unique options',
+    );
+  }
+  return JSON.stringify(parsed.data);
 }
 
 export async function sendDraftEnvelope(

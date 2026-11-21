@@ -118,8 +118,14 @@ export interface SignFieldRecord {
   required: boolean;
   proposedByAi: boolean;
   fontSizePt: number | null;
+  options?: string[] | null | undefined;
   valueText: string | null;
   valueChecked: boolean | null;
+  attachmentFileId?: string | null | undefined;
+  attachmentFilename?: string | null | undefined;
+  attachmentContentType?: string | null | undefined;
+  attachmentSizeBytes?: number | null | undefined;
+  attachmentSha256?: string | null | undefined;
   filledAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -137,6 +143,7 @@ export interface SignProposedField {
   hNorm: number;
   label: string | null;
   required: boolean;
+  options?: string[] | null | undefined;
   confidence?: number | null;
   proposedByAi?: true;
 }
@@ -191,6 +198,9 @@ export function normalizeAiAnalysis(raw: unknown): SignAiAnalysis | null {
       hNorm: Number(f.hNorm ?? 0.08),
       label: typeof f.label === 'string' ? f.label : null,
       required: typeof f.required === 'boolean' ? f.required : true,
+      ...(Array.isArray(f.options)
+        ? { options: f.options.filter((opt): opt is string => typeof opt === 'string') }
+        : {}),
       confidence: typeof f.confidence === 'number' ? f.confidence : null,
       proposedByAi: true,
     };
@@ -260,6 +270,15 @@ export function normalizeAiAnalysis(raw: unknown): SignAiAnalysis | null {
   };
 }
 
+export interface PublicSignFieldAttachment {
+  fileId: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string | null;
+}
+
 export interface PublicSignField {
   id: string;
   fieldType: SignFieldType;
@@ -270,7 +289,9 @@ export interface PublicSignField {
   hNorm: number;
   label: string | null;
   required: boolean;
-  fontSizePt?: number | null;
+  fontSizePt?: number | null | undefined;
+  options?: readonly string[] | null | undefined;
+  attachment?: PublicSignFieldAttachment | null | undefined;
 }
 
 export type PublicSignViewState =
@@ -290,6 +311,7 @@ export type PublicSignViewState =
       allowDelegation?: boolean | undefined;
       delegationCount?: number | undefined;
       delegatedFromName?: string | null | undefined;
+      inPerson?: boolean;
       fields: readonly PublicSignField[];
       sharedSummary?: SignSharedSummary | null;
     }
@@ -304,6 +326,7 @@ export type PublicSignViewState =
       orgName: string;
       title: string;
       maskedEmail: string | null;
+      inPerson?: boolean;
     }
   | {
       state: 'waiting_turn';
@@ -315,6 +338,7 @@ export type PublicSignViewState =
       title: string;
       status: string;
       signerRole?: SignSignerRole;
+      inPerson?: boolean;
     };
 
 export interface PublicFieldSubmission {
@@ -417,6 +441,8 @@ export const signApi = {
     deliveryMode: SignDeliveryMode;
     requireEmailOtp?: boolean;
   }) => client.sign.signer.correct_recipient(input),
+  startInPersonSigning: (envelopeId: string, signerId: string, expiresInMinutes?: number) =>
+    client.sign.signer.start_in_person({ envelopeId, signerId, ...(expiresInMinutes ? { expiresInMinutes } : {}) }),
   setFields: (
     envelopeId: string,
     fields: Array<{
@@ -431,6 +457,7 @@ export const signApi = {
       required: boolean;
       proposedByAi: boolean;
       fontSizePt?: number;
+      options?: string[] | null;
     }>,
   ) => client.sign.field.set({ envelopeId, fields, idempotencyKey: crypto.randomUUID() }),
   analyzeAi: async (
@@ -508,6 +535,7 @@ export const signApi = {
       label?: string | null;
       required: boolean;
       fontSizePt?: number | null;
+      options?: string[] | null;
     }>,
   ) => client.sign.template.fields_set({ templateId, fields, idempotencyKey: crypto.randomUUID() }),
   archiveTemplate: (templateId: string) =>
@@ -534,12 +562,14 @@ export const signApi = {
     templateId: string;
     enabled: boolean;
     requireEmailOtp?: boolean;
+    listedOnPublicHub?: boolean;
     maxUses?: number | null;
     expiresAt?: string | null;
   }) => client.sign.template.direct_link_set(input),
   rotateTemplateDirectLink: (input: {
     templateId: string;
     requireEmailOtp?: boolean;
+    listedOnPublicHub?: boolean;
     maxUses?: number | null;
     expiresAt?: string | null;
   }) => client.sign.template.direct_link_rotate(input),
@@ -640,12 +670,14 @@ export interface SignTemplateFieldRecord {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  options?: string[] | null | undefined;
 }
 
 export interface SignTemplateDirectLinkDetail {
   id: string;
   enabled: boolean;
   requireEmailOtp: boolean;
+  listedOnPublicHub?: boolean | undefined;
   maxUses?: number | null | undefined;
   usesCount?: number | undefined;
   expiresAt?: string | null | undefined;
@@ -672,6 +704,7 @@ export interface SignTemplateSummary {
   directLink: {
     enabled: boolean;
     requireEmailOtp: boolean;
+    listedOnPublicHub?: boolean | undefined;
     maxUses?: number | null | undefined;
     usesCount?: number | undefined;
     expiresAt?: string | null | undefined;
@@ -744,6 +777,19 @@ async function postPublicJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
+  const rawAttachment =
+    raw.attachment && typeof raw.attachment === 'object' ? (raw.attachment as Record<string, unknown>) : null;
+  const attachment: PublicSignFieldAttachment | null =
+    rawAttachment && typeof rawAttachment.fileId === 'string' && rawAttachment.fileId
+      ? {
+          fileId: rawAttachment.fileId,
+          filename: typeof rawAttachment.filename === 'string' ? rawAttachment.filename : 'attachment',
+          contentType: typeof rawAttachment.contentType === 'string' ? rawAttachment.contentType : 'application/pdf',
+          sizeBytes: Number(rawAttachment.sizeBytes ?? 0),
+          sha256: typeof rawAttachment.sha256 === 'string' ? rawAttachment.sha256 : '',
+          uploadedAt: typeof rawAttachment.uploadedAt === 'string' ? rawAttachment.uploadedAt : null,
+        }
+      : null;
   return {
     id: String(raw.id ?? ''),
     fieldType: (raw.fieldType as SignFieldType) ?? 'signature',
@@ -755,6 +801,10 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
     label: typeof raw.label === 'string' ? raw.label : null,
     required: typeof raw.required === 'boolean' ? raw.required : true,
     fontSizePt: typeof raw.fontSizePt === 'number' ? raw.fontSizePt : null,
+    options: Array.isArray(raw.options)
+      ? raw.options.filter((opt): opt is string => typeof opt === 'string')
+      : null,
+    attachment,
   };
 }
 
@@ -807,6 +857,7 @@ export const publicSignApi = {
         ...(raw.delegatedFromName === null || typeof raw.delegatedFromName === 'string'
           ? { delegatedFromName: raw.delegatedFromName as string | null }
           : {}),
+        ...(raw.inPerson === true ? { inPerson: true } : {}),
         fields: rawFields.map(normalizePublicField),
         ...(sharedSummary ? { sharedSummary } : {}),
       };
@@ -846,6 +897,7 @@ export const publicSignApi = {
       envelopeStatus: 'sent' | 'in_progress' | 'completed';
       completed: boolean;
       signedAt: string;
+      inPerson?: boolean;
     }>('/api/sign/submit', input),
 
   decline: (input: { token: string; reason: string }) =>
@@ -862,6 +914,28 @@ export const publicSignApi = {
       delegationCount: number;
       delegatedAt: string;
     }>('/api/sign/delegate', input),
+
+  uploadAttachment: async (input: {
+    token: string;
+    fieldId: string;
+    file: File;
+  }): Promise<PublicSignFieldAttachment> => {
+    const form = new FormData();
+    form.set('token', input.token);
+    form.set('fieldId', input.fieldId);
+    form.set('file', input.file, input.file.name || 'attachment');
+    const response = await fetch(apiUrl('/api/sign/attachment'), {
+      method: 'POST',
+      body: form,
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_ATTACHMENT_FAILED', data.message);
+    }
+    return (await response.json()) as PublicSignFieldAttachment;
+  },
 
   verifyPublic: async (input: { certificateCode: string; fileSha256: string }): Promise<PublicCertificateVerifyResponse> => {
     const response = await postPublicResponse('/api/sign/verify', input);
@@ -1001,6 +1075,127 @@ export const publicDirectSignApi = {
   start: (input: { token: string; name: string; email?: string | null; otpSessionToken?: string | null }) =>
     postPublicJson<PublicDirectStartResult>('/api/sign/direct/start', {
       token: input.token,
+      name: input.name,
+      ...(input.email ? { email: input.email } : {}),
+      ...(input.otpSessionToken ? { otpSessionToken: input.otpSessionToken } : {}),
+    }),
+};
+
+export interface PublicHubTemplateItem {
+  templateId: string;
+  title: string;
+  description: string | null;
+  roleLabel: string;
+  signerRole: 'signer' | 'approver';
+  requireEmailOtp: boolean;
+  pageCount: number;
+}
+
+export interface PublicHubListResponse {
+  orgSlug: string;
+  orgName: string;
+  items: PublicHubTemplateItem[];
+}
+
+function publicHubPathOf(orgSlug: string): string {
+  return `/api/sign/public-hub/${encodeURIComponent(orgSlug.trim().toLowerCase())}`;
+}
+
+function normalizePublicDirectView(raw: Record<string, unknown>): PublicDirectSignViewState {
+  if (raw.state === 'otp_required') {
+    return {
+      state: 'otp_required',
+      orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
+      title: String(raw.title ?? ''),
+      description: typeof raw.description === 'string' ? raw.description : null,
+      roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : '',
+      signerRole: raw.signerRole === 'approver' ? 'approver' : 'signer',
+      requireEmailOtp: true,
+    };
+  }
+  return {
+    state: 'ready',
+    orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
+    title: String(raw.title ?? ''),
+    description: typeof raw.description === 'string' ? raw.description : null,
+    message: typeof raw.message === 'string' ? raw.message : null,
+    roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : '',
+    signerRole: raw.signerRole === 'approver' ? 'approver' : 'signer',
+    emailRequired: Boolean(raw.emailRequired),
+    requireEmailOtp: Boolean(raw.requireEmailOtp),
+    otpVerified: Boolean(raw.otpVerified),
+    verifiedEmail: typeof raw.verifiedEmail === 'string' ? raw.verifiedEmail : null,
+    pageCount: Number(raw.pageCount ?? 1),
+    ...(Array.isArray(raw.pageDimensions)
+      ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> }
+      : {}),
+    fieldCount: Number(raw.fieldCount ?? 0),
+  };
+}
+
+// Public self-service template hub endpoints (/-/sign/p/$orgSlug, Slice 4d, #3820): zero cookies, zero Referer, zero raw link tokens.
+export const publicHubSignApi = {
+  list: async (orgSlug: string): Promise<PublicHubListResponse> => {
+    const response = await fetch(apiUrl(publicHubPathOf(orgSlug)), {
+      method: 'GET',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'NOT_FOUND', data.message);
+    }
+    return (await response.json()) as PublicHubListResponse;
+  },
+
+  view: async (orgSlug: string, templateId: string, otpSessionToken?: string | null): Promise<PublicDirectSignViewState> => {
+    const raw = await postPublicJson<Record<string, unknown>>(publicHubPathOf(orgSlug), {
+      action: 'view',
+      templateId,
+      ...(otpSessionToken ? { otpSessionToken } : {}),
+    });
+    return normalizePublicDirectView(raw);
+  },
+
+  pdf: async (orgSlug: string, templateId: string, otpSessionToken?: string | null): Promise<Uint8Array> => {
+    const response = await postPublicResponse(publicHubPathOf(orgSlug), {
+      action: 'pdf',
+      templateId,
+      ...(otpSessionToken ? { otpSessionToken } : {}),
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_PDF_UNAVAILABLE', data.message);
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
+  },
+
+  requestOtp: (orgSlug: string, templateId: string, email: string) =>
+    postPublicJson<PublicDirectOtpRequestResult>(publicHubPathOf(orgSlug), {
+      action: 'otp_request',
+      templateId,
+      email,
+    }),
+
+  verifyOtp: async (orgSlug: string, templateId: string, email: string, code: string): Promise<PublicDirectOtpVerifyResult> => {
+    const response = await postPublicResponse(publicHubPathOf(orgSlug), {
+      action: 'otp_verify',
+      templateId,
+      email,
+      code,
+    });
+    if (response.status === 200 || response.status === 401 || response.status === 423) {
+      return (await response.json()) as PublicDirectOtpVerifyResult;
+    }
+    const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+    throw new PublicSignError(response.status, data.code ?? 'SIGN_LINK_INVALID', data.message);
+  },
+
+  start: (input: { orgSlug: string; templateId: string; name: string; email?: string | null; otpSessionToken?: string | null }) =>
+    postPublicJson<PublicDirectStartResult>(publicHubPathOf(input.orgSlug), {
+      action: 'start',
+      templateId: input.templateId,
       name: input.name,
       ...(input.email ? { email: input.email } : {}),
       ...(input.otpSessionToken ? { otpSessionToken: input.otpSessionToken } : {}),

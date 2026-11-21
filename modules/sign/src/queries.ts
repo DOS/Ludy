@@ -30,7 +30,7 @@ import {
 } from './hr-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
-import { SIGN_WRITERS, parseDetectedTags, parseSharedSummary } from './shared.ts';
+import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parseSharedSummary } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -409,8 +409,14 @@ export const envelopeGet = defineQuery({
         'required',
         'proposed_by_ai',
         'font_size_pt',
+        'options_json',
         'value_text',
         'value_checked',
+        'attachment_file_id',
+        'attachment_filename',
+        'attachment_content_type',
+        'attachment_size_bytes',
+        'attachment_sha256',
         'filled_at',
         'created_at',
         'updated_at',
@@ -516,8 +522,14 @@ export const envelopeGet = defineQuery({
         required: f.required,
         proposedByAi: f.proposed_by_ai,
         fontSizePt: f.font_size_pt,
+        options: parseFieldOptions(f.options_json),
         valueText: f.value_text,
         valueChecked: f.value_checked,
+        attachmentFileId: f.attachment_file_id,
+        attachmentFilename: f.attachment_filename,
+        attachmentContentType: f.attachment_content_type,
+        attachmentSizeBytes: f.attachment_size_bytes,
+        attachmentSha256: f.attachment_sha256,
         filledAt: isoOrNull(f.filled_at),
         createdAt: new Date(f.created_at).toISOString(),
         updatedAt: new Date(f.updated_at).toISOString(),
@@ -554,6 +566,7 @@ export const envelopeEvents = defineQuery({
       events: rows.map((e) => ({
         id: e.id,
         signerId: e.signer_id,
+        hostUserId: e.host_user_id ?? null,
         seq: e.seq,
         eventType: e.event_type,
         actorType: e.actor_type,
@@ -616,12 +629,23 @@ export const envelopeVerify = defineQuery({
         ? { valid: false, count: 0, tipHash: null, brokenSeq: null, reason: 'No signing events recorded' }
         : verifyEventChain(events);
 
-    const fileIds = [env.source_file_id, env.sealed_file_id, env.certificate_file_id].filter(
-      (id): id is string => id !== null,
-    );
+    const attachmentFields = await ctx.trx
+      .selectFrom('crove_sign.field')
+      .select(['attachment_file_id', 'attachment_content_type', 'attachment_size_bytes', 'attachment_sha256'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .where('attachment_file_id', 'is not', null)
+      .execute();
+
+    const fileIds = [
+      env.source_file_id,
+      env.sealed_file_id,
+      env.certificate_file_id,
+      ...attachmentFields.map((f) => f.attachment_file_id),
+    ].filter((id): id is string => id !== null);
     const fileRows = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
+      .select(['id', 'source', 'content_type', 'size_bytes', 'storage_key', 'generation', 'sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', fileIds)
       .execute();
@@ -663,7 +687,19 @@ export const envelopeVerify = defineQuery({
             );
           })();
 
-    const pointersConsistent = sourceConsistent && sealedConsistent && certConsistent;
+    const attachmentsConsistent = attachmentFields.every((af) => {
+      if (!af.attachment_file_id) return true;
+      const f = byId.get(af.attachment_file_id);
+      return (
+        f !== undefined &&
+        f.source === 'sign_attachment' &&
+        f.content_type === af.attachment_content_type &&
+        Number(f.size_bytes) === af.attachment_size_bytes &&
+        f.sha256 === af.attachment_sha256
+      );
+    });
+
+    const pointersConsistent = sourceConsistent && sealedConsistent && certConsistent && attachmentsConsistent;
     return {
       envelopeId: env.id,
       status: env.status,
@@ -794,17 +830,22 @@ export const envelopeSealJobData = defineQuery({
       .selectFrom('crove_sign.field')
       .select([
         'id',
+        'signer_id',
         'field_type',
         'page_number',
         'x_norm',
         'y_norm',
         'w_norm',
         'h_norm',
+        'label',
         'required',
         'font_size_pt',
         'value_text',
         'value_checked',
         'signature_png_base64',
+        'attachment_file_id',
+        'attachment_filename',
+        'attachment_sha256',
         'filled_at',
       ])
       .where('org_id', '=', ctx.orgId)
