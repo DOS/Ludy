@@ -12,7 +12,9 @@ import { checkAdherence } from '../../packages/agent/src/member-vy/meetings-adhe
 import { checkBrief } from '../../packages/agent/src/member-vy/meetings-brief.ts';
 import { checkCommitments } from '../../packages/agent/src/member-vy/meeting-commitments.ts';
 import { checkDigest } from '../../packages/agent/src/member-vy/meetings-digest.ts';
+import { checkNoteOrganize } from '../../packages/agent/src/member-vy/note-organize.ts';
 import { checkTitles } from '../../packages/agent/src/member-vy/meeting-title.ts';
+import { checkTodoPlan } from '../../packages/agent/src/member-vy/todo-plan.ts';
 
 let fake: FakeModel;
 beforeAll(async () => {
@@ -99,7 +101,36 @@ const adherenceJson = (token: Token = ''): string =>
     agenda: [{ n: 1, text: `Chốt giá cho khách A${mark(token)}` }, { n: 2, text: 'Tuyển nhân sự mới' }, { n: 3, text: 'Chọn địa điểm tiệc cuối năm' }],
     transcript: TRANSCRIPT.map((l, i) => ({ n: i + 1, t: clock(l.from), text: l.said })),
   });
-const subjectWith = (route: Route, token: Token): string => (route === 'adherence' ? adherenceJson(token) : route === 'digest' || route === 'brief' ? factsJson(token) : withToken(token));
+const PLAN_TODOS = [
+  { id: '11111111-1111-4111-8111-111111111111', title: 'Nop to khai thue', priority: 1 as const, tags: [], dueOn: '2026-11-19', dueTime: null, overdue: true, group: 'overdue' as const, revision: 1 },
+  { id: '11111111-1111-4111-8111-111111111112', title: 'Chot bao gia', priority: 2 as const, tags: [], dueOn: '2026-11-21', dueTime: null, overdue: false, group: 'today' as const, revision: 1 },
+];
+const ORGANIZE_NOTEBOOKS = [
+  { id: '22222222-2222-4222-8222-222222222221', name: 'Tai chinh', visibility: 'private' as const },
+];
+const ORGANIZE_NOTES = [
+  { id: '33333333-3333-4333-8333-333333333331', title: 'Hoa don EVN', body: 'Thanh toan dien', tags: [], visibility: 'private' as const, updatedAt: '2026-11-21T00:00:00Z', canEditTags: true, revision: 1 },
+];
+const todoPlanJson = (token: Token = ''): string =>
+  JSON.stringify({
+    today: '2026-11-21',
+    todos: PLAN_TODOS.map((t, i) => (i === 0 ? { ...t, title: t.title + mark(token) } : t)),
+  });
+const organizeJson = (token: Token = ''): string =>
+  JSON.stringify({
+    notebooks: ORGANIZE_NOTEBOOKS,
+    notes: ORGANIZE_NOTES.map((n, i) => (i === 0 ? { ...n, title: n.title + mark(token) } : n)),
+  });
+const subjectWith = (route: Route, token: Token): string =>
+  route === 'adherence'
+    ? adherenceJson(token)
+    : route === 'digest' || route === 'brief'
+      ? factsJson(token)
+      : route === 'todo_plan'
+        ? todoPlanJson(token)
+        : route === 'organize'
+          ? organizeJson(token)
+          : withToken(token);
 const codeOf = (fn: () => unknown): string => {
   try {
     fn();
@@ -152,6 +183,36 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
     });
   }
 
+  it('todo_plan: keeps verified focus & overdue reschedules and drops hallucinated IDs and invalid dates', async () => {
+    const a = await ask('todo_plan', todoPlanJson());
+    const checked = checkTodoPlan(a.text, { todos: PLAN_TODOS, today: '2026-11-21' });
+    expect(checked.focus.map((f) => f.todoId)).toEqual(PLAN_TODOS.map((t) => t.id));
+    expect(checked.reschedules.map((r) => ({ todoId: r.todoId, dueOn: r.dueOn }))).toEqual([
+      { todoId: PLAN_TODOS[0]!.id, dueOn: '2026-11-22' },
+    ]);
+    expect(checked.dropped).toBe(1);
+    const bad = await ask('todo_plan', todoPlanJson('bad'));
+    const empty = checkTodoPlan(bad.text, { todos: PLAN_TODOS, today: '2026-11-21' });
+    expect(empty).toEqual({ focus: [], reschedules: [], dropped: 2 });
+  });
+
+  it('organize: keeps verified notebook & tag suggestions and drops hallucinated note IDs and bad tags', async () => {
+    const a = await ask('organize', organizeJson());
+    const checked = checkNoteOrganize(a.text, { notes: ORGANIZE_NOTES, notebooks: ORGANIZE_NOTEBOOKS });
+    expect(checked.suggestions).toEqual([
+      {
+        noteId: ORGANIZE_NOTES[0]!.id,
+        notebookId: ORGANIZE_NOTEBOOKS[0]!.id,
+        tags: ['hộp-thư', 'cần-xem'],
+        reason: 'Gợi ý phân loại gọn theo nội dung',
+      },
+    ]);
+    expect(checked.dropped).toBe(1);
+    const bad = await ask('organize', organizeJson('bad'));
+    const empty = checkNoteOrganize(bad.text, { notes: ORGANIZE_NOTES, notebooks: ORGANIZE_NOTEBOOKS });
+    expect(empty).toEqual({ suggestions: [], dropped: 1 });
+  });
+
   it('a garbage answer is refused by every check as unparsable, and a down service answers HTTP 500', async () => {
     for (const route of Object.keys(ROUTE_MARKERS) as Route[]) expect((await ask(route, subjectWith(route, 'garbage'))).text, route).toBe(GARBAGE);
     expect(codeOf(() => checkTitles(GARBAGE, segments))).toBe('TITLE_UNPARSABLE');
@@ -182,6 +243,8 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
       adherence: 'meetings-adherence.ts',
       digest: 'meetings-digest.ts',
       brief: 'meetings-brief.ts',
+      todo_plan: 'todo-plan.ts',
+      organize: 'note-organize.ts',
     };
     for (const route of Object.keys(sources) as Route[]) {
       const source = readFileSync(new URL(`../../packages/agent/src/member-vy/${sources[route]}`, import.meta.url), 'utf8');
