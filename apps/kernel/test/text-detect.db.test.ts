@@ -46,8 +46,11 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
-    await root.query(`CREATE DATABASE ${dbName}`);
-    await root.end();
+    try {
+      await root.query(`CREATE DATABASE ${dbName}`);
+    } finally {
+      await root.end();
+    }
     const base = new URL(ADMIN);
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
@@ -67,8 +70,11 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
-    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-    await root.end();
+    try {
+      await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    } finally {
+      await root.end();
+    }
   }, 60_000);
 
   it('detects every real value with exact Unicode code-point offsets and rejects every near-miss', async () => {
@@ -235,7 +241,93 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     const redactVnMs = performance.now() - tRedactVn;
     expect(redactedVn).toBe('Nguyễn Văn Ánh 📞 [đã ẩn: số điện thoại] 😀.\r\n'.repeat(2100));
     expect(redactVnMs).toBeLessThan(2500);
+
+    // Dotted numeric+alpha prefixes before '@' must stay O(N) (never trigger email-branch suffix backtracking).
+    const dottedTokens96k = '123456789.a.'.repeat(8000) + ' @ ';
+    const tDotted = performance.now();
+    const detectedDotted = await detect(dottedTokens96k);
+    const dottedMs = performance.now() - tDotted;
+    expect(detectedDotted).toHaveLength(8000);
+    expect(dottedMs).toBeLessThan(2500);
+
+    const tRedactDotted = performance.now();
+    const redactedDotted = await redactSpans(
+      dottedTokens96k,
+      detectedDotted.map((r) => r.start_pos),
+      detectedDotted.map((r) => r.kind),
+      detectedDotted.map(() => '[đã ẩn: CCCD]'),
+    );
+    const redactDottedMs = performance.now() - tRedactDotted;
+    expect(redactedDotted).toBe('[đã ẩn: CCCD].a.'.repeat(8000) + ' @ ');
+    expect(redactDottedMs).toBeLessThan(2500);
+
+    const alphaDots100k = 'a.'.repeat(50000) + 'x';
+    const tAlphaDots = performance.now();
+    expect(await detect(alphaDots100k)).toEqual([]);
+    expect(performance.now() - tAlphaDots).toBeLessThan(2500);
+
+    const mixed100k = 'a@example.com, 0912345678, '.repeat(3500);
+    const tMixed = performance.now();
+    const detectedMixed = await detect(mixed100k);
+    expect(detectedMixed).toHaveLength(7000);
+    expect(performance.now() - tMixed).toBeLessThan(2500);
+
+    const chainedAt = 'a@b.example@'.repeat(6000) + 'c.example';
+    const tChainedAt = performance.now();
+    expect(await detect(chainedAt)).toHaveLength(6000);
+    expect(performance.now() - tChainedAt).toBeLessThan(2500);
+
+    const chainedHttp = 'https://'.repeat(12000) + '/0912345678';
+    const tChainedHttp = performance.now();
+    expect(await detect(chainedHttp)).toEqual([]);
+    expect(performance.now() - tChainedHttp).toBeLessThan(2500);
   });
+
+  it('normalizes Vietnamese labels (SĐT, ĐỒNG, VNĐ) identically in a C-collation database', async () => {
+    if (!ADMIN) return;
+    const cDbName = `crove_test_text_detect_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    try {
+      await root.query(
+        `CREATE DATABASE ${cDbName} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'`,
+      );
+    } finally {
+      await root.end();
+    }
+
+    const cUrlObj = new URL(ADMIN);
+    cUrlObj.pathname = `/${cDbName}`;
+    const cUrl = cUrlObj.toString();
+
+    let cClient: pg.Client | undefined;
+    try {
+      await migrate({ adminUrl: cUrl, dir: MIGRATIONS });
+      cClient = new pg.Client({ connectionString: cUrl });
+      await cClient.connect();
+
+      const { rows } = await cClient.query<DetectRow>(
+        'SELECT kind, start_pos, end_pos, match_text FROM crove_kernel.text_detect($1)',
+        ['SĐT 84.912.345.678, Sđt 84.912.345.678, 15000000 ĐỒNG, SĐT 0912 345 678 ĐỒNG Ý CHƯA, VNĐ 123456789, STK VNĐ 12345678, ĐIỆN THOẠI +84 912 345 678.'],
+      );
+      expect(rows.map((r) => ({ kind: r.kind, matchText: r.match_text }))).toEqual([
+        { kind: 'phone', matchText: '84.912.345.678' },
+        { kind: 'phone', matchText: '84.912.345.678' },
+        { kind: 'phone', matchText: '0912 345 678' },
+        { kind: 'bank_account', matchText: '12345678' },
+        { kind: 'phone', matchText: '+84 912 345 678' },
+      ]);
+    } finally {
+      if (cClient) await cClient.end();
+      const cleanup = new pg.Client({ connectionString: ADMIN });
+      await cleanup.connect();
+      try {
+        await cleanup.query(`DROP DATABASE IF EXISTS ${cDbName} WITH (FORCE)`);
+      } finally {
+        await cleanup.end();
+      }
+    }
+  }, 120_000);
 
   it('is immutable, parallel-safe SECURITY INVOKER with pinned search_path, narrow crove_tenant grant, and zero hardening violations', async () => {
     const sigs = [

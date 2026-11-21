@@ -65,8 +65,37 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
   },
   {
     name: 'preceding digit group separated by a space does not swallow numeric-local email',
-    text: 'Mã 1234 5678@x.example đã gửi.',
-    expected: [{ kind: 'email', matchText: '5678@x.example' }],
+    text: 'Mã 1234 5678@x.example và 1234 5678.90@x.example đã gửi.',
+    expected: [
+      { kind: 'email', matchText: '5678@x.example' },
+      { kind: 'email', matchText: '5678.90@x.example' },
+    ],
+  },
+  {
+    name: 'complete phone followed by space and numeric-local email keeps both spans',
+    text: 'Gọi 0912345678 5678@x.example.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'email', matchText: '5678@x.example' },
+    ],
+  },
+  {
+    name: 'unquoted email local part ending in a hyphen stays detected without grabbing wrappers',
+    text: "Mail ops-@example.com, 'ops-@example.com', `a.ops-@example.com`.",
+    expected: [
+      { kind: 'email', matchText: 'ops-@example.com' },
+      { kind: 'email', matchText: 'ops-@example.com' },
+      { kind: 'email', matchText: 'a.ops-@example.com' },
+    ],
+  },
+  {
+    name: 'adjacent overlapping at-chains avoid duplicate overlapping email spans',
+    text: 'a@b.example@c.example@d.example, a@b.example!c@d.example.',
+    expected: [
+      { kind: 'email', matchText: 'a@b.example' },
+      { kind: 'email', matchText: 'c.example@d.example' },
+      { kind: 'email', matchText: 'a@b.example' },
+    ],
   },
   {
     name: 'email with punycode label on reserved example TLD',
@@ -222,11 +251,12 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
   },
   {
     name: '8-digit and 10-digit and 12-digit bank accounts with bank context',
-    text: 'STK ACB 12345678, Tài khoản VND: 108001234567, STK 0912 3456 78 90.',
+    text: 'STK ACB 12345678, Tài khoản VND: 108001234567, STK 0912 3456 78 90, STK 20261121.',
     expected: [
       { kind: 'bank_account', matchText: '12345678' },
       { kind: 'bank_account', matchText: '108001234567' },
       { kind: 'bank_account', matchText: '0912 3456 78 90' },
+      { kind: 'bank_account', matchText: '20261121' },
     ],
   },
   {
@@ -243,8 +273,8 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     ],
   },
   {
-    name: 'Vietnamese tin prose does not trigger tax_code while uppercase TIN does',
-    text: 'Nhắn tin 0912 345 678, Thông tin 079091001234, TIN 12345678.',
+    name: 'Vietnamese tin prose (with and without diacritics) does not trigger tax_code while uppercase TIN does',
+    text: 'Nhắn tin 0912 345 678, Thông tin 079091001234, NHAN TIN 12345678, BAN TIN 12345678, TIN 12345678.',
     expected: [
       { kind: 'phone', matchText: '0912 345 678' },
       { kind: 'national_id', matchText: '079091001234' },
@@ -279,8 +309,8 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     expected: [],
   },
   {
-    name: 'near-miss: Vietnamese thong tin prefix before near-misses stays ignored',
-    text: 'Thông tin 100.000.000, Thông tin 100000000, Thông tin 192.168.1.100, Thông tin 12345678, Thông tin 20261121132157, THÔNG TIN 100000000.',
+    name: 'near-miss: Vietnamese thong tin prefix (with and without diacritics) stays ignored',
+    text: 'Thông tin 100.000.000, Thông tin 100000000, Thông tin 192.168.1.100, Thông tin 12345678, Thông tin 20261121132157, THÔNG TIN 100000000, THONG TIN 100000000, NHAN TIN 12345678.',
     expected: [],
   },
   {
@@ -311,6 +341,19 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
   {
     name: 'near-miss: invalid email lookalikes and identifier tokens',
     text: 'họp @ 9.30, a@b, @.@., ab@x.example.123, cab..ab@x.example, id0912345678, 0912345678px, 1234567890@localhost.',
+    expected: [],
+  },
+  {
+    name: 'long http(s) URL path beyond 256 chars stays suppressed while trailing delimited phone is detected',
+    text: `https://example.com/${'a'.repeat(320)}/0912345678, gọi 0987654321; <https://example.com/${'b'.repeat(300)}/0912345678> 0321234567`,
+    expected: [
+      { kind: 'phone', matchText: '0987654321' },
+      { kind: 'phone', matchText: '0321234567' },
+    ],
+  },
+  {
+    name: 'near-miss: spaced numeric columns and newline-split digit runs stay separated',
+    text: 'Mã 1234  567890, cột 0321  123456, Gọi 0912\n345 678.',
     expected: [],
   },
   {
