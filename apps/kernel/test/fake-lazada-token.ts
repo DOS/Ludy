@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A made-up Lazada token API for the token tests (#2524, S3a = #4240): an in-process `fetch` that answers `POST /rest/auth/token/refresh` on api.lazada.com and `POST /rest/auth/token/create` on
-// auth.lazada.com in the shape of the documentation mirrored on open.alitrip.com (article 108260: the answer holds access_token, refresh_token, expires_in, refresh_expires_in and the seller's country,
+// A made-up Lazada token API for the token tests (#2524, S3a = #4240): an in-process `fetch` that answers `POST /rest/auth/token/refresh` and `POST /rest/auth/token/create`, both on auth.lazada.com
+// (the one address the official pages give for both), in the shape of the documentation mirrored on open.alitrip.com (article 108260: the answer holds access_token, refresh_token, expires_in, refresh_expires_in and the seller's country,
 // account and country_user_info at the top level). It verifies the signature with its OWN implementation of the algorithm (article 108068), so a signer that drifts fails here, and it rotates like Lazada
 // does: a refresh token works once, the answer carries a new access token and a new refresh token, and the refresh life is NOT reset (the answer's refresh_expires_in counts down to one fixed date). An
 // authorization code works once. The seller's e-mail is in every grant on purpose, so the tests can show none of it is kept. No network.
@@ -73,11 +73,11 @@ export function fakeLazadaToken(options: FakeTokenOptions) {
     const path = url.pathname.replace(/^\/rest/, '');
     const call: FakeTokenCall = { method: init?.method ?? 'GET', host: url.host, path, query, form, url: input };
     calls.push(call);
-    if (url.protocol !== 'https:' || !['api.lazada.com', 'auth.lazada.com'].includes(url.host) || !url.pathname.startsWith('/rest/')) throw new Error(`the fake Lazada does not serve ${url.host}`);
+    if (url.protocol !== 'https:' || url.host !== 'auth.lazada.com' || !url.pathname.startsWith('/rest/')) throw new Error(`the fake Lazada does not serve ${url.host}`);
     const hostile = options.intercept?.(call);
     if (hostile) return hostile;
-    const refresh = url.host === 'api.lazada.com' && path === '/auth/token/refresh';
-    const create = url.host === 'auth.lazada.com' && path === '/auth/token/create';
+    const refresh = path === '/auth/token/refresh';
+    const create = path === '/auth/token/create';
     if (call.method !== 'POST' || (!refresh && !create)) return refused('ApiNotFound', path);
     if (query.access_token !== undefined || form.access_token !== undefined) return refused('InvalidParameter', 'access_token is not for this call');
     if (query.sign !== expectedSign(options.appSecret, path, { ...query, ...form }) || query.app_key !== options.appKey || query.sign_method !== 'sha256') {

@@ -58,6 +58,9 @@ export type MarketplaceConnect = z.infer<typeof zMarketplaceConnect>;
 export const zMarketplaceConnectionRecordTest = z.strictObject({ id: zId, state: zMarketplaceConnectionState });
 export const zMarketplaceConnectionTested = z.object({ state: zMarketplaceConnectionState });
 export type MarketplaceConnectionTested = z.infer<typeof zMarketplaceConnectionTested>;
+// What the test button gets back: the state at once for the offline adapter (tested at the API), or `queued` for an adapter that reaches the platform (the worker tests it and records the state, which the list shows).
+export const zMarketplaceConnectionTestAnswer = z.union([zMarketplaceConnectionTested, z.strictObject({ queued: z.literal(true) })]);
+export type MarketplaceConnectionTestAnswer = z.infer<typeof zMarketplaceConnectionTestAnswer>;
 
 // The command the poll files a page of orders with (#4250, step 2 of the link table of #2840 point 3): the file of the page, as the same intake as an upload takes it, and the connection that polled it. The
 // entity and the source are the connection's and fixed, never the caller's: the command reads the entity from the connection row and the file is always an upload of text/csv.

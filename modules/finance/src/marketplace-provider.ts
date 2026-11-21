@@ -96,6 +96,8 @@ export interface MarketplaceOrderPage {
   orders: MarketplaceOrder[];
   // Where the next poll resumes: opaque, at most 200 characters. The cursor given when there is nothing new.
   nextCursor: string | null;
+  // True when the provider knows more orders wait behind this page (a full page): the poll may read the next page in the same run. Left out, the poll reads one page per run, as before.
+  more?: boolean;
 }
 
 // What a platform paid and kept for one order (the figures of an income report, #2516), decimal strings.
@@ -407,6 +409,7 @@ export const zMarketplaceOrderPage = z.strictObject({
     )
     .max(1000),
   nextCursor: z.string().max(200).nullable(),
+  more: z.boolean().optional(),
 });
 
 // The page when it is one the writer may take, or null: decimal strings, real calendar days, known stages, bounded lengths, no field the port does not name. The caller maps null to the poll

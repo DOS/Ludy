@@ -92,6 +92,7 @@ import { misaTransport } from './einvoice-transport.ts';
 import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTransport } from '@crove/misa-amis';
 import { amisTransport } from './misa-amis-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
+import { LAZADA_HOSTS, lazadaMarketplace } from './marketplace-lazada.ts';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -485,6 +486,8 @@ export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDE
   for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
     const id = raw.trim();
     if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
+    // Lazada (#2524, S2 = #4238): named by the deployment, never on its own. Its calls are bound to the hosts the adapter names; the seller's own App Key and Secret are sealed per connection.
+    if (id === 'lazada' && isMarketplaceAdapter(id)) out[id] = lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS) });
   }
   return out;
 }
