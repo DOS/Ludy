@@ -16487,6 +16487,10 @@ export const vi = {
       weekly_status_source: 'Đọc số liệu và tên công việc trong tuần của một dự án',
     },
     sign: {
+      acceptance: {
+        ai_status: 'Kiểm tra trạng thái hỗ trợ tóm tắt biên bản nghiệm thu dự án của Vy',
+        source: 'Đọc thông tin dự án và các công việc hoàn tất để lập biên bản nghiệm thu',
+      },
       ai_analysis: {
         get: 'Đọc bản phân tích ô ký và điều khoản AI mới nhất của hồ sơ ký',
         record: 'Ghi kết quả phân tích AI cho hồ sơ ký (hệ thống)',

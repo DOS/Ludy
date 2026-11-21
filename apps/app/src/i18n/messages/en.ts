@@ -16488,6 +16488,10 @@ export const en = {
       weekly_status_source: 'Read weekly task counts and titles for one project',
     },
     sign: {
+      acceptance: {
+        ai_status: 'Check whether Vy acceptance minutes drafting is available',
+        source: 'Read project details and completed tasks for acceptance minutes',
+      },
       ai_analysis: {
         get: 'Read the latest AI field and clause analysis of an envelope',
         record: 'Record AI analysis results on a signing envelope (system)',
