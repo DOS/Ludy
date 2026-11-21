@@ -5,6 +5,7 @@
 // - finance.marketplace_connection.record_test (same; R1): records the state the connection test came back with. The test itself is the API's for the offline provider and the worker's
 //   for a real one; this command takes only a state.
 // - finance.marketplace_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
+// - finance.marketplace_connection.request_test (same; R2 external): asks the worker to test a connection whose adapter reaches a host (#4238); the worker records the state with record_test.
 // - finance.marketplace_connection.request_poll (same; R2 external): asks the worker to pull the platform's orders now (the outbox event queues the poll job).
 // - finance.marketplace_connection.record_poll (system; R1): what the worker records after a poll: how it ended, the cursor the next one resumes from (moved only after the page was
 //   ingested) (the orders still waiting are counted by the list from the staged files the connection's polls ingested). The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
@@ -101,6 +102,16 @@ export const marketplaceConnectionConnect = defineCommand({
       const id =
         row?.id ??
         (await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
+      // A new credential for an account that was already connected ends what the old one earned: the back-off after its refused polls and its last test no longer describe this credential, so the next
+      // poll runs at once. (A poll that began with the old credential and ends after this can still record its own failure; the next good poll clears it.)
+      if (!row) {
+        await ctx.trx
+          .updateTable('crove_finance.marketplace_connection')
+          .set({ last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', id)
+          .execute();
+      }
       ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, provider: channelProvider, platform: input.platform, reconnected: channel.reconnected });
       return { id, existing: !row };
     } catch (error) {
@@ -194,10 +205,41 @@ export const marketplaceConnectionRequestPoll = defineCommand({
   },
 });
 
+// The test the worker runs is queued by this event (apps/kernel/src/worker.ts): the same queue as the poll, a `kind` in the job. Ids only.
+export const MARKETPLACE_TEST_REQUESTED = 'finance.marketplace_test_requested';
+export const MARKETPLACE_TEST_MIN_GAP_MS = 60_000;
+
+export const marketplaceConnectionRequestTest = defineCommand({
+  name: 'finance.marketplace_connection.request_test',
+  input: z.strictObject({ id: zId }),
+  // The event it emits starts a job that calls the platform's API with the org's sealed credential (one read that changes nothing there): R2 external, like a poll.
+  risk: 'R2',
+  sideEffect: 'external',
+  access: MANAGERS,
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ queued: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select(['c.provider', 'c.last_tested_at', 'ch.status'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
+    if (!marketplaceAdapterOf(row.provider)) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Kết nối này không phải của một bộ kết nối sàn mà phiên bản này hỗ trợ');
+    // The queue is a standard one (a singleton key alone dedupes nothing), so the limit is here: a connection tested less than a minute ago is not tested again, whoever asks. Each test is a call to the platform.
+    if (row.last_tested_at && ctx.now.getTime() - new Date(row.last_tested_at).getTime() < MARKETPLACE_TEST_MIN_GAP_MS) throw new DomainError('MARKETPLACE_TEST_RECENT', 429, 'Vừa kiểm tra kết nối này xong, hãy đợi một phút rồi kiểm tra lại');
+    await ctx.emit(MARKETPLACE_TEST_REQUESTED, { connection_id: input.id });
+    ctx.audit({ requested: true });
+    return { queued: true };
+  },
+});
+
 // What the worker needs to poll one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 export type MarketplacePollTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'unknown_adapter' }
-  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null };
+  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null; lastPolledAt: string | null };
 
 export const marketplaceConnectionPollTarget = defineQuery({
   name: 'finance.marketplace_connection.poll_target',
@@ -207,7 +249,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'c.last_polled_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -215,7 +257,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
-    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state };
+    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state, lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).toISOString() : null };
   },
 });
 
@@ -316,6 +358,7 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionRecordTest,
   marketplaceConnectionUnlink,
   marketplaceConnectionRequestPoll,
+  marketplaceConnectionRequestTest,
   marketplaceConnectionRecordPoll,
 ];
 export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget];

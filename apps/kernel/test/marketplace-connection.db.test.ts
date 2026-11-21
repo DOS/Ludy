@@ -18,7 +18,7 @@ import { MarketplaceProviderError, createSandboxMarketplaceProvider, financeComm
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { runMarketplacePoll } from '../src/marketplace-poll-job.ts';
+import { runMarketplacePoll, runMarketplaceTest } from '../src/marketplace-poll-job.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -82,6 +82,7 @@ suite('marketplace connections (#2519)', () => {
   let app: ReturnType<typeof createHttpApp>;
   let offApp: ReturnType<typeof createHttpApp>;
   let realApp: ReturnType<typeof createHttpApp>;
+  let lazadaApp: ReturnType<typeof createHttpApp>;
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-conn.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@marketplace-conn.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@marketplace-conn.test', session: randomUUID(), userId: '' };
@@ -178,6 +179,7 @@ suite('marketplace connections (#2519)', () => {
     const offline = createSandboxMarketplaceProvider();
     app = createHttpApp({ ...deps, channels: channels({ sandbox: offline }) });
     offApp = createHttpApp({ ...deps, channels: channels({}) });
+    lazadaApp = createHttpApp({ ...deps, channels: channels({ lazada: { ...offline, id: 'lazada', hosts: ['api.lazada.vn'], connectFields: ['appKey', 'appSecret'] } as unknown as MarketplaceProvider }) });
     realApp = createHttpApp({ ...deps, channels: channels({ sandbox: { ...offline, hosts: ['marketplace.example.test'], connectFields: ['user', 'password'] } }) });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
@@ -234,8 +236,11 @@ suite('marketplace connections (#2519)', () => {
     expect(connected.status).toBe(200);
     const id = String(connected.body.id);
     expect(await rows('SELECT provider, connected_by FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ provider: 'marketplace_sandbox', connected_by: adminUser.userId }]);
+    // A refused poll and a test leave their marks (and the back-off they start); connecting the same account again with a new credential clears them, so the next poll is not held back by the old one.
+    await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_test_state = 'wrong_credentials', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
     // The same account again is the same connection.
     expect((await call('connections/connect', owner, connectInput())).body).toEqual({ id });
+    expect(await rows('SELECT last_poll_state, last_polled_at, last_test_state, last_tested_at FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null }]);
     expect((await call('connections/list', viewer)).body).toEqual([
       {
         id,
@@ -482,8 +487,12 @@ suite('marketplace connections (#2519)', () => {
     expect(connected.status).toBe(200);
     expect(connected.text).not.toContain(PLANTED);
     for (const text of [(await call('connections/list', owner, undefined, realApp)).text, (await call('providers', owner, undefined, realApp)).text]) expect(text).not.toContain(PLANTED);
-    // The test of an adapter reached over the network is the worker's, so the screen refuses it in words: the API never opens a credential; the same for pulling from a button.
-    expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'MARKETPLACE_PROVIDER_NOT_READY' });
+    // The test of an adapter reached over the network is the worker's (#4238): the API never opens a credential, so it only queues the test (an event with ids) and answers `queued`; pulling from a button
+    // is still refused in words.
+    expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toEqual({ queued: true });
+    const testEvents = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_test_requested'", [orgId]);
+    expect(testEvents.map((e) => e.payload)).toEqual([{ connection_id: connected.body.id }]);
+    for (const who of [member, viewer]) expect((await call('connections/test', who, { id: connected.body.id }, realApp)).status).toBe(403);
     expect((await call('connections/pollNow', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'MARKETPLACE_PROVIDER_NOT_READY' });
     // The worker opens the credential and hands it to the adapter alone; nothing is logged.
     const seen: string[] = [];
@@ -499,6 +508,23 @@ suite('marketplace connections (#2519)', () => {
     const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
+      // The worker's test opens the credential, hands it to the adapter's test alone, and records only the state and the time: no cursor, no file, no poll state.
+      const tested: string[] = [];
+      const tester: MarketplaceProvider = {
+        ...real,
+        async testConnection(secret) {
+          tested.push(secret);
+          return 'api_not_enabled';
+        },
+      };
+      expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: { sandbox: tester } }, { orgId, connectionId: String(connected.body.id), kind: 'test' })).toEqual({ state: 'api_not_enabled' });
+      expect(tested.map((s) => JSON.parse(s))).toEqual([{ user: 'ban-hang@ludy.test', password: PLANTED }]);
+      // A connection tested less than a minute ago is not tested again, whoever asks: the queue is a standard one, so the limit is in the command.
+      expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'MARKETPLACE_TEST_RECENT' });
+      expect(await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_test_requested'", [orgId])).toHaveLength(1);
+      const after = (await call('connections/list', owner, undefined, realApp)).body as Array<{ id: string; lastTestState: string | null; lastTestedAt: string | null; lastPollState: string | null; lastPolledAt: string | null }>;
+      expect(after.find((c) => c.id === connected.body.id)).toMatchObject({ lastTestState: 'api_not_enabled', lastPollState: null, lastPolledAt: null });
+      expect(after.find((c) => c.id === connected.body.id)?.lastTestedAt).not.toBeNull();
       expect(await poll(String(connected.body.id), { sandbox: real })).toEqual({ state: 'ok', orders: 0, staged: false });
       expect(JSON.stringify([logs.mock.calls, warns.mock.calls])).not.toContain(PLANTED);
     } finally {
@@ -506,6 +532,9 @@ suite('marketplace connections (#2519)', () => {
       warns.mockRestore();
     }
     expect(seen.map((s) => JSON.parse(s))).toEqual([{ user: 'ban-hang@ludy.test', password: PLANTED }]);
+    // An adapter this deployment turned off, and a connection that is gone, are left alone by a test too: nothing is asked and nothing is recorded.
+    expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: {} }, { orgId, connectionId: String(connected.body.id) })).toEqual({ state: 'skipped', reason: 'provider_off' });
+    expect(await runMarketplaceTest({ runtime: worker, broker: vault, store, providers: { sandbox: real } }, { orgId, connectionId: randomUUID() })).toEqual({ state: 'skipped', reason: 'not_found' });
     const dump = JSON.stringify({
       audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]),
       outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),
@@ -531,6 +560,21 @@ suite('marketplace connections (#2519)', () => {
     // Not in the shared channel list either: it names the entity in its account id.
     expect(JSON.stringify((await rpc('channels/list', await tokenFor(owner), {})).body)).not.toContain('marketplace_');
     expect((await call('connections/disconnect', owner, { id: connected.body.id }, realApp)).body).toEqual({ removed: true });
+  });
+
+  it('starts a Lazada connection as "not authorized yet": the sealed App Key and Secret hold no token, so the state is recorded at connect and again after a reconnect', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Lazada', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const input = connectInput({ adapter: 'lazada', platform: 'lazada', legalEntityId: entity, fields: { appKey: '123456', appSecret: 'helloworld' } });
+    const first = await call('connections/connect', owner, input, lazadaApp);
+    expect(first.status).toBe(200);
+    const stateOf = async () => ((await call('connections/list', owner, undefined, lazadaApp)).body as Array<{ id: string; lastTestState: string | null }>).find((c) => c.id === first.body.id)?.lastTestState;
+    expect(await stateOf()).toBe('api_not_enabled');
+    // A reconnect clears the old marks and records the same fact again; a refused poll mark does not outlive it.
+    await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now() WHERE org_id = $1 AND id = $2", [orgId, first.body.id]);
+    expect((await call('connections/connect', owner, input, lazadaApp)).body).toEqual({ id: first.body.id });
+    expect(await stateOf()).toBe('api_not_enabled');
+    expect(await rows('SELECT last_poll_state, last_polled_at FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, first.body.id])).toEqual([{ last_poll_state: null, last_polled_at: null }]);
+    expect((await call('connections/disconnect', owner, { id: first.body.id }, lazadaApp)).body).toEqual({ removed: true });
   });
 
   it('closes the connection: the credential is dropped, the row is gone, what was staged stays, and a second disconnect finds nothing', async () => {

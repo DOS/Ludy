@@ -3504,6 +3504,11 @@ export function createRpcHandler(
               },
               { actor, orgId },
             );
+            // An adapter whose connect fields hold no access token (Lazada: App Key and App Secret) is connected but not authorized: that is known from what was sealed, not from a test, so it is recorded
+            // now with the state the card words as "not authorized yet" (the authorize step, S2b, replaces it). The credential is not opened here.
+            if (provider.hosts.length > 0 && input.adapter === 'lazada') {
+              await runtime.execute('finance.marketplace_connection.record_test', { id: connected.id, state: 'api_not_enabled' }, { actor, orgId });
+            }
             return { id: connected.id };
           }),
         ),
@@ -3515,9 +3520,12 @@ export function createRpcHandler(
             if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
             const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
             if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
-            // The API never opens a credential: a provider reached over the network is tested by the worker (a later build, with its adapter). The offline provider reaches no host and needs
-            // no credential, so its test runs here.
-            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            // The API never opens a credential: a provider reached over the network is tested by the worker, which records the state (the card shows it on its next read). The offline provider reaches
+            // no host and needs no credential, so its test runs here.
+            if (provider.hosts.length > 0) {
+              await runtime.execute('finance.marketplace_connection.request_test', { id: row.id }, { actor, orgId });
+              return { queued: true as const };
+            }
             let state: MarketplaceTestResult;
             try {
               state = await provider.testConnection(SANDBOX_MARKETPLACE_SECRET);

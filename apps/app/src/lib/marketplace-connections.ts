@@ -20,6 +20,15 @@ export const POLL_STATE_KEYS = {
   not_recognized: 'pollStates.not_recognized',
 } as const satisfies Record<MarketplacePollState, string>;
 
+// The words for a test state of a connection: an adapter may have its own for a state (Lazada tells "not authorized yet" from "refused"), else the generic ones.
+const OWN_TEST_WORDS: Readonly<Record<string, readonly MarketplaceConnectionState[]>> = { lazada: ['wrong_credentials', 'api_not_enabled'] };
+export const testStateKey = (adapterId: string, state: MarketplaceConnectionState): string =>
+  OWN_TEST_WORDS[adapterId]?.includes(state) ? `testStatesLazada.${state}` : TEST_STATE_KEYS[state];
+
+// The words for how a poll ended. A Lazada poll refused as `credentials` whose last test said the app is not authorized yet reads as that (not as a refused login); everything else is generic.
+export const pollStateKey = (connection: Pick<MarketplaceConnection, 'provider' | 'lastTestState'>, state: MarketplacePollState): string =>
+  state === 'credentials' && adapterIdOf(connection) === 'lazada' && connection.lastTestState === 'api_not_enabled' ? 'pollStatesLazada.not_authorized' : POLL_STATE_KEYS[state];
+
 export const PLATFORM_KEYS = { shopee: 'platforms.shopee', tiktok_shop: 'platforms.tiktok_shop', lazada: 'platforms.lazada' } as const;
 
 // Whether the marketplace card draws: the deployment offers an adapter to connect, or the org already has a connection (a viewer still reads it when the adapter was turned off
@@ -40,4 +49,4 @@ export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo
 export const fieldLabelKey = (name: string, known: (key: string) => boolean): string | null => (known(`fieldLabels.${name}`) ? `fieldLabels.${name}` : null);
 
 // A field the org types to connect is a secret unless its name says it is a plain identifier: the input hides what is typed.
-export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|clientId|shopId)$/i.test(name);
+export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|appKey|clientId|shopId)$/i.test(name);
