@@ -536,7 +536,7 @@ describe('testConnection', () => {
 // The function's own declaration is not a call.
 function requestPaths(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/(?<![\w.])call\(/g)) {
+  for (const m of text.matchAll(/(?<![\w.])call\s*\(/g)) {
     const start = (m.index ?? 0) + m[0].length;
     if (/function\s+$/.test(text.slice(0, m.index ?? 0))) continue;
     const args: string[] = [];
@@ -592,6 +592,7 @@ describe('what the adapter is allowed to reach', () => {
     expect(requestPaths("await call(credential, ORDERS_PATH, params);\nawait call({ ...credential }, ITEMS_PATH, { a: f(1, 2) });")).toEqual(['ORDERS_PATH', 'ITEMS_PATH']);
     expect(requestPaths('await call({ ...credential }, ORDERS_PATH + params.extra, params);')).toEqual(['ORDERS_PATH + params.extra']);
     expect(requestPaths("await call(other(1, 2), '/product/remove', params);")).toEqual(["'/product/remove'"]);
+    expect(requestPaths('await call (credential, ORDERS_PATH + params.extra, params);')).toEqual(['ORDERS_PATH + params.extra']);
     expect(requestPaths('async function call(credential: C, path: string, apiParams: P): Promise<unknown> {')).toEqual([]);
   });
 });
