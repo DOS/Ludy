@@ -60,6 +60,7 @@ async function start(request: StartRequest): Promise<StartReply> {
     keepVideo: request.keepVideo,
     liveNotes: request.liveNotes,
     streamId: request.streamId,
+    ...(request.joinUrl ? { joinUrl: request.joinUrl } : {}),
   };
   const reply = (await chrome.runtime.sendMessage(message)) as StartReply;
   if (!reply.ok) {

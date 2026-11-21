@@ -4,11 +4,11 @@
 // without a change here, which the security review sees, fails the build.
 
 export const BASE_PERMISSIONS = ['identity', 'storage'] as const;
-// Asked only when the member turns the meetings feature on, and given back when it is turned off.
-export const MEETINGS_OPTIONAL_PERMISSIONS = ['offscreen', 'tabCapture'] as const;
+// Asked only when the member turns the meetings feature on, and given back when it is turned off (`activeTab` lets the popup read the active meeting tab URL on click to prevent duplicate capture, #4123).
+export const MEETINGS_OPTIONAL_PERMISSIONS = ['offscreen', 'tabCapture', 'activeTab'] as const;
 // Asked only when the member enables the Web Clipper toggle inside Notes, and given back when turned off.
 export const WEB_CLIPPER_OPTIONAL_PERMISSIONS = ['activeTab', 'scripting'] as const;
-export const OPTIONAL_PERMISSIONS = [...MEETINGS_OPTIONAL_PERMISSIONS, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS] as const;
+export const OPTIONAL_PERMISSIONS = [...new Set([...MEETINGS_OPTIONAL_PERMISSIONS, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS])] as const;
 // The Ludy cloud address, granted at install.
 export const DEFAULT_HOST_PERMISSIONS = ['https://app.ludy.vn/*'] as const;
 // A self-hosted address the member types: asked for that one origin at setup, never granted by default. `localhost`
