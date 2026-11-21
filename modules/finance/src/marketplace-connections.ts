@@ -586,11 +586,14 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
     if (pendingExpired(found.authorize_pending_at, ctx.now.getTime())) return fail();
     // The seller who authorized must be the seller this connection was authorized for (#4285, #4273): the stored one, or for a connection authorized before it was kept, the one the worker read from its previous
     // secret. A different seller would move this connection's books, link rows and poll cursor onto another shop's orders, so nothing is replaced: the code is cleared, the state says so, and a different seller
-    // needs a new connection. Decided here, by a plain comparison of two short words; a platform that names no seller (null) is not compared.
-    // A field left out is the same as null: never a different seller.
+    // needs a new connection. Decided here, by a plain comparison of two short words. It fails closed: when a seller is known and the answer names none (null or a field left out), the seller cannot be
+    // told, so nothing is replaced either and the state is `failed` (the seller authorizes again). With no seller known yet there is nothing to compare, and the first one named is kept.
     const sellerRef = input.sellerRef ?? null;
     const baseline = found.seller_ref ?? input.priorSellerRef ?? null;
-    if (baseline !== null && sellerRef !== null && sellerRef !== baseline) return fail('shop_changed');
+    if (baseline !== null) {
+      if (sellerRef === null) return fail('failed');
+      if (sellerRef !== baseline) return fail('shop_changed');
+    }
     // The credential is replaced only if the connection is as the worker read it (a reconnect or a refresh since then moved its version); in the same transaction as the mark below, so the two never part.
     const replaced = await ctx.run<{ refreshed: boolean }>('kernel.channel.refresh', {
       connectionId: found.channel_connection_id,

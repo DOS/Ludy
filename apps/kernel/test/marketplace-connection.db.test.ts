@@ -861,12 +861,18 @@ suite('marketplace connections (#2519)', () => {
     expect(await row()).toMatchObject({ authorize_state: 'shop_changed', authorize_code_envelope: null, seller_ref: '100200' });
     expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-2' });
     expect(((await call('connections/list', owner)).body as Array<{ id: string; authorizeState: string | null }>).find((c) => c.id === id)?.authorizeState).toBe('shop_changed');
-    // An answer that names no seller is not compared and keeps the stored one.
-    expect(await authorize('TOKEN-4', { sellerRef: null })).toEqual({ recorded: true });
+    // Fail closed: with a seller stored, an answer that names none (null, or the field left out altogether) cannot be told from another seller, so nothing is replaced either: the code is cleared, the state
+    // is `failed` (not `shop_changed`: no other seller was seen) and the stored seller stays.
+    expect(await authorize('TOKEN-4', { sellerRef: null })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'failed', authorize_code_envelope: null, seller_ref: '100200' });
+    expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-2' });
+    expect(await authorize('TOKEN-4b', {})).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'failed', seller_ref: '100200' });
+    expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-2' });
+    // The right seller still works after that.
+    expect(await authorize('TOKEN-4c', { sellerRef: '100200' })).toEqual({ recorded: true });
     expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
-    // The field left out altogether (not null) names no seller either: it is not a different one.
-    expect(await authorize('TOKEN-4b', {})).toEqual({ recorded: true });
-    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
+    expect(await credentialNow()).toMatchObject({ accessToken: 'TOKEN-4c' });
     // A reconnect (the same entity and platform) keeps the seller: it is not the secret's, and the next authorization is compared with it.
     await exec('finance.marketplace_connection.connect', connectIn, owner);
     expect(await row()).toMatchObject({ authorize_state: null, seller_ref: '100200' });
@@ -876,6 +882,12 @@ suite('marketplace connections (#2519)', () => {
     await rows('UPDATE crove_finance.marketplace_connection SET seller_ref = NULL WHERE org_id = $1 AND id = $2', [orgId, id]);
     expect(await authorize('TOKEN-6', { sellerRef: '300400', priorSellerRef: '100200' })).toEqual({ recorded: false });
     expect(await row()).toMatchObject({ authorize_state: 'shop_changed', seller_ref: null });
+    // The previous secret names a seller and the answer names none: refused too (fail closed).
+    expect(await authorize('TOKEN-6b', { sellerRef: null, priorSellerRef: '100200' })).toEqual({ recorded: false });
+    expect(await row()).toMatchObject({ authorize_state: 'failed', seller_ref: null });
+    // Nothing known on either side: there is nothing to compare, the authorization works and keeps no seller.
+    expect(await authorize('TOKEN-6c', { sellerRef: null })).toEqual({ recorded: true });
+    expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: null });
     expect(await authorize('TOKEN-7', { sellerRef: '100200', priorSellerRef: '100200' })).toEqual({ recorded: true });
     expect(await row()).toMatchObject({ authorize_state: 'authorized', seller_ref: '100200' });
     // A value that is not a plain id is refused by the command's shape, and the database holds the same rule.
