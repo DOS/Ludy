@@ -85,7 +85,15 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@crove/mod-meetings';
-import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import {
+  setSignCaBrokerAvailable,
+  setSignLiveCaEnabled,
+  signAiCommands,
+  signAiQueries,
+  signCommands,
+  signManifest,
+  signQueries,
+} from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
 import { misaTransport } from './einvoice-transport.ts';
@@ -136,6 +144,9 @@ import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
 import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from './marketplace-shopee-token.ts';
 import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from './marketplace-tiktok-token.ts';
+import { TIKTOK_HOSTS, tiktokCaller } from './marketplace-tiktok.ts';
+import { tiktokMarketplace } from './marketplace-tiktok-orders.ts';
+import { withTiktokAuthorize } from './marketplace-tiktok-authorize.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -271,6 +282,8 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   // A platform's video-only recording can be imported only where crove-media can take its audio out (C2a, #3306): MEDIA_URL.
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
   setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);
+  setSignLiveCaEnabled(config.SIGN_LIVE_CA_ENABLED === 'true');
+  setSignCaBrokerAvailable(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -491,6 +504,13 @@ export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDE
   for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
     const id = raw.trim();
     if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
+    // TikTok Shop (#2524, S2 = #4269): named by the deployment, never on its own. The provider and the shop-list call share one signed caller bound to the API host; the token calls go through a fetch bound to
+    // the token host, inside the wrapper (the token URL carries the app secret and never leaves the token module).
+    if (id === 'tiktok_shop' && isMarketplaceAdapter(id)) {
+      const options = { fetch: hostBoundFetch(TIKTOK_HOSTS) };
+      const caller = tiktokCaller(options);
+      out[id] = withTiktokAuthorize(tiktokMarketplace(options, caller), { tokenFetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS), caller });
+    }
     // Lazada (#2524, S2 = #4238): named by the deployment, never on its own. Its calls are bound to the hosts the adapter names; the seller's own App Key and Secret are sealed per connection.
     if (id === 'lazada' && isMarketplaceAdapter(id)) {
       // One signed caller for the orders and the finance reads, so the app's calls are spaced across both (#4302: the income leg).

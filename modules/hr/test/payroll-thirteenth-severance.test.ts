@@ -2,17 +2,20 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  HR_JOB_LOSS_INELIGIBLE_REASONS,
+  HR_JOB_LOSS_TERMINATION_REASONS,
   HR_LINE_FLAGS,
   HR_SEVERANCE_INELIGIBLE_REASONS,
   HR_SEVERANCE_TERMINATION_REASONS,
+  zHrEmployeeJobLossAsk,
   zHrEmployeeSeveranceAsk,
   zHrPayrollInputs,
   zHrRunApplyThirteenthMonth,
   zHrRunThirteenthMonthPreview,
 } from '@crove/kernel-contract';
-import { PAYROLL_RULES, SEVERANCE_TERMINATION_REASONS, calculatePayroll } from '@crove/l10n-vn';
+import { JOB_LOSS_TERMINATION_REASONS, PAYROLL_RULES, SEVERANCE_TERMINATION_REASONS, calculatePayroll } from '@crove/l10n-vn';
 import { hrCommands, hrQueries } from '../src/index.ts';
-import { employeeSeverance } from '../src/employees.ts';
+import { employeeJobLoss, employeeSeverance } from '../src/employees.ts';
 import { runApplyThirteenthMonth, runApprove, runThirteenthMonthPreview } from '../src/payroll-run.ts';
 
 describe('13th-month salary and statutory severance contracts & domain guards (#3375)', () => {
@@ -34,9 +37,16 @@ describe('13th-month salary and statutory severance contracts & domain guards (#
     expect(employeeSeverance.sensitive).toBe(true);
     expect(hrQueries.some((q) => q.name === 'hr.payroll.employee.severance')).toBe(true);
 
+    expect(employeeJobLoss.name).toBe('hr.payroll.employee.job_loss');
+    expect(employeeJobLoss.access).toEqual(['owner', 'admin']);
+    expect(employeeJobLoss.sensitive).toBe(true);
+    expect(hrQueries.some((q) => q.name === 'hr.payroll.employee.job_loss')).toBe(true);
+
     expect(HR_LINE_FLAGS).toContain('severance_check');
     expect(HR_SEVERANCE_TERMINATION_REASONS).toEqual(SEVERANCE_TERMINATION_REASONS);
     expect(HR_SEVERANCE_INELIGIBLE_REASONS).toContain('worked_under_12_months');
+    expect(HR_JOB_LOSS_TERMINATION_REASONS).toEqual(JOB_LOSS_TERMINATION_REASONS);
+    expect(HR_JOB_LOSS_INELIGIBLE_REASONS).toEqual(['worked_under_12_months', 'not_job_loss_reason']);
   });
 
   it('validates 13th-month preview/apply and severance query schemas strictly', () => {
@@ -90,6 +100,21 @@ describe('13th-month salary and statutory severance contracts & domain guards (#
 
     expect(zHrEmployeeSeveranceAsk.safeParse({ employeeId: empA, endedOn: '2026-02-30' }).success).toBe(false);
     expect(zHrEmployeeSeveranceAsk.safeParse({ employeeId: empA, totalWorkedMonths: -1 }).success).toBe(false);
+
+    expect(
+      zHrEmployeeJobLossAsk.parse({
+        employeeId: empA,
+        endedOn: '2026-11-30',
+        terminationReason: 'economic_reasons',
+        totalWorkedMonths: 24,
+        unemploymentInsuredMonths: 24,
+        priorSettledMonths: 0,
+        paidAmount: '25000000',
+      }),
+    ).toMatchObject({ employeeId: empA, terminationReason: 'economic_reasons' });
+    expect(zHrEmployeeJobLossAsk.safeParse({ employeeId: empA, endedOn: '2026-02-30' }).success).toBe(false);
+    expect(zHrEmployeeJobLossAsk.safeParse({ employeeId: empA, totalWorkedMonths: -1 }).success).toBe(false);
+    expect(zHrEmployeeJobLossAsk.safeParse({ employeeId: empA, terminationReason: 'mutual_agreement' }).success).toBe(false);
   });
 
   it('keeps payroll_line.rules_used free of LaborRuleRef IDs after 13th-month bonus update so runApprove succeeds', async () => {

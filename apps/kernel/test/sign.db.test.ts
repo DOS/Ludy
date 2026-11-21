@@ -1378,7 +1378,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       },
       enqueueSeal: async () => {},
     });
-    expect(offRecovered).toEqual({ inspect: 0, seal: 0 });
+    expect(offRecovered).toEqual({ inspect: 0, seal: 0, caReconcile: 0 });
     expect(offInspectIds).toEqual([]);
 
     await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: true }, { actor: asUser(owner), orgId: regOrgId, idempotencyKey: randomUUID() });
@@ -1390,7 +1390,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       enqueueInspect: async () => {},
       enqueueSeal: async () => {},
     });
-    expect(entitlementOffRecovered).toEqual({ inspect: 0, seal: 0 });
+    expect(entitlementOffRecovered).toEqual({ inspect: 0, seal: 0, caReconcile: 0 });
     const onInspectIds: string[] = [];
     const onRecovered = await sweepSignPendingWork({
       workerDb,
@@ -1447,7 +1447,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       },
       enqueueSeal: async () => {},
     });
-    expect(pagedRecovered).toEqual({ inspect: 1, seal: 0 });
+    expect(pagedRecovered).toEqual({ inspect: 1, seal: 0, caReconcile: 0 });
     expect(pagedInspectIds).toEqual([pendingEnv.envelopeId]);
     expect(appOnCalls).toBe(2);
     await expect(

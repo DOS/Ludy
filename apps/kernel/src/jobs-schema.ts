@@ -132,6 +132,7 @@ export const QUEUES = {
   // Created by the eSign core migration (20270104060000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
   signPdfInspect: 'sign-pdf-inspect',
   signPdfSeal: 'sign-pdf-seal',
+  signCaReconcile: 'sign-ca-reconcile',
   signExpireSweep: 'sign-expire-sweep',
   signCleanup: 'sign-cleanup',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -274,6 +275,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // eSign jobs talk only to the internal crove-extract service or the database, never to an external origin (#3323).
   [QUEUES.signPdfInspect]: 'none',
   [QUEUES.signPdfSeal]: 'none',
+  [QUEUES.signCaReconcile]: 'none',
   [QUEUES.signExpireSweep]: 'none',
   [QUEUES.signCleanup]: 'none',
   [QUEUES.deadLetter]: 'none',
@@ -304,6 +306,7 @@ const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
   [QUEUES.meetingsImport]: 'stately',
   [QUEUES.signPdfInspect]: 'exclusive',
   [QUEUES.signPdfSeal]: 'exclusive',
+  [QUEUES.signCaReconcile]: 'exclusive',
 };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case

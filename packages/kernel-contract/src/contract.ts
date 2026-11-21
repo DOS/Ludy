@@ -308,6 +308,8 @@ import {
   zHrFinalizationSet,
   zHrEmployeeEnd,
   zHrEmployeeErased,
+  zHrEmployeeJobLossAsk,
+  zHrEmployeeJobLossResult,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -326,6 +328,7 @@ import {
   zHrCandidateEraseResult,
   zHrCandidateHire,
   zHrCandidateHireResult,
+  zHrCandidateInterviewCancelled,
   zHrCandidateInterviewScheduled,
   zHrCandidateList,
   zHrCandidateMoveStage,
@@ -333,6 +336,7 @@ import {
   zHrCandidateScheduleInterview,
   zHrCandidateView,
   zHrCandidateWritten,
+  zHrInterviewerOption,
   zHrInterviewSlotsAsk,
   zHrInterviewSlotsResult,
   zHrOpeningAdd,
@@ -365,10 +369,14 @@ import {
   zNoteRestoreVersion,
   zNoteSearch,
   zNoteSetVisibility,
+  zNoteOrganizeInput,
+  zNoteOrganizeResult,
   zNoteSuggestTodosInput,
   zNoteSuggestTodosResult,
   zNoteSummarizeInput,
   zNoteSummarizeResult,
+  zTodoPlanInput,
+  zTodoPlanResult,
   zNoteSummary,
   zNoteTemplate,
   zNoteTemplateCreate,
@@ -539,6 +547,7 @@ import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
+import { zCaptureHeartbeat, zCaptureHeartbeatDone } from './meeting-capture.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -626,6 +635,20 @@ import {
   zSignAiAnalysisRecord,
   zSignAiAnalyzeInput,
   zSignAiAnalyzeResult,
+  zSignCaConnectionDisableInput,
+  zSignCaConnectionRecord,
+  zSignCaConnectionSaveInput,
+  zSignCaConnectionTestInput,
+  zSignCaRequestInitiateInput,
+  zSignCaRequestListResult,
+  zSignCaSettingsResult,
+  zSignCaSigningRequestRecord,
+  zSignDiffCompareInput,
+  zSignDiffCompareResult,
+  zSignDrafterProposeInput,
+  zSignDrafterProposeResult,
+  zSignDrafterRenderPdfInput,
+  zSignDrafterRenderPdfResult,
   zSignEnvelopeBySourceInput,
   zSignEnvelopeBySourceResult,
   zSignEnvelopeAcknowledgeDeclineInput,
@@ -640,6 +663,8 @@ import {
   zSignEnvelopeRemindResult,
   zSignEnvelopeSendInput,
   zSignEnvelopeSendResult,
+  zSignEnvelopeSharedSummarySetInput,
+  zSignEnvelopeSharedSummarySetResult,
   zSignEnvelopeUpdateInput,
   zSignEnvelopeUpdateResult,
   zSignEnvelopeVerifyResult,
@@ -649,6 +674,8 @@ import {
   zSignFieldSetResult,
   zSignSignerAddInput,
   zSignSignerAddResult,
+  zSignSignerCorrectRecipientInput,
+  zSignSignerCorrectRecipientResult,
   zSignSignerCreateLinkInput,
   zSignSignerCreateLinkResult,
   zSignSignerRemoveInput,
@@ -671,6 +698,8 @@ import {
   zSignTemplateListResult,
   zSignTemplateRolesSetInput,
   zSignTemplateRolesSetResult,
+  zSignTemplateSharedSummarySetInput,
+  zSignTemplateSharedSummarySetResult,
   zSignTemplateUpdateInput,
   zSignTemplateUpdateResult,
 } from './sign.ts';
@@ -1121,6 +1150,7 @@ export const contract = {
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
         severance: oc.input(zHrEmployeeSeveranceAsk).output(zHrEmployeeSeveranceResult),
+        job_loss: oc.input(zHrEmployeeJobLossAsk).output(zHrEmployeeJobLossResult),
       },
       // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
       bankTemplates: {
@@ -1182,8 +1212,12 @@ export const contract = {
         edit: oc.input(zHrCandidateEdit).output(zHrCandidateWritten),
         moveStage: oc.input(zHrCandidateMoveStage).output(zHrCandidateWritten),
         scheduleInterview: oc.input(zHrCandidateScheduleInterview).output(zHrCandidateInterviewScheduled),
+        cancelInterview: oc.input(zHrCandidateRef).output(zHrCandidateInterviewCancelled),
         hire: oc.input(zHrCandidateHire).output(zHrCandidateHireResult),
         erase: oc.input(zHrCandidateRef).output(zHrCandidateEraseResult),
+      },
+      interviewers: {
+        list: oc.output(z.array(zHrInterviewerOption)),
       },
       interviewSlots: oc.input(zHrInterviewSlotsAsk).output(zHrInterviewSlotsResult),
       brief: oc.input(zHrRecruitingBriefAsk).output(zHrRecruitingBriefResult),
@@ -1237,6 +1271,9 @@ export const contract = {
     vyStatus: oc.input(z.strictObject({})).output(zNoteVyStatus),
     summarize: oc.input(zNoteSummarizeInput).output(zNoteSummarizeResult),
     suggestTodos: oc.input(zNoteSuggestTodosInput).output(zNoteSuggestTodosResult),
+    // Notes v2 (T4b & E5b, #3563, ADR-0049): member-scoped Vy daily focus planner and unfiled inbox organizer.
+    todoPlan: oc.input(zTodoPlanInput).output(zTodoPlanResult),
+    organize: oc.input(zNoteOrganizeInput).output(zNoteOrganizeResult),
     vyResults: oc.input(zNoteRef).output(zNoteVyResults),
     acceptSummary: oc.input(zNoteAcceptSummary).output(zNoteWritten),
     // The caller's own to-dos (#1673), which nobody else reads: not another member, an owner or an admin.
@@ -1285,6 +1322,8 @@ export const contract = {
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     // The extension reports that a recording of its own token ended with no media reaching the server, so the app's recording chip lets go (#3196).
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
+    // The heartbeat of a running capture, from the extension and the app's recorder every 30 seconds, and its end when the person stops (ADR-0055 slice 1, #4123).
+    captureHeartbeat: oc.input(zCaptureHeartbeat).output(zCaptureHeartbeatDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
     // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
@@ -3326,6 +3365,7 @@ export const contract = {
       verify: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeVerifyResult),
       create: oc.input(zSignEnvelopeCreateInput).output(zSignEnvelopeCreateResult),
       update: oc.input(zSignEnvelopeUpdateInput).output(zSignEnvelopeUpdateResult),
+      shared_summary_set: oc.input(zSignEnvelopeSharedSummarySetInput).output(zSignEnvelopeSharedSummarySetResult),
       send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
       remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
       void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
@@ -3336,6 +3376,7 @@ export const contract = {
       remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
       reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
       create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+      correct_recipient: oc.input(zSignSignerCorrectRecipientInput).output(zSignSignerCorrectRecipientResult),
     },
     field: {
       set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),
@@ -3347,17 +3388,33 @@ export const contract = {
     acceptance: {
       draft_summary: oc.input(zSignAcceptanceDraftInput).output(zSignAcceptanceDraftResult),
     },
+    diff: {
+      compare: oc.input(zSignDiffCompareInput).output(zSignDiffCompareResult),
+    },
+    drafter: {
+      proposeClauses: oc.input(zSignDrafterProposeInput).output(zSignDrafterProposeResult),
+      renderPdf: oc.input(zSignDrafterRenderPdfInput).output(zSignDrafterRenderPdfResult),
+    },
     template: {
       list: oc.input(zSignTemplateListInput).output(zSignTemplateListResult),
       get: oc.input(z.strictObject({ templateId: zId })).output(zSignTemplateDetail),
       create: oc.input(zSignTemplateCreateInput).output(zSignTemplateCreateResult),
       update: oc.input(zSignTemplateUpdateInput).output(zSignTemplateUpdateResult),
+      shared_summary_set: oc.input(zSignTemplateSharedSummarySetInput).output(zSignTemplateSharedSummarySetResult),
       roles_set: oc.input(zSignTemplateRolesSetInput).output(zSignTemplateRolesSetResult),
       fields_set: oc.input(zSignTemplateFieldsSetInput).output(zSignTemplateFieldsSetResult),
       archive: oc.input(zSignTemplateArchiveInput).output(zSignTemplateArchiveResult),
       instantiate: oc.input(zSignTemplateInstantiateInput).output(zSignTemplateInstantiateResult),
       direct_link_set: oc.input(zSignTemplateDirectLinkSetInput).output(zSignTemplateDirectLinkResult),
       direct_link_rotate: oc.input(zSignTemplateDirectLinkRotateInput).output(zSignTemplateDirectLinkResult),
+    },
+    ca: {
+      settings: oc.output(zSignCaSettingsResult),
+      save_connection: oc.input(zSignCaConnectionSaveInput).output(zSignCaConnectionRecord),
+      disable_connection: oc.input(zSignCaConnectionDisableInput).output(zSignCaConnectionRecord),
+      test_connection: oc.input(zSignCaConnectionTestInput).output(zSignCaConnectionRecord),
+      list_requests: oc.input(z.strictObject({ envelopeId: zId })).output(zSignCaRequestListResult),
+      initiate_request: oc.input(zSignCaRequestInitiateInput).output(zSignCaSigningRequestRecord),
     },
   },
 };

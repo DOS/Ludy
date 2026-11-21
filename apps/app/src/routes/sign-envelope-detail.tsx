@@ -15,10 +15,11 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
-import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
@@ -29,10 +30,13 @@ import {
   type SignAiAnalysis,
   type SignFieldRecord,
   type SignProposedField,
+  type SignSharedSummary,
   type SignSignerRecord,
 } from '../lib/sign-api.ts';
+import { canManageSignCa } from './sign-settings.tsx';
 import {
   SIGN_FIELD_TYPES,
+  SIGN_DELIVERY_MODES,
   checkSendReadiness,
   clampFieldBox,
   createPlacedFieldBox,
@@ -41,6 +45,7 @@ import {
   resizeFieldBox,
   type DraftFieldPlacement,
   type NormalizedBox,
+  type SignDeliveryMode,
   type SignFieldType,
   type SignRoutingMode,
 } from '../lib/sign-fields.ts';
@@ -138,6 +143,20 @@ export function SignEnvelopeDetailPage() {
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
+  const [correctTarget, setCorrectTarget] = useState<SignSignerRecord | null>(null);
+  const [correctName, setCorrectName] = useState('');
+  const [correctEmail, setCorrectEmail] = useState('');
+  const [correctPhone, setCorrectPhone] = useState('');
+  const [correctDeliveryMode, setCorrectDeliveryMode] = useState<SignDeliveryMode>('link');
+  const [correctRequireOtp, setCorrectRequireOtp] = useState(false);
+  const [correctFormError, setCorrectFormError] = useState<string | null>(null);
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
 
   const detailQuery = useQuery({
     queryKey: ['sign', 'envelope', id],
@@ -157,6 +176,14 @@ export function SignEnvelopeDetailPage() {
   const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
   const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
   const isDraft = envelope?.status === 'draft';
+  const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role;
+  const currentUserId = meQuery.data?.userId ?? null;
+  const canCorrectRecipients = Boolean(
+    envelope &&
+      (envelope.status === 'sent' || envelope.status === 'in_progress') &&
+      meQuery.data &&
+      (roleHere === 'owner' || roleHere === 'admin' || (currentUserId !== null && envelope.createdBy === currentUserId)),
+  );
 
   useEffect(() => {
     fieldsEditRevRef.current = 0;
@@ -234,6 +261,46 @@ export function SignEnvelopeDetailPage() {
     enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
   });
 
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const isCompletedAndSealed = envelope?.status === 'completed' && envelope?.sealStatus === 'sealed';
+
+  const caSettingsQuery = useQuery({
+    queryKey: ['sign', 'ca-settings'],
+    queryFn: () => signApi.getCaSettings(),
+    enabled: Boolean(isCompletedAndSealed),
+  });
+
+  const caRequestsQuery = useQuery({
+    queryKey: ['sign', 'ca-requests', id],
+    queryFn: () => signApi.listCaRequests(id),
+    enabled: Boolean(id) && Boolean(isCompletedAndSealed),
+    refetchInterval: (query) => {
+      const hasPending = query.state.data?.items.some(
+        (r) => r.status === 'pending' || (r.status === 'signed' && !r.padesFileId),
+      );
+      return hasPending ? 3000 : false;
+    },
+  });
+
+  const activeCaConnection = useMemo(() => {
+    const conns = caSettingsQuery.data?.connections.filter((c) => c.status === 'active') ?? [];
+    return conns.find((c) => c.provider !== 'sandbox') ?? conns[0] ?? null;
+  }, [caSettingsQuery.data]);
+
+  const latestCaRequest = caRequestsQuery.data?.items[0] ?? null;
+  const canInitiateCa = canManageSignCa(orgQuery.data?.role) && activeCaConnection !== null;
+
+  const initiateCaMutation = useMutation({
+    mutationFn: (caConnectionId: string) =>
+      signApi.initiateCaRequest({ envelopeId: id, caConnectionId }),
+    onSuccess: async () => {
+      toast(t('ca.initiatingToast'));
+      await queryClient.invalidateQueries({ queryKey: ['sign', 'ca-requests', id] });
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
   const invalidateAll = async () => {
     await queryClient.invalidateQueries({ queryKey: ['sign', 'envelope', id] });
     await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
@@ -307,6 +374,7 @@ export function SignEnvelopeDetailPage() {
   const updateMetaMutation = useMutation({
     mutationFn: async (input: {
       routingMode?: SignRoutingMode;
+      allowDelegation?: boolean;
       title?: string;
       subject?: string | null;
       message?: string | null;
@@ -410,6 +478,104 @@ export function SignEnvelopeDetailPage() {
     onError: (err) => toast(errorMessage(err), 'error'),
   });
 
+  const canEditSharedSummary = useMemo(() => {
+    if (!envelope) return false;
+    if (envelope.status !== 'draft' && envelope.status !== 'sent' && envelope.status !== 'in_progress') {
+      return false;
+    }
+    const me = meQuery.data;
+    if (!me) return true;
+    const orgSummary = me.orgs.find((o) => o.slug === slug);
+    if (!orgSummary) return false;
+    if (orgSummary.role === 'owner' || orgSummary.role === 'admin') return true;
+    return orgSummary.role === 'member' && envelope.createdBy !== null && me.userId === envelope.createdBy;
+  }, [envelope, meQuery.data, slug]);
+
+  const sharedSummaryMutation = useMutation({
+    mutationFn: (payload: { shareSummaryWithSigners: boolean; sharedSummary: SignSharedSummary | null }) =>
+      signApi.setEnvelopeSharedSummary({
+        envelopeId: id,
+        shareSummaryWithSigners: payload.shareSummaryWithSigners,
+        sharedSummary: payload.sharedSummary,
+        ...(envelope ? { expectedVersion: envelope.version } : {}),
+      }),
+    onSuccess: async () => {
+      toast(t('sharedSummary.savedToast'));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const openCorrectRecipientDialog = (signer: SignSignerRecord) => {
+    setCorrectTarget(signer);
+    setCorrectName(signer.name);
+    setCorrectEmail(signer.email ?? '');
+    setCorrectPhone(signer.phone ?? '');
+    setCorrectDeliveryMode(signer.deliveryMode);
+    setCorrectRequireOtp(signer.requireEmailOtp);
+    setCorrectFormError(null);
+  };
+
+  const correctRecipientMutation = useMutation({
+    mutationFn: async (payload: {
+      signerId: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      deliveryMode: SignDeliveryMode;
+      requireEmailOtp: boolean;
+    }) => {
+      return signApi.correctSignerRecipient({
+        envelopeId: id,
+        ...payload,
+      });
+    },
+    onSuccess: async (res) => {
+      setCorrectTarget(null);
+      setCorrectFormError(null);
+      if (res.link) {
+        const url = buildSigningUrl(res.link.token);
+        setMintedLinks((prev) => [...prev.filter((item) => item.signerId !== res.signerId), { signerId: res.signerId, url }]);
+        await copyTextToClipboard(url);
+        toast(t('correctDialog.savedLinkToast'));
+      } else {
+        setMintedLinks((prev) => prev.filter((item) => item.signerId !== res.signerId));
+        toast(res.mailStatus ? t('correctDialog.savedEmailToast') : t('correctDialog.savedWaitingToast'));
+      }
+      await invalidateAll();
+    },
+    onError: (err) => setCorrectFormError(errorMessage(err)),
+  });
+
+  const handleCorrectRecipientSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!correctTarget) return;
+    setCorrectFormError(null);
+    const trimmedName = correctName.trim();
+    const trimmedEmail = correctEmail.trim();
+    const trimmedPhone = correctPhone.trim();
+    if (!trimmedName) {
+      setCorrectFormError(t('signer.nameLabel'));
+      return;
+    }
+    const nextOtp = correctTarget.signerRole === 'cc' ? false : correctRequireOtp;
+    if ((correctDeliveryMode === 'email' || nextOtp) && !isEmailAddress(trimmedEmail)) {
+      setCorrectFormError(t('signer.emailNeededForOtp'));
+      return;
+    }
+    if (trimmedEmail && !isEmailAddress(trimmedEmail)) {
+      setCorrectFormError(t('signer.emailNeededForOtp'));
+      return;
+    }
+    correctRecipientMutation.mutate({
+      signerId: correctTarget.id,
+      name: trimmedName,
+      email: trimmedEmail || null,
+      phone: trimmedPhone || null,
+      deliveryMode: correctDeliveryMode,
+      requireEmailOtp: nextOtp,
+    });
+  };
   const effectiveAi = useMemo(
     () => normalizeAiAnalysis(aiAnalysisOverride ?? aiQuery.data ?? null),
     [aiAnalysisOverride, aiQuery.data],
@@ -668,6 +834,11 @@ export function SignEnvelopeDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{t(`statuses.${envelope.status}`)}</Badge>
           <Badge variant="secondary">{t(`inspectStatuses.${envelope.inspectStatus}`)}</Badge>
+          {envelope.allowDelegation ? (
+            <Badge variant="outline" data-testid="sign-allow-delegation-badge">
+              {t('allowDelegationBadge')}
+            </Badge>
+          ) : null}
           {envelope.sealStatus || envelope.status === 'completed' ? (
             <Badge variant="secondary">{t(`sealStatuses.${envelope.sealStatus ?? 'pending'}`)}</Badge>
           ) : null}
@@ -792,6 +963,7 @@ export function SignEnvelopeDetailPage() {
             onMoveSigner={handleMoveSigner}
             onCopyZaloLink={handleCopyZaloLink}
             onRemindSigner={handleRemindSigner}
+            {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
           />
 
           {isDraft ? (
@@ -889,6 +1061,23 @@ export function SignEnvelopeDetailPage() {
                     <span className="block text-[11px] text-muted-foreground">{t('autoRemindHint')}</span>
                   </span>
                 </label>
+                <div className="space-y-1 pt-1">
+                  <label
+                    htmlFor="env-allow-delegation-checkbox"
+                    className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground"
+                  >
+                    <Checkbox
+                      id="env-allow-delegation-checkbox"
+                      checked={Boolean(envelope.allowDelegation)}
+                      disabled={updateMetaMutation.isPending}
+                      onCheckedChange={(checked) => updateMetaMutation.mutate({ allowDelegation: Boolean(checked) })}
+                      className="mt-0.5"
+                      data-testid="env-allow-delegation-checkbox"
+                    />
+                    <span>{t('allowDelegationLabel')}</span>
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">{t('allowDelegationHint')}</p>
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -1009,6 +1198,19 @@ export function SignEnvelopeDetailPage() {
             onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
             onApplyAllProposals={handleApplyAllProposals}
           />
+
+          {canEditSharedSummary || Boolean(envelope.sharedSummary) || Boolean(envelope.shareSummaryWithSigners) ? (
+            <SenderSharedSummaryEditor
+              recordKey={`env-${envelope.id}`}
+              initialShare={Boolean(envelope.shareSummaryWithSigners)}
+              initialSummary={envelope.sharedSummary ?? null}
+              pageCount={envelope.pageCount ?? detectedPages}
+              aiAnalysis={effectiveAi}
+              editable={canEditSharedSummary}
+              saving={sharedSummaryMutation.isPending}
+              onSave={(payload) => sharedSummaryMutation.mutateAsync(payload)}
+            />
+          ) : null}
 
           {isDraft && selectedField ? (
             <Card data-testid="field-inspector-card">
@@ -1220,6 +1422,101 @@ export function SignEnvelopeDetailPage() {
                   ) : null}
                 </div>
 
+                {isCompletedAndSealed && (activeCaConnection || latestCaRequest) ? (
+                  <div className="space-y-2 border-t pt-2.5" data-testid="sign-ca-pades-section">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-foreground">{t('ca.envelopeSectionTitle')}</span>
+                      {latestCaRequest ? (
+                        <Badge
+                          variant={
+                            latestCaRequest.status === 'signed' && latestCaRequest.padesFileId
+                              ? 'success'
+                              : latestCaRequest.status === 'pending' ||
+                                  (latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId)
+                                ? 'brand'
+                                : 'destructive'
+                          }
+                          data-testid="sign-ca-request-status"
+                        >
+                          {t(
+                            `ca.requestStatus.${
+                              latestCaRequest.status === 'signed' && !latestCaRequest.padesFileId
+                                ? 'pending'
+                                : latestCaRequest.status
+                            }`,
+                          )}
+                        </Badge>
+                      ) : activeCaConnection ? (
+                        <span className="text-[11px] text-muted-foreground">
+                          {t('ca.envelopeActiveProvider', {
+                            provider: t(`ca.providers.${activeCaConnection.provider}`),
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {latestCaRequest?.challengeCode && latestCaRequest.status === 'pending' ? (
+                      <p className="font-mono text-[11px] text-foreground">
+                        {t('ca.challengeCodeLabel', { challenge: latestCaRequest.challengeCode })}
+                      </p>
+                    ) : null}
+
+                    {latestCaRequest?.padesSha256 ? (
+                      <div className="space-y-1">
+                        <span className="block text-muted-foreground">{t('ca.padesSha256Label')}</span>
+                        <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                          <span className="truncate">{latestCaRequest.padesSha256}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void copyDigest(latestCaRequest.padesSha256!)}
+                          >
+                            {t('evidence.copyDigest')}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {latestCaRequest?.padesFileId ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() =>
+                          void handleDownload(
+                            latestCaRequest.padesFileId,
+                            `${envelope.certificateCode ?? envelope.id}-pades.pdf`,
+                          )
+                        }
+                        data-testid="sign-download-pades-btn"
+                      >
+                        {t('ca.downloadPadesButton')}
+                      </Button>
+                    ) : null}
+
+                    {canInitiateCa &&
+                    activeCaConnection &&
+                    latestCaRequest?.status !== 'pending' &&
+                    latestCaRequest?.status !== 'signed' ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        loading={initiateCaMutation.isPending}
+                        onClick={() => initiateCaMutation.mutate(activeCaConnection.id)}
+                        data-testid="sign-apply-pades-btn"
+                      >
+                        {t('ca.applyPadesButton', {
+                          provider: t(`ca.providers.${activeCaConnection.provider}`),
+                        })}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {eventsQuery.data?.events.length ? (
                   <div className="space-y-1.5 border-t pt-2">
                     <p className="font-medium text-foreground">{t('evidence.eventsHeading')}</p>
@@ -1278,6 +1575,101 @@ export function SignEnvelopeDetailPage() {
               {t('voidDialog.confirm')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={correctTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCorrectTarget(null);
+            setCorrectFormError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" closeLabel={common('close')} data-testid="sign-correct-recipient-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('correctDialog.title')}</DialogTitle>
+            <DialogDescription>{t('correctDialog.description')}</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCorrectRecipientSubmit} className="space-y-3">
+            {correctFormError ? <ErrorText>{correctFormError}</ErrorText> : null}
+            <div className="space-y-1.5">
+              <Label htmlFor="correct-signer-name">{t('signer.nameLabel')}</Label>
+              <Input
+                id="correct-signer-name"
+                className="min-h-11"
+                value={correctName}
+                onChange={(e) => setCorrectName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="correct-signer-email">{t('signer.emailLabel')}</Label>
+              <Input
+                id="correct-signer-email"
+                type="email"
+                className="min-h-11"
+                value={correctEmail}
+                onChange={(e) => setCorrectEmail(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="correct-signer-phone">{t('signer.phoneLabel')}</Label>
+                <Input
+                  id="correct-signer-phone"
+                  className="min-h-11"
+                  value={correctPhone}
+                  onChange={(e) => setCorrectPhone(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="correct-signer-delivery">{t('signer.deliveryLabel')}</Label>
+                <NativeSelect
+                  id="correct-signer-delivery"
+                  value={correctDeliveryMode}
+                  className="min-h-11 w-full"
+                  onChange={(e) => setCorrectDeliveryMode(e.target.value as SignDeliveryMode)}
+                >
+                  {SIGN_DELIVERY_MODES.map((mode) => (
+                    <NativeSelectOption key={mode} value={mode}>
+                      {t(`signer.deliveries.${mode}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+            </div>
+            {correctTarget?.signerRole !== 'cc' ? (
+              <label
+                htmlFor="correct-signer-otp"
+                className="flex min-h-11 cursor-pointer items-center gap-2.5 text-xs text-foreground"
+              >
+                <Checkbox
+                  id="correct-signer-otp"
+                  checked={correctRequireOtp}
+                  onCheckedChange={(checked) => setCorrectRequireOtp(Boolean(checked))}
+                />
+                <span>{t('signer.otpLabel')}</span>
+              </label>
+            ) : null}
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => {
+                  setCorrectTarget(null);
+                  setCorrectFormError(null);
+                }}
+              >
+                {common('cancel')}
+              </Button>
+              <Button type="submit" className="min-h-11" loading={correctRecipientMutation.isPending}>
+                {t('correctDialog.confirm')}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

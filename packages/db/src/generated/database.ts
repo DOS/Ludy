@@ -210,6 +210,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'crove_meetings.capture_session': MeetingsCaptureSessionTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.glossary_term': MeetingsGlossaryTermTable;
@@ -247,6 +248,7 @@ export interface CroveProjectsSchema {
 
 export interface CroveSignSchema {
   'crove_sign.ai_analysis': SignAiAnalysisTable;
+  'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
@@ -3319,6 +3321,21 @@ export interface MeetingsCalendarAgendaTable {
   series_id: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
+/** crove_meetings.capture_session */
+export interface MeetingsCaptureSessionTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string, NotGranted, NotGranted>;
+  recorder_user_id: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  agenda_id: ColumnType<string | null, NotGranted, NotGranted>;
+  meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  last_seen_at: ColumnType<Date, NotGranted, Date | string>;
+  ended_at: ColumnType<Date | null, NotGranted, Date | string | null>;
+  ended_reason: ColumnType<string | null, NotGranted, string | null>;
+}
+
 /** crove_meetings.chat_channel */
 export interface MeetingsChatChannelTable {
   org_id: string;
@@ -3752,6 +3769,35 @@ export interface SignAiAnalysisTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_sign.ca_signing_request */
+export interface SignCaSigningRequestTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  signer_id: string | null;
+  ca_connection_id: string;
+  provider: string;
+  idempotency_key: string;
+  digest_sha256: string;
+  cert_ref: Generated<string>;
+  external_tx_id: string | null;
+  status: Generated<string>;
+  retry_safety: Generated<string>;
+  challenge_code: string | null;
+  error_code: string | null;
+  sub_filter: string | null;
+  pades_file_id: string | null;
+  pades_storage_key: string | null;
+  pades_generation: string | null;
+  pades_sha256: string | null;
+  poll_attempts: Generated<number>;
+  next_poll_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_sign.envelope */
 export interface SignEnvelopeTable {
   org_id: string;
@@ -3798,6 +3844,9 @@ export interface SignEnvelopeTable {
   auto_remind_before_expiry: Generated<boolean>;
   decline_acknowledged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   decline_acknowledged_by: string | null;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
+  allow_delegation: Generated<boolean>;
 }
 
 /** crove_sign.field */
@@ -3853,6 +3902,10 @@ export interface SignSignerTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   role_key: string | null;
   pre_expiry_reminded_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  delegated_from_name: string | null;
+  delegated_from_email: string | null;
+  delegation_reason: string | null;
+  delegation_count: Generated<number>;
 }
 
 /** crove_sign.signing_event */
@@ -3935,6 +3988,9 @@ export interface SignTemplateTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
+  allow_delegation: Generated<boolean>;
 }
 
 /** crove_social.account_snapshot */

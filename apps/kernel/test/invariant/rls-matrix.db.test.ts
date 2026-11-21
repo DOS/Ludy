@@ -44,6 +44,10 @@ const MACHINERY = new Set([
   // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant.
   'crove_finance.bank_feed_hook',
   'crove_finance.bank_feed_webhook_notice',
+  // #4316 (S1 of the marketplace push receiver, #4315): a marketplace connection's push hook key (only the SHA-256 of 128 random bits, never the key) and the raw pushes waiting for the worker to verify (deleted when
+  // the worker claims them and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Land before their tables (PENDING_TABLES).
+  'crove_finance.marketplace_hook',
+  'crove_finance.marketplace_hook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
   'crove_ads.ad_token_seal',
   // #2975: the grant an owner or admin gave an MCP client (ADR-0051, ADR-0032): one org, the consenting user, a client, the scope `ludy.read`, R0. Definer-only, no login role grant.
@@ -100,6 +104,9 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_hook',
+  'crove_finance.marketplace_hook_notice',
+  'crove_finance.marketplace_vat_rate',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -107,6 +114,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.leave_request',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -118,8 +126,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_sign.ca_connection',
-  'crove_sign.ca_signing_request',
   'crove_sign.envelope_obligation',
   'crove_sign.member_signature',
   'crove_sign.org_stamp',
@@ -165,6 +171,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.job_opening', () => 'false'], // HR, as above.
+  ['crove_hr.leave_request', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
@@ -279,6 +286,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.candidate', 'false'],
   ['crove_hr.department', 'false'],
   ['crove_hr.job_opening', 'false'],
+  ['crove_hr.leave_request', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
@@ -402,6 +410,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.marketplace_column_profile',
   // #4239 (step 1 of the link table of #2840 point 3, #4238): a file a marketplace connection's poll ingested is linked to it once, in the same transaction as the ingest; the link is never edited or deleted by a tenant role (a purge or the file's own deletion removes it).
   'crove_finance.marketplace_connection_file',
+  // #4303 S3a: the VAT method and rate of an entity's marketplace sales from a date: a change is a new dated row, never an edit (the books of a closed period keep the rate they were posted with).
+  'crove_finance.marketplace_vat_rate',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -1700,6 +1710,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4316: a marketplace connection's push hook key, one per connection: the SHA-256 (hex) of 128 random bits that the route's URL carries, the dates, and the count of refused pushes. Definer-only, in MACHINERY. Its
+  // factory lands before the table (step 1 of 2), so PENDING_TABLES holds it until the migration of step 2.
+  'crove_finance.marketplace_hook': {
+    make: (o) => {
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const channel = { ...channelConnectionRow(o), provider };
+      const connection = { org_id: o.id, id: randomUUID(), channel_connection_id: channel.id, provider, platform: 'shopee' };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.marketplace_connection', values: connection },
+        ],
+        row: { org_id: o.id, id: randomUUID(), marketplace_connection_id: connection.id, key_sha256: hex64() },
+      };
+    },
+  },
+  // #4316: a raw push waiting for the worker to verify: the header as sent, the dedupe key and the body as bytes (a bytea written from its hex text). Definer-only, in MACHINERY; deleted when claimed and by the sweep
+  // after 10 minutes. It references a hook of the same org.
+  'crove_finance.marketplace_hook_notice': {
+    make: (o) => {
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const channel = { ...channelConnectionRow(o), provider };
+      const connection = { org_id: o.id, id: randomUUID(), channel_connection_id: channel.id, provider, platform: 'shopee' };
+      const hook = { org_id: o.id, id: randomUUID(), marketplace_connection_id: connection.id, key_sha256: hex64() };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.marketplace_connection', values: connection },
+          { table: 'crove_finance.marketplace_hook', values: hook },
+        ],
+        row: { org_id: o.id, id: randomUUID(), hook_id: hook.id, dedupe_key: hex64(), authorization_header: hex64(), body: `\\x${Buffer.from('{"shop_id":"rls-matrix"}').toString('hex')}` },
+      };
+    },
+  },
   // #2516: the organization party that stands for a marketplace as the counterparty of the entity's 131 (ADR-0045 point 6, plan section 8.4): one per entity and platform, the party is an
   // ordinary organization of the org. It takes the org's default entity by its trigger. Tenant roles read and insert; nothing updates or deletes it. Each seeded link names a platform
   // of its own and a party of its own, since a platform is unique per entity and a party is linked once.
@@ -1709,6 +1753,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
         row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
+      };
+    },
+  },
+  // #4303 S3a: the VAT method and rate of an entity's marketplace sales (parent #2520), one row per (org, entity, effective_from): `deduction` with a rate in percent (the output VAT on 33311 of the sales posting), or `none` with
+  // no rate (a household on the percentage method, a direct-method company). A change is a new dated row. Tenant roles read and insert; nothing updates or deletes it. Its factory lands before the table (step 1 of 2),
+  // so PENDING_TABLES holds it until the migration of step 2. Each seeded row names an entity of its own.
+  'crove_finance.marketplace_vat_rate': {
+    make: (o) => {
+      const entity = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix VAT rate ${tag()}`, kind: 'branch', created_by: o.owner } }],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, effective_from: '2026-01-01', method: 'deduction', vat_percent: '8', created_by: o.owner },
       };
     },
   },
@@ -2110,6 +2166,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.job_opening': {
     update: { set: 'title = title' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix opening' } }),
+  },
+  // #4300: employee leave request with multi-level approval (owner/admin, linked employee, and L1 department manager in a user context; system and agent contexts read and write none).
+  'crove_hr.leave_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const month = payrollMonth();
+      const day = `${month}-02`;
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, month, start_on: day, end_on: day, kind: 'annual_leave', days: '1' },
+      };
+    },
   },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {

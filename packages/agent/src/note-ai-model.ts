@@ -38,3 +38,37 @@ export function generateTodoSuggestText(
     }),
   );
 }
+
+export function generateTodoPlanText(
+  config: AiConfig,
+  prompt: Readonly<{ system: string; user: string }>,
+  abortSignal: AbortSignal,
+): Promise<{ text: string; usage: { inputTokens?: number | undefined; outputTokens?: number | undefined } }> {
+  return metered('notes.todo_plan', () =>
+    generateText({
+      model: chatModel(config),
+      system: prompt.system,
+      prompt: prompt.user,
+      maxOutputTokens: 2000,
+      maxRetries: 0,
+      abortSignal,
+    }),
+  );
+}
+
+export function generateNoteOrganizeText(
+  config: AiConfig,
+  prompt: Readonly<{ system: string; user: string }>,
+  abortSignal: AbortSignal,
+): Promise<{ text: string; usage: { inputTokens?: number | undefined; outputTokens?: number | undefined } }> {
+  return metered('notes.organize', () =>
+    generateText({
+      model: chatModel(config),
+      system: prompt.system,
+      prompt: prompt.user,
+      maxOutputTokens: 2000,
+      maxRetries: 0,
+      abortSignal,
+    }),
+  );
+}

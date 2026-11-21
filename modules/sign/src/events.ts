@@ -10,6 +10,7 @@ export const SIGN_EVENT_TYPES = [
   'document_inspected',
   'document_inspect_failed',
   'envelope_updated',
+  'envelope_shared_summary_updated',
   'signer_added',
   'signer_removed',
   'signers_reordered',
@@ -18,6 +19,8 @@ export const SIGN_EVENT_TYPES = [
   'link_created',
   'signer_reminded',
   'signer_pre_expiry_reminded',
+  'signer_corrected',
+  'signer_delegated',
   'signer_viewed',
   'signer_otp_verified',
   'signer_signed',
@@ -28,6 +31,9 @@ export const SIGN_EVENT_TYPES = [
   'envelope_expired',
   'envelope_sealed',
   'envelope_seal_failed',
+  'ca_requested',
+  'ca_completed',
+  'ca_failed',
 ] as const;
 export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 

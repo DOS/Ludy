@@ -46,6 +46,7 @@ export interface SignerPanelProps {
   onMoveSigner: (signerId: string, direction: -1 | 1) => Promise<void>;
   onCopyZaloLink?: (signerId: string) => Promise<void>;
   onRemindSigner?: (signerId: string) => Promise<void>;
+  onCorrectSigner?: (signer: SignSignerRecord) => void;
 }
 
 const SIGNER_STATUS_VARIANT = {
@@ -71,9 +72,11 @@ export function SignerPanel({
   onMoveSigner,
   onCopyZaloLink,
   onRemindSigner,
+  onCorrectSigner,
 }: SignerPanelProps) {
   const t = useTranslations('sign');
   const isDraft = envelopeStatus === 'draft';
+  const isActiveEnvelope = envelopeStatus === 'sent' || envelopeStatus === 'in_progress';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -156,6 +159,8 @@ export function SignerPanel({
               const palette = signerChipStyle(index);
               const isSelected = signer.id === activeSignerId;
               const canLinkOrRemind = !isDraft && (signer.status === 'pending' || signer.status === 'viewed');
+              const isUnsigned = signer.status === 'waiting' || signer.status === 'pending' || signer.status === 'viewed';
+              const canCorrect = Boolean(onCorrectSigner && isActiveEnvelope && isUnsigned);
               return (
                 <li
                   key={signer.id}
@@ -181,6 +186,16 @@ export function SignerPanel({
                         <span className="block truncate text-sm font-medium text-foreground">{signer.name}</span>
                         {signer.email ? (
                           <span className="block truncate text-xs text-muted-foreground">{signer.email}</span>
+                        ) : null}
+                        {signer.delegatedFromName ? (
+                          <span
+                            className="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                            data-testid={`signer-delegated-${signer.id}`}
+                          >
+                            {signer.delegatedFromEmail
+                              ? t('signer.delegatedBy', { name: signer.delegatedFromName, email: signer.delegatedFromEmail })
+                              : t('signer.delegatedByNameOnly', { name: signer.delegatedFromName })}
+                          </span>
                         ) : null}
                       </span>
                     </button>
@@ -264,9 +279,9 @@ export function SignerPanel({
                     </div>
                   ) : null}
 
-                  {canLinkOrRemind ? (
+                  {canLinkOrRemind || canCorrect ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      {onCopyZaloLink ? (
+                      {canLinkOrRemind && onCopyZaloLink && signer.signerRole !== 'cc' ? (
                         <Button
                           type="button"
                           size="sm"
@@ -277,7 +292,7 @@ export function SignerPanel({
                           {t('actions.copyZalo')}
                         </Button>
                       ) : null}
-                      {onRemindSigner && signer.deliveryMode === 'email' && signer.email ? (
+                      {canLinkOrRemind && onRemindSigner && signer.deliveryMode === 'email' && signer.email ? (
                         <Button
                           type="button"
                           size="sm"
@@ -286,6 +301,18 @@ export function SignerPanel({
                           onClick={() => void onRemindSigner(signer.id)}
                         >
                           {t('actions.remind')}
+                        </Button>
+                      ) : null}
+                      {canCorrect && onCorrectSigner ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => onCorrectSigner(signer)}
+                          data-testid={`signer-correct-${signer.id}`}
+                        >
+                          {t('signer.correctButton')}
                         </Button>
                       ) : null}
                     </div>

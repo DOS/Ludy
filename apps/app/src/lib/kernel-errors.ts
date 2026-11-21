@@ -283,6 +283,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_RECRUITING_TRANSITION_REFUSED',
   'HR_INTERVIEW_DURATION_INVALID',
   'HR_INTERVIEW_SLOT_TAKEN',
+  'HR_INTERVIEWER_INVALID',
   // The posting of an approved run (#2532).
   'HR_RUN_NOT_APPROVED',
   'HR_POSTING_OPEN',
@@ -542,6 +543,8 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_SETTINGS_INVALID',
   // A strict org accepts only a written consent method (A2, #3160).
   'CONSENT_METHOD_NOT_ALLOWED',
+  // A second capture of a call that is already being recorded (ADR-0055 slice 1, #4123); the recorder words it with the kind and time in its details.
+  'CAPTURE_ALREADY_RUNNING',
   // A member's own to-dos (#1673, #3558).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
@@ -1427,6 +1430,18 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_TEMPLATE_NOT_FOUND',
   'SIGN_TEMPLATE_NOT_INSPECTED',
   'SIGN_UNKNOWN_ROLE_KEY',
+  // eSign Slice 2c Vietnam CA settings & PAdES (#3554).
+  'SIGN_CA_CONNECTION_NOT_FOUND',
+  'SIGN_CA_CREDENTIALS_REQUIRED',
+  'SIGN_CA_NOT_CONFIGURED',
+  'SIGN_CA_PROVIDER_NOT_READY',
+  'SIGN_ENVELOPE_NOT_SEALED',
+  'SIGN_LIVE_CA_GATED',
+  // eSign Slice 4c in-flight recipient correction & audited signer delegation (#3819).
+  'SIGN_DELEGATE_SAME_EMAIL',
+  'SIGN_DELEGATION_DISABLED',
+  'SIGN_DELEGATION_LIMIT_REACHED',
+  'SIGN_SIGNER_ALREADY_COMPLETED',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

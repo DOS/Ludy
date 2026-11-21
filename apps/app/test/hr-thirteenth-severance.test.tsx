@@ -2,7 +2,11 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrEmployeeSeveranceResult, HrThirteenthMonthPreviewResult } from '@crove/kernel-contract';
+import type {
+  HrEmployeeJobLossResult,
+  HrEmployeeSeveranceResult,
+  HrThirteenthMonthPreviewResult,
+} from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 
@@ -34,7 +38,12 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { ThirteenthMonthPanel, defaultThirteenthMonthYear } = await import('../src/components/hr-thirteenth-month-panel.tsx');
-const { SeveranceCalculatorPanel, buildSeveranceAsk } = await import('../src/components/hr-severance-panel.tsx');
+const {
+  SeveranceCalculatorPanel,
+  buildJobLossAsk,
+  buildSeveranceAsk,
+  buildSwitchedAllowanceAsk,
+} = await import('../src/components/hr-severance-panel.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -61,6 +70,18 @@ function renderSeverance(result: HrEmployeeSeveranceResult, locale: 'vi' | 'en' 
     <QueryClientProvider client={cache.current}>
       <I18nProvider>
         <SeveranceCalculatorPanel employeeId={EMP_ID} employeeEndedOn={result.endedOn} />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function renderJobLoss(result: HrEmployeeJobLossResult, locale: 'vi' | 'en' = 'vi') {
+  setActiveLocale(locale);
+  cache.current.setQueryData(['hr', 'payroll', 'employees', 'job_loss', { employeeId: EMP_ID }], result);
+  return renderToStaticMarkup(
+    <QueryClientProvider client={cache.current}>
+      <I18nProvider>
+        <SeveranceCalculatorPanel employeeId={EMP_ID} employeeEndedOn={result.endedOn} initialMode="job_loss" />
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -187,5 +208,149 @@ describe('13th-month and statutory severance UI panels (#3375)', () => {
     expect(en.commands.hr.payroll.run.apply_thirteenth_month).toBeTruthy();
     expect(viMessages.commands.hr.payroll.employee.severance).toBeTruthy();
     expect(en.commands.hr.payroll.employee.severance).toBeTruthy();
+    expect(viMessages.commands.hr.payroll.employee.job_loss).toBeTruthy();
+    expect(en.commands.hr.payroll.employee.job_loss).toBeTruthy();
+  });
+
+  it('renders Art. 46 / Art. 47 accessible tablist, 1-click redundancy switch, 2-month floor badge, and Ly note (#4296)', () => {
+    const redundancyCase: HrEmployeeSeveranceResult = {
+      employeeId: EMP_ID,
+      status: 'ended',
+      hireDate: '2024-01-01',
+      endedOn: '2026-11-30',
+      terminationReason: 'job_loss_redundancy',
+      totalWorkedMonths: 35,
+      unemploymentInsuredMonths: 35,
+      priorSettledMonths: 0,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+      qualifyingMonths: 0,
+      qualifyingYears: '0',
+      averageWage: '10000000',
+      eligible: false,
+      reason: 'job_loss_redundancy',
+      amount: '0',
+      paidAmount: null,
+      pitExemptAmount: '0',
+      taxableExcess: '0',
+      rulesUsed: [],
+    };
+
+    const htmlArt46 = renderSeverance(redundancyCase, 'vi');
+    expect(htmlArt46).toContain('role="tablist"');
+    expect(htmlArt46).toContain('data-testid="hr-severance-tab-art46"');
+    expect(htmlArt46).toContain('data-testid="hr-severance-tab-art47"');
+    expect(htmlArt46).toContain('Trợ cấp thôi việc (Điều 46)');
+    expect(htmlArt46).toContain('Trợ cấp mất việc làm (Điều 47)');
+    expect(htmlArt46).toContain('min-h-11');
+    expect(htmlArt46).toContain('data-testid="hr-severance-switch-job-loss"');
+
+    // Switching from Art. 46 (job_loss_redundancy) to Art. 47 preserves entered dates, months, and paidAmount.
+    const switchedToJobLoss = buildSwitchedAllowanceAsk(
+      'job_loss',
+      EMP_ID,
+      {
+        endedOn: '2026-12-15',
+        totalWorkedMonths: '36',
+        unemploymentInsuredMonths: '12',
+        priorSettledMonths: '2',
+        paidAmount: '28000000',
+      },
+      undefined,
+      redundancyCase,
+    );
+    expect(switchedToJobLoss).toEqual({
+      employeeId: EMP_ID,
+      endedOn: '2026-12-15',
+      terminationReason: 'organizational_restructuring',
+      totalWorkedMonths: 36,
+      unemploymentInsuredMonths: 12,
+      priorSettledMonths: 2,
+      paidAmount: '28000000',
+    });
+
+    const floorResult: HrEmployeeJobLossResult = {
+      employeeId: EMP_ID,
+      status: 'ended',
+      hireDate: '2024-01-01',
+      endedOn: '2026-11-30',
+      terminationReason: 'organizational_restructuring',
+      totalWorkedMonths: 24,
+      unemploymentInsuredMonths: 24,
+      priorSettledMonths: 0,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+      qualifyingMonths: 0,
+      qualifyingYears: '0',
+      averageWage: '10000000',
+      eligible: true,
+      reason: null,
+      amount: '20000000',
+      minimumFloorApplied: true,
+      paidAmount: '25000000',
+      pitExemptAmount: '20000000',
+      taxableExcess: '5000000',
+      rulesUsed: [
+        {
+          id: 'job_loss.labor_code_art47@2021-01-01',
+          planRow: 17,
+          status: 'commentary',
+          confidence: 'primary',
+          cite: 'Labor Code 2019 Arts. 42, 43, 47',
+        },
+        {
+          id: 'job_loss.decree145_art8@2021-02-01',
+          planRow: 17,
+          status: 'commentary',
+          confidence: 'commentary',
+          cite: 'Decree 145/2020/ND-CP Art. 8',
+        },
+      ],
+    };
+
+    const jobLossAskDateOnly = buildJobLossAsk(EMP_ID, { endedOn: '2026-12-31' }, floorResult);
+    expect(jobLossAskDateOnly.endedOn).toBe('2026-12-31');
+    expect(jobLossAskDateOnly.totalWorkedMonths).toBeUndefined();
+    expect(jobLossAskDateOnly.unemploymentInsuredMonths).toBe(24);
+
+    const htmlFloorVi = renderJobLoss(floorResult, 'vi');
+    expect(htmlFloorVi).toContain('data-testid="hr-job-loss-floor-badge"');
+    expect(htmlFloorVi).toContain('Sàn tối thiểu 2 tháng lương theo Điều 47');
+    expect(htmlFloorVi).toContain('data-testid="hr-job-loss-ly-note"');
+    expect(htmlFloorVi).toContain('24 tháng đóng BHTN');
+    expect(htmlFloorVi).toContain('vượt mức miễn thuế TNCN');
+    expect(htmlFloorVi).toContain('job_loss.labor_code_art47@2021-01-01');
+    expect(htmlFloorVi).toContain('chờ kế toán xác nhận');
+
+    const overFloorEn: HrEmployeeJobLossResult = {
+      ...floorResult,
+      terminationReason: 'economic_reasons',
+      totalWorkedMonths: 40,
+      unemploymentInsuredMonths: 10,
+      qualifyingMonths: 30,
+      qualifyingYears: '2.5',
+      amount: '25000000',
+      minimumFloorApplied: false,
+      paidAmount: '25000000',
+      pitExemptAmount: '25000000',
+      taxableExcess: '0',
+    };
+    const htmlOverFloorEn = renderJobLoss(overFloorEn, 'en');
+    expect(htmlOverFloorEn).toContain('at or above 2-month floor');
+    expect(htmlOverFloorEn).toContain('within the statutory PIT-exempt cap');
+
+    const ineligibleEn: HrEmployeeJobLossResult = {
+      ...floorResult,
+      terminationReason: 'other_non_art42_art43',
+      eligible: false,
+      reason: 'not_job_loss_reason',
+      amount: '0',
+      minimumFloorApplied: false,
+      paidAmount: null,
+      pitExemptAmount: '0',
+      taxableExcess: '0',
+    };
+    const htmlIneligibleEn = renderJobLoss(ineligibleEn, 'en');
+    expect(htmlIneligibleEn).toContain('data-testid="hr-severance-ineligible"');
+    expect(htmlIneligibleEn).toContain('outside Arts. 42/43');
+    expect(htmlIneligibleEn).not.toContain('data-testid="hr-job-loss-floor-badge"');
   });
 });

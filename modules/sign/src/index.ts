@@ -45,7 +45,36 @@ export {
   type SignAcceptanceSource,
   type SignAcceptanceSourceTask,
 } from './acceptance.ts';
-export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export { parseSharedSummary, sanitizeSharedSummaryForWrite } from './shared.ts';
+export { signQueries, type SignDiffSourceResult, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  computeSignVersionDiff,
+  splitPageIntoClauses,
+  type SignDiffPageText,
+} from './version-diff.ts';
+export {
+  STARTER_CONTRACT_TEMPLATES,
+  buildStarterContractClauses,
+  buildStarterContractFilename,
+  buildStarterContractTitle,
+  formatContractDecimalAmount,
+  neutralizeContractInputText,
+  renderStarterContractPdf,
+  type RenderedStarterContractPdf,
+  type StarterTemplateMeta,
+} from './contract-drafter.ts';
+export {
+  assertSignCaProviderAllowed,
+  isSignCaBrokerAvailable,
+  isSignLiveCaEnabled,
+  setSignCaBrokerAvailable,
+  setSignLiveCaEnabled,
+  signCaCommands,
+  signCaQueries,
+  type SealedCaConnectionSecret,
+  type SignCaJobBeginResult,
+  type SignCaJobRecordResult,
+} from './ca.ts';
 export {
   signTemplateCommands,
   signTemplateQueries,
@@ -69,6 +98,9 @@ export {
 export {
   SIGN_COMPLETED_MAIL_SOURCE,
   SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_CORRECT_INVITE_MAIL_SOURCE,
+  SIGN_DELEGATED_MAIL_TEMPLATE,
+  SIGN_DELEGATE_MAIL_SOURCE,
   SIGN_DIRECT_OTP_MAIL_SOURCE,
   SIGN_DIRECT_OTP_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_SOURCE,
@@ -79,10 +111,12 @@ export {
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
+  renderSignDelegatedMail,
   renderSignDirectOtpMail,
   renderSignInviteMail,
   renderSignOtpMail,
   zSignCompletedMailPayload,
+  zSignDelegatedMailPayload,
   zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,

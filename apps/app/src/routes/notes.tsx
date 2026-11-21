@@ -31,6 +31,7 @@ import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSideb
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
 import { NewFromTemplateButton, NoteVersionHistoryButton, SaveAsTemplateButton } from '../components/note-templates-history.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
+import { NotesVyOrganizerPanel, NotesVyOrganizerTrigger } from '../components/notes-vy-organizer.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -826,6 +827,8 @@ export function NotesPage() {
   const writer = role !== undefined && role !== 'viewer';
   const notebooksQuery = useQuery({ ...orpc.notes.notebooks.list.queryOptions({ input: {} }), enabled: role !== undefined });
   const notebooksList = notebooksQuery.data?.notebooks ?? [];
+  const [organizeOpen, setOrganizeOpen] = useState(false);
+  const organizeTriggerRef = useRef<HTMLButtonElement>(null);
   // The whole list gives the tag chips; with a tag chosen, the filtered list is the one shown.
   const all = useQuery({ ...orpc.notes.list.queryOptions({ input: { view, ...notebookFilter } }), enabled: !search.q });
   const tagged = useQuery({ ...orpc.notes.list.queryOptions({ input: { view, ...notebookFilter, tag: tag ?? '' } }), enabled: !search.q && tag !== undefined });
@@ -928,6 +931,13 @@ export function NotesPage() {
             go({ list: 'mine', note: noteId });
           }}
         />
+        {writer && (
+          <NotesVyOrganizerTrigger
+            open={organizeOpen}
+            onToggle={() => setOrganizeOpen((v) => !v)}
+            buttonRef={organizeTriggerRef}
+          />
+        )}
         {newButton}
       </div>
     ) : undefined;
@@ -935,6 +945,15 @@ export function NotesPage() {
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} actions={actions} />
+      {writer && (
+        <NotesVyOrganizerPanel
+          slug={slug}
+          open={organizeOpen}
+          notebooks={notebooksList}
+          triggerRef={organizeTriggerRef}
+          onClose={() => setOrganizeOpen(false)}
+        />
+      )}
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {exportMine.error && <ErrorText>{errorMessage(exportMine.error)}</ErrorText>}
       <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
