@@ -8,7 +8,7 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NoteVisibility, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { listColorOf, parseSections } from './todos.ts';
@@ -94,6 +94,27 @@ export const notesExportMine = defineQuery({
         WINDOW w AS (ORDER BY sort_key, id)) b
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
     const notebookKeep = notebookIds.filter((r) => r.fits).map((r) => r.id);
+    const notebookUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) AS used
+            FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${notebookKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: templateIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed - notebookUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(
+                 pg_catalog.length(name)
+                 + pg_catalog.length(title)
+                 + pg_catalog.length(body)
+                 + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+               ) OVER w AS running
+          FROM crove_notes.note_template
+         WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY created_at DESC, id)) tpl
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const templateKeep = templateIds.filter((r) => r.fits).map((r) => r.id);
     const notes =
       noteKeep.length === 0
         ? []
@@ -162,6 +183,18 @@ export const notesExportMine = defineQuery({
             .where('owner_user_id', '=', userId)
             .where('id', 'in', listKeep)
             .orderBy('sort_key')
+            .orderBy('id')
+            .execute();
+    const templates =
+      templateKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.note_template')
+            .select(['id', 'visibility', 'name', 'title', 'body', 'tags', 'created_at', 'updated_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .where('id', 'in', templateKeep)
+            .orderBy('created_at', 'desc')
             .orderBy('id')
             .execute();
 
@@ -290,11 +323,22 @@ export const notesExportMine = defineQuery({
         updatedAt: new Date(l.updated_at).toISOString(),
         deletedAt: iso(l.deleted_at),
       })),
+      templates: templates.map((tpl) => ({
+        id: tpl.id,
+        visibility: tpl.visibility as NoteVisibility,
+        name: tpl.name,
+        title: tpl.title,
+        body: tpl.body,
+        tags: tpl.tags,
+        createdAt: new Date(tpl.created_at).toISOString(),
+        updatedAt: new Date(tpl.updated_at).toISOString(),
+      })),
       truncated:
         noteKeep.length < noteIds.length ||
         todoKeep.length < todoIds.length ||
         listKeep.length < todoListIds.length ||
-        notebookKeep.length < notebookIds.length,
+        notebookKeep.length < notebookIds.length ||
+        templateKeep.length < templateIds.length,
     };
   },
 });
