@@ -117,6 +117,21 @@ const common = (line: MarketplaceIncomeLine): MarketplaceIncomeLine => ({
   net: line.net,
 });
 
+// The shortest slice a too large window is split down to (about an hour: halves of 5400 seconds are 2700).
+export const INCOME_MIN_SLICE_SECONDS = 3600;
+
+// Read [fromSec, toSec] and, when the reader refuses it as `too_large`, the two halves and put the lines together; a slice already no longer than INCOME_MIN_SLICE_SECONDS that is still too large is
+// refused as `too_large` (the day stalls visibly: the poll records the state and keeps the cursor). Every other error passes unchanged. Slices do not share an instant, so no order is read twice.
+export async function readHalved(fromSec: number, toSec: number, read: (fromSec: number, toSec: number) => Promise<MarketplaceIncomeLine[]>): Promise<MarketplaceIncomeLine[]> {
+  try {
+    return await read(fromSec, toSec);
+  } catch (error) {
+    if (!(error instanceof MarketplaceProviderError) || error.kind !== 'too_large' || toSec - fromSec + 1 <= INCOME_MIN_SLICE_SECONDS) throw error;
+    const middle = fromSec + Math.floor((toSec - fromSec + 1) / 2) - 1;
+    return [...(await readHalved(fromSec, middle, read)), ...(await readHalved(middle + 1, toSec, read))];
+  }
+}
+
 function only(platform: MarketplacePlatformKey, wanted: MarketplacePlatformKey): void {
   if (platform !== wanted) throw new MarketplaceProviderError('unreachable');
 }
@@ -172,7 +187,13 @@ export function withShopeeIncome(provider: MarketplaceProvider, options: ShopeeO
         nowMs: now().getTime(),
         lookbackDays: 0,
         waitPending: false,
-        read: async (window) => ({ lines: (await finance.income(secret, window)).lines.map(common), pending: 0 }),
+        // A day with more orders than one list call holds (a campaign day) is read in halves, down to about an hour, and the halves are ONE page: one file for the day, so no two files share a day.
+        read: async (window) => {
+          const day = window.endDay;
+          const from = Date.parse(`${day}T00:00:00Z`) / 1000 - VIETNAM_OFFSET_MS / 1000;
+          const lines = await readHalved(from, from + DAY_MS / 1000 - 1, async (fromSec, toSec) => (await finance.income(secret, { startDay: day, endDay: day, fromSec, toSec })).lines.map(common));
+          return { lines, pending: 0 };
+        },
       });
     },
   };

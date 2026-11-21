@@ -40,7 +40,7 @@ export const MARKETPLACE_POLL_RESULTS = ['ok', 'unreachable', 'credentials', 'ra
 export type MarketplacePollEnding = (typeof MARKETPLACE_POLL_RESULTS)[number];
 
 // A failure the caller maps to a state on screen. `not_recognized`: the platform answered, but with a page the adapter will not store (a masked value, an unknown status, a malformed amount).
-export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized'] as const;
+export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized', 'too_large'] as const;
 export type MarketplaceErrorKind = (typeof MARKETPLACE_ERROR_KINDS)[number];
 
 export class MarketplaceProviderError extends Error {

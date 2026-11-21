@@ -6,7 +6,7 @@ import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { MarketplaceProviderError, parseMarketplaceIncomePage, type MarketplaceIncomeLine, type MarketplaceProvider } from '@crove/mod-finance';
 import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
-import { INCOME_FIRST_DAYS, INCOME_PENDING_WAIT_DAYS, joinPollCursor, readIncomeDay, splitPollCursor, withLazadaIncome, withShopeeIncome, withTiktokIncome } from '../src/marketplace-income-leg.ts';
+import { INCOME_FIRST_DAYS, INCOME_MIN_SLICE_SECONDS, INCOME_PENDING_WAIT_DAYS, joinPollCursor, readHalved, readIncomeDay, splitPollCursor, withLazadaIncome, withShopeeIncome, withTiktokIncome } from '../src/marketplace-income-leg.ts';
 import { MARKETPLACE_MAX_PAGES_PER_RUN, runMarketplacePoll } from '../src/marketplace-poll-job.ts';
 import { SHOPEE_HOSTS, shopeeCaller } from '../src/marketplace-shopee.ts';
 import { shopeeFinance } from '../src/marketplace-shopee-finance.ts';
@@ -291,5 +291,72 @@ describe('a Lazada day read end to end', () => {
     // The made-up Lazada answers every line whatever the window, so the unpaid line lives in its own provider.
     const waiting = provider([{ orderNo: '8000002', date: '6 Nov 2026', paidStatus: 'Not paid', feeType: 13, amount: '500000' }]);
     expect(await waiting.listIncome?.(SECRET, 'lazada', 'd:2026-11-06')).toEqual({ lines: [], nextCursor: 'd:2026-11-06' });
+  });
+});
+
+describe('a window too large is split', () => {
+  const tooLarge = () => new MarketplaceProviderError('too_large');
+  const DAY_FROM = Date.parse('2026-11-14T17:00:00Z') / 1000;
+  const DAY_TO = DAY_FROM + 86_399;
+
+  it('halves a window the reader refuses as too large, reads the halves in order, and never shares an instant between two slices', async () => {
+    const asked: Array<[number, number]> = [];
+    const lines = await readHalved(DAY_FROM, DAY_TO, async (from, to) => {
+      asked.push([from, to]);
+      // More than 100 orders over a whole day, up to 100 in a half: only the whole day is refused.
+      if (to - from + 1 > 43_200) throw tooLarge();
+      return [line({ orderNo: `A${from}` })];
+    });
+    expect(asked).toEqual([[DAY_FROM, DAY_TO], [DAY_FROM, DAY_FROM + 43_199], [DAY_FROM + 43_200, DAY_TO]]);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('goes on halving down to about an hour and then stalls visibly with `too_large`; other errors pass unchanged and are never split', async () => {
+    const sizes: number[] = [];
+    await expect(
+      readHalved(DAY_FROM, DAY_TO, async (from, to) => {
+        sizes.push(to - from + 1);
+        throw tooLarge();
+      }),
+    ).rejects.toMatchObject({ kind: 'too_large' });
+    expect(Math.min(...sizes)).toBeLessThanOrEqual(INCOME_MIN_SLICE_SECONDS);
+    expect(Math.min(...sizes)).toBeGreaterThan(INCOME_MIN_SLICE_SECONDS / 2 - 1);
+    const unreachable = vi.fn(async () => Promise.reject(new MarketplaceProviderError('unreachable')));
+    await expect(readHalved(DAY_FROM, DAY_TO, unreachable)).rejects.toMatchObject({ kind: 'unreachable' });
+    expect(unreachable).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Shopee, a campaign day of 150 orders', () => {
+    const CRED = { partnerId: '1000012', partnerKey: 'test-only-partner-key', shopId: '77777', accessToken: 'SHP_access' };
+    const SECRET = JSON.stringify(CRED);
+    const income = { escrow_amount: '78000.0', original_cost_of_goods_sold: '100000.0', voucher_from_seller: '5000.0', commission_fee: '4000.0', service_fee: '3000.0', seller_transaction_fee: '2000.0', actual_shipping_fee: '8000.0' };
+    const provider = (releases: number[]) => {
+      const escrows = releases.map((releaseMs, i) => ({ orderSn: `O${String(i).padStart(4, '0')}`, releaseMs, payout: '78000.0', income }));
+      const fake = fakeShopee({ ...CRED, escrows, now: () => NOW });
+      const options = { fetch: hostBoundFetch(SHOPEE_HOSTS, fake.fetch), now: () => new Date(NOW), spacingMs: 0 };
+      const caller = shopeeCaller(options);
+      return withShopeeIncome(shopeeMarketplace(options, caller), options, shopeeFinance(options, caller));
+    };
+    const DAY_START_MS = Date.parse('2026-11-14T17:00:00Z');
+
+    it('reads all 150 as ONE page of the day, every order once, with the list asked for smaller windows', async () => {
+      // 150 orders over the afternoon, one every 100 seconds: a day holds more than a list call, any three-hour slice does not.
+      const p = provider(Array.from({ length: 150 }, (_, i) => DAY_START_MS + (12 * 3600 + i * 100) * 1000));
+      const page = parseMarketplaceIncomePage(await p.listIncome?.(SECRET, 'shopee', 'd:2026-11-15'));
+      expect(page?.lines).toHaveLength(150);
+      expect(new Set(page?.lines.map((l) => l.orderNo)).size).toBe(150);
+      expect(page?.nextCursor).toBe('d:2026-11-16');
+    });
+
+    it('stalls visibly when one slice of about an hour still holds more than a list call: too_large, and the poll keeps the cursor', async () => {
+      // 150 orders released within the same ten minutes.
+      const p = provider(Array.from({ length: 150 }, (_, i) => DAY_START_MS + (12 * 3600 + i * 4) * 1000));
+      await expect(p.listIncome?.(SECRET, 'shopee', 'd:2026-11-15')).rejects.toMatchObject({ kind: 'too_large' });
+      // What the poll records for that error: the state, with the cursor kept and no file.
+      const stalled = setup(async () => Promise.reject(new MarketplaceProviderError('too_large')), { cursor: 'o:2026-11-20T00:00:00.000Z|d:2026-11-15' });
+      expect(await stalled.run()).toEqual({ state: 'too_large', orders: 0, staged: false });
+      expect(stalled.polls()).toEqual([{ id: CONNECTION, state: 'too_large' }]);
+      expect(stalled.ingests()).toHaveLength(0);
+    });
   });
 });
