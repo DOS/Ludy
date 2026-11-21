@@ -8379,7 +8379,7 @@ export const vi = {
       hint: 'Chưa có gì được lưu. Hãy xem lại sàn, kỳ, tổng các khoản và số tiền sàn đã trả rồi chọn nhập hoặc bỏ qua; thư gửi đến không có gì chứng minh người gửi là ai. Ludy không đọc và không lưu các cột về người mua. Không có gì được nhập tự động: người dùng quyết định.',
       cap: 'Đang hiện {count, number} báo cáo mới nhất; hãy xử lý bớt để thấy các báo cáo cũ hơn.',
       platform: 'Sàn',
-      platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop' },
+      platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
       mappingUnconfirmed: 'Cột chưa đối chiếu với tệp thật',
       mappingHint: 'Cách đọc cột của sàn này chưa được đối chiếu với báo cáo thu nhập thật của người bán; hãy so các số ở trên với tệp trước khi nhập.',
       entity: 'Pháp nhân',

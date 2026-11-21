@@ -201,8 +201,9 @@ describe('a page that is not what the platform sends', () => {
     expect((await exact.finance.income(SECRET, WINDOW)).lines).toHaveLength(100);
     expect(exact.fake.calls.filter((c) => c.path === '/api/v2/payment/get_escrow_detail')).toHaveLength(100);
     // 101 need a second page and are over the limit; 250 need three pages.
-    expect(await refused(many(101))).toBe('not_recognized');
-    expect(await refused(many(250))).toBe('not_recognized');
+    // Refused as its own kind, so a caller can split the window (marketplace-income-leg.ts).
+    expect(await refused(many(101))).toBe('too_large');
+    expect(await refused(many(250))).toBe('too_large');
   });
 
   it('refuses a window that is not days, is backwards or is longer than 15 days, with no call made', async () => {
