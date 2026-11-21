@@ -554,6 +554,7 @@ export const envelopeEvents = defineQuery({
       events: rows.map((e) => ({
         id: e.id,
         signerId: e.signer_id,
+        hostUserId: e.host_user_id ?? null,
         seq: e.seq,
         eventType: e.event_type,
         actorType: e.actor_type,

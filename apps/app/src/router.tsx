@@ -118,10 +118,11 @@ import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
 import { SignDirectPage } from './routes/sign-direct.tsx';
 import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
 import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
+import { SignPublicHubPage } from './routes/sign-public-hub.tsx';
 import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
 import { SignSettingsPage } from './routes/sign-settings.tsx';
-import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH } from './lib/sign-hash.ts';
+import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH, SIGN_PUBLIC_HUB_PAGE_PREFIX } from './lib/sign-hash.ts';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -295,6 +296,17 @@ const signDirectRoute = createRoute({
   path: SIGN_DIRECT_PAGE_PATH,
   beforeLoad: ({ matches }) => requireInstalledOutside(matches),
   component: SignDirectPage,
+});
+
+// Public self-service eSign template hub (#3820): /-/sign/p/$orgSlug, no account. Lists only templates opted into the hub.
+const signPublicHubRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: `${SIGN_PUBLIC_HUB_PAGE_PREFIX}/$orgSlug`,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: function SignPublicHubRouteView() {
+    const { orgSlug } = signPublicHubRoute.useParams();
+    return <SignPublicHubPage orgSlug={orgSlug} />;
+  },
 });
 
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
@@ -763,6 +775,7 @@ const routeTree = rootRoute.addChildren([
   quoteDocumentRoute,
   signCeremonyRoute,
   signDirectRoute,
+  signPublicHubRoute,
   shareRoute,
   socialPlanPrintRoute,
   meetingMinutesRoute,

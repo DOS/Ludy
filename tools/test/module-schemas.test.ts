@@ -134,6 +134,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
   'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
+  'apps/kernel/src/sign-public-hub.ts': { modules: ['sign'], why: 'the orgless public self-service eSign template hub resolvers (crove_sign.public_hub_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/worker.ts': {
     modules: ['ads', 'social'],
     why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise); the agent sweep, a schedule with no egress, also wipes the sealed copies of closed ads tokens past their age through a worker-only definer (crove_ads.token_revoke_expire), whether or not ads is installed: the hold is a trigger of the database, so a copy can exist with the module switched off and must not outlive its seven days (#2296)',

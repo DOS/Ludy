@@ -5,7 +5,15 @@
 
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
+export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+export function hasInPersonQueryFlag(search = typeof window !== 'undefined' ? window.location.search : ''): boolean {
+  if (!search) return false;
+  const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+  const flag = params.get('in_person');
+  return flag === '1' || flag === 'true';
+}
 
 export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? window.location.hash : ''): string | null {
   const outerTrimmed = hash.trim();
@@ -114,6 +122,16 @@ export function buildSigningUrl(token: string, origin = typeof window !== 'undef
 export function buildDirectSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_DIRECT_PAGE_PATH}#${cleanToken}`;
+}
+
+export function buildInPersonSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  const cleanToken = token.trim();
+  return `${origin}${SIGN_PAGE_PATH}?in_person=1#${cleanToken}`;
+}
+
+export function buildPublicHubUrl(orgSlug: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  const cleanSlug = encodeURIComponent(orgSlug.trim().toLowerCase());
+  return `${origin}${SIGN_PUBLIC_HUB_PAGE_PREFIX}/${cleanSlug}`;
 }
 
 // Computes lowercase hex SHA-256 directly in the browser without uploading file bytes.

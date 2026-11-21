@@ -2,7 +2,7 @@
 // Envelope detail, pure-JS PDF field placer, Vy AI proposal overlays, send confirmation, and audit evidence (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -49,7 +49,7 @@ import {
   type SignFieldType,
   type SignRoutingMode,
 } from '../lib/sign-fields.ts';
-import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -150,6 +150,30 @@ export function SignEnvelopeDetailPage() {
   const [correctDeliveryMode, setCorrectDeliveryMode] = useState<SignDeliveryMode>('link');
   const [correctRequireOtp, setCorrectRequireOtp] = useState(false);
   const [correctFormError, setCorrectFormError] = useState<string | null>(null);
+  const [inPersonSignerId, setInPersonSignerId] = useState<string | null>(null);
+  const [inPersonSession, setInPersonSession] = useState<{
+    signerId: string;
+    signerName: string;
+    url: string;
+    expiresAt: string;
+  } | null>(null);
+  const inPersonDialogGenRef = useRef(0);
+  const inPersonSignerIdRef = useRef<string | null>(null);
+
+  const selectInPersonDialogSigner = useCallback((nextSignerId: string | null) => {
+    inPersonDialogGenRef.current += 1;
+    inPersonSignerIdRef.current = nextSignerId;
+    setInPersonSignerId(nextSignerId);
+    setInPersonSession(null);
+  }, []);
+
+  useEffect(() => {
+    selectInPersonDialogSigner(null);
+    return () => {
+      inPersonDialogGenRef.current += 1;
+      inPersonSignerIdRef.current = null;
+    };
+  }, [id, selectInPersonDialogSigner]);
 
   const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
   const meQuery = useQuery(
@@ -157,6 +181,16 @@ export function SignEnvelopeDetailPage() {
       ? orpc.me.get.queryOptions()
       : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
   );
+
+  const hasOrgQuery = Boolean((orpc as { org?: { get?: { queryOptions?: () => unknown } } }).org?.get?.queryOptions);
+  const orgQuery = useQuery(
+    hasOrgQuery
+      ? orpc.org.get.queryOptions()
+      : { queryKey: ['org', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const canWriteSign = orgQuery.data
+    ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin' || orgQuery.data.role === 'member'
+    : true;
 
   const detailQuery = useQuery({
     queryKey: ['sign', 'envelope', id],
@@ -261,7 +295,6 @@ export function SignEnvelopeDetailPage() {
     enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
   });
 
-  const orgQuery = useQuery(orpc.org.get.queryOptions());
   const isCompletedAndSealed = envelope?.status === 'completed' && envelope?.sealStatus === 'sealed';
 
   const caSettingsQuery = useQuery({
@@ -576,6 +609,33 @@ export function SignEnvelopeDetailPage() {
       requireEmailOtp: nextOtp,
     });
   };
+
+  const startInPersonMutation = useMutation({
+    mutationFn: async ({ signerId, dialogGen }: { signerId: string; dialogGen: number }) => {
+      const res = await signApi.startInPersonSigning(id, signerId);
+      const signerName = signers.find((s) => s.id === signerId)?.name ?? '';
+      return {
+        dialogGen,
+        signerId,
+        signerName,
+        url: buildInPersonSigningUrl(res.token),
+        expiresAt: res.expiresAt,
+      };
+    },
+    onSuccess: async ({ dialogGen, ...session }) => {
+      if (inPersonDialogGenRef.current === dialogGen && inPersonSignerIdRef.current === session.signerId) {
+        setInPersonSession(session);
+        toast(t('inPersonDialog.startedToast'));
+      }
+      await invalidateAll();
+    },
+    onError: (err, vars) => {
+      if (inPersonDialogGenRef.current !== vars.dialogGen || inPersonSignerIdRef.current !== vars.signerId) {
+        return;
+      }
+      toast(errorMessage(err), 'error');
+    },
+  });
   const effectiveAi = useMemo(
     () => normalizeAiAnalysis(aiAnalysisOverride ?? aiQuery.data ?? null),
     [aiAnalysisOverride, aiQuery.data],
@@ -961,9 +1021,16 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            onCopyZaloLink={handleCopyZaloLink}
-            onRemindSigner={handleRemindSigner}
+            onCopyZaloLink={canWriteSign ? handleCopyZaloLink : undefined}
+            onRemindSigner={canWriteSign ? handleRemindSigner : undefined}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
+            onStartInPerson={
+              canWriteSign
+                ? (signerId) => {
+                    selectInPersonDialogSigner(signerId);
+                  }
+                : undefined
+            }
           />
 
           {isDraft ? (
@@ -1524,7 +1591,14 @@ export function SignEnvelopeDetailPage() {
                       {eventsQuery.data.events.map((ev) => (
                         <li key={ev.id} className="rounded border bg-card px-2 py-1.5">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                              {ev.hostUserId ? (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {t('evidence.inPersonHostBadge')}
+                                </Badge>
+                              ) : null}
+                            </div>
                             <span className="text-[11px] text-muted-foreground">#{ev.seq}</span>
                           </div>
                           <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
@@ -1670,6 +1744,103 @@ export function SignEnvelopeDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={inPersonSignerId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            selectInPersonDialogSigner(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg" closeLabel={common('close')} data-testid="in-person-handoff-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('inPersonDialog.title')}</DialogTitle>
+            <DialogDescription>
+              {t('inPersonDialog.description', {
+                signer:
+                  inPersonSession?.signerName ||
+                  signers.find((s) => s.id === inPersonSignerId)?.name ||
+                  '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert>
+            <AlertDescription>{t('inPersonDialog.securityNotice')}</AlertDescription>
+          </Alert>
+
+          {inPersonSession ? (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="in-person-ceremony-url">{t('inPersonDialog.urlLabel')}</Label>
+                <Input
+                  id="in-person-ceremony-url"
+                  readOnly
+                  value={inPersonSession.url}
+                  className="font-mono text-xs"
+                  data-testid="in-person-ceremony-url-input"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('inPersonDialog.expiresAtHint', { time: f.dateTime(inPersonSession.expiresAt) })}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  className="min-h-11 flex-1"
+                  onClick={() => {
+                    window.open(inPersonSession.url, '_blank', 'noopener,noreferrer');
+                  }}
+                  data-testid="in-person-open-tab-btn"
+                >
+                  {t('inPersonDialog.openIsolatedTabButton')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 flex-1"
+                  onClick={async () => {
+                    if (await copyTextToClipboard(inPersonSession.url)) {
+                      toast(t('inPersonDialog.copiedIncognitoToast'));
+                    }
+                  }}
+                  data-testid="in-person-copy-incognito-btn"
+                >
+                  {t('inPersonDialog.copyIncognitoButton')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => selectInPersonDialogSigner(null)}
+              >
+                {common('cancel')}
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                loading={startInPersonMutation.isPending}
+                onClick={() => {
+                  if (inPersonSignerId) {
+                    startInPersonMutation.mutate({
+                      signerId: inPersonSignerId,
+                      dialogGen: inPersonDialogGenRef.current,
+                    });
+                  }
+                }}
+                data-testid="in-person-mint-btn"
+              >
+                {t('inPersonDialog.mintButton')}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>
