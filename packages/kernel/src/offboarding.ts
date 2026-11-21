@@ -482,6 +482,8 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
   // Monthly employee leave ledger (#3394, #2540): opening balances, annual leave, paid personal leave and unpaid leave days per employee and month.
   'hr.payroll_leave_entry': { from: 'crove_hr.payroll_leave_entry', omit: [] },
+  // Employee leave requests with L1 -> final approval trail (#4300).
+  'hr.leave_request': { from: 'crove_hr.leave_request', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },

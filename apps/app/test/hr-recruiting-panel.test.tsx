@@ -150,6 +150,8 @@ const sampleDepartment: HrDepartmentView = {
   name: 'Phòng Tài chính - Kế toán',
   code: 'FIN',
   payFunction: 'admin',
+  managerUserId: null,
+  managerName: null,
   archivedAt: null,
   activeEmployees: 2,
   activeBaseWageTotal: '30000000',

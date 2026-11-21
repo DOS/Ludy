@@ -12,7 +12,7 @@
 // Audit facts carry ids, counts, the changed field names and a marker for every classified value (auditValue), never a value. Results carry ids only (idempotency rows keep them).
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
+import { kernelManifest, memberProfiles } from '@crove/kernel';
 import {
   HR_ERASED_NAME,
   HR_RETENTION_YEARS,
@@ -25,6 +25,7 @@ import {
   zHrEmployeeEdit,
   zHrEmployeeEnd,
   zHrEmployeeJobLossAsk,
+  zHrEmployeeLinkMember,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -205,6 +206,9 @@ export const userOf = (actor: QueryContext['actor']): string => {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   return actor.userId;
 };
+
+export const memberLabel = (profile: { displayName: string | null; email: string } | undefined): string | null =>
+  profile ? (profile.displayName && profile.displayName.trim().length > 0 ? profile.displayName : profile.email) : null;
 
 const notFound = () => new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
 const erasedError = () => new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa');
@@ -664,7 +668,7 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'department_id', 'job_title', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
@@ -688,7 +692,7 @@ export const employeeErase = defineCommand({
       .execute();
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, department_id: null, job_title: null, erased_at: ctx.now, updated_at: ctx.now })
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, department_id: null, job_title: null, user_id: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
@@ -704,6 +708,51 @@ export const employeeErase = defineCommand({
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },
       ],
     };
+  },
+});
+
+export const employeeLinkMember = defineCommand({
+  name: 'hr.payroll.employee.link_member',
+  input: zHrEmployeeLinkMember,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: targetOf,
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['user_id', 'updated_at'])],
+  handler: async (ctx, input): Promise<HrWritten> => {
+    const employee = await loadEmployee(ctx, input.employeeId);
+    if (input.userId !== null) {
+      requireActive(employee);
+      const member = await ctx.trx
+        .selectFrom('crove_kernel.tenant_member')
+        .select('role')
+        .where('org_id', '=', ctx.orgId)
+        .where('user_id', '=', input.userId)
+        .executeTakeFirst();
+      if (!member) {
+        throw new DomainError('HR_MEMBER_NOT_FOUND', 404, 'Không tìm thấy thành viên này trong tổ chức');
+      }
+      if (member.role === 'viewer') {
+        throw new DomainError('HR_MEMBER_ROLE_VIEWER', 422, 'Người xem (viewer) không thể liên kết với hồ sơ nhân viên');
+      }
+    }
+    try {
+      await ctx.trx
+        .updateTable('crove_hr.payroll_employee')
+        .set({ user_id: input.userId, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.employeeId)
+        .execute();
+    } catch (error) {
+      const pg = error as { code?: string; constraint?: string };
+      if (pg.code === '23505' && pg.constraint === 'payroll_employee_org_user_uidx') {
+        throw new DomainError('HR_MEMBER_ALREADY_LINKED', 409, 'Thành viên này đã được liên kết với một hồ sơ nhân viên khác');
+      }
+      throw error;
+    }
+    ctx.audit({ employeeId: input.employeeId, linkedUserId: input.userId });
+    return { employeeId: input.employeeId };
   },
 });
 
@@ -830,6 +879,7 @@ export const employeeList = defineQuery({
         'e.department_id',
         'd.name as department_name',
         'e.job_title',
+        'e.user_id',
         'e.status',
         'e.ended_on',
         'e.erased_at',
@@ -854,10 +904,15 @@ export const employeeList = defineQuery({
       .execute();
     const byEmployee = new Map<string, HrEmploymentView[]>();
     for (const t of terms) byEmployee.set(t.employee_id, [...(byEmployee.get(t.employee_id) ?? []), termsView(t as TermsRow)]);
+    const profiles = await memberProfiles(
+      ctx.trx,
+      employees.map((e) => e.user_id).filter((id): id is string => id !== null),
+    );
     const today = vietnamDay(new Date());
     return employees.map((e) => {
       const current = inForce(byEmployee.get(e.id) ?? [], today);
       const erased = e.erased_at !== null;
+      const linkedMemberName = memberLabel(!erased && e.user_id ? profiles.get(e.user_id) : undefined);
       return {
         id: e.id,
         legalEntityId: e.legal_entity_id,
@@ -865,6 +920,8 @@ export const employeeList = defineQuery({
         departmentId: erased ? null : e.department_id,
         departmentName: erased ? null : (e.department_name ?? null),
         jobTitle: erased ? null : e.job_title,
+        linkedUserId: erased ? null : e.user_id,
+        linkedMemberName,
         status: e.status,
         endedOn: e.ended_on === null ? null : iso(e.ended_on),
         current,
@@ -893,6 +950,7 @@ export const employeeGet = defineQuery({
         'e.department_id',
         'd.name as department_name',
         'e.job_title',
+        'e.user_id',
         'e.address',
         'e.status',
         'e.ended_on',
@@ -963,6 +1021,8 @@ export const employeeGet = defineQuery({
     }
     const today = vietnamDay(new Date());
     const current = inForce(terms, today);
+    const linkedProfile = !erased && e.user_id ? (await memberProfiles(ctx.trx, [e.user_id])).get(e.user_id) : undefined;
+    const linkedMemberName = memberLabel(linkedProfile);
     return {
       id: e.id,
       legalEntityId: e.legal_entity_id,
@@ -970,6 +1030,8 @@ export const employeeGet = defineQuery({
       departmentId: erased ? null : e.department_id,
       departmentName: erased ? null : (e.department_name ?? null),
       jobTitle: erased ? null : e.job_title,
+      linkedUserId: erased ? null : e.user_id,
+      linkedMemberName,
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
       current,
@@ -1273,5 +1335,5 @@ export const employeeContractPdf = defineQuery({
   },
 });
 
-export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
+export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeLinkMember, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
 export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance, employeeJobLoss, employeeContractPdf];

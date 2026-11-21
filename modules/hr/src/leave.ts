@@ -39,7 +39,7 @@ const employeeNotFound = () => new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Kh
 const erasedError = () => new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa');
 const entryNotFound = () => new DomainError('HR_LEAVE_ENTRY_NOT_FOUND', 404, 'Không tìm thấy dòng nghỉ phép này');
 
-async function loadEmployeeForLeave(trx: QueryContext['trx'], orgId: string, employeeId: string, lock: boolean) {
+export async function loadEmployeeForLeave(trx: QueryContext['trx'], orgId: string, employeeId: string, lock: boolean) {
   let q = trx
     .selectFrom('crove_hr.payroll_employee')
     .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
@@ -84,6 +84,39 @@ export function computeAnnualLeaveBalance(
     },
     rules,
   );
+}
+
+export function validateMonthlyLeaveBounds(opts: {
+  month: string;
+  kind: 'opening_balance' | 'annual_leave' | 'personal_paid' | 'unpaid_leave';
+  days: ReturnType<typeof money>;
+  hireDate: string | null;
+  endedOn: Date | string | null;
+}): string {
+  const { month, kind, days, hireDate, endedOn } = opts;
+  if (kind === 'unpaid_leave' && !days.toDecimalPlaces(1).equals(days)) {
+    throw new DomainError(
+      'HR_LEAVE_DAYS_OUT_OF_RANGE',
+      422,
+      'Số ngày nghỉ không lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 31 ngày)',
+    );
+  }
+  if (kind !== 'opening_balance') {
+    if (hireDate !== null && month < hireDate.slice(0, 7)) {
+      throw new DomainError('HR_LEAVE_BEFORE_HIRE', 422, 'Tháng nghỉ phép không thể trước tháng vào làm');
+    }
+    // Match pay-run active employment scoping (`peopleOf`): an employee whose `ended_on` precedes the 1st of `month`
+    // has zero active employment in `month` and cannot accrue or record monthly leave in that month.
+    if (endedOn !== null && iso(endedOn) < monthStart(month)) {
+      throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc');
+    }
+    if (days.greaterThan('31')) {
+      throw new DomainError('HR_LEAVE_DAYS_EXCEEDS_MONTH', 422, 'Số ngày nghỉ trong một tháng không vượt quá 31 ngày');
+    }
+  } else if (endedOn !== null && iso(endedOn) < `${month.slice(0, 4)}-01-01`) {
+    throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Năm kết chuyển phép đầu kỳ không thể sau năm nhân viên đã nghỉ việc');
+  }
+  return kind === 'unpaid_leave' ? days.toDecimalPlaces(1).toFixed() : days.toDecimalPlaces(2).toFixed();
 }
 
 export const leaveSet = defineCommand({
@@ -142,29 +175,13 @@ export const leaveSet = defineCommand({
     if (!firstTerm) {
       throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này chưa có hợp đồng làm việc');
     }
-    if (input.kind === 'unpaid_leave' && !days.toDecimalPlaces(1).equals(days)) {
-      throw new DomainError(
-        'HR_LEAVE_DAYS_OUT_OF_RANGE',
-        422,
-        'Số ngày nghỉ không lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 31 ngày)',
-      );
-    }
-    if (input.kind !== 'opening_balance') {
-      if (input.month < iso(firstTerm.effective_from).slice(0, 7)) {
-        throw new DomainError('HR_LEAVE_BEFORE_HIRE', 422, 'Tháng nghỉ phép không thể trước tháng vào làm');
-      }
-      // Match pay-run active employment scoping (`peopleOf`): an employee whose `ended_on` precedes the 1st of `input.month`
-      // has zero active employment in `input.month` and cannot accrue or record monthly leave in that month.
-      if (employee.ended_on !== null && iso(employee.ended_on) < monthStart(input.month)) {
-        throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc');
-      }
-      if (days.greaterThan('31')) {
-        throw new DomainError('HR_LEAVE_DAYS_EXCEEDS_MONTH', 422, 'Số ngày nghỉ trong một tháng không vượt quá 31 ngày');
-      }
-    } else if (employee.ended_on !== null && iso(employee.ended_on) < `${input.month.slice(0, 4)}-01-01`) {
-      throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Năm kết chuyển phép đầu kỳ không thể sau năm nhân viên đã nghỉ việc');
-    }
-    const storedDays = input.kind === 'unpaid_leave' ? days.toDecimalPlaces(1).toFixed() : days.toDecimalPlaces(2).toFixed();
+    const storedDays = validateMonthlyLeaveBounds({
+      month: input.month,
+      kind: input.kind,
+      days,
+      hireDate: iso(firstTerm.effective_from),
+      endedOn: employee.ended_on,
+    });
     const saved = await ctx.trx
       .insertInto('crove_hr.payroll_leave_entry')
       .values({
@@ -231,6 +248,40 @@ export const leaveDelete = defineCommand({
   },
 });
 
+export function evaluateLeaveBalanceSummary(opts: {
+  year: string;
+  category: HrLeaveCategory;
+  standardAnnualDays?: string;
+  asOfMonth?: string;
+  workweek?: HrLeaveWorkweek;
+  hireDate: string;
+  endedOn: string | null;
+  entries: readonly HrLeaveEntryView[];
+}): LeaveBalanceResult {
+  try {
+    return computeAnnualLeaveBalance(
+      {
+        year: opts.year,
+        category: opts.category,
+        ...(opts.standardAnnualDays !== undefined ? { standardAnnualDays: opts.standardAnnualDays } : {}),
+        hireDate: opts.hireDate,
+        endedOn: opts.endedOn,
+        entries: opts.entries
+          .filter((e) => e.approved || e.kind === 'unpaid_leave')
+          .map((e) => ({ kind: e.kind, month: e.month, days: e.days, approved: e.approved })),
+        ...(opts.asOfMonth !== undefined ? { asOfMonth: opts.asOfMonth } : {}),
+        ...(opts.workweek !== undefined ? { workweek: opts.workweek } : {}),
+      },
+      PAYROLL_RULES,
+    );
+  } catch (error) {
+    if (error instanceof PayrollRefusedError) {
+      throw new DomainError('HR_LEAVE_BALANCE_UNAVAILABLE', 422, error.message);
+    }
+    throw error;
+  }
+}
+
 export const leaveBalance = defineQuery({
   name: 'hr.payroll.leave.balance',
   input: zHrLeaveBalanceAsk,
@@ -270,29 +321,16 @@ export const leaveBalance = defineQuery({
     }));
     const hireDate = iso(firstTerm.effective_from);
     const endedOn = employee.ended_on === null ? null : iso(employee.ended_on);
-    let balance: LeaveBalanceResult;
-    try {
-      balance = computeAnnualLeaveBalance(
-        {
-          year: input.year,
-          category: input.category,
-          ...(input.standardAnnualDays !== undefined ? { standardAnnualDays: input.standardAnnualDays } : {}),
-          hireDate,
-          endedOn,
-          entries: entries
-            .filter((e) => e.approved || e.kind === 'unpaid_leave')
-            .map((e) => ({ kind: e.kind, month: e.month, days: e.days, approved: e.approved })),
-          ...(input.asOfMonth !== undefined ? { asOfMonth: input.asOfMonth } : {}),
-          ...(input.workweek !== undefined ? { workweek: input.workweek } : {}),
-        },
-        PAYROLL_RULES,
-      );
-    } catch (error) {
-      if (error instanceof PayrollRefusedError) {
-        throw new DomainError('HR_LEAVE_BALANCE_UNAVAILABLE', 422, error.message);
-      }
-      throw error;
-    }
+    const balance = evaluateLeaveBalanceSummary({
+      year: input.year,
+      category: input.category,
+      ...(input.standardAnnualDays !== undefined ? { standardAnnualDays: input.standardAnnualDays } : {}),
+      ...(input.asOfMonth !== undefined ? { asOfMonth: input.asOfMonth } : {}),
+      ...(input.workweek !== undefined ? { workweek: input.workweek } : {}),
+      hireDate,
+      endedOn,
+      entries,
+    });
     return {
       employeeId: employee.id,
       year: input.year,

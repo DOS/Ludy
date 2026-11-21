@@ -1252,9 +1252,22 @@ export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
 export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
 export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export const HR_LEAVE_REQUEST_KINDS = ['annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveRequestKind = (typeof HR_LEAVE_REQUEST_KINDS)[number];
+export const HR_LEAVE_REQUEST_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrLeaveRequestStatus = (typeof HR_LEAVE_REQUEST_STATUSES)[number];
 export type HrPayrollLeaveEntryTable = Refine<
   G.HrPayrollLeaveEntryTable,
   { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type HrLeaveRequestTable = Refine<
+  G.HrLeaveRequestTable,
+  {
+    kind: ColumnType<HrLeaveRequestKind, HrLeaveRequestKind, never>;
+    status: Generated<HrLeaveRequestStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
   'legal_entity_id'
 >;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
@@ -1497,6 +1510,7 @@ type Refined = Tables<{
   'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
+  'crove_hr.leave_request': HrLeaveRequestTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;

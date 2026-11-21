@@ -57,7 +57,19 @@ const LIST_CAP = 200;
 const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
 // One card per installed app (#1528, #3225): its key figure and a way in.
-function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean; manager: boolean }) {
+function AppCards({
+  slug,
+  vat,
+  vatLoaded,
+  manager,
+  hrMember,
+}: {
+  slug: string;
+  vat: { period: string; daysLeft: number } | null;
+  vatLoaded: boolean;
+  manager: boolean;
+  hrMember: boolean;
+}) {
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
@@ -65,7 +77,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
   const modules = installedModules();
   // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
   // bookings, which need them, so it shows only where one of the two runs.
-  const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
+  const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || hrMember));
   const has = (module: string) => modules.includes(module);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.
@@ -107,6 +119,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
     return [...(has('social') ? [postsFigure()] : []), ...(has('crm') ? [bookingsFigure()] : [])];
   };
   const target = (id: AppId, app: { home: string }) => {
+    if (id === 'hr' && !manager) return '/o/$slug/hr/my';
     const card = id in APP_CARD ? APP_CARD[id as keyof typeof APP_CARD] : null;
     // Engage opens on its posts; with the social module off its card shows the bookings, so that is where it opens.
     return id === 'engage' && !has('social') ? '/o/$slug/bookings' : (card?.to ?? app.home);
@@ -374,7 +387,13 @@ export function OverviewPage() {
         />
       )}
 
-      <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} manager={role === 'owner' || role === 'admin'} />
+      <AppCards
+        slug={slug}
+        vat={vat}
+        vatLoaded={overview.isSuccess}
+        manager={role === 'owner' || role === 'admin'}
+        hrMember={role === 'owner' || role === 'admin' || role === 'member'}
+      />
 
       {/* The org's notes (#1671): in a client company's org, notes about the client. */}
       {notesOn && <OrgNotesPanel slug={slug} />}

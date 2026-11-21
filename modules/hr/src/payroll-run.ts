@@ -896,7 +896,7 @@ export const lineAdjust = defineCommand({
   },
 });
 
-interface StoredLine {
+export interface StoredLine {
   id: string;
   employee_id: string;
   // The terms the figures were computed from (a `pay` line): what the posting reads the function of the person's work through.
@@ -917,9 +917,9 @@ interface StoredLine {
   refusal: string | null;
 }
 
-const LINE_COLUMNS = ['id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'checks', 'rules_used', 'refusal'] as const;
+export const LINE_COLUMNS = ['id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'checks', 'rules_used', 'refusal'] as const;
 
-const figuresOfLine = (l: StoredLine): HrRunFigures | null =>
+export const figuresOfLine = (l: StoredLine): HrRunFigures | null =>
   l.status === 'refused' || l.gross === null
     ? null
     : {
@@ -1122,7 +1122,7 @@ export const runList = defineQuery({
   },
 });
 
-async function employerName(ctx: ReadCtx, legalEntityId: string): Promise<string> {
+export async function employerName(ctx: ReadCtx, legalEntityId: string): Promise<string> {
   const row = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
   return row?.name ?? '';
 }

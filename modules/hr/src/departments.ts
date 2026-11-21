@@ -4,18 +4,20 @@
 // Owners and admins only, in the commands/queries and in the database's RESTRICTIVE owner_admin and le_scope policies.
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
+import { memberProfiles } from '@crove/kernel';
 import {
   tableWrite,
   zHrDepartmentAdd,
   zHrDepartmentEdit,
   zHrDepartmentList,
   zHrDepartmentRef,
+  zHrDepartmentSetManager,
   type HrDepartmentView,
   type HrDepartmentWritten,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { sum, toMoney } from '@crove/l10n-vn';
-import { resolveEntity, vietnamDay } from './employees.ts';
+import { memberLabel, resolveEntity, vietnamDay } from './employees.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate } from './payroll-dates.ts';
 
@@ -148,6 +150,50 @@ export const departmentArchive = defineCommand({
   },
 });
 
+export const departmentSetManager = defineCommand({
+  name: 'hr.department.set_manager',
+  input: zHrDepartmentSetManager,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: targetOf,
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'department', ['manager_user_id', 'updated_at'])],
+  handler: async (ctx, input): Promise<HrDepartmentWritten> => {
+    userOf(ctx.actor);
+    const existing = await ctx.trx
+      .selectFrom('crove_hr.department')
+      .select(['id', 'archived_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.departmentId)
+      .executeTakeFirst();
+    if (!existing) throw notFound();
+    if (existing.archived_at !== null) throw archivedError();
+    if (input.managerUserId !== null) {
+      const member = await ctx.trx
+        .selectFrom('crove_kernel.tenant_member')
+        .select('role')
+        .where('org_id', '=', ctx.orgId)
+        .where('user_id', '=', input.managerUserId)
+        .executeTakeFirst();
+      if (!member) {
+        throw new DomainError('HR_MEMBER_NOT_FOUND', 404, 'Không tìm thấy thành viên này trong tổ chức');
+      }
+      if (member.role === 'viewer') {
+        throw new DomainError('HR_MEMBER_ROLE_VIEWER', 422, 'Người xem (viewer) không thể làm quản lý phòng ban');
+      }
+    }
+    await ctx.trx
+      .updateTable('crove_hr.department')
+      .set({ manager_user_id: input.managerUserId, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.departmentId)
+      .execute();
+    ctx.audit({ departmentId: input.departmentId, managerUserId: input.managerUserId });
+    return { departmentId: input.departmentId };
+  },
+});
+
 // Reads active headcount and summed base_wage over active employees' current employment as of today: audited before reading.
 export const departmentList = defineQuery({
   name: 'hr.department.list',
@@ -157,7 +203,7 @@ export const departmentList = defineQuery({
   handler: async (ctx, input): Promise<HrDepartmentView[]> => {
     let q = ctx.trx
       .selectFrom('crove_hr.department')
-      .select(['id', 'legal_entity_id', 'name', 'code', 'pay_function', 'archived_at'])
+      .select(['id', 'legal_entity_id', 'name', 'code', 'pay_function', 'manager_user_id', 'archived_at'])
       .where('org_id', '=', ctx.orgId);
     if (input.legalEntityId !== undefined) q = q.where('legal_entity_id', '=', input.legalEntityId);
     if (!input.includeArchived) q = q.where('archived_at', 'is', null);
@@ -213,18 +259,28 @@ export const departmentList = defineQuery({
       }
     }
 
-    return departments.map((d) => ({
-      id: d.id,
-      legalEntityId: d.legal_entity_id,
-      name: d.name,
-      code: d.code,
-      payFunction: d.pay_function,
-      archivedAt: d.archived_at === null ? null : new Date(d.archived_at).toISOString(),
-      activeEmployees: headcountByDept.get(d.id) ?? 0,
-      activeBaseWageTotal: toMoney(sum(wagesByDept.get(d.id) ?? [])),
-    }));
+    const managerProfiles = await memberProfiles(
+      ctx.trx,
+      departments.map((d) => d.manager_user_id).filter((id): id is string => id !== null),
+    );
+
+    return departments.map((d) => {
+      const managerName = memberLabel(d.manager_user_id ? managerProfiles.get(d.manager_user_id) : undefined);
+      return {
+        id: d.id,
+        legalEntityId: d.legal_entity_id,
+        name: d.name,
+        code: d.code,
+        payFunction: d.pay_function,
+        managerUserId: d.manager_user_id,
+        managerName,
+        archivedAt: d.archived_at === null ? null : new Date(d.archived_at).toISOString(),
+        activeEmployees: headcountByDept.get(d.id) ?? 0,
+        activeBaseWageTotal: toMoney(sum(wagesByDept.get(d.id) ?? [])),
+      };
+    });
   },
 });
 
-export const hrDepartmentCommands = [departmentAdd, departmentEdit, departmentArchive];
+export const hrDepartmentCommands = [departmentAdd, departmentEdit, departmentSetManager, departmentArchive];
 export const hrDepartmentQueries = [departmentList];

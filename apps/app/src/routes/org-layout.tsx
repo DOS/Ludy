@@ -94,18 +94,22 @@ export function OrgLayout() {
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And background work that failed (#1720), which only owners and admins see.
   const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
-  // HR holds the people payroll is run for: owners and admins only (the queries and the database refuse everyone else too), so nobody else is offered its app or its palette entry.
+  // HR payroll/admin screens stay restricted to owners and admins, while Cổng nhân viên (`hrMy`) is open to org members too (viewers still see none).
   const managerHere = roleHere === 'owner' || roleHere === 'admin';
-  // Items left out of the menu and the palette for a viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
+  const hrMemberHere = managerHere || roleHere === 'member';
+  // Items left out of the menu and the palette for a member/viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
   // exist only where this system runs MCP. Their screens still answer anyone who types the address.
-  const hidden = (item: NavItem) => (item.module === 'hr' && !managerHere) || (item.label === 'aiUsage' && !managerHere) || (item.label === 'aiConnections' && !aiConnectionsVisible(getConfig().mcpEnabled));
-  const NAV = useMemo(() => allNav.filter((n) => !hidden(n)), [allNav, managerHere]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const hidden = (item: NavItem) =>
+    (item.module === 'hr' && (item.label === 'hrMy' ? !hrMemberHere : !managerHere)) ||
+    (item.label === 'aiUsage' && !managerHere) ||
+    (item.label === 'aiConnections' && !aiConnectionsVisible(getConfig().mcpEnabled));
+  const NAV = useMemo(() => allNav.filter((n) => !hidden(n)), [allNav, managerHere, hrMemberHere]); // oxlint-disable-line react-hooks/exhaustive-deps
   const apps = useMemo(
     () =>
       allApps
-        .filter((a) => managerHere || a.id !== 'hr')
+        .filter((a) => hrMemberHere || a.id !== 'hr')
         .map((a) => ({ ...a, groups: a.groups.map((g) => ({ ...g, items: g.items.filter((i) => !hidden(i)) })).filter((g) => g.items.length > 0) })),
-    [allApps, managerHere], // oxlint-disable-line react-hooks/exhaustive-deps
+    [allApps, managerHere, hrMemberHere], // oxlint-disable-line react-hooks/exhaustive-deps
   );
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),

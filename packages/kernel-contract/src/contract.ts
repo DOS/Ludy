@@ -296,6 +296,7 @@ import {
   zHrDepartmentEdit,
   zHrDepartmentList,
   zHrDepartmentRef,
+  zHrDepartmentSetManager,
   zHrDepartmentView,
   zHrDepartmentWritten,
   zHrDependentAdd,
@@ -310,6 +311,7 @@ import {
   zHrEmployeeErased,
   zHrEmployeeJobLossAsk,
   zHrEmployeeJobLossResult,
+  zHrEmployeeLinkMember,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -320,7 +322,27 @@ import {
 } from './hr.ts';
 import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
-import { zHrLeaveBalanceAsk, zHrLeaveBalanceResult, zHrLeaveDelete, zHrLeaveSet, zHrLeaveWritten } from './hr-leave.ts';
+import {
+  zHrLeaveBalanceAsk,
+  zHrLeaveBalanceResult,
+  zHrLeaveDelete,
+  zHrLeaveRequestActionResult,
+  zHrLeaveRequestDecide,
+  zHrLeaveRequestList,
+  zHrLeaveRequestRef,
+  zHrLeaveRequestView,
+  zHrLeaveSet,
+  zHrLeaveWritten,
+  zHrSelfLeaveBalanceAsk,
+  zHrSelfLeaveBalanceResult,
+  zHrSelfLeaveRequestList,
+  zHrSelfLeaveRequestSubmit,
+  zHrSelfLeaveSubmitResult,
+  zHrSelfPayslipSummary,
+  zHrSelfPayslipsList,
+  zHrSelfProfile,
+  zHrSelfProfileAsk,
+} from './hr-leave.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1129,10 +1151,30 @@ export const contract = {
       list: oc.input(zHrDepartmentList).output(z.array(zHrDepartmentView)),
       add: oc.input(zHrDepartmentAdd).output(zHrDepartmentWritten),
       edit: oc.input(zHrDepartmentEdit).output(zHrDepartmentWritten),
+      setManager: oc.input(zHrDepartmentSetManager).output(zHrDepartmentWritten),
       archive: oc.input(zHrDepartmentRef).output(zHrDepartmentWritten),
     },
     employee: {
       contractPdf: oc.input(zHrEmployeeContractPdfAsk).output(zHrEmployeeContractPdf),
+    },
+    self: {
+      profile: { get: oc.input(zHrSelfProfileAsk).output(zHrSelfProfile) },
+      leave: {
+        balance: oc.input(zHrSelfLeaveBalanceAsk).output(zHrSelfLeaveBalanceResult),
+        requests: oc.input(zHrSelfLeaveRequestList).output(z.array(zHrLeaveRequestView)),
+        submit: oc.input(zHrSelfLeaveRequestSubmit).output(zHrSelfLeaveSubmitResult),
+        cancel: oc.input(zHrLeaveRequestRef).output(zHrLeaveRequestActionResult),
+      },
+      payslips: {
+        list: oc.input(zHrSelfPayslipsList).output(z.array(zHrSelfPayslipSummary)),
+        get: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
+    },
+    leaveRequests: {
+      list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),
+      approveL1: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
+      approveFinal: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
+      reject: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
     },
     payroll: {
       employees: {
@@ -1140,6 +1182,7 @@ export const contract = {
         get: oc.input(zHrEmployeeRef).output(zHrEmployee),
         add: oc.input(zHrEmployeeAdd).output(zHrWritten),
         edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        linkMember: oc.input(zHrEmployeeLinkMember).output(zHrWritten),
         finalization: oc.input(zHrFinalizationSet).output(zHrWritten),
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
