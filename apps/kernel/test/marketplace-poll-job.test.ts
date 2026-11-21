@@ -18,13 +18,14 @@ const goodPage = (): MarketplaceOrderPage => ({
   nextCursor: 'sandbox:1',
 });
 
-function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' = 'shopee') {
+function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' = 'shopee', ingestFails = false) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const puts: string[] = [];
   const runtime = {
     query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null }),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
+      if (ingestFails && name === 'finance.marketplace_connection.ingest_page') throw new Error('the page could not be filed');
       return name === 'finance.marketplace_connection.ingest_page' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
     },
   } as unknown as Runtime;
@@ -52,6 +53,19 @@ describe('the page is checked before anything of it is used (#2840 point 2)', ()
     expect(ingests()).toHaveLength(0);
     expect(puts).toHaveLength(0);
   };
+
+  it('files a page through the link command with the connection and no entity or source of its own, and keeps the cursor when the command fails (#4250)', async () => {
+    const { run, polls, ingests } = setup(async () => goodPage());
+    await run();
+    const input = ingests()[0]?.input ?? {};
+    expect(input).toMatchObject({ marketplaceConnectionId: CONNECTION, contentType: 'text/csv' });
+    expect(Object.keys(input)).not.toContain('legalEntityId');
+    expect(Object.keys(input)).not.toContain('source');
+    const failing = setup(async () => goodPage(), 'shopee', true);
+    await expect(failing.run()).rejects.toThrow();
+    // The cursor moves only after the page was filed: nothing is recorded when the command throws.
+    expect(failing.polls()).toEqual([]);
+  });
 
   it('takes a good page and stages it once', async () => {
     const { run, polls, ingests } = setup(async () => goodPage());
