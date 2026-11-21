@@ -627,6 +627,8 @@ import {
   zSignAiAnalyzeResult,
   zSignEnvelopeBySourceInput,
   zSignEnvelopeBySourceResult,
+  zSignEnvelopeAcknowledgeDeclineInput,
+  zSignEnvelopeAcknowledgeDeclineResult,
   zSignEnvelopeCreateInput,
   zSignEnvelopeCreateResult,
   zSignEnvelopeDetail,
@@ -3328,6 +3330,7 @@ export const contract = {
       send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
       remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
       void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
+      acknowledge_decline: oc.input(zSignEnvelopeAcknowledgeDeclineInput).output(zSignEnvelopeAcknowledgeDeclineResult),
     },
     signer: {
       add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),

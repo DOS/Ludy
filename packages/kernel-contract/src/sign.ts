@@ -357,9 +357,11 @@ export const zSignEnvelopeSummary = z.strictObject({
   sealStatus: zSignSealStatus.nullable(),
   certificateCode: z.string().nullable(),
   pageCount: z.number().int().nullable(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.string().nullable(),
   sentAt: z.string().nullable(),
   completedAt: z.string().nullable(),
+  declineAcknowledgedAt: z.string().nullable().optional(),
   voidedAt: z.string().nullable(),
   expiredAt: z.string().nullable(),
   version: z.number().int(),
@@ -426,10 +428,12 @@ export const zSignEnvelopeDetail = z.strictObject({
     certificateFileId: zId.nullable(),
     certificateSha256: z.string().nullable(),
     certificateCode: z.string().nullable(),
+    autoRemindBeforeExpiry: z.boolean().optional(),
     expiresAt: z.string().nullable(),
     sentAt: z.string().nullable(),
     completedAt: z.string().nullable(),
     declinedAt: z.string().nullable(),
+    declineAcknowledgedAt: z.string().nullable().optional(),
     voidedAt: z.string().nullable(),
     voidedBy: zId.nullable(),
     voidReason: z.string().nullable(),
@@ -453,6 +457,11 @@ export const zSignEnvelopeDetail = z.strictObject({
       requireEmailOtp: z.boolean(),
       status: zSignSignerStatus,
       tokenLastRemindedAt: z.string().nullable(),
+      preExpiryRemindedAt: z.string().nullable().optional(),
+      preExpiryRemindStatus: z
+        .enum(['queued', 'sending', 'sent', 'delivered', 'bounced', 'complained', 'suppressed', 'failed', 'ambiguous'])
+        .nullable()
+        .optional(),
       viewedAt: z.string().nullable(),
       signedAt: z.string().nullable(),
       declinedAt: z.string().nullable(),
@@ -536,6 +545,7 @@ export const zSignEnvelopeCreateInput = z.strictObject({
   sourceKind: zSignSourceKind.default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
 });
@@ -553,6 +563,7 @@ export const zSignEnvelopeUpdateInput = z.strictObject({
   subject: z.string().trim().min(1).max(300).nullable().optional(),
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: zSignRoutingMode.optional(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
 });
@@ -592,6 +603,16 @@ export const zSignEnvelopeVoidResult = z.strictObject({
   envelopeId: zId,
   status: z.literal('voided'),
   revokedTokens: z.number().int(),
+  version: z.number().int(),
+});
+
+export const zSignEnvelopeAcknowledgeDeclineInput = z.strictObject({
+  envelopeId: zId,
+  idempotencyKey: zId.optional(),
+});
+export const zSignEnvelopeAcknowledgeDeclineResult = z.strictObject({
+  envelopeId: zId,
+  declineAcknowledgedAt: z.string(),
   version: z.number().int(),
 });
 

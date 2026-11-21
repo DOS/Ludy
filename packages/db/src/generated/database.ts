@@ -3811,6 +3811,9 @@ export interface SignEnvelopeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
   direct_link_id: string | null;
+  auto_remind_before_expiry: Generated<boolean>;
+  decline_acknowledged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decline_acknowledged_by: string | null;
 }
 
 /** crove_sign.field */
@@ -3865,6 +3868,7 @@ export interface SignSignerTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   role_key: string | null;
+  pre_expiry_reminded_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_sign.signing_event */
