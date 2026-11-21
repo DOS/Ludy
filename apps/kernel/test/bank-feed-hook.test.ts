@@ -123,7 +123,7 @@ describe('the hook route of a bank feed (Tingee webhook)', () => {
     expect(on.seen[0]?.parameters).toEqual(['bank_tingee', createHash('sha256').update(KEY).digest('hex')]);
     expect(bankFeedHookKeyHash(KEY)).toBe(on.seen[0]?.parameters[1]);
     // The put carries the hook's id, the request id, the timestamp and signature as sent, and the raw body: no org id, nothing from the body is read.
-    expect(on.seen[1]?.parameters).toEqual([HOOK, 'req-0001', expect.stringMatching(/^\d{17}$/), 'f'.repeat(128), on.body]);
+    expect(on.seen[1]?.parameters).toEqual([HOOK, createHash('sha256').update(KEY).digest('hex'), 'req-0001', expect.stringMatching(/^\d{17}$/), 'f'.repeat(128), on.body]);
     expect(JSON.stringify(on.seen)).not.toContain(KEY);
     expect(on.authenticate).not.toHaveBeenCalled();
   });
@@ -133,7 +133,7 @@ describe('the hook route of a bank feed (Tingee webhook)', () => {
     const forged = JSON.stringify({ clientId: 'another-merchant', accountNumber: '9999', orgId: '11111111-1111-1111-1111-111111111111' });
     expect((await on.post({ body: forged })).status).toBe(200);
     const put = on.seen[1];
-    expect(put?.parameters).toHaveLength(5);
+    expect(put?.parameters).toHaveLength(6);
     expect(put?.parameters[0]).toBe(HOOK);
     expect(put?.sql).not.toContain('org_id');
     expect(put?.parameters).not.toContain('11111111-1111-1111-1111-111111111111');
