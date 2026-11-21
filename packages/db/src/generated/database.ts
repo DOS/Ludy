@@ -3868,6 +3868,7 @@ export interface SignSigningEventTable {
   ip_hash: ColumnType<string | null, string | null, NotGranted>;
   user_agent: ColumnType<string | null, string | null, NotGranted>;
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  host_user_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_sign.template_field */

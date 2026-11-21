@@ -45,6 +45,12 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_sign.public_direct_request_otp(text,text,text)', 'sign'],
   ['crove_sign.public_direct_verify_otp(text,text,text,text)', 'sign'],
   ['crove_sign.public_direct_start(text,text,text,text,text,text,text)', 'sign'],
+  ['crove_sign.public_hub_list(text)', 'sign'],
+  ['crove_sign.public_hub_resolve(text,uuid,text)', 'sign'],
+  ['crove_sign.public_hub_pdf_source(text,uuid,text)', 'sign'],
+  ['crove_sign.public_hub_request_otp(text,uuid,text,text)', 'sign'],
+  ['crove_sign.public_hub_verify_otp(text,uuid,text,text,text)', 'sign'],
+  ['crove_sign.public_hub_start(text,uuid,text,text,text,text,text,text)', 'sign'],
 ];
 
 suite('the public definers carry the app check (ADR-0053, C2)', () => {

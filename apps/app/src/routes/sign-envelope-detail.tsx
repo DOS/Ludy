@@ -20,7 +20,7 @@ import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   downloadSignFile,
   downloadSignPdfBytes,
@@ -44,7 +44,7 @@ import {
   type SignFieldType,
   type SignRoutingMode,
 } from '../lib/sign-fields.ts';
-import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -113,6 +113,18 @@ export function SignEnvelopeDetailPage() {
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
+  const [inPersonSignerId, setInPersonSignerId] = useState<string | null>(null);
+  const [inPersonSession, setInPersonSession] = useState<{
+    signerId: string;
+    signerName: string;
+    url: string;
+    expiresAt: string;
+  } | null>(null);
+
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const canWriteSign = orgQuery.data
+    ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin' || orgQuery.data.role === 'member'
+    : true;
 
   const detailQuery = useQuery({
     queryKey: ['sign', 'envelope', id],
@@ -320,6 +332,25 @@ export function SignEnvelopeDetailPage() {
       setVoidDialogOpen(false);
       setVoidReason('');
       toast(t('voidDialog.voidedToast'));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const startInPersonMutation = useMutation({
+    mutationFn: async (signerId: string) => {
+      const res = await signApi.startInPersonSigning(id, signerId);
+      const signerName = signers.find((s) => s.id === signerId)?.name ?? '';
+      return {
+        signerId,
+        signerName,
+        url: buildInPersonSigningUrl(res.token),
+        expiresAt: res.expiresAt,
+      };
+    },
+    onSuccess: async (session) => {
+      setInPersonSession(session);
+      toast(t('inPersonDialog.startedToast'));
       await invalidateAll();
     },
     onError: (err) => toast(errorMessage(err), 'error'),
@@ -685,8 +716,16 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            onCopyZaloLink={handleCopyZaloLink}
-            onRemindSigner={handleRemindSigner}
+            onCopyZaloLink={canWriteSign ? handleCopyZaloLink : undefined}
+            onRemindSigner={canWriteSign ? handleRemindSigner : undefined}
+            onStartInPerson={
+              canWriteSign
+                ? (signerId) => {
+                    setInPersonSignerId(signerId);
+                    setInPersonSession(null);
+                  }
+                : undefined
+            }
           />
 
           {isDraft ? (
@@ -1071,7 +1110,14 @@ export function SignEnvelopeDetailPage() {
                       {eventsQuery.data.events.map((ev) => (
                         <li key={ev.id} className="rounded border bg-card px-2 py-1.5">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                              {ev.hostUserId ? (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {t('evidence.inPersonHostBadge')}
+                                </Badge>
+                              ) : null}
+                            </div>
                             <span className="text-[11px] text-muted-foreground">#{ev.seq}</span>
                           </div>
                           <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
@@ -1122,6 +1168,101 @@ export function SignEnvelopeDetailPage() {
               {t('voidDialog.confirm')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={inPersonSignerId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInPersonSignerId(null);
+            setInPersonSession(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg" closeLabel={common('close')} data-testid="in-person-handoff-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('inPersonDialog.title')}</DialogTitle>
+            <DialogDescription>
+              {t('inPersonDialog.description', {
+                signer:
+                  inPersonSession?.signerName ||
+                  signers.find((s) => s.id === inPersonSignerId)?.name ||
+                  '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert>
+            <AlertDescription>{t('inPersonDialog.securityNotice')}</AlertDescription>
+          </Alert>
+
+          {inPersonSession ? (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="in-person-ceremony-url">{t('inPersonDialog.urlLabel')}</Label>
+                <Input
+                  id="in-person-ceremony-url"
+                  readOnly
+                  value={inPersonSession.url}
+                  className="font-mono text-xs"
+                  data-testid="in-person-ceremony-url-input"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('inPersonDialog.expiresAtHint', { time: f.dateTime(inPersonSession.expiresAt) })}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  className="min-h-11 flex-1"
+                  onClick={() => {
+                    window.open(inPersonSession.url, '_blank', 'noopener,noreferrer');
+                  }}
+                  data-testid="in-person-open-tab-btn"
+                >
+                  {t('inPersonDialog.openIsolatedTabButton')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 flex-1"
+                  onClick={async () => {
+                    if (await copyTextToClipboard(inPersonSession.url)) {
+                      toast(t('inPersonDialog.copiedIncognitoToast'));
+                    }
+                  }}
+                  data-testid="in-person-copy-incognito-btn"
+                >
+                  {t('inPersonDialog.copyIncognitoButton')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => setInPersonSignerId(null)}
+              >
+                {common('cancel')}
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                loading={startInPersonMutation.isPending}
+                onClick={() => {
+                  if (inPersonSignerId) {
+                    startInPersonMutation.mutate(inPersonSignerId);
+                  }
+                }}
+                data-testid="in-person-mint-btn"
+              >
+                {t('inPersonDialog.mintButton')}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>

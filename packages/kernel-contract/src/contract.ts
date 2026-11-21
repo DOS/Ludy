@@ -647,6 +647,8 @@ import {
   zSignSignerAddResult,
   zSignSignerCreateLinkInput,
   zSignSignerCreateLinkResult,
+  zSignSignerStartInPersonInput,
+  zSignSignerStartInPersonResult,
   zSignSignerRemoveInput,
   zSignSignerRemoveResult,
   zSignSignerReorderInput,
@@ -3329,6 +3331,7 @@ export const contract = {
       remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
       reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
       create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+      start_in_person: oc.input(zSignSignerStartInPersonInput).output(zSignSignerStartInPersonResult),
     },
     field: {
       set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),

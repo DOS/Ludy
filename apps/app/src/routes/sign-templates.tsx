@@ -51,7 +51,7 @@ import {
   type SignRoutingMode,
   type SignSignerRole,
 } from '../lib/sign-fields.ts';
-import { buildDirectSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildDirectSigningUrl, buildPublicHubUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -529,19 +529,23 @@ export function TemplateRolesCard({
 export function DirectLinkCard({
   detail,
   freshDirectUrl,
+  orgSlug,
   pending,
   rotating,
   onToggleEnabled,
   onToggleOtp,
+  onTogglePublicHub,
   onRotate,
   onCopyUrl,
 }: {
   detail: SignTemplateDetail;
   freshDirectUrl: string | null;
+  orgSlug?: string | undefined;
   pending: boolean;
   rotating?: boolean;
   onToggleEnabled: (enabled: boolean) => void;
   onToggleOtp: (otp: boolean) => void;
+  onTogglePublicHub?: ((listedOnPublicHub: boolean) => void) | undefined;
   onRotate: () => void;
   onCopyUrl: (url: string) => void;
 }) {
@@ -550,6 +554,8 @@ export function DirectLinkCard({
   const eligible = detail.template.status === 'active' && detail.template.inspectStatus === 'passed' && nonCcCount === 1;
   const enabled = Boolean(detail.directLink?.enabled);
   const requireEmailOtp = Boolean(detail.directLink?.requireEmailOtp);
+  const listedOnPublicHub = Boolean(detail.directLink?.listedOnPublicHub);
+  const publicHubUrl = orgSlug ? buildPublicHubUrl(orgSlug) : null;
   const isRotating = rotating ?? pending;
 
   return (
@@ -599,6 +605,37 @@ export function DirectLinkCard({
                   />
                   <Label htmlFor="sign-tpl-direct-otp">{t('directLinkOtpLabel')}</Label>
                 </div>
+
+                {onTogglePublicHub ? (
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="sign-tpl-direct-public-hub"
+                      checked={listedOnPublicHub}
+                      disabled={pending}
+                      onCheckedChange={(checked) => onTogglePublicHub(checked === true)}
+                      data-testid="sign-tpl-direct-public-hub-checkbox"
+                    />
+                    <Label htmlFor="sign-tpl-direct-public-hub">{t('directLinkPublicHubLabel')}</Label>
+                  </div>
+                ) : null}
+
+                {listedOnPublicHub && publicHubUrl ? (
+                  <div className="space-y-1.5" data-testid="sign-tpl-public-hub-url-box">
+                    <Label htmlFor="sign-tpl-public-hub-url">{t('publicHubUrlLabel')}</Label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        id="sign-tpl-public-hub-url"
+                        readOnly
+                        value={publicHubUrl}
+                        className="font-mono text-xs"
+                        data-testid="sign-tpl-public-hub-url-input"
+                      />
+                      <Button type="button" variant="outline" size="sm" onClick={() => onCopyUrl(publicHubUrl)}>
+                        {t('copyButton')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
 
                 {freshDirectUrl ? (
                   <div className="space-y-1.5">
@@ -1223,7 +1260,7 @@ export function SignTemplatesPage() {
   });
 
   const directLinkSetMutation = useMutation({
-    mutationFn: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean }) =>
+    mutationFn: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean; listedOnPublicHub?: boolean }) =>
       signApi.setTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
       if (draftTracker.getLoadedTemplateId() === vars.templateId) {
@@ -1237,7 +1274,7 @@ export function SignTemplatesPage() {
   });
 
   const directLinkRotateMutation = useMutation({
-    mutationFn: (input: { templateId: string; requireEmailOtp?: boolean }) =>
+    mutationFn: (input: { templateId: string; requireEmailOtp?: boolean; listedOnPublicHub?: boolean }) =>
       signApi.rotateTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
       if (draftTracker.getLoadedTemplateId() === vars.templateId && res.token) {
@@ -1489,9 +1526,12 @@ export function SignTemplatesPage() {
                     {t('roleSummary', { roles: String(item.roleCount), fields: String(item.fieldCount) })}
                   </p>
                   {item.directLink?.enabled ? (
-                    <Badge variant="outline" className="mt-2">
-                      {t('directLinkBadge')}
-                    </Badge>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="outline">{t('directLinkBadge')}</Badge>
+                      {item.directLink.listedOnPublicHub ? (
+                        <Badge variant="secondary">{t('publicHubBadge')}</Badge>
+                      ) : null}
+                    </div>
                   ) : null}
                 </button>
               );
@@ -1707,17 +1747,24 @@ export function SignTemplatesPage() {
                 <DirectLinkCard
                   detail={detail}
                   freshDirectUrl={freshDirectUrl}
+                  orgSlug={slug}
                   pending={directLinkSetMutation.isPending || directLinkRotateMutation.isPending}
                   rotating={directLinkRotateMutation.isPending}
                   onToggleEnabled={(enabled) => directLinkSetMutation.mutate({ templateId: detail.template.id, enabled })}
                   onToggleOtp={(requireEmailOtp) =>
                     directLinkSetMutation.mutate({ templateId: detail.template.id, enabled: true, requireEmailOtp })
                   }
+                  onTogglePublicHub={(listedOnPublicHub) =>
+                    directLinkSetMutation.mutate({ templateId: detail.template.id, enabled: true, listedOnPublicHub })
+                  }
                   onRotate={() =>
                     directLinkRotateMutation.mutate({
                       templateId: detail.template.id,
                       ...(detail.directLink?.requireEmailOtp !== undefined
                         ? { requireEmailOtp: detail.directLink.requireEmailOtp }
+                        : {}),
+                      ...(detail.directLink?.listedOnPublicHub !== undefined
+                        ? { listedOnPublicHub: detail.directLink.listedOnPublicHub }
                         : {}),
                     })
                   }
