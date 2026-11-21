@@ -97,6 +97,7 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820, Slice 4d): GET lists active 1-signer templates explicitly opted into listed_on_public_hub = true and POST runs hub view/PDF/OTP/start without storing plaintext capability tokens; enforces org_app_on and entitlement with opaque 404 (zero org-existence oracle), per-IP + per-template/email rate limits, and bounded PDF read concurrency',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

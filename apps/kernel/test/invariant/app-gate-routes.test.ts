@@ -76,6 +76,8 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/direct/otp/request': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_request_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/direct/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_verify_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/direct/start': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_start gates org_app_on + entitlement -> 404' },
+  // #3820 (eSign Slice 4d): Step 1 of 2 pre-registration; Slice 4d PR moves this from 'pending' to 'sql' (crove_sign.public_hub_* checking org_app_on + entitlement -> 404).
+  '/api/sign/public-hub/:orgSlug': { app: 'sign', gate: 'pending', why: '#3820 (Slice 4d self-service public template hub pre-registration; gated in SQL via crove_sign.public_hub_*)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
