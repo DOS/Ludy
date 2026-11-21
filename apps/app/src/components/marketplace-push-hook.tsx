@@ -13,6 +13,51 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { hookReduce, hookViewStart } from '../lib/bank-feeds.ts';
 
+// The mutation that makes the address (#4348). Whatever the outcome (even one the page is gone for), the status is read again: an address made but never seen, or an old one that stopped, shows there. The mutation holds its
+// answer, the address included, so it has no cache time: it is dropped as soon as nothing watches it, and the card resets it in its own success callback besides.
+export function pushHookMutationOptions() {
+  return {
+    ...orpc.marketplace.connections.pushHookSet.mutationOptions({
+      onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.marketplace.connections.pushHook.key() }),
+    }),
+    gcTime: 0,
+  };
+}
+
+// The address as the owner sees it, once: a read-only field (selected on focus), the two notes, the copy button and "Close". The card focuses the field when the address arrives; the status lines around it stay in the card, always
+// drawn, so a screen reader announces them.
+export function PushHookAddressBox({
+  address,
+  replaced,
+  inputRef,
+  onCopy,
+  onHide,
+}: {
+  address: string;
+  replaced: boolean;
+  inputRef?: React.Ref<HTMLInputElement>;
+  onCopy: () => void;
+  onHide: () => void;
+}) {
+  const t = useTranslations('marketplaceConnections.pushHook');
+  return (
+    <div className="space-y-2 rounded-md bg-muted p-2">
+      {replaced && <p className="text-xs text-warning">{t('replacedExisting')}</p>}
+      <Input ref={inputRef} className="min-h-11 font-mono text-xs" readOnly aria-label={t('addressLabel')} value={address} onFocus={(e) => e.currentTarget.select()} />
+      <p className="text-xs text-subtle-foreground">{t('noteExact')}</p>
+      <p className="text-xs text-subtle-foreground">{t('noteShared')}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" className="min-h-11" onClick={onCopy}>
+          {t('copy')}
+        </Button>
+        <Button type="button" variant="ghost" className="min-h-11" onClick={onHide}>
+          {t('close')}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function MarketplacePushHook({ connection }: { connection: MarketplaceConnection }) {
   const t = useTranslations('marketplaceConnections.pushHook');
   const f = useFormat();
@@ -23,14 +68,7 @@ export function MarketplacePushHook({ connection }: { connection: MarketplaceCon
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef(false);
   const status = useQuery(orpc.marketplace.connections.pushHook.queryOptions({ input: { id: connection.id } }));
-  const make = useMutation({
-    ...orpc.marketplace.connections.pushHookSet.mutationOptions({
-      // Whatever the outcome (even one the page is gone for), the status is read again: an address made but never seen, or an old one that stopped, shows there.
-      onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.marketplace.connections.pushHook.key() }),
-    }),
-    // The mutation holds its answer, the address included: with no cache time it is dropped as soon as nothing watches it.
-    gcTime: 0,
-  });
+  const make = useMutation(pushHookMutationOptions());
   useEffect(() => {
     if (view.address !== null) inputRef.current?.focus();
   }, [view.address]);
@@ -108,22 +146,7 @@ export function MarketplacePushHook({ connection }: { connection: MarketplaceCon
       <p className="text-xs text-foreground" role="status">
         {view.address !== null ? t('shownOnce') : ''}
       </p>
-      {view.address !== null && (
-        <div className="space-y-2 rounded-md bg-muted p-2">
-          {view.replaced && <p className="text-xs text-warning">{t('replacedExisting')}</p>}
-          <Input ref={inputRef} className="min-h-11 font-mono text-xs" readOnly aria-label={t('addressLabel')} value={view.address} onFocus={(e) => e.currentTarget.select()} />
-          <p className="text-xs text-subtle-foreground">{t('noteExact')}</p>
-          <p className="text-xs text-subtle-foreground">{t('noteShared')}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" className="min-h-11" onClick={() => void copy()}>
-              {t('copy')}
-            </Button>
-            <Button type="button" variant="ghost" className="min-h-11" onClick={hide}>
-              {t('close')}
-            </Button>
-          </div>
-        </div>
-      )}
+      {view.address !== null && <PushHookAddressBox address={view.address} replaced={view.replaced} inputRef={inputRef} onCopy={() => void copy()} onHide={hide} />}
       <p className="text-xs text-subtle-foreground" role="status">
         {copied === 'yes' ? t('copied') : copied === 'failed' ? t('copyFailed') : ''}
       </p>

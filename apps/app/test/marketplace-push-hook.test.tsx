@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The push address block of a marketplace connection (#4348, S3b of #4315), rendered on the server with the API's status seeded in the cache: what it says before an address exists, once one exists, and when the hook
 // stopped; that the status never carries an address, and that the address and replace-confirmation are not drawn until a person asks (the one-time address is only ever in the mutation's own onSuccess, see the component).
-import { QueryClientProvider } from '@tanstack/react-query';
+import { MutationObserver, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,7 +28,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 
-const { MarketplacePushHook } = await import('../src/components/marketplace-push-hook.tsx');
+const { MarketplacePushHook, PushHookAddressBox, pushHookMutationOptions } = await import('../src/components/marketplace-push-hook.tsx');
 
 const at = '2026-11-21T00:00:00.000Z';
 const connection: MarketplaceConnection = {
@@ -60,6 +60,52 @@ function block(status: MarketplacePushHookStatus | null, locale: 'en' | 'vi' = '
     </QueryClientProvider>,
   );
 }
+
+const ADDRESS = 'https://api.example.test/api/marketplace/shopee/webhook/AbCdEfGhIjKlMnOpQrStUv';
+
+describe('the address once it is made (#4348)', () => {
+  beforeEach(() => client.current.clear());
+
+  it('shows the address in a read-only field with its notes, a copy button and a close button, each 44 px high, and says it was a replacement when it was', () => {
+    const box = (replaced: boolean) =>
+      renderToStaticMarkup(
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <PushHookAddressBox address={ADDRESS} replaced={replaced} onCopy={() => undefined} onHide={() => undefined} />
+        </IntlProvider>,
+      );
+    const fresh1 = box(false);
+    expect(fresh1).toMatch(new RegExp(`<input[^>]*readOnly=""[^>]*value="${ADDRESS}"|<input[^>]*value="${ADDRESS}"[^>]*readOnly=""`));
+    expect(fresh1).toContain(`aria-label="${en.marketplaceConnections.pushHook.addressLabel}"`);
+    expect(fresh1).toContain(en.marketplaceConnections.pushHook.noteExact);
+    expect(fresh1).toContain(en.marketplaceConnections.pushHook.noteShared);
+    expect(fresh1).toContain(`>${en.marketplaceConnections.pushHook.copy}<`);
+    expect(fresh1).toContain(`>${en.marketplaceConnections.pushHook.close}<`);
+    expect(fresh1.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(fresh1).not.toContain(en.marketplaceConnections.pushHook.replacedExisting);
+    expect(box(true)).toContain(en.marketplaceConnections.pushHook.replacedExisting);
+  });
+
+  it('does not keep the address in the mutation cache: no cache time, and the card resets the mutation in its own success callback', async () => {
+    const options = pushHookMutationOptions();
+    expect(options.gcTime).toBe(0);
+    // The call as the card makes it (run): the address is read in the call's onSuccess and the mutation is reset at once.
+    const observer = new MutationObserver(client.current, { ...options, mutationFn: async () => ({ adapter: 'shopee' as const, address: ADDRESS, created: true }) });
+    // As in the card, something watches the mutation (the callbacks of mutate run only for a watched observer).
+    const stopWatching = observer.subscribe(() => undefined);
+    let seen = '';
+    await new Promise<void>((resolve) => {
+      void observer.mutate({ id: 'c1' }, { onSuccess: (made: { address: string }) => { seen = made.address; observer.reset(); resolve(); } });
+    });
+    expect(seen).toBe(ADDRESS);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(JSON.stringify(client.current.getMutationCache().getAll().map((m) => m.state))).not.toContain(ADDRESS);
+    expect(client.current.getMutationCache().getAll()).toHaveLength(0);
+    expect(JSON.stringify(observer.getCurrentResult())).not.toContain(ADDRESS);
+    stopWatching();
+    // And no query holds it either.
+    expect(JSON.stringify(client.current.getQueryCache().getAll().map((q) => q.state.data))).not.toContain(ADDRESS);
+  });
+});
 
 describe('MarketplacePushHook', () => {
   beforeEach(() => client.current.clear());

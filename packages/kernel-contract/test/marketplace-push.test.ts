@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The push address of a marketplace connection (#4348, S3b of #4315): the one function that builds it and the shapes of the command and the status.
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_HOOK_KEY_LENGTH, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, zMarketplacePushHookCreated, zMarketplacePushHookSet, zMarketplacePushHookStatus } from '../src/marketplace-connections.ts';
+import { MARKETPLACE_HOOK_KEY_LENGTH, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, marketplaceHookBaseUsable, zMarketplacePushHookCreated, zMarketplacePushHookSet, zMarketplacePushHookStatus } from '../src/marketplace-connections.ts';
 
 const KEY = 'AbCdEfGhIjKlMnOpQrStUv';
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -11,6 +11,13 @@ describe('marketplace push address', () => {
     expect(KEY).toHaveLength(MARKETPLACE_HOOK_KEY_LENGTH);
     expect(marketplaceHookAddress('https://api.example.test', 'shopee', KEY)).toBe(`https://api.example.test/api/marketplace/shopee/webhook/${KEY}`);
     expect(marketplaceHookAddress('https://api.example.test//', 'tiktok_shop', KEY)).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${KEY}`);
+  });
+
+  it('offers an address only on an https URL a platform can reach: not the localhost default, a loopback address, plain http, a query or a fragment, or nothing', () => {
+    for (const ok of ['https://api.example.test', 'https://api.example.test/', 'https://api.example.test/base', 'https://ludy.example.vn:8443']) expect(marketplaceHookBaseUsable(ok), ok).toBe(true);
+    for (const bad of [undefined, '', 'not a url', 'http://api.example.test', 'http://localhost:3000', 'https://localhost', 'https://app.localhost', 'https://127.0.0.1', 'https://[::1]', 'https://api.example.test/?a=1', 'https://api.example.test/#x', 'ftp://api.example.test']) {
+      expect(marketplaceHookBaseUsable(bad), String(bad)).toBe(false);
+    }
   });
 
   it('names the three platforms that push and takes only a connection id to make or read an address', () => {
