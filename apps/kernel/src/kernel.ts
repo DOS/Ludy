@@ -93,7 +93,6 @@ import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTrans
 import { amisTransport } from './misa-amis-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { LAZADA_HOSTS, lazadaMarketplace } from './marketplace-lazada.ts';
-import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
