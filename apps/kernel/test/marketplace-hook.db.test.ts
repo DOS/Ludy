@@ -319,6 +319,19 @@ suite('Marketplace push hook (#4316)', () => {
 
   // The route (S2, #4346): POST /api/marketplace/<adapter>/webhook/<hookKey> through the real app. The adapters this deployment runs are shopee and tiktok_shop (see the app above); lazada is not run.
   describe('the route', () => {
+    // Earlier tests of this file delete and rotate the hooks they use, so the route tests make hooks of their own on the same two connections.
+    const routeKey = randomBytes(16).toString('base64url');
+    const routeOtherKey = randomBytes(16).toString('base64url');
+    let routeHook = '';
+    let routeOtherHook = '';
+    beforeAll(async () => {
+      await rows('DELETE FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = ANY($1::uuid[])', [[connectionId, otherConnectionId]]);
+      routeHook = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(routeKey)]))[0]?.id ?? '';
+      routeOtherHook = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(routeOtherKey)]))[0]?.id ?? '';
+      // The channel connections are active (the closing test above puts them back).
+      await rows("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = ANY($1::uuid[])", [[orgId, otherOrgId]]);
+      await rows('DELETE FROM crove_finance.marketplace_hook_notice');
+    });
     const push = (adapter: string, hookKey: string, body: Buffer | string = BODY, headers: Record<string, string> = { authorization: HEADER }, origin = 'http://localhost:8080') =>
       app.request(`${origin}/api/marketplace/${adapter}/webhook/${hookKey}`, { method: 'POST', headers, body: typeof body === 'string' ? body : new Uint8Array(body) });
     const stored = () => rows<{ hook_id: string; dedupe_key: string; request_url: string | null; authorization_header: string; body: Buffer }>('SELECT hook_id, dedupe_key, request_url, authorization_header, body FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
@@ -326,24 +339,24 @@ suite('Marketplace push hook (#4316)', () => {
 
     it('stores the raw push of a Shopee hook with the address from the configured public URL, whatever Host and X-Forwarded-* say, and answers an empty 200', async () => {
       await clear();
-      const response = await push('shopee', key, BODY, { authorization: HEADER, 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http' }, 'http://evil.example');
+      const response = await push('shopee', routeKey, BODY, { authorization: HEADER, 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http' }, 'http://evil.example');
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('');
       const [row] = await stored();
-      expect(row?.hook_id).toBe(hookId);
+      expect(row?.hook_id).toBe(routeHook);
       expect(row?.authorization_header).toBe(HEADER);
       expect(Buffer.compare(row?.body ?? Buffer.alloc(0), BODY)).toBe(0);
-      expect(row?.request_url).toBe(`http://localhost:8080/api/marketplace/shopee/webhook/${key}`);
+      expect(row?.request_url).toBe(`http://localhost:8080/api/marketplace/shopee/webhook/${routeKey}`);
       await clear();
     });
 
     it('keeps no address for a TikTok Shop push, answers a repeat with an empty 200 and stores it once', async () => {
       await clear();
-      expect((await push('tiktok_shop', otherKey)).status).toBe(200);
-      expect((await push('tiktok_shop', otherKey)).status).toBe(200);
+      expect((await push('tiktok_shop', routeOtherKey)).status).toBe(200);
+      expect((await push('tiktok_shop', routeOtherKey)).status).toBe(200);
       const all = await stored();
       expect(all).toHaveLength(1);
-      expect(all[0]?.hook_id).toBe(otherHookId);
+      expect(all[0]?.hook_id).toBe(routeOtherHook);
       expect(all[0]?.request_url).toBeNull();
       await clear();
     });
@@ -351,23 +364,23 @@ suite('Marketplace push hook (#4316)', () => {
     it('answers a 404 and stores nothing for an unknown key, a key of another adapter, a malformed key and an adapter this deployment does not run', async () => {
       await clear();
       expect((await push('shopee', randomBytes(16).toString('base64url'))).status).toBe(404);
-      expect((await push('shopee', otherKey)).status).toBe(404);
+      expect((await push('shopee', routeOtherKey)).status).toBe(404);
       expect((await push('shopee', 'short')).status).toBe(404);
-      expect((await push('lazada', key)).status).toBe(404);
-      expect((await push('nope', key)).status).toBe(404);
+      expect((await push('lazada', routeKey)).status).toBe(404);
+      expect((await push('nope', routeKey)).status).toBe(404);
       expect(await stored()).toEqual([]);
     });
 
     it('answers an empty 200 and stores nothing for a stopped hook, a push with no header, an empty body and a body over 16 KB', async () => {
       await clear();
-      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = now() WHERE org_id = $1 AND id = $2', [orgId, hookId]);
-      expect((await push('shopee', key)).status).toBe(200);
-      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = NULL WHERE org_id = $1 AND id = $2', [orgId, hookId]);
-      const noHeader = await push('shopee', key, BODY, {});
+      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = now() WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
+      expect((await push('shopee', routeKey)).status).toBe(200);
+      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = NULL WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
+      const noHeader = await push('shopee', routeKey, BODY, {});
       expect(noHeader.status).toBe(200);
       expect(await noHeader.text()).toBe('');
-      expect((await push('shopee', key, '')).status).toBe(200);
-      const large = await push('shopee', key, Buffer.alloc(16 * 1024 + 1, 0x61));
+      expect((await push('shopee', routeKey, '')).status).toBe(200);
+      const large = await push('shopee', routeKey, Buffer.alloc(16 * 1024 + 1, 0x61));
       expect(large.status).toBe(200);
       expect(await large.text()).toBe('');
       expect(await stored()).toEqual([]);
@@ -375,9 +388,9 @@ suite('Marketplace push hook (#4316)', () => {
 
     it('takes no GET, and answers a success (never a 429) for a push to a hook that is full', async () => {
       await clear();
-      expect((await app.request(`http://localhost:8080/api/marketplace/shopee/webhook/${key}`, { method: 'GET' })).status).not.toBe(200);
+      expect((await app.request(`http://localhost:8080/api/marketplace/shopee/webhook/${routeKey}`, { method: 'GET' })).status).not.toBe(200);
       for (let i = 0; i < 25; i++) {
-        const response = await push('shopee', key, Buffer.from(`{"shop_id":"7495540735365777507","n":${i}}`));
+        const response = await push('shopee', routeKey, Buffer.from(`{"shop_id":"7495540735365777507","n":${i}}`));
         expect(response.status).toBe(200);
       }
       // Twenty wait for the hook; the rest were answered a success and dropped.
