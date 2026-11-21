@@ -486,7 +486,7 @@ describe('the worker finishes a seller\'s authorization (#4238)', () => {
     expect(await sent(grant('100200'), previous('300400'))).toMatchObject({ sellerRef: '100200', priorSellerRef: '300400' });
     // The answer names no seller, or a value that is not a plain id (a space, a name, an e-mail): nothing is passed for it.
     expect(await sent(grant(), previous('300400'))).toMatchObject({ sellerRef: null, priorSellerRef: '300400' });
-    expect(await sent(grant('Nguyen Van A'), previous('a@b.vn'))).toMatchObject({ sellerRef: null, priorSellerRef: null });
+    expect(await sent(grant('Nguyen Van A'), previous('seller@example.com'))).toMatchObject({ sellerRef: null, priorSellerRef: null });
     expect(await sent(grant(12345), previous(undefined))).toMatchObject({ sellerRef: null, priorSellerRef: null });
     // A previous secret that is not an object is no previous seller, not an error.
     expect(await sent(grant('100200'), (keyId) => (keyId === 'code-key' ? 'AUTH-CODE' : '"just a string"'))).toMatchObject({ sellerRef: '100200', priorSellerRef: null });
