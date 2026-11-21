@@ -106,6 +106,9 @@ describe('createTiktokToken', () => {
     const odd = async (response: Response) => createTiktokToken(setup({ fetch: async () => response }).options, { ...APP, code: 'CODE1' });
     expect(await odd(json({ code: 99999, message: PLANTED }))).toEqual({ failed: '99999' });
     expect(await odd(json({ code: 'bad code!', message: PLANTED }))).toEqual({ failed: 'UNKNOWN' });
+    // A "code" that is secret-shaped or token-shaped text is never passed on.
+    expect(await odd(json({ code: 'TTP_secret-looking-token', message: PLANTED }))).toEqual({ failed: 'UNKNOWN' });
+    expect(await odd(json({ code: 'IllegalRefreshToken' }))).toEqual({ failed: 'UNKNOWN' });
     expect(await odd(json({ message: PLANTED }, 400))).toEqual({ failed: 'HTTP_400' });
     expect(await odd(json({ code: 0, message: 'ok' }, 400))).toEqual({ failed: 'HTTP_400' });
     expect(await odd(json({}, 429))).toEqual({ failed: '429' });
@@ -220,11 +223,21 @@ describe('TiktokRefresher', () => {
     expect(fake.calls).toHaveLength(1);
   });
 
+  it('renews at once a connection whose stored access token has already expired, whatever the gap says', async () => {
+    const { refresher, fake } = setup();
+    const result = await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString(), accessExpiresAt: new Date(NOW - 1000).toISOString() }));
+    expect(result).toHaveProperty('secret');
+    expect(fake.calls).toHaveLength(1);
+    // Not yet expired: the gap still holds.
+    expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString(), accessExpiresAt: new Date(NOW + HOUR).toISOString() }))).toEqual({ failed: 'RECENT' });
+  });
+
   it('treats every trouble as a failure (no refusal code is documented), and never repeats a call whose answer was lost', async () => {
     const odd = async (response: Response) => setup({ fetch: async () => response }).refresher.refresh(secretOf());
     expect(await odd(json({ code: 99999, message: PLANTED }))).toEqual({ failed: '99999' });
     expect(await odd(json({ code: 36004004, message: PLANTED }))).toEqual({ failed: '36004004' });
     expect(await odd(json({ code: 'bad code!' }))).toEqual({ failed: 'UNKNOWN' });
+    expect(await odd(json({ code: 'TTP_secret-looking-token' }))).toEqual({ failed: 'UNKNOWN' });
     expect(await odd(json({}, 401))).toEqual({ failed: 'HTTP_401' });
     expect(await odd(json({}, 429))).toEqual({ failed: '429' });
     expect(await odd(new Response('down', { status: 502 }))).toEqual({ failed: '502' });

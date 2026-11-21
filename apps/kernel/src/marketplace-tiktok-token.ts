@@ -25,7 +25,7 @@ const GET_PATH = '/api/v2/token/get';
 const REFRESH_PATH = '/api/v2/token/refresh';
 
 // An access token lasts 7 days: it is renewed when under one day is left (channel_refresh_due caps the window at seven days), and a connection whose access life is not longer than the horizon is renewed
-// at most this often, so a short life does not rotate the pair at every ten-minute sweep.
+// at most this often while its stored access token is still valid, so a short life does not rotate the pair at every ten-minute sweep (an expired one is renewed at once).
 export const TIKTOK_REFRESH_HORIZON_SECONDS = 86_400;
 const MIN_REFRESH_GAP_MS = 6 * 3_600_000;
 const MAX_ANSWER_BYTES = 64_000;
@@ -38,7 +38,8 @@ const SELLER_USER_TYPE = 0;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const token = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 400 && v === v.trim() && /^[\x21-\x7e]+$/.test(v);
-const safeCode = (code: string, otherwise: string): string => (/^[A-Za-z0-9_.-]{1,40}$/.test(code) ? code : otherwise);
+// A code as it may be reported: TikTok's own numeric codes or the `HTTP_<status>` this module makes for an answer that has none; every other text is `otherwise`, so nothing the host sends as a "code" is passed on.
+const safeCode = (code: string, otherwise: string): string => (/^(\d{1,10}|HTTP_\d{3})$/.test(code) ? code : otherwise);
 // An expiry as an answer writes it: a Unix time in seconds, a number or digits, between now and 400 days ahead; anything else is null.
 const unixExpiry = (v: unknown, nowMs: number): number | null => {
   const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{9,11}$/.test(v) ? Number(v) : Number.NaN;
@@ -185,9 +186,12 @@ export class TiktokRefresher implements Refresher {
     const oldEnd = typeof old.refreshExpiresAt === 'string' ? Date.parse(old.refreshExpiresAt) : Number.NaN;
     // The seller's authorization ends at the refresh token's date and is never extended by a refresh: past it there is nothing to try, so no call is made (and none with a token known to be dead).
     if (!Number.isNaN(oldEnd) && oldEnd <= now) return { refused: 'AUTHORIZATION_ENDED' };
-    // Renewed a moment ago and due again (a short access life): not asked again yet.
+    // Renewed a moment ago and due again (a short access life): not asked again yet, so the pair is not rotated at every sweep. The gap never holds back a connection whose stored access token has already
+    // expired: that one is renewed at once (an expired token is a connection that does not work).
     const lastAt = typeof old.refreshedAt === 'string' ? Date.parse(old.refreshedAt) : Number.NaN;
-    if (!Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
+    const accessEnd = typeof old.accessExpiresAt === 'string' ? Date.parse(old.accessExpiresAt) : Number.NaN;
+    const accessExpired = !Number.isNaN(accessEnd) && accessEnd <= now;
+    if (!accessExpired && !Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
 
     const called = await getToken(this.fetchImpl, REFRESH_PATH, { app_key: old.appKey, app_secret: old.appSecret, refresh_token: old.refreshToken, grant_type: 'refresh_token' });
     if ('failed' in called) return called;

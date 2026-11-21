@@ -194,7 +194,7 @@ const SHOP_FIELDS = ['id', 'name', 'region', 'seller_type', 'cipher', 'code'] as
 export async function tiktokShops(call: TiktokCaller, credential: TiktokCredential): Promise<TiktokShop[]> {
   const data = await call(credential, { method: 'GET', path: SHOPS_PATH, query: {} });
   const list = isRecord(data) ? data.shops : undefined;
-  if (list === undefined) return [];
+  // The official answer always carries `data.shops` (an explicit empty list when no shop authorized the app); a missing field is a changed or foreign answer, not "no shops", and must not read as a working connection.
   if (!Array.isArray(list) || list.length > MAX_SHOPS) throw new TiktokApiError('not_recognized');
   const seen = new Set<string>();
   return list.map((entry): TiktokShop => {

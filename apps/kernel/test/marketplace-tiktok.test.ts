@@ -152,6 +152,9 @@ describe('the shop list', () => {
       );
     const one = { id: '7000714532876273420', name: 'x', region: 'VN', seller_type: 'LOCAL', cipher: 'GCP_x', code: 'C1' };
     expect((await bad({ rows: [] })).kind).toBe('not_recognized');
+    // A missing or null list is a changed or foreign answer, not "no shops": the explicit empty list above stays valid.
+    expect((await bad(undefined)).kind).toBe('not_recognized');
+    expect((await bad(null)).kind).toBe('not_recognized');
     expect((await bad([{ ...one, id: 'abc' }])).kind).toBe('not_recognized');
     expect((await bad([{ ...one, region: 'vn' }])).kind).toBe('not_recognized');
     expect((await bad([{ ...one, seller_type: 'OTHER' }])).kind).toBe('not_recognized');
@@ -252,6 +255,13 @@ describe('the connection test', () => {
     const { call, fake } = setup();
     expect(await testTiktokConnection(call, 'not json')).toBe('wrong_credentials');
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it('is not a working connection when the answer has no shop list at all', async () => {
+    const noList = (data: unknown) => ({ intercept: (_h: string, path: string) => (path === '/authorization/202309/shops' ? json({ code: 0, data }) : undefined) });
+    expect(await testTiktokConnection(setup(noList({})).call, SECRET)).toBe('unreachable');
+    expect(await testTiktokConnection(setup(noList(undefined)).call, SECRET)).toBe('unreachable');
+    expect(await testTiktokConnection(setup(noList({ shops: [] })).call, SECRET)).toBe('works');
   });
 
   it('is unreachable when the transport fails', async () => {
