@@ -11,7 +11,7 @@
 <text x="209.6" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">commands + queries</text>
 <text x="209.6" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">919 + 557</text>
 <rect x="363.2" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="377.2" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">787</text>
+<text x="377.2" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">788</text>
 <text x="377.2" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">database migrations</text>
 <text x="377.2" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">forward-only</text>
 <rect x="530.8" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
@@ -19,7 +19,7 @@
 <text x="544.8" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">test cases</text>
 <text x="544.8" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">run on every merge</text>
 <rect x="698.4" y="62" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
-<text x="712.4" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">200</text>
+<text x="712.4" y="98" font-size="28" font-weight="800" fill="#6636d1" text-anchor="start">202</text>
 <text x="712.4" y="118" font-size="12.5" font-weight="600" fill="#15151f" text-anchor="start">invariant test suites</text>
 <text x="712.4" y="135" font-size="11" font-weight="400" fill="#6b6b74" text-anchor="start">tenancy, ledger, approvals</text>
 <rect x="28" y="160" width="153.6" height="86" rx="12" fill="#ffffff" stroke="#e3e2e7" stroke-width="1.5"/>
