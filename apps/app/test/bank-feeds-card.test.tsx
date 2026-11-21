@@ -64,7 +64,7 @@ const listedAccounts = [
   { externalAccountId: 'SBX-002', displayName: 'Tài khoản tiết kiệm', listedAt: at },
 ];
 
-function card(role: Role, seed: Seed = {}): string {
+function card(role: Role, seed: Seed = {}, offers?: { sandbox: boolean; tingee: boolean }): string {
   const qc = client.current;
   qc.setQueryData(['bankFeeds', 'accounts'], seed.mapped ?? []);
   qc.setQueryData(['bankFeeds', 'connections'], seed.connections ?? [connection()]);
@@ -75,7 +75,7 @@ function card(role: Role, seed: Seed = {}): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <BankFeedsCard role={role} />
+        <BankFeedsCard role={role} {...(offers ? { offers } : {})} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -190,5 +190,39 @@ describe('BankFeedsCard for a member or viewer', () => {
 
   it.each<Role>(['member', 'viewer'])('as %s: draws nothing when no account is mapped', (role) => {
     expect(card(role, { mapped: [] })).toBe('');
+  });
+});
+
+describe('BankFeedsCard Tingee connect form', () => {
+  beforeEach(() => client.current.clear());
+
+  it('shows the Tingee form with the permission guidance, a hidden secret and 44 px controls, only when offered', () => {
+    const html = card('owner', {}, { sandbox: false, tingee: true });
+    expect(html).toContain(`aria-label="${en.bankFeeds.tingee.title}"`);
+    for (const key of ['guideCreate', 'guideGroups', 'guideNever', 'guideSecret'] as const) expect(html).toContain(en.bankFeeds.tingee[key]);
+    // The secret input itself is the hidden one, and each Tingee control carries the 44 px height.
+    const input = (label: string) => html.match(new RegExp(`<input[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '';
+    const secret = input(en.bankFeeds.tingee.secretLabel);
+    expect(secret).toContain('type="password"');
+    expect(secret).toContain('autoComplete="new-password"');
+    expect(secret).toContain('min-h-11');
+    expect(input(en.bankFeeds.tingee.clientIdLabel)).not.toContain('type="password"');
+    expect(input(en.bankFeeds.tingee.clientIdLabel)).toContain('min-h-11');
+    // The test feed's form is not drawn when it is not offered, and the Tingee one is not drawn when it is not.
+    expect(html).not.toContain(`aria-label="${en.bankFeeds.connectTitle}"`);
+    expect(card('owner', {}, { sandbox: true, tingee: false })).not.toContain(`aria-label="${en.bankFeeds.tingee.title}"`);
+  });
+
+  it('names the permission groups to leave out, in both languages', () => {
+    for (const messages of [en, viMessages]) {
+      expect(messages.bankFeeds.tingee.guideNever).toMatch(/Chi hộ/);
+      expect(messages.bankFeeds.tingee.guideNever).toMatch(/Direct debit/);
+      expect(messages.bankFeeds.tingee.guideNever).toMatch(/Hoàn tiền/);
+    }
+    expect(card('owner', { locale: 'vi' }, { sandbox: false, tingee: true })).toContain(viMessages.bankFeeds.tingee.guideGroups);
+  });
+
+  it('shows no Tingee form to a member or viewer', () => {
+    expect(card('member', { mapped: [account('m1', 'SBX-001')] }, { sandbox: false, tingee: true })).not.toContain(en.bankFeeds.tingee.title);
   });
 });

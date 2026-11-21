@@ -4,8 +4,8 @@
 // It reads two endpoints: the accounts a credential reaches and the transactions of one account in a window. It calls nothing else: the interface has no capability that
 // moves money, and this file names no path of any other Tingee product (a test reads this source to keep it so; it is a guard rail, and review is what holds the line).
 // Every call goes through the fetch it is given, which the caller binds to the hosts below (allowlistedFetch(TINGEE_HOSTS)).
-import { createHmac } from 'node:crypto';
-import type { BankFeedAccount, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { BankFeedAccount, BankFeedHookNotice, BankFeedHookVerdict, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
 
 export const TINGEE_PRODUCTION_HOST = 'open-api.tingee.vn';
 const PRODUCTION_HOST = TINGEE_PRODUCTION_HOST;
@@ -96,6 +96,37 @@ export function parseTingeeSecret(secret: string): Credential {
 // HMAC_SHA512(timestamp + ":" + body, secretToken), hex: how Tingee signs a request (config-info, "Sinh chu ky").
 export function signTingeeRequest(secretToken: string, timestamp: string, body: string): string {
   return createHmac('sha512', secretToken).update(`${timestamp}:${body}`, 'utf8').digest('hex');
+}
+
+// A webhook's timestamp is yyyyMMddHHmmssSSS in Vietnam time, as for a request. Fresh: at most 90 seconds ahead of this clock and at most 10 minutes behind it (the stricter of the two readings of Tingee's pages).
+const HOOK_AHEAD_MS = 90_000;
+const HOOK_BEHIND_MS = 10 * 60_000;
+
+// The same text without the whitespace between tokens, and nothing else touched: a number keeps the digits Tingee wrote (a parse and a stringify would turn 12345678901234567890 into a JS number). The caller has checked it parses.
+export function minifyJson(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// A hex signature compared in constant time; anything that is not 128 hex digits (the length of a SHA-512 digest) is not one.
+function sameSignature(expected: string, given: string): boolean {
+  if (!/^[0-9a-fA-F]{128}$/.test(given)) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(given, 'hex'));
 }
 
 const pad = (n: number, width: number) => String(n).padStart(width, '0');
@@ -253,6 +284,33 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
     async check(secret: string): Promise<void> {
       const data = await call(parseTingeeSecret(secret), ACCOUNTS_PATH, { skipCount: 0, maxResultCount: 1 });
       if (!Array.isArray(data.items)) throw new TingeeError('upstream', 'tingee: the account list has an unexpected shape');
+    },
+
+    // The timestamp of a webhook, checked by the API before it stores anything (no secret needed).
+    hookTimestampFresh(timestamp: string, nowMs: number): boolean {
+      const m = /^(\d{14})(\d{3})$/.exec(timestamp);
+      if (!m) return false;
+      const at = parseStamp(m[1] as string);
+      if (at === null) return false;
+      const stamped = at + Number(m[2]);
+      return stamped <= nowMs + HOOK_AHEAD_MS && stamped >= nowMs - HOOK_BEHIND_MS;
+    },
+
+    // The worker's check of a stored notice: HMAC-SHA512 over `timestamp:body` with the connection's Secret Token, on the raw bytes first and on the minified form second (whether Tingee signs the bytes it sends or its own
+    // minified text is settled by the UAT run), then a consistency check that the body names the connection's own Client ID. Never throws for a bad notice, only for a credential that cannot be read.
+    verifyHook(secret: string, notice: BankFeedHookNotice): BankFeedHookVerdict {
+      const credential = parseTingeeSecret(secret);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(notice.body);
+      } catch {
+        parsed = undefined;
+      }
+      const raw = sameSignature(signTingeeRequest(credential.secretToken, notice.timestamp, notice.body), notice.signature);
+      const minified = !raw && parsed !== undefined && sameSignature(signTingeeRequest(credential.secretToken, notice.timestamp, minifyJson(notice.body)), notice.signature);
+      if (!raw && !minified) return 'signature';
+      if (!isRecord(parsed) || typeof parsed.clientId !== 'string') return 'malformed';
+      return parsed.clientId === credential.clientId ? 'ok' : 'client';
     },
 
     async accounts(secret: string): Promise<BankFeedAccount[]> {
