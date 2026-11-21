@@ -190,7 +190,7 @@ describe('the unrecognised report card', () => {
     // 44 px high on a phone, like the other buttons.
     expect(save).toContain('min-h-11');
     expect(html).toContain('Lưu cách ghép này');
-    expect(html).toContain('Chỉ lưu khi các dòng này đúng như bạn mong đợi');
+    expect(html).toContain('báo cáo kế tiếp có cùng tiêu đề cột sẽ được đọc theo cách này');
     expect(card({ status: status({ mapping: MAPPING, preview: PREVIEW, sheet: SIGNED_SHEET }), locale: 'en' })).toContain('Save this mapping');
   });
 

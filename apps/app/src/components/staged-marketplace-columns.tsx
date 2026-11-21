@@ -6,7 +6,7 @@
 // pick, and a buyer's column has no picker at all. With the AI off the pickers are the same, empty. The parsed lines are personal data (a buyer's text can sit in a column mapped by hand): they are
 // shown to the member who asked and kept seven days at most.
 // Saving (#4037): once the lines of a passed check are on screen and the choices still are the ones checked, an owner or admin can save the mapping; the server saves the mapping of that file's last check (never
-// what this screen sends beyond the file, platform and assignments it saw) and the card then says it is saved (it stays in the list until the file is read with the mapping).
+// what this screen sends beyond the file, platform and assignments it saw) and the card then says it is saved and offers to read this file with it now (it stays in the list until it is read).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -116,11 +116,18 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
   const [edits, setEdits] = useState<Edits | null>(null);
   // Set once the mapping is saved: the check row is gone with it, so the card says so instead of offering the columns again.
   const [savedNow, setSavedNow] = useState(false);
+  // Set once the file was asked to be read again with the saved mapping.
+  const [rereadAsked, setRereadAsked] = useState(false);
   // Focus goes to the saved note when the Save button it replaces disappears.
   const savedNote = useRef<HTMLParagraphElement>(null);
+  const rereadNote = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (savedNow) savedNote.current?.focus();
   }, [savedNow]);
+  // And to the note that replaces the "read now" button, so a keyboard user is not left on the page body.
+  useEffect(() => {
+    if (rereadAsked) rereadNote.current?.focus();
+  }, [rereadAsked]);
   const status = useQuery({
     ...orpc.marketplace.columns.queryOptions({ input: { fileId: file.fileId } }),
     enabled: opened,
@@ -161,6 +168,16 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
   // The mapping may be saved when its passed check is the one on screen: done, no refusal, lines parsed, the choices unchanged since, and a header digest the worker recorded (an older check has none).
   const passed = data !== undefined && data.state === 'done' && data.refusal === null && data.preview !== null && data.mapping !== null && verdictIsCurrent(data.mapping, current);
   const digestKnown = sheet?.headerDigest !== undefined;
+  // The file is read again through the mapping just saved (the existing re-read; the worker finds the mapping by the file's header row and stages the lines like any report's for a person to approve).
+  const reread = useMutation({
+    mutationFn: () => client.files.reextract({ fileId: file.fileId, idempotencyKey: crypto.randomUUID() }),
+    onSuccess: () => {
+      setRereadAsked(true);
+      void queryClient.invalidateQueries({ queryKey: orpc.marketplace.columnsFiles.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.marketplace.staged.key() });
+    },
+    onError: (error) => toast(errorMessage(error), 'error'),
+  });
   const save = useMutation({
     mutationFn: (mapping: NonNullable<typeof current>) => client.marketplace.columnsConfirm({ fileId: file.fileId, platform: mapping.platform, assignments: mapping.assignments, idempotencyKey: crypto.randomUUID() }),
     onSuccess: () => {
@@ -180,6 +197,17 @@ function ColumnsCard({ file, canSave }: { file: MarketplaceColumnsFile; canSave:
         <p ref={savedNote} tabIndex={-1} className="mt-3 text-xs text-subtle-foreground outline-none" role="status" data-testid="staged-columns-saved">
           {t('saved')}
         </p>
+        {rereadAsked ? (
+          <p ref={rereadNote} tabIndex={-1} className="mt-3 text-xs text-subtle-foreground outline-none" role="status" data-testid="staged-columns-reread-asked">
+            {t('readRequested')}
+          </p>
+        ) : (
+          <div className="mt-3">
+            <Button size="sm" className="min-h-11 md:min-h-8" loading={reread.isPending} onClick={() => reread.mutate()} data-testid="staged-columns-reread">
+              {t('readNow')}
+            </Button>
+          </div>
+        )}
       </Card>
     );
   }
