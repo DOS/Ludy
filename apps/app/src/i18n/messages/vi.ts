@@ -5687,6 +5687,8 @@ export const vi = {
       'Phương pháp và thuế suất GTGT của doanh thu mà các sàn báo về. Mỗi thuế suất là một dòng có ngày hiệu lực do một người xác nhận; sổ sách dùng nó để tách thuế GTGT đầu ra (33311) khỏi doanh thu. Muốn đổi thì thêm dòng mới từ ngày đó, không sửa dòng cũ.',
     entity: 'Công ty',
     empty: 'Chưa lưu thuế suất nào. Tháng nào chưa có dòng nào phủ tới thì doanh thu sàn của tháng đó được giữ lại, không hạch toán với thuế suất đoán.',
+    statusNone: 'Chưa lưu thuế suất',
+    statusLater: 'Bắt đầu từ ngày sau',
     rowsTitle: 'Thuế suất GTGT',
     from: 'Từ {date}',
     rowDeduction: 'GTGT khấu trừ, {percent}%',

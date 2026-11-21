@@ -5690,6 +5690,8 @@ export const en = {
       'The VAT method and rate of the sales your marketplaces report. A rate is a dated row that a person confirms; the books use it to split output VAT (33311) from the sales. A change is a new row from its date, never an edit.',
     entity: 'Company',
     empty: 'No VAT rate saved yet. Until one covers a month, that month of marketplace sales is held back instead of posted with a guessed rate.',
+    statusNone: 'No rate saved yet',
+    statusLater: 'Starts later',
     rowsTitle: 'VAT rates',
     from: 'From {date}',
     rowDeduction: 'VAT by deduction, {percent}%',

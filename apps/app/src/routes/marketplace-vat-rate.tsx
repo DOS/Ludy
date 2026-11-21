@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { marketplaceCardShown } from '../lib/marketplace-connections.ts';
 import { draftProblem, draftToRow, rowInForce, showPercent, suggestedRows, type DraftRow } from '../lib/marketplace-vat-rate.ts';
 import type { Role } from '../lib/members.ts';
 
@@ -120,38 +121,61 @@ function Rows({ legalEntityId, entities, canManage }: { legalEntityId: string; e
   );
 }
 
+// The one line the closed card shows: where the rate stands, so a person sees it without opening the card.
+function Status({ legalEntityId }: { legalEntityId: string }) {
+  const t = useTranslations('marketplaceVatRate');
+  const rates = useQuery(orpc.marketplace.vatRates.list.queryOptions({ input: { legalEntityId } }));
+  if (!rates.data) return null;
+  const current = rowInForce(rates.data.rows, today());
+  return (
+    <span className="text-sm text-muted-foreground" data-testid="marketplace-vat-status">
+      {rates.data.rows.length === 0 ? t('statusNone') : current ? <RowText row={current} /> : t('statusLater')}
+    </span>
+  );
+}
+
+// Closed by default: a setting an owner touches once, so it takes one line of the Accounting tab until opened.
 export function MarketplaceVatRateCard({ role }: { role: Role }) {
   const t = useTranslations('marketplaceVatRate');
   const headingId = useId();
   const canManage = role === 'owner' || role === 'admin';
+  const providers = useQuery(orpc.marketplace.providers.queryOptions());
+  const connections = useQuery(orpc.marketplace.connections.list.queryOptions());
   const entities = useQuery(orpc.legalEntities.list.queryOptions());
   const [chosen, setChosen] = useState('');
   const list = entities.data ?? [];
   const entity = list.find((e) => e.id === chosen) ?? list[0];
+  // Only where marketplace sales can exist: an adapter is on or the org already has a connection.
+  if (!marketplaceCardShown(providers.data?.adapters, connections.data)) return null;
   return (
     <Card role="group" aria-labelledby={headingId} className="block p-4">
-      <p id={headingId} className="text-sm font-medium text-muted-foreground">
-        {t('title')}
-      </p>
-      <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
-      {entities.isLoading ? (
-        <RowsSkeleton />
-      ) : entities.error ? (
-        <ErrorText>{errorMessage(entities.error)}</ErrorText>
-      ) : entity ? (
-        <>
-          {list.length > 1 && (
-            <NativeSelect aria-label={t('entity')} className="mt-3 min-w-48" value={entity.id} onChange={(e) => setChosen(e.target.value)}>
-              {list.map((e) => (
-                <NativeSelectOption key={e.id} value={e.id}>
-                  {e.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          )}
-          <Rows key={entity.id} legalEntityId={entity.id} entities={list} canManage={canManage} />
-        </>
-      ) : null}
+      <details data-testid="marketplace-vat-card">
+        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+          <span id={headingId} className="text-sm font-medium text-muted-foreground">
+            {t('title')}
+          </span>
+          {entity && <Status legalEntityId={entity.id} />}
+        </summary>
+        <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
+        {entities.isLoading ? (
+          <RowsSkeleton />
+        ) : entities.error ? (
+          <ErrorText>{errorMessage(entities.error)}</ErrorText>
+        ) : entity ? (
+          <>
+            {list.length > 1 && (
+              <NativeSelect aria-label={t('entity')} className="mt-3 min-w-48" value={entity.id} onChange={(e) => setChosen(e.target.value)}>
+                {list.map((e) => (
+                  <NativeSelectOption key={e.id} value={e.id}>
+                    {e.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+            <Rows key={entity.id} legalEntityId={entity.id} entities={list} canManage={canManage} />
+          </>
+        ) : null}
+      </details>
     </Card>
   );
 }
