@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared case table for crove_kernel.text_detect and crove_kernel.text_redact_spans (#4001, Slice 1):
 // covers real values across all five structured kinds and near-misses that must stay undetected.
+import { enterpriseCheckDigit } from '@crove/l10n-vn';
+
+const SYNTHETIC_MST_PREFIX = '590000001';
+const SYNTHETIC_MST_CHECK = enterpriseCheckDigit(SYNTHETIC_MST_PREFIX);
+if (SYNTHETIC_MST_CHECK === null) {
+  throw new Error('Synthetic MST prefix must yield a valid check digit');
+}
+const SYNTHETIC_MST_VALID = `${SYNTHETIC_MST_PREFIX}${SYNTHETIC_MST_CHECK}`;
+const SYNTHETIC_MST_INVALID = `${SYNTHETIC_MST_PREFIX}${(SYNTHETIC_MST_CHECK + 1) % 10}`;
 
 export const REDACTION_KINDS = ['email', 'phone', 'national_id', 'tax_code', 'bank_account'] as const;
 export type RedactionKind = (typeof REDACTION_KINDS)[number];
@@ -160,9 +169,12 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     ],
   },
   {
-    name: '10-digit MST with checksum valid without explicit label',
-    text: 'Xuất hóa đơn cho 0101245486 nhé.',
-    expected: [{ kind: 'tax_code', matchText: '0101245486' }],
+    name: '10-digit MST checksum disambiguates unlabelled tax code vs bank account',
+    text: `Xuất hóa đơn cho ${SYNTHETIC_MST_VALID}, còn số ${SYNTHETIC_MST_INVALID} không phải MST.`,
+    expected: [
+      { kind: 'tax_code', matchText: SYNTHETIC_MST_VALID },
+      { kind: 'bank_account', matchText: SYNTHETIC_MST_INVALID },
+    ],
   },
   {
     name: '12-digit national ID (CCCD) in plain and grouped spellings',
