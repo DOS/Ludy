@@ -22,8 +22,20 @@ export type SignDeliveryMode = (typeof SIGN_DELIVERY_MODES)[number];
 export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+
+export const SIGN_CHOICE_MAX_OPTIONS = 50;
+export const SIGN_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 export const MIN_FIELD_W = 0.02;
 export const MIN_FIELD_H = 0.015;
@@ -43,7 +55,8 @@ export interface DraftFieldPlacement extends NormalizedBox {
   label: string | null;
   required: boolean;
   proposedByAi: boolean;
-  fontSizePt?: number | null;
+  fontSizePt?: number | null | undefined;
+  options?: string[] | null | undefined;
 }
 
 export interface SignDetectedTag extends NormalizedBox {
@@ -53,6 +66,7 @@ export interface SignDetectedTag extends NormalizedBox {
   roleKey: string;
   required: boolean;
   label: string | null;
+  options?: string[] | null | undefined;
 }
 
 export const DEFAULT_FIELD_SIZE: Record<SignFieldType, { readonly wNorm: number; readonly hNorm: number }> = {
@@ -61,7 +75,28 @@ export const DEFAULT_FIELD_SIZE: Record<SignFieldType, { readonly wNorm: number;
   date: { wNorm: 0.18, hNorm: 0.048 },
   text: { wNorm: 0.24, hNorm: 0.052 },
   checkbox: { wNorm: 0.04, hNorm: 0.032 },
+  dropdown: { wNorm: 0.24, hNorm: 0.052 },
+  radio: { wNorm: 0.04, hNorm: 0.032 },
+  attachment: { wNorm: 0.26, hNorm: 0.06 },
 };
+
+export function isChoiceFieldType(fieldType: SignFieldType): fieldType is 'dropdown' | 'radio' {
+  return fieldType === 'dropdown' || fieldType === 'radio';
+}
+
+export function normalizeChoiceOptions(options: readonly string[] | null | undefined): string[] {
+  if (!options) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of options) {
+    const cleaned = raw.replace(/\p{Cc}+/gu, ' ').trim().slice(0, 200);
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    normalized.push(cleaned);
+    if (normalized.length >= SIGN_CHOICE_MAX_OPTIONS) break;
+  }
+  return normalized;
+}
 
 // Strictly semantic OKLCH label tokens from DESIGN.md (zero palette color literals).
 export const SIGNER_CHIP_CLASSES = [
@@ -139,13 +174,18 @@ export function createPlacedFieldBox(input: {
   });
 }
 
-export type SendReadinessIssue = 'NOT_INSPECTED' | 'INSPECT_FAILED' | 'NO_SIGNERS' | 'MISSING_SIGNATURE_FIELD';
+export type SendReadinessIssue =
+  | 'NOT_INSPECTED'
+  | 'INSPECT_FAILED'
+  | 'NO_SIGNERS'
+  | 'MISSING_SIGNATURE_FIELD'
+  | 'MISSING_CHOICE_OPTIONS';
 
-// Mirrors server-side sign.envelope.send preconditions (#3323) so the UI informs before submission.
+// Mirrors server-side sign.envelope.send preconditions (#3323, #3818) so the UI informs before submission.
 export function checkSendReadiness(input: {
   inspectStatus: string;
   signers: readonly { id: string; signerRole: string }[];
-  fields: readonly { signerId: string; fieldType: string }[];
+  fields: readonly { signerId: string; fieldType: string; options?: readonly string[] | null | undefined }[];
 }): SendReadinessIssue | null {
   if (input.inspectStatus === 'failed') return 'INSPECT_FAILED';
   if (input.inspectStatus !== 'passed') return 'NOT_INSPECTED';
@@ -155,6 +195,9 @@ export function checkSendReadiness(input: {
   for (const field of input.fields) {
     if (field.fieldType === 'signature') {
       sigCountBySigner.set(field.signerId, (sigCountBySigner.get(field.signerId) ?? 0) + 1);
+    }
+    if ((field.fieldType === 'dropdown' || field.fieldType === 'radio') && normalizeChoiceOptions(field.options).length === 0) {
+      return 'MISSING_CHOICE_OPTIONS';
     }
   }
   for (const signer of activeSigners) {
@@ -171,6 +214,7 @@ export interface PlannedTagPlacement extends NormalizedBox {
   pageNumber: number;
   label: string | null;
   required: boolean;
+  options: string[] | null;
 }
 
 function isDuplicateTagPlacement(
@@ -215,6 +259,7 @@ export function planDetectedTagsForSigners(input: {
       continue;
     }
     const box = clampFieldBox(tag);
+    const normalizedOpts = isChoiceFieldType(tag.fieldType) ? normalizeChoiceOptions(tag.options) : [];
     const candidate: PlannedTagPlacement = {
       signerId: matchedSigner.id,
       fieldType: tag.fieldType,
@@ -222,6 +267,7 @@ export function planDetectedTagsForSigners(input: {
       ...box,
       label: tag.label,
       required: tag.required,
+      options: isChoiceFieldType(tag.fieldType) ? normalizedOpts : null,
     };
     if (isDuplicateTagPlacement(input.existingFields, candidate) || isDuplicateTagPlacement(applicable, candidate)) {
       alreadyAppliedCount += 1;
@@ -268,6 +314,7 @@ export function planDetectedTagsForTemplateRoles(input: {
       continue;
     }
     const box = clampFieldBox(tag);
+    const normalizedOpts = isChoiceFieldType(tag.fieldType) ? normalizeChoiceOptions(tag.options) : [];
     const candidate: PlannedTagPlacement = {
       signerId: matchedRole.id,
       fieldType: tag.fieldType,
@@ -275,6 +322,7 @@ export function planDetectedTagsForTemplateRoles(input: {
       ...box,
       label: tag.label,
       required: tag.required,
+      options: isChoiceFieldType(tag.fieldType) ? normalizedOpts : null,
     };
     if (isDuplicateTagPlacement(input.existingFields, candidate) || isDuplicateTagPlacement(applicable, candidate)) {
       alreadyAppliedCount += 1;

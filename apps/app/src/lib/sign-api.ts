@@ -118,8 +118,14 @@ export interface SignFieldRecord {
   required: boolean;
   proposedByAi: boolean;
   fontSizePt: number | null;
+  options?: string[] | null | undefined;
   valueText: string | null;
   valueChecked: boolean | null;
+  attachmentFileId?: string | null | undefined;
+  attachmentFilename?: string | null | undefined;
+  attachmentContentType?: string | null | undefined;
+  attachmentSizeBytes?: number | null | undefined;
+  attachmentSha256?: string | null | undefined;
   filledAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -137,6 +143,7 @@ export interface SignProposedField {
   hNorm: number;
   label: string | null;
   required: boolean;
+  options?: string[] | null | undefined;
   confidence?: number | null;
   proposedByAi?: true;
 }
@@ -191,6 +198,9 @@ export function normalizeAiAnalysis(raw: unknown): SignAiAnalysis | null {
       hNorm: Number(f.hNorm ?? 0.08),
       label: typeof f.label === 'string' ? f.label : null,
       required: typeof f.required === 'boolean' ? f.required : true,
+      ...(Array.isArray(f.options)
+        ? { options: f.options.filter((opt): opt is string => typeof opt === 'string') }
+        : {}),
       confidence: typeof f.confidence === 'number' ? f.confidence : null,
       proposedByAi: true,
     };
@@ -260,6 +270,15 @@ export function normalizeAiAnalysis(raw: unknown): SignAiAnalysis | null {
   };
 }
 
+export interface PublicSignFieldAttachment {
+  fileId: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string | null;
+}
+
 export interface PublicSignField {
   id: string;
   fieldType: SignFieldType;
@@ -270,7 +289,9 @@ export interface PublicSignField {
   hNorm: number;
   label: string | null;
   required: boolean;
-  fontSizePt?: number | null;
+  fontSizePt?: number | null | undefined;
+  options?: readonly string[] | null | undefined;
+  attachment?: PublicSignFieldAttachment | null | undefined;
 }
 
 export type PublicSignViewState =
@@ -436,6 +457,7 @@ export const signApi = {
       required: boolean;
       proposedByAi: boolean;
       fontSizePt?: number;
+      options?: string[] | null;
     }>,
   ) => client.sign.field.set({ envelopeId, fields, idempotencyKey: crypto.randomUUID() }),
   analyzeAi: async (
@@ -513,6 +535,7 @@ export const signApi = {
       label?: string | null;
       required: boolean;
       fontSizePt?: number | null;
+      options?: string[] | null;
     }>,
   ) => client.sign.template.fields_set({ templateId, fields, idempotencyKey: crypto.randomUUID() }),
   archiveTemplate: (templateId: string) =>
@@ -647,6 +670,7 @@ export interface SignTemplateFieldRecord {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  options?: string[] | null | undefined;
 }
 
 export interface SignTemplateDirectLinkDetail {
@@ -753,6 +777,19 @@ async function postPublicJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
+  const rawAttachment =
+    raw.attachment && typeof raw.attachment === 'object' ? (raw.attachment as Record<string, unknown>) : null;
+  const attachment: PublicSignFieldAttachment | null =
+    rawAttachment && typeof rawAttachment.fileId === 'string' && rawAttachment.fileId
+      ? {
+          fileId: rawAttachment.fileId,
+          filename: typeof rawAttachment.filename === 'string' ? rawAttachment.filename : 'attachment',
+          contentType: typeof rawAttachment.contentType === 'string' ? rawAttachment.contentType : 'application/pdf',
+          sizeBytes: Number(rawAttachment.sizeBytes ?? 0),
+          sha256: typeof rawAttachment.sha256 === 'string' ? rawAttachment.sha256 : '',
+          uploadedAt: typeof rawAttachment.uploadedAt === 'string' ? rawAttachment.uploadedAt : null,
+        }
+      : null;
   return {
     id: String(raw.id ?? ''),
     fieldType: (raw.fieldType as SignFieldType) ?? 'signature',
@@ -764,6 +801,10 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
     label: typeof raw.label === 'string' ? raw.label : null,
     required: typeof raw.required === 'boolean' ? raw.required : true,
     fontSizePt: typeof raw.fontSizePt === 'number' ? raw.fontSizePt : null,
+    options: Array.isArray(raw.options)
+      ? raw.options.filter((opt): opt is string => typeof opt === 'string')
+      : null,
+    attachment,
   };
 }
 
@@ -873,6 +914,28 @@ export const publicSignApi = {
       delegationCount: number;
       delegatedAt: string;
     }>('/api/sign/delegate', input),
+
+  uploadAttachment: async (input: {
+    token: string;
+    fieldId: string;
+    file: File;
+  }): Promise<PublicSignFieldAttachment> => {
+    const form = new FormData();
+    form.set('token', input.token);
+    form.set('fieldId', input.fieldId);
+    form.set('file', input.file, input.file.name || 'attachment');
+    const response = await fetch(apiUrl('/api/sign/attachment'), {
+      method: 'POST',
+      body: form,
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_ATTACHMENT_FAILED', data.message);
+    }
+    return (await response.json()) as PublicSignFieldAttachment;
+  },
 
   verifyPublic: async (input: { certificateCode: string; fileSha256: string }): Promise<PublicCertificateVerifyResponse> => {
     const response = await postPublicResponse('/api/sign/verify', input);
