@@ -20,6 +20,10 @@ describe('classifyBankFeedFailure', () => {
     expect(classifyBankFeedFailure(new DomainError('VALIDATION', 422, 'lines.3.amount: invalid'))).toEqual({ kind: 'bad_page' });
   });
 
+  it('takes the stricter reading of a page lines as a page it cannot store too', () => {
+    expect(classifyBankFeedFailure(new DomainError('BANK_FEED_INVALID', 422, 'bad line'))).toEqual({ kind: 'bad_page' });
+  });
+
   it('takes anything else as an answer that was not understood', () => {
     expect(classifyBankFeedFailure(new Error('ECONNRESET'))).toEqual({ kind: 'upstream' });
     expect(classifyBankFeedFailure('boom')).toEqual({ kind: 'upstream' });

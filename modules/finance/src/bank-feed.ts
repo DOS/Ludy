@@ -367,6 +367,17 @@ export const bankFeedRecordOutcome = defineCommand({
     if (input.feedAccountId !== undefined) {
       update = update.where('id', '=', input.feedAccountId);
       if (input.fromCursor !== undefined) update = input.fromCursor === null ? update.where('cursor', 'is', null) : update.where('cursor', '=', input.fromCursor);
+    } else {
+      // A connection-wide record reaches the accounts the connection still lists: one it no longer lists is never pulled again, so nothing would clear its reason.
+      update = update.where(
+        'external_account_id',
+        'in',
+        ctx.trx
+          .selectFrom('crove_finance.bank_feed_listed_account')
+          .select('external_account_id')
+          .where('org_id', '=', ctx.orgId)
+          .where('channel_connection_id', '=', input.connectionId),
+      );
     }
     const recorded = (await update.returning('id').execute()).length;
     ctx.audit({ connectionId: input.connectionId, kind: input.kind, accounts: recorded });

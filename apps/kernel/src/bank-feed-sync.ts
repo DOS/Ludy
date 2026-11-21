@@ -19,6 +19,9 @@ import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-
 
 const SYSTEM = { type: 'system' as const, component: 'finance.bank_feed' };
 
+// What the runtime answers when a page's own lines cannot be stored: the shape check, or the stricter reading of the lines.
+const REFUSED_PAGE: ReadonlySet<string> = new Set(['VALIDATION', 'BANK_FEED_INVALID']);
+
 export interface BankFeedFailure {
   kind: Exclude<BankFeedPullOutcome, 'ok'>;
   // The refused line's position in the page, 0-based, only for `bad_page`.
@@ -29,7 +32,7 @@ export interface BankFeedFailure {
 // was not understood. Only the kind and the position leave this function, never the error's message.
 export function classifyBankFeedFailure(error: unknown): BankFeedFailure {
   if (error instanceof TingeeError) return error.kind === 'bad_page' && error.itemIndex !== null ? { kind: 'bad_page', item: error.itemIndex } : { kind: error.kind };
-  if (error instanceof DomainError && error.code === 'VALIDATION') return { kind: 'bad_page' };
+  if (error instanceof DomainError && REFUSED_PAGE.has(error.code)) return { kind: 'bad_page' };
   return { kind: 'upstream' };
 }
 
@@ -152,9 +155,10 @@ export async function runBankFeedSync(deps: BankFeedSyncDeps, job: BankFeedSyncJ
           options,
         );
       } catch (error) {
-        // Only the runtime refusing the page's own lines is a refused page; a moved cursor (another sync was first) or a closed connection is not.
-        if (error instanceof DomainError && error.code !== 'VALIDATION') throw error;
-        return refuse(error);
+        // Only the runtime refusing the page's own lines is a refused page. A moved cursor (another sync was first), a closed
+        // connection or a fault of ours (a lost database connection, a deadlock) says nothing about the bank: rethrown unrecorded.
+        if (error instanceof DomainError && REFUSED_PAGE.has(error.code)) return refuse(error);
+        throw error;
       }
       pages++;
       stored += (result.counts?.new ?? 0) + (result.counts?.ambiguous ?? 0);
