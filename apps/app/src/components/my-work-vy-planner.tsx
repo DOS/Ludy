@@ -47,7 +47,7 @@ export function MyWorkVyPlannerTrigger({
   const t = useTranslations('myWork.vyPlanner');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
-  if (role === 'viewer') return null;
+  if (!role || role === 'viewer') return null;
   return (
     <Button
       ref={buttonRef}
@@ -164,20 +164,37 @@ export function MyWorkVyPlannerPanel({
     mutationFn: async (item: TodoPlanResult['focus'][number]) => {
       const draft = focusDrafts[item.todoId] ?? {
         priority: item.priority,
-        dueOn: result?.today ?? item.dueOn ?? '',
+        dueOn: item.dueOn && result && item.dueOn >= result.today ? item.dueOn : (result?.today ?? ''),
         edited: false,
         applied: false,
         error: null,
       };
-      if (draft.priority === item.priority && draft.dueOn !== '' && draft.dueOn !== item.dueOn) {
-        await api.notes.todos.reschedule({ todoIds: [item.todoId], dueOn: draft.dueOn });
+      const nextDueOn = draft.dueOn || null;
+      const dateChanged = nextDueOn !== item.dueOn;
+      const priorityChanged = draft.priority !== item.priority;
+
+      if (!dateChanged && !priorityChanged) {
         return item.todoId;
       }
+      if (!priorityChanged && nextDueOn !== null) {
+        await api.notes.todos.reschedule({ todoIds: [item.todoId], dueOn: nextDueOn });
+        return item.todoId;
+      }
+
       const full = await api.notes.todos.get({ todoId: item.todoId });
-      const nextDueOn = draft.dueOn || null;
+      if (full.deletedAt !== null) {
+        throw Object.assign(new Error('TODO_IN_TRASH'), { code: 'TODO_IN_TRASH' });
+      }
+      if (full.status !== 'open') {
+        throw Object.assign(new Error('TODO_NOT_CHANGEABLE'), { code: 'TODO_NOT_CHANGEABLE' });
+      }
+      if (full.revision !== item.revision) {
+        throw Object.assign(new Error('TODO_REVISION_CONFLICT'), { code: 'TODO_REVISION_CONFLICT' });
+      }
+
       await api.notes.todos.update({
         todoId: full.id,
-        revision: full.revision,
+        revision: item.revision,
         title: full.title,
         details: full.details,
         checklist: full.checklist,
@@ -211,7 +228,10 @@ export function MyWorkVyPlannerPanel({
   const applyOneReschedule = useMutation({
     mutationFn: async (item: TodoPlanResult['reschedules'][number]) => {
       const draft = rescheduleDrafts[item.todoId];
-      const dueOn = draft?.dueOn || item.dueOn;
+      const dueOn = draft ? draft.dueOn : item.dueOn;
+      if (!dueOn || (result && dueOn < result.today)) {
+        throw Object.assign(new Error('TODO_NOT_CHANGEABLE'), { code: 'TODO_NOT_CHANGEABLE' });
+      }
       await api.notes.todos.reschedule({ todoIds: [item.todoId], dueOn });
       return { todoId: item.todoId, dueOn };
     },
@@ -234,25 +254,31 @@ export function MyWorkVyPlannerPanel({
 
   const applyAllReschedules = useMutation({
     mutationFn: async () => {
-      if (!result) return 0;
+      if (!result) return { appliedIds: [] as string[], errors: new Map<string, string>() };
       const byDate = new Map<string, string[]>();
       for (const item of result.reschedules) {
         const draft = rescheduleDrafts[item.todoId];
         if (draft?.applied) continue;
-        const targetDate = draft?.dueOn || item.dueOn;
+        const targetDate = draft ? draft.dueOn : item.dueOn;
+        if (!targetDate || targetDate < result.today) continue;
         const list = byDate.get(targetDate) ?? [];
         list.push(item.todoId);
         byDate.set(targetDate, list);
       }
       const appliedIds: string[] = [];
+      const errors = new Map<string, string>();
       for (const [dueOn, todoIds] of byDate) {
-        const res = await api.notes.todos.reschedule({ todoIds, dueOn });
-        appliedIds.push(...res.todoIds);
+        try {
+          const res = await api.notes.todos.reschedule({ todoIds, dueOn });
+          appliedIds.push(...res.todoIds);
+        } catch (err) {
+          const msg = tv(`errors.${noteVyErrorKey(errorCodeOf(err))}`);
+          for (const id of todoIds) errors.set(id, msg);
+        }
       }
-      return appliedIds;
+      return { appliedIds, errors };
     },
-    onSuccess: (appliedIds) => {
-      if (!Array.isArray(appliedIds) || appliedIds.length === 0) return;
+    onSuccess: ({ appliedIds, errors }) => {
       const done = new Set(appliedIds);
       setRescheduleDrafts((prev) => {
         const next = { ...prev };
@@ -260,10 +286,16 @@ export function MyWorkVyPlannerPanel({
           const cur = next[id];
           if (cur) next[id] = { ...cur, applied: true, error: null };
         }
+        for (const [id, msg] of errors) {
+          const cur = next[id];
+          if (cur) next[id] = { ...cur, error: msg };
+        }
         return next;
       });
-      void refreshNotes();
-      toast(t('reschedulesAppliedAllToast', { count: appliedIds.length }), 'success');
+      if (appliedIds.length > 0) {
+        void refreshNotes();
+        toast(t('reschedulesAppliedAllToast', { count: appliedIds.length }), 'success');
+      }
     },
   });
 
@@ -287,7 +319,12 @@ export function MyWorkVyPlannerPanel({
         : null;
 
   const remainingReschedules = result
-    ? result.reschedules.filter((r) => !rescheduleDrafts[r.todoId]?.applied).length
+    ? result.reschedules.filter((r) => {
+        const draft = rescheduleDrafts[r.todoId];
+        if (draft?.applied) return false;
+        const targetDate = draft ? draft.dueOn : r.dueOn;
+        return Boolean(targetDate) && targetDate >= result.today;
+      }).length
     : 0;
 
   return (
@@ -537,6 +574,7 @@ export function MyWorkVyPlannerPanel({
                               disabled={
                                 draft.applied ||
                                 !draft.dueOn ||
+                                draft.dueOn < result.today ||
                                 applyOneReschedule.isPending ||
                                 applyAllReschedules.isPending
                               }

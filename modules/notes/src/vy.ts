@@ -6,6 +6,7 @@ import type { MemberRole } from '@crove/db';
 import {
   DEFAULT_TIME_ZONE,
   NOTE_BODY_MAX,
+  TODO_LISTS_MAX,
   zId,
   zNoteAcceptSummary,
   zTimeZone,
@@ -409,6 +410,7 @@ export const notesVyPlanInputs = defineQuery({
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
         .where('deleted_at', 'is', null)
+        .limit(TODO_LISTS_MAX)
         .execute(),
     ]);
     const listNames = new Map(listRows.map((l) => [l.id, l.name]));

@@ -120,11 +120,18 @@ export function buildNoteOrganizeSubjectJson(
   notes: readonly NoteOrganizeInputNote[],
   notebooks: readonly NoteOrganizeInputNotebook[],
 ): string {
-  const packedNotebooks = notebooks.slice(0, ORGANIZE_LIMITS.maxInputNotebooks).map((nb) => ({
-    id: nb.id,
-    name: clipText(nb.name, ORGANIZE_LIMITS.maxNotebookNameChars),
-    visibility: nb.visibility,
-  }));
+  const maxNotebooksChars = Math.floor(ORGANIZE_LIMITS.maxSubjectChars * 0.35);
+  const packedNotebooks: Array<{ id: string; name: string; visibility: NoteVisibility }> = [];
+  for (const nb of notebooks.slice(0, ORGANIZE_LIMITS.maxInputNotebooks)) {
+    const entry = {
+      id: nb.id,
+      name: clipText(nb.name, ORGANIZE_LIMITS.maxNotebookNameChars),
+      visibility: nb.visibility,
+    };
+    const next = [...packedNotebooks, entry];
+    if (JSON.stringify({ notebooks: next, notes: [] }).length > maxNotebooksChars) break;
+    packedNotebooks.push(entry);
+  }
 
   const sortedNotes = [...notes].sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : a.updatedAt < b.updatedAt ? 1 : 0));
   const packedNotes: Array<Record<string, unknown>> = [];

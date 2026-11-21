@@ -187,5 +187,16 @@ describe('notes.organize deterministic checks & prompt-injection defense (#3563)
 
     const json = buildNoteOrganizeSubjectJson(manyNotes, manyNotebooks);
     expect(json.length).toBeLessThanOrEqual(ORGANIZE_LIMITS.maxSubjectChars);
+
+    // Adversarial control-char notebooks (6x JSON expansion) must stay valid JSON <= maxSubjectChars without starving notes.
+    const adversarialNotebooks: NoteOrganizeInputNotebook[] = Array.from({ length: 50 }, (_, idx) => ({
+      id: `adv-nb-${idx}`,
+      name: '\u0001'.repeat(ORGANIZE_LIMITS.maxNotebookNameChars),
+      visibility: 'private',
+    }));
+    const boundedJson = buildNoteOrganizeSubjectJson(NOTES, adversarialNotebooks);
+    expect(boundedJson.length).toBeLessThanOrEqual(ORGANIZE_LIMITS.maxSubjectChars);
+    const reparsed = JSON.parse(boundedJson) as { notebooks: unknown[]; notes: unknown[] };
+    expect(reparsed.notes.length).toBeGreaterThan(0);
   });
 });
