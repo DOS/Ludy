@@ -25,6 +25,7 @@ describe('the test channel name (SO-27)', () => {
   });
 
   it('names the import template with the product, never the retired code name', () => {
+    expect(brandFileName('ludy-mau-nhap-bai.csv', 'Ludy')).toBe('ludy-mau-nhap-bai.csv');
     expect(brandFileName('crove-mau-nhap-bai.csv', 'Ludy')).toBe('ludy-mau-nhap-bai.csv');
   });
 });

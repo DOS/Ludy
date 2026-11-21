@@ -12,9 +12,9 @@ describe('the SPA Content-Security-Policy', () => {
     const csp = directives(header);
     expect(csp.get('require-trusted-types-for')).toBe("'script'");
     // One named policy (#1238): no 'none', no 'allow-duplicates', no default policy, no wildcard.
-    expect(csp.get('trusted-types')).toBe('crove-sw');
+    expect(csp.get('trusted-types')).toBe('ludy-sw');
     expect(header).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' http://localhost; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types crove-sw",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' http://localhost; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types ludy-sw",
     );
   });
 

@@ -2,6 +2,7 @@
 // Small facts about the calendar providers the screens need (Meetings B3, #3167): which OAuth dialog a stored connection belongs to, and whether an answer that came back through the
 // address bar means the member's Microsoft tenant needs its administrator to allow the app first.
 import type { CalendarOAuthProvider } from '@ludy/kernel-contract';
+import { takeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 // The OAuth provider id of the connect dialog for a stored connection's provider.
 export function oauthProviderOf(provider: string): CalendarOAuthProvider | null {
@@ -36,18 +37,18 @@ export function adminConsentLink(authorizeUrl: string): string | null {
 }
 
 // The link is kept with the attempt (under its state) so the callback page, which comes back through the provider's redirect, can show it; read once, like the attempt itself.
-const LINK_PREFIX = 'crove.oauth.admin-link.';
+const LINK_PREFIX = 'ludy.oauth.admin-link.';
+const LEGACY_LINK_PREFIX = 'crove.oauth.admin-link.';
 export function rememberAdminLink(state: string, link: string): void {
   try {
-    sessionStorage.setItem(LINK_PREFIX + state, link);
+    writeMigratedItem(sessionStorage, LINK_PREFIX + state, LEGACY_LINK_PREFIX + state, link);
   } catch {
     // Storage off: the page then says what to ask without a link.
   }
 }
 export function takeAdminLink(state: string): string | null {
   try {
-    const link = sessionStorage.getItem(LINK_PREFIX + state);
-    sessionStorage.removeItem(LINK_PREFIX + state);
+    const link = takeMigratedItem(sessionStorage, LINK_PREFIX + state, LEGACY_LINK_PREFIX + state);
     if (link === null) return null;
     // Only the address this module builds is shown back: the right host and path, nothing else.
     const parsed = new URL(link);

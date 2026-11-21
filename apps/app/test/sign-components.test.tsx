@@ -608,8 +608,12 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
   it('rejects a malformed URL fragment even when sessionStorage holds an older token', () => {
     const store = new Map<string, string>([
       [
-        'crove.sign.ceremony.token',
+        'ludy.sign.ceremony.token',
         JSON.stringify({ token: 'A'.repeat(43), savedAt: Date.now() }),
+      ],
+      [
+        'crove.sign.ceremony.token',
+        JSON.stringify({ token: 'B'.repeat(43), savedAt: Date.now() }),
       ],
     ]);
     const replaceState = vi.fn();
@@ -628,6 +632,7 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
     const html = renderVi(<SignCeremonyPage />);
     expect(html).toContain('data-testid="sign-ceremony-invalid"');
     expect(replaceState).toHaveBeenCalledWith(null, '', '/-/sign');
+    expect(store.has('ludy.sign.ceremony.token')).toBe(false);
     expect(store.has('crove.sign.ceremony.token')).toBe(false);
   });
 

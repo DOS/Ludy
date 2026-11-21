@@ -4,6 +4,7 @@ import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 import { HOSTED_STORAGE_KEY, completeHostedLogin, readHostedCallback, type HostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
+import { readMigratedItem, type StorageLike } from './storage-migrate.ts';
 
 export interface PublicConfig {
   authUrl: string;
@@ -69,13 +70,38 @@ export function getConfig(): PublicConfig {
   return config;
 }
 
+export const AUTH_STORAGE_KEY = 'ludy-auth';
+export const LEGACY_AUTH_STORAGE_KEY = 'crove-auth';
+const AUTH_VERIFIER_SUFFIX = '-code-verifier';
+
+export function migrateAuthStorage(storage?: StorageLike): void {
+  try {
+    const store = storage ?? (typeof window === 'undefined' ? undefined : window.localStorage);
+    if (!store) return;
+    for (const [key, legacyKey] of [
+      [AUTH_STORAGE_KEY, LEGACY_AUTH_STORAGE_KEY],
+      [`${AUTH_STORAGE_KEY}${AUTH_VERIFIER_SUFFIX}`, `${LEGACY_AUTH_STORAGE_KEY}${AUTH_VERIFIER_SUFFIX}`],
+    ] as const) {
+      if (store.getItem(key) !== null) {
+        // Drop any leftover legacy entry so signing out of ludy-auth cannot resurrect an older session.
+        if (store.getItem(legacyKey) !== null) store.removeItem?.(legacyKey);
+      } else {
+        readMigratedItem(store, key, legacyKey);
+      }
+    }
+  } catch {
+    // Ignore storage access failures in SSR or restricted browsing modes.
+  }
+}
+
 export function auth(): Client {
   if (client) return client;
   const { authUrl, authAnonKey } = getConfig();
+  migrateAuthStorage();
   client = new AuthClient({
     url: authUrl,
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
-    storageKey: 'crove-auth',
+    storageKey: AUTH_STORAGE_KEY,
     // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563).
     fetch: withInviteToken((input, init) => fetch(input, init), new URL(authUrl, serverOrigin()).origin),
     // Email links (confirmation, recovery) come back with a one-time code that only this browser can exchange.

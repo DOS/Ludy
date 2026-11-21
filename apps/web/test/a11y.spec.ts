@@ -203,7 +203,7 @@ for (const { path, lang } of PAGES) {
         await chooseLanguage(page, lang);
         await page.setViewportSize({ width: viewport.width, height: viewport.height });
         // The theme the page applies before its first paint (root-document.tsx), as if the visitor had picked it.
-        await page.addInitScript((value) => localStorage.setItem('crove-theme', value), theme);
+        await page.addInitScript((value) => localStorage.setItem('ludy-theme', value), theme);
         await page.goto(path);
         await page.waitForLoadState('networkidle');
         await expect(page.locator('html')).toHaveAttribute('data-theme', theme);

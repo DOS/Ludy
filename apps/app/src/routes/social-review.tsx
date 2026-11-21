@@ -23,6 +23,7 @@ import { errorMessage } from '../lib/api.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { planProgress } from '../lib/social-plan-review.ts';
 import { pageBrand, type ReportBrand } from '../lib/social-report-branding.ts';
+import { readMigratedItem, writeMigratedItem } from '../lib/storage-migrate.ts';
 
 type Verdict = 'approved' | 'changes_requested' | 'comment';
 // reply (#1301): the team's reply under the answer, or null; absent from a server without it.
@@ -78,14 +79,15 @@ export function TeamReply({ reply, from }: { reply: { body: string; at: string }
   );
 }
 
-const NAME_KEY = 'crove.review.name';
+const NAME_KEY = 'ludy.review.name';
+const LEGACY_NAME_KEY = 'crove.review.name';
 const tokenOf = () => {
   const t = window.location.hash.replace(/^#/, '');
   return /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null;
 };
 const readName = () => {
   try {
-    return window.localStorage.getItem(NAME_KEY) ?? '';
+    return readMigratedItem(window.localStorage, NAME_KEY, LEGACY_NAME_KEY) ?? '';
   } catch {
     return '';
   }
@@ -114,7 +116,7 @@ async function reviewFile(token: string, fileId: string): Promise<Blob> {
 
 const saveName = (name: string) => {
   try {
-    window.localStorage.setItem(NAME_KEY, name);
+    writeMigratedItem(window.localStorage, NAME_KEY, LEGACY_NAME_KEY, name);
   } catch {
     // A private window keeps no name; nothing else depends on it.
   }

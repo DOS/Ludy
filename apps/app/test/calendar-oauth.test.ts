@@ -64,10 +64,14 @@ describe('adminConsentLink', () => {
     try {
       const link = adminConsentLink(authorize) as string;
       rememberAdminLink('st1', link);
+      expect(store.has('ludy.oauth.admin-link.st1')).toBe(true);
       expect(takeAdminLink('st1')).toBe(link);
       expect(takeAdminLink('st1')).toBeNull();
-      store.set('crove.oauth.admin-link.st2', 'https://evil.example/organizations/adminconsent?client_id=1');
+      store.set('ludy.oauth.admin-link.st2', 'https://evil.example/organizations/adminconsent?client_id=1');
       expect(takeAdminLink('st2')).toBeNull();
+      store.set('crove.oauth.admin-link.st3', link);
+      expect(takeAdminLink('st3')).toBe(link);
+      expect(store.has('crove.oauth.admin-link.st3')).toBe(false);
       expect(takeAdminLink('none')).toBeNull();
     } finally {
       Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: original });

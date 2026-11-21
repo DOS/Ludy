@@ -25,7 +25,8 @@ export function ThemeToggle({ toLight, toDark }: { toLight: string; toDark: stri
     const next: Theme = (wanted.current ?? currentTheme()) === 'dark' ? 'light' : 'dark';
     wanted.current = next;
     try {
-      localStorage.setItem('crove-theme', next);
+      localStorage.setItem('ludy-theme', next);
+      localStorage.removeItem('crove-theme');
     } catch {
       // Storage may be blocked; the choice then lasts for this page view.
     }
