@@ -132,6 +132,7 @@ import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './b
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@crove/bank-feed';
 import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
+import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from './marketplace-shopee-token.ts';
 import { TIKTOK_TOKEN_HOSTS, TiktokRefresher } from './marketplace-tiktok-token.ts';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
@@ -672,6 +673,9 @@ export function channelRefreshers(config: ChannelConfig): Record<string, Refresh
   // A TikTok Shop connection's tokens (#2524, T1 = #4256): the same, for `marketplace_tiktok_shop`. The seller's own app key and secret are in each connection's sealed secret; the fetch reaches only
   // the token host, and the token URL (which carries the app secret) never leaves the token module.
   if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'tiktok_shop')) refreshers.marketplace_tiktok_shop = new TiktokRefresher({ fetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS) });
+  // A Shopee connection's tokens (#2524, S1 = #4274): the same, for `marketplace_shopee`. The partner id and key are in each connection's sealed secret; the fetch reaches only the one API host, and the refresh
+  // token rotates and works once, so the sweep's `ifVersion` re-seal is what keeps the pair.
+  if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'shopee')) refreshers.marketplace_shopee = new ShopeeRefresher({ fetch: hostBoundFetch(SHOPEE_TOKEN_HOSTS) });
   return refreshers;
 }
 
