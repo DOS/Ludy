@@ -187,6 +187,18 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
               <dt className="text-xs text-subtle-foreground">{t('leave.personalPaidDays')}</dt>
               <dd className="tabular-nums">{data.balance.personalPaidDays}</dd>
             </div>
+            <div>
+              <dt className="text-xs text-subtle-foreground">{t('leave.sicknessBhxhDays')}</dt>
+              <dd className="tabular-nums" data-testid="hr-leave-sickness-bhxh">
+                {data.balance.sicknessBhxhDays}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-subtle-foreground">{t('leave.maternityBhxhDays')}</dt>
+              <dd className="tabular-nums" data-testid="hr-leave-maternity-bhxh">
+                {data.balance.maternityBhxhDays}
+              </dd>
+            </div>
           </dl>
 
           <form
@@ -232,13 +244,13 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                   id={`hr-leave-days-${employeeId}`}
                   className="w-24"
                   inputMode="decimal"
-                  step={kind === 'opening_balance' ? '0.01' : '0.5'}
+                  step={kind === 'unpaid_leave' ? '0.5' : '0.01'}
                   value={days}
                   onChange={(ev) => setDays(normalizeLeaveDaysInput(ev.target.value))}
                   data-testid="hr-leave-days"
                 />
               </div>
-              <label className="flex items-center gap-2 pb-2 text-sm">
+              <label className="flex items-center gap-2 pb-2 text-sm max-md:min-h-11">
                 <input
                   type="checkbox"
                   checked={approved}

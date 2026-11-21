@@ -70,10 +70,32 @@ export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
 export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
 export const TAX_CODE_PLACE = 'crove_hr.payroll_employee.tax_code_sealed';
 export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_sealed';
+export const WORK_PERMIT_PLACE = 'crove_hr.payroll_employee.work_permit_number_sealed';
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-export const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+export const EMPLOYEE_COLUMNS = [
+  'org_id',
+  'id',
+  'legal_entity_id',
+  'department_id',
+  'job_title',
+  'display_name',
+  'address',
+  'national_id_sealed',
+  'bank_account_sealed',
+  'bank_code',
+  'birth_date',
+  'tax_code_sealed',
+  'insurance_number_sealed',
+  'is_foreign',
+  'work_permit_exempt',
+  'work_permit_expires_on',
+  'work_permit_number_sealed',
+  'created_by',
+  'created_at',
+  'updated_at',
+] as const;
 export const EMPLOYMENT_COLUMNS = [
   'org_id',
   'id',
@@ -91,6 +113,10 @@ export const EMPLOYMENT_COLUMNS = [
   'region',
   'base_wage',
   'pay_function',
+  'pay_basis',
+  'hourly_rate',
+  'piece_rate',
+  'tax_resident',
   'created_by',
   'created_at',
 ] as const;
@@ -109,11 +135,23 @@ interface PreparedEmploymentRow {
   region: HrEmploymentTerms['region'];
   base_wage: string;
   pay_function: HrEmploymentTerms['payFunction'];
+  pay_basis: HrEmploymentTerms['payBasis'];
+  hourly_rate: string | null;
+  piece_rate: string | null;
+  tax_resident: boolean;
 }
 
-type EmploymentTermsInput = Omit<HrEmploymentTerms, 'payFunction'> & { payFunction?: HrPayFunction | undefined };
+type EmploymentTermsInput = Omit<HrEmploymentTerms, 'payFunction' | 'payBasis' | 'taxResident'> & {
+  payFunction?: HrPayFunction | undefined;
+  payBasis?: HrEmploymentTerms['payBasis'] | undefined;
+  taxResident?: boolean | undefined;
+};
 
 export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFunction: HrPayFunction = 'admin'): PreparedEmploymentRow {
+  const payBasis = terms.payBasis ?? 'monthly';
+  const hourlyRate = terms.hourlyRate ?? null;
+  const pieceRate = terms.pieceRate ?? null;
+  const taxResident = terms.taxResident ?? true;
   const contractForm = terms.contractForm ?? null;
   const termMonths = terms.termMonths ?? null;
   const fixedTermSequence = terms.fixedTermSequence ?? null;
@@ -137,6 +175,12 @@ export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFu
 
   if (hasMetadata) {
     const hasProbation = probationRoleTier !== null || probationEndOn !== null || probationWage !== null;
+    const contractualWage =
+      payBasis === 'hourly'
+        ? (hourlyRate ?? terms.baseWage)
+        : payBasis === 'piece_rate'
+          ? (pieceRate ?? terms.baseWage)
+          : terms.baseWage;
     const check = checkLaborContractTerms({
       contractKind: terms.contractType === 'none' ? 'under_one_month' : terms.contractType,
       ...(contractForm !== null ? { form: contractForm } : {}),
@@ -144,7 +188,7 @@ export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFu
       endDate: contractEndOn,
       termMonths,
       fixedTermSequence,
-      contractWage: terms.baseWage,
+      contractWage: contractualWage,
       probation: hasProbation
         ? {
             roleTier: probationRoleTier ?? '',
@@ -198,6 +242,10 @@ export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFu
     region: terms.region,
     base_wage: terms.baseWage,
     pay_function: terms.payFunction ?? defaultPayFunction,
+    pay_basis: payBasis,
+    hourly_rate: hourlyRate,
+    piece_rate: pieceRate,
+    tax_resident: taxResident,
   };
 }
 
@@ -278,8 +326,8 @@ const targetOf = (input: { employeeId: string }) => ({ type: 'hr.payroll_employe
 export const employeeAdd = defineCommand({
   name: 'hr.payroll.employee.add',
   input: zHrEmployeeAdd,
-  // The identity number and the account number are sealed under the new person's key; the runtime keeps them out of every record the command leaves.
-  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber'],
+  // The identity number, account number and work permit number are sealed under the new person's key; the runtime keeps them out of every record the command leaves.
+  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber', 'workPermitNumber'],
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -303,6 +351,7 @@ export const employeeAdd = defineCommand({
     const account = input.accountNumber === undefined ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
     const taxSealed = input.taxCode === undefined ? null : await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode);
     const insuranceSealed = input.insuranceNumber === undefined ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
+    const workPermitSealed = input.workPermitNumber === undefined ? null : await ctx.seal(subject, WORK_PERMIT_PLACE, input.workPermitNumber);
     await ctx.trx
       .insertInto('crove_hr.payroll_employee')
       .values({
@@ -319,6 +368,10 @@ export const employeeAdd = defineCommand({
         birth_date: input.birthDate ?? null,
         tax_code_sealed: taxSealed,
         insurance_number_sealed: insuranceSealed,
+        is_foreign: input.isForeign,
+        work_permit_exempt: input.workPermitExempt,
+        work_permit_expires_on: input.workPermitExpiresOn ?? null,
+        work_permit_number_sealed: workPermitSealed,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -350,6 +403,10 @@ export const employeeAdd = defineCommand({
       hasTaxNumber: taxSealed !== null,
       hasInsuranceNo: insuranceSealed !== null,
       birth: auditValue(EMPLOYEE, 'birth_date', input.birthDate ?? null),
+      isForeign: input.isForeign,
+      workPermitExempt: input.workPermitExempt,
+      hasWorkPermitNumber: workPermitSealed !== null,
+      workPermitExpiresOn: auditValue(EMPLOYEE, 'work_permit_expires_on', input.workPermitExpiresOn ?? null),
       effectiveFrom: prepared.effective_from,
       contractType: prepared.contract_type,
       contractForm: prepared.contract_form,
@@ -361,7 +418,11 @@ export const employeeAdd = defineCommand({
       probationWage: auditValue(EMPLOYMENT, 'probation_wage', prepared.probation_wage),
       region: prepared.region,
       payFunction: prepared.pay_function,
+      payBasis: prepared.pay_basis,
+      taxResident: prepared.tax_resident,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
+      hourlyRate: auditValue(EMPLOYMENT, 'hourly_rate', prepared.hourly_rate),
+      pieceRate: auditValue(EMPLOYMENT, 'piece_rate', prepared.piece_rate),
     });
     return { employeeId, employmentId: employment.id };
   },
@@ -370,13 +431,13 @@ export const employeeAdd = defineCommand({
 export const employeeEdit = defineCommand({
   name: 'hr.payroll.employee.edit',
   input: zHrEmployeeEdit,
-  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber'],
+  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber', 'workPermitNumber'],
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'department_id', 'job_title', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'is_foreign', 'work_permit_exempt', 'work_permit_number_sealed', 'work_permit_expires_on', 'department_id', 'job_title', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
     // exceptions are what a leaver still needs: for the declarations (#2533) the birth date, the tax code and the insurance number, and for paying what is still owed (a final month, a
@@ -388,6 +449,10 @@ export const employeeEdit = defineCommand({
       (input.displayName !== undefined ||
         input.address !== undefined ||
         input.identityNumber !== undefined ||
+        input.isForeign !== undefined ||
+        input.workPermitExempt !== undefined ||
+        input.workPermitNumber !== undefined ||
+        input.workPermitExpiresOn !== undefined ||
         input.departmentId !== undefined ||
         input.jobTitle !== undefined)
     ) {
@@ -404,6 +469,10 @@ export const employeeEdit = defineCommand({
       birth_date?: string | null;
       tax_code_sealed?: string | null;
       insurance_number_sealed?: string | null;
+      is_foreign?: boolean;
+      work_permit_exempt?: boolean;
+      work_permit_number_sealed?: string | null;
+      work_permit_expires_on?: string | null;
       department_id?: string | null;
       job_title?: string | null;
       updated_at: Date;
@@ -439,6 +508,22 @@ export const employeeEdit = defineCommand({
     if (input.insuranceNumber !== undefined) {
       set.insurance_number_sealed = input.insuranceNumber === null ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
       changed.push('insuranceNumber');
+    }
+    if (input.isForeign !== undefined) {
+      set.is_foreign = input.isForeign;
+      changed.push('isForeign');
+    }
+    if (input.workPermitExempt !== undefined) {
+      set.work_permit_exempt = input.workPermitExempt;
+      changed.push('workPermitExempt');
+    }
+    if (input.workPermitNumber !== undefined) {
+      set.work_permit_number_sealed = input.workPermitNumber === null ? null : await ctx.seal(subject, WORK_PERMIT_PLACE, input.workPermitNumber);
+      changed.push('workPermitNumber');
+    }
+    if (input.workPermitExpiresOn !== undefined) {
+      set.work_permit_expires_on = input.workPermitExpiresOn;
+      changed.push('workPermitExpiresOn');
     }
     if (input.departmentId !== undefined) {
       if (input.departmentId === null) {
@@ -540,7 +625,11 @@ export const employmentAdd = defineCommand({
       probationWage: auditValue(EMPLOYMENT, 'probation_wage', prepared.probation_wage),
       region: prepared.region,
       payFunction: prepared.pay_function,
+      payBasis: prepared.pay_basis,
+      taxResident: prepared.tax_resident,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
+      hourlyRate: auditValue(EMPLOYMENT, 'hourly_rate', prepared.hourly_rate),
+      pieceRate: auditValue(EMPLOYMENT, 'piece_rate', prepared.piece_rate),
     });
     return { employeeId: input.employeeId, employmentId: row.id };
   },
@@ -664,7 +753,7 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'department_id', 'job_title', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
@@ -688,7 +777,7 @@ export const employeeErase = defineCommand({
       .execute();
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, department_id: null, job_title: null, erased_at: ctx.now, updated_at: ctx.now })
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, work_permit_expires_on: null, department_id: null, job_title: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
@@ -698,9 +787,9 @@ export const employeeErase = defineCommand({
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'birth date', 'bank', 'department', 'job title', 'dependents names'],
+      cleared: ['name', 'address', 'birth date', 'bank', 'work permit expiry', 'department', 'job title', 'dependents names'],
       kept: [
-        { what: 'the identity number, the account number, the tax code and the insurance number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
+        { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },
       ],
     };
@@ -726,6 +815,10 @@ const TERMS_SELECT_COLUMNS = [
   'region',
   'base_wage',
   'pay_function',
+  'pay_basis',
+  'hourly_rate',
+  'piece_rate',
+  'tax_resident',
 ] as const;
 
 interface TermsRow {
@@ -743,6 +836,10 @@ interface TermsRow {
   region: HrEmploymentView['region'];
   base_wage: string;
   pay_function: HrEmploymentView['payFunction'];
+  pay_basis: HrEmploymentView['payBasis'];
+  hourly_rate: string | null;
+  piece_rate: string | null;
+  tax_resident: boolean;
 }
 
 const termsView = (r: TermsRow): HrEmploymentView => ({
@@ -752,6 +849,10 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
   region: r.region,
   baseWage: r.base_wage,
   payFunction: r.pay_function,
+  payBasis: r.pay_basis,
+  hourlyRate: r.hourly_rate,
+  pieceRate: r.piece_rate,
+  taxResident: r.tax_resident,
   contractForm: r.contract_form,
   termMonths: r.term_months,
   contractEndOn: r.contract_end_on === null ? null : iso(r.contract_end_on),
@@ -760,6 +861,55 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
   probationEndOn: r.probation_end_on === null ? null : iso(r.probation_end_on),
   probationWage: r.probation_wage,
 });
+
+function diffCalendarDays(startIso: string, endIso: string): number {
+  const [y1, m1, d1] = startIso.split('-').map(Number) as [number, number, number];
+  const [y2, m2, d2] = endIso.split('-').map(Number) as [number, number, number];
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
+}
+
+export function maskWorkPermitTail(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (trimmed.length <= 4) return '****';
+  return `****${trimmed.slice(-4)}`;
+}
+
+export function workPermitAlertsFor(
+  employee: { status: string; erased: boolean; isForeign: boolean; workPermitExempt: boolean; workPermitExpiresOn: string | null },
+  asOf: string,
+  noticeDays = 30,
+): HrContractAlert[] {
+  if (employee.status !== 'active' || employee.erased || !employee.isForeign || employee.workPermitExempt || employee.workPermitExpiresOn === null) {
+    return [];
+  }
+  const daysRemaining = diffCalendarDays(asOf, employee.workPermitExpiresOn);
+  if (daysRemaining < 0) {
+    return [
+      {
+        code: 'work_permit_expired',
+        severity: 'error',
+        targetDate: employee.workPermitExpiresOn,
+        daysRemaining,
+        message: 'Giấy phép lao động đã hết hạn; cần gia hạn hoặc rà soát miễn giấy phép lao động',
+        cite: 'Labor Code 2019 Art. 151 & 156; Decree 152/2020/ND-CP',
+      },
+    ];
+  }
+  if (daysRemaining <= noticeDays) {
+    return [
+      {
+        code: 'work_permit_expiring_soon',
+        severity: 'warning',
+        targetDate: employee.workPermitExpiresOn,
+        daysRemaining,
+        message: 'Giấy phép lao động sắp hết hạn trong vòng 30 ngày',
+        cite: 'Labor Code 2019 Art. 151 & 156; Decree 152/2020/ND-CP',
+      },
+    ];
+  }
+  return [];
+}
 
 function contractAlertsFor(status: 'active' | 'ended', current: HrEmploymentView | null, asOf: string): HrContractAlert[] {
   if (status !== 'active' || current === null) return [];
@@ -835,6 +985,10 @@ export const employeeList = defineQuery({
         'e.erased_at',
         'e.national_id_sealed',
         'e.bank_account_sealed',
+        'e.is_foreign',
+        'e.work_permit_exempt',
+        'e.work_permit_expires_on',
+        'e.work_permit_number_sealed',
       ])
       .where('e.org_id', '=', ctx.orgId);
     if (input.status !== 'all') q = q.where('e.status', '=', input.status);
@@ -858,6 +1012,9 @@ export const employeeList = defineQuery({
     return employees.map((e) => {
       const current = inForce(byEmployee.get(e.id) ?? [], today);
       const erased = e.erased_at !== null;
+      const isForeign = erased ? false : e.is_foreign;
+      const workPermitExempt = erased ? false : e.work_permit_exempt;
+      const workPermitExpiresOn = erased || e.work_permit_expires_on === null ? null : iso(e.work_permit_expires_on);
       return {
         id: e.id,
         legalEntityId: e.legal_entity_id,
@@ -867,10 +1024,17 @@ export const employeeList = defineQuery({
         jobTitle: erased ? null : e.job_title,
         status: e.status,
         endedOn: e.ended_on === null ? null : iso(e.ended_on),
+        isForeign,
+        workPermitExempt,
+        workPermitExpiresOn,
+        hasWorkPermitNumber: e.work_permit_number_sealed !== null,
         current,
         hasIdentityNumber: e.national_id_sealed !== null,
         hasAccountNumber: e.bank_account_sealed !== null,
-        contractAlerts: contractAlertsFor(e.status, current, today),
+        contractAlerts: [
+          ...contractAlertsFor(e.status, current, today),
+          ...workPermitAlertsFor({ status: e.status, erased, isForeign, workPermitExempt, workPermitExpiresOn }, today),
+        ],
       };
     });
   },
@@ -903,6 +1067,10 @@ export const employeeGet = defineQuery({
         'e.birth_date',
         'e.tax_code_sealed',
         'e.insurance_number_sealed',
+        'e.is_foreign',
+        'e.work_permit_exempt',
+        'e.work_permit_expires_on',
+        'e.work_permit_number_sealed',
         'e.finalization_authorized_years',
       ])
       .where('e.org_id', '=', ctx.orgId)
@@ -938,6 +1106,7 @@ export const employeeGet = defineQuery({
     let accountNumber: string | null = null;
     let taxCode: string | null = null;
     let insuranceNumber: string | null = null;
+    let workPermitNumber: string | null = null;
     let erased = e.erased_at !== null;
     if (!erased) {
       // The sealed values opened, here and only here, for this one employee: the audit row of this read is already committed.
@@ -947,6 +1116,7 @@ export const employeeGet = defineQuery({
       if (e.bank_account_sealed !== null) items.push({ sealed: e.bank_account_sealed, place: ACCOUNT_PLACE, ref: subject });
       if (e.tax_code_sealed !== null) items.push({ sealed: e.tax_code_sealed, place: TAX_CODE_PLACE, ref: subject });
       if (e.insurance_number_sealed !== null) items.push({ sealed: e.insurance_number_sealed, place: INSURANCE_PLACE, ref: subject });
+      if (e.work_permit_number_sealed !== null) items.push({ sealed: e.work_permit_number_sealed, place: WORK_PERMIT_PLACE, ref: subject });
       const opened = items.length === 0 ? [] : await ctx.openMany(items);
       let next = 0;
       const take = (present: boolean): string | null => {
@@ -960,9 +1130,13 @@ export const employeeGet = defineQuery({
       accountNumber = take(e.bank_account_sealed !== null);
       taxCode = take(e.tax_code_sealed !== null);
       insuranceNumber = take(e.insurance_number_sealed !== null);
+      workPermitNumber = maskWorkPermitTail(take(e.work_permit_number_sealed !== null));
     }
     const today = vietnamDay(new Date());
     const current = inForce(terms, today);
+    const isForeign = erased ? false : e.is_foreign;
+    const workPermitExempt = erased ? false : e.work_permit_exempt;
+    const workPermitExpiresOn = erased || e.work_permit_expires_on === null ? null : iso(e.work_permit_expires_on);
     return {
       id: e.id,
       legalEntityId: e.legal_entity_id,
@@ -972,13 +1146,21 @@ export const employeeGet = defineQuery({
       jobTitle: erased ? null : e.job_title,
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
+      isForeign,
+      workPermitExempt,
+      workPermitExpiresOn,
+      hasWorkPermitNumber: e.work_permit_number_sealed !== null,
       current,
       hasIdentityNumber: e.national_id_sealed !== null,
       hasAccountNumber: e.bank_account_sealed !== null,
-      contractAlerts: contractAlertsFor(e.status, current, today),
+      contractAlerts: [
+        ...contractAlertsFor(e.status, current, today),
+        ...workPermitAlertsFor({ status: e.status, erased, isForeign, workPermitExempt, workPermitExpiresOn }, today),
+      ],
       address: e.address,
       identityNumber,
       accountNumber,
+      workPermitNumber,
       bankCode: erased ? null : e.bank_code,
       birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
       taxCode,
@@ -1253,10 +1435,13 @@ export const employeeContractPdf = defineQuery({
         probationEndOn: term.probationEndOn,
         probationWage: term.probationWage,
         baseWage: term.baseWage,
+        payBasis: term.payBasis,
+        hourlyRate: term.hourlyRate,
+        pieceRate: term.pieceRate,
         region: term.region,
         payFunction: term.payFunction,
         employeeInsurable: term.contractType !== 'none',
-        taxResident: true,
+        taxResident: term.taxResident,
         flatTax: isFlatTaxContract(term),
       },
     });
