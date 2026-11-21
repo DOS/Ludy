@@ -8381,7 +8381,7 @@ export const en = {
       hint: 'Nothing is stored yet. Check the platform, the period, the totals and what the platform paid, then import or skip: nothing in an email proves who sent it. Ludy does not read or store the buyer columns. Nothing is imported by itself: a person decides.',
       cap: 'Showing the {count, number} newest reports; decide some to see the older ones.',
       platform: 'Platform',
-      platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop' },
+      platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
       mappingUnconfirmed: 'Columns not checked against a real file',
       mappingHint: 'How this platform\'s columns are read has not been checked against a seller\'s real income report yet; compare the figures above with the file before importing.',
       entity: 'Legal entity',

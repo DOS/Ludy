@@ -141,7 +141,7 @@ export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 // The platforms whose income files are read (Lazada has no profile until a real file decides its layout, #2521).
-export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop'] as const;
+export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const zMarketplaceIncomePlatform = z.enum(MARKETPLACE_INCOME_PLATFORM_KEYS);
 const zDecimal = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/, 'decimal string');
 
