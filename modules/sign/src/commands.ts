@@ -39,6 +39,7 @@ import {
   type IssuedSigningLink,
 } from './shared.ts';
 import { signTemplateCommands } from './templates.ts';
+import { envelopePreExpiryRemindSweep } from './today-and-reminders.ts';
 
 export type { IssuedSigningLink };
 
@@ -123,6 +124,7 @@ const zEnvelopeCreate = z.strictObject({
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
 });
 
 export const envelopeCreate = defineCommand({
@@ -147,6 +149,7 @@ export const envelopeCreate = defineCommand({
       'source_sha256',
       'inspect_status',
       'expires_at',
+      'auto_remind_before_expiry',
       'created_by',
       'created_at',
       'updated_at',
@@ -187,6 +190,7 @@ export const envelopeCreate = defineCommand({
         source_sha256: file.sha256,
         inspect_status: 'pending',
         expires_at: expiresAt,
+        auto_remind_before_expiry: input.autoRemindBeforeExpiry ?? true,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -358,6 +362,7 @@ const zEnvelopeUpdate = z.strictObject({
   message: z.string().trim().max(5000).nullable().optional(),
   routingMode: z.enum(SIGN_ROUTING_MODES).optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  autoRemindBeforeExpiry: z.boolean().optional(),
 });
 
 export const envelopeUpdate = defineCommand({
@@ -374,6 +379,7 @@ export const envelopeUpdate = defineCommand({
       'message',
       'routing_mode',
       'expires_at',
+      'auto_remind_before_expiry',
       'version',
       'updated_at',
     ]),
@@ -395,6 +401,7 @@ export const envelopeUpdate = defineCommand({
     const nextSubject = input.subject === undefined ? row.subject : input.subject;
     const nextMessage = input.message === undefined ? row.message : input.message;
     const nextRoutingMode = input.routingMode ?? row.routing_mode;
+    const nextAutoRemind = input.autoRemindBeforeExpiry ?? row.auto_remind_before_expiry;
     const changed: string[] = [];
     if (nextTitle !== row.title) changed.push('title');
     if (nextSubject !== row.subject) changed.push('subject');
@@ -405,6 +412,7 @@ export const envelopeUpdate = defineCommand({
       const newIso = nextExpiresAt ? nextExpiresAt.toISOString() : null;
       if (oldIso !== newIso) changed.push('expires_at');
     }
+    if (nextAutoRemind !== row.auto_remind_before_expiry) changed.push('auto_remind_before_expiry');
     if (changed.length === 0) {
       ctx.audit({ envelopeId: row.id, changed: [], version: row.version });
       return { envelopeId: row.id, version: row.version };
@@ -418,6 +426,7 @@ export const envelopeUpdate = defineCommand({
         message: nextMessage,
         routing_mode: nextRoutingMode,
         expires_at: nextExpiresAt,
+        auto_remind_before_expiry: nextAutoRemind,
         version: nextVersion,
         updated_at: ctx.now,
       })
@@ -1172,6 +1181,72 @@ export const envelopeVoid = defineCommand({
   },
 });
 
+export const envelopeAcknowledgeDecline = defineCommand({
+  name: 'sign.envelope.acknowledge_decline',
+  input: z.strictObject({
+    envelopeId: zId,
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  writes: [
+    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+      'decline_acknowledged_at',
+      'decline_acknowledged_by',
+      'version',
+      'updated_at',
+    ]),
+    SIGNING_EVENT_WRITE,
+  ],
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx);
+    const row = await lockEnvelope(ctx, input.envelopeId);
+    if (row.status !== 'declined') {
+      throw new DomainError('SIGN_ENVELOPE_NOT_DECLINED', 409, 'Only declined envelopes can be acknowledged');
+    }
+    if (row.decline_acknowledged_at !== null) {
+      const existingIso = new Date(row.decline_acknowledged_at).toISOString();
+      ctx.audit({ envelopeId: row.id, alreadyAcknowledged: true, version: row.version });
+      return {
+        envelopeId: row.id,
+        declineAcknowledgedAt: existingIso,
+        version: row.version,
+      };
+    }
+    const nextVersion = row.version + 1;
+    await ctx.trx
+      .updateTable('crove_sign.envelope')
+      .set({
+        decline_acknowledged_at: ctx.now,
+        decline_acknowledged_by: userId,
+        version: nextVersion,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', row.id)
+      .execute();
+
+    await appendSigningEvent(ctx.trx, {
+      orgId: ctx.orgId,
+      envelopeId: row.id,
+      eventType: 'envelope_decline_acknowledged',
+      actorType: 'user',
+      actorId: userId,
+      actorLabel: actorLabelOf(ctx),
+      documentSha256: row.source_sha256,
+      payloadJson: { version: nextVersion },
+      occurredAt: ctx.now,
+    });
+    ctx.audit({ envelopeId: row.id, version: nextVersion });
+    return {
+      envelopeId: row.id,
+      declineAcknowledgedAt: ctx.now.toISOString(),
+      version: nextVersion,
+    };
+  },
+});
+
 const zEnvelopeSealComplete = z.discriminatedUnion('outcome', [
   z.strictObject({
     envelopeId: zId,
@@ -1525,8 +1600,10 @@ export const signCommands = [
   signerCreateLink,
   envelopeRemind,
   envelopeVoid,
+  envelopeAcknowledgeDecline,
   envelopeSealComplete,
   envelopeExpireSweep,
+  envelopePreExpiryRemindSweep,
   orgCleanup,
   ...signPublicCommands,
   ...signDirectPublicCommands,
