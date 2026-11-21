@@ -2027,7 +2027,7 @@ export interface HrLeaveRequestTable {
   l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   final_acted_by: string | null;
   final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  reason: ColumnType<string | null, string | null, NotGranted>;
+  reason: string | null;
   decision_note: string | null;
   payroll_leave_entry_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
