@@ -29,7 +29,7 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_finance.bank_feed_notice_claim(integer)', 'finance'],
   ['crove_finance.misa_amis_callback_claim(integer)', 'finance'],
   ['crove_finance.bank_feed_hook_lookup(text,text)', 'finance'],
-  ['crove_finance.bank_feed_hook_put_notice(uuid,text,text,text,text)', 'finance'],
+  ['crove_finance.bank_feed_hook_put_notice(uuid,text,text,text,text,text)', 'finance'],
   ['crove_finance.bank_feed_hook_claim(integer)', 'finance'],
   ['crove_kernel.meeting_platform_ring(text,text)', 'meetings'],
   ['crove_sign.public_token_resolve(text,boolean)', 'sign'],

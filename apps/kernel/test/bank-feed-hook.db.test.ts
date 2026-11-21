@@ -257,7 +257,7 @@ suite('Bank feed webhook (#4203)', () => {
     }
     // The worker cannot look up, put or set; the API cannot claim, reject or sweep.
     await expect(workerPool.query("SELECT * FROM crove_finance.bank_feed_hook_lookup('bank_tingee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query("SELECT crove_finance.bank_feed_hook_put_notice($1::uuid, 'r', 't', 's', 'b')", [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query("SELECT crove_finance.bank_feed_hook_put_notice($1::uuid, $2, 'r', 't', 's', 'b')", [randomUUID(), '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM crove_finance.bank_feed_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT crove_finance.bank_feed_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT crove_finance.bank_feed_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
@@ -293,6 +293,10 @@ suite('Bank feed webhook (#4203)', () => {
     for (let i = 0; i < 20; i++) expect((await post(keyOwner)).status).toBe(200);
     expect((await post(keyOwner)).status).toBe(503);
     expect(await notices()).toHaveLength(20);
+    // A retry of a notice that already waits is acknowledged even though the hook is full.
+    const waiting = (await notices())[0]!.request_id;
+    expect((await post(keyOwner, { 'x-request-id': waiting })).status).toBe(200);
+    expect(await notices()).toHaveLength(20);
     await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
   });
 
@@ -309,6 +313,10 @@ suite('Bank feed webhook (#4203)', () => {
     expect(rotated.body).toMatchObject({ created: false });
     const keyNew = String(rotated.body.key);
     expect(keyNew).not.toBe(keyOwner);
+    // A request that passed the lookup with the old key and reaches the put after the rotation stores nothing.
+    const stale = await pool.query('SELECT crove_finance.bank_feed_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, bankFeedHookKeyHash(keyOwner), randomUUID(), FRESH, 'a'.repeat(128), BODY]);
+    expect(stale.rows).toEqual([{ put: 'gone' }]);
+    expect(await notices()).toHaveLength(0);
     expect((await post(keyOwner)).status).toBe(404);
     expect((await post(keyNew)).status).toBe(200);
     expect(await notices()).toHaveLength(1);

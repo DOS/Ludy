@@ -75,7 +75,7 @@ export async function acceptBankFeedHook(runtime: Runtime, provider: BankFeedPro
   if (!turn.allowed) return { status: 429, retryAfterSeconds: turn.retryAfterSeconds };
   const put = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ put: string }>`
-      SELECT crove_finance.bank_feed_hook_put_notice(${hook.hookId}::uuid, ${requestId}, ${timestamp}, ${signature}, ${request.body}) AS put`.execute(db);
+      SELECT crove_finance.bank_feed_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${requestId}, ${timestamp}, ${signature}, ${request.body}) AS put`.execute(db);
     return rows[0]?.put ?? 'gone';
   });
   if (put === 'accepted' || put === 'duplicate') return { status: 200 };

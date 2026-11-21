@@ -314,14 +314,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
   },
-  // The raw body of a bank feed provider's signed notice waiting for the worker (#4203, Tingee S3): the transfer content and the payer's name as the provider sent them. It is kept only until the worker verifies it (the claim
-  // deletes it), at most ten minutes whatever its state (the sweep), is never logged, is deleted by an erasure that its text mentions, and goes with the hook, the connection and the org.
+  // The raw body of a bank feed provider's signed notice waiting for the worker (#4203, Tingee S3): the transfer content and the payer's name as the provider sent them. A claim deletes it when the worker takes it; any notice
+  // older than ten minutes is deleted by the next claim or the nightly sweep (so a worker that is down leaves it until then); it is never logged, is deleted by an erasure that its text mentions, and goes with the hook, the connection and the org.
   'crove_finance.bank_feed_webhook_notice.body': {
     kind: 'free_text',
     handling: 'erase',
     // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through crove_finance.personal_data_erase_bank_feed_notice.
     machinery: true,
-    reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: kept only until the worker verifies it and at most ten minutes, deleted by an erasure whose value its text mentions, and with the connection and the org",
+    reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: deleted when the worker claims it, and any notice older than ten minutes by the next claim or the nightly sweep; also deleted by an erasure whose value its text mentions, and with the connection and the org",
   },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
@@ -1352,6 +1352,11 @@ export const personalDataErase = defineCommand({
       add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
     }
 
+    // The raw body of a bank feed notice that waits for the worker (#4203): a notice whose text mentions the value is deleted (it is only a hint to pull and is deleted, not redacted, so the short-number guard below does not apply to it: a short number can only delete a hint that is rebuilt by the next notice). Through the owner-only definer: the table has no login role grant.
+    const { rows: hookNotices } = await sql<{ rows: number }>`
+      SELECT crove_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('crove_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
+
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
     // was, cut to the column's limit should the mark be longer than the value, and a tag that mentions it goes (all of
@@ -1571,11 +1576,6 @@ export const personalDataErase = defineCommand({
          WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
          RETURNING c.id`.execute(ctx.trx);
       add('crove_finance.marketplace_column_check.preview', previewRows.length);
-
-      // The raw body of a bank feed notice that waits for the worker (#4203): a notice whose text mentions the value is deleted (it is only a hint to pull, and lives ten minutes at most). Through the owner-only definer: the table has no login role grant.
-      const { rows: hookNotices } = await sql<{ rows: number }>`
-        SELECT crove_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-      add('crove_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and

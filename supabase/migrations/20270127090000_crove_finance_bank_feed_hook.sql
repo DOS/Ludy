@@ -85,15 +85,16 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 $$;
 
 -- Stores one notice for a hook found by bank_feed_hook_lookup and answers 'accepted', 'duplicate' (the request id is already waiting), 'busy' (the hook has twenty notices waiting, or the machine's backlog is full)
--- or 'gone' (the hook is no longer there, stopped, or its org or connection closed in between). The org comes from the hook row. It stores the raw notice and nothing else, and it wakes the worker.
-CREATE OR REPLACE FUNCTION crove_finance.bank_feed_hook_put_notice(p_hook uuid, p_request_id text, p_timestamp text, p_signature text, p_body text)
+-- or 'gone' (the hook is no longer there, stopped, its key was rotated since the lookup, or its org or connection closed in between). The caller passes the hash the lookup accepted: the notice is stored only while that is still the
+-- hook's current key, so a request that passed with a retired key stores nothing. A request id already waiting is acknowledged ('duplicate') before the capacity check. The org comes from the hook row. It stores the raw notice and nothing else, and it wakes the worker.
+CREATE OR REPLACE FUNCTION crove_finance.bank_feed_hook_put_notice(p_hook uuid, p_key_sha256 text, p_request_id text, p_timestamp text, p_signature text, p_body text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
   v_org uuid;
   v_rows integer;
 BEGIN
-  IF p_hook IS NULL OR p_request_id IS NULL OR pg_catalog.char_length(p_request_id) NOT BETWEEN 1 AND 100
+  IF p_hook IS NULL OR p_key_sha256 IS NULL OR p_key_sha256 !~ '^[0-9a-f]{64}$' OR p_request_id IS NULL OR pg_catalog.char_length(p_request_id) NOT BETWEEN 1 AND 100
      OR p_timestamp IS NULL OR pg_catalog.char_length(p_timestamp) NOT BETWEEN 1 AND 40
      OR p_signature IS NULL OR pg_catalog.char_length(p_signature) NOT BETWEEN 1 AND 256
      OR p_body IS NULL OR pg_catalog.octet_length(p_body) NOT BETWEEN 1 AND 16384 THEN
@@ -103,10 +104,14 @@ BEGIN
   FROM crove_finance.bank_feed_hook h
   JOIN crove_kernel.channel_connection c ON c.org_id = h.org_id AND c.id = h.channel_connection_id AND c.status = 'active'
   JOIN crove_kernel.tenant t ON t.org_id = h.org_id AND t.status = 'active' AND crove_kernel.org_app_on(t.org_id, 'finance')
-  WHERE h.id = p_hook AND h.stopped_at IS NULL
+  WHERE h.id = p_hook AND h.key_sha256 = p_key_sha256 AND h.stopped_at IS NULL
   FOR UPDATE OF h;
   IF v_org IS NULL THEN
     RETURN 'gone';
+  END IF;
+  -- A retry of a notice that is already waiting is acknowledged whatever the backlog (the provider stops retrying).
+  IF EXISTS (SELECT 1 FROM crove_finance.bank_feed_webhook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook AND n.request_id = p_request_id) THEN
+    RETURN 'duplicate';
   END IF;
   IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.bank_feed_webhook_notice n WHERE n.org_id = v_org AND n.hook_id = p_hook LIMIT 20) s) >= 20
      OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_finance.bank_feed_webhook_notice LIMIT 10001) s) > 10000 THEN
@@ -263,7 +268,7 @@ END $$;
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION
   crove_finance.bank_feed_hook_lookup(text, text),
-  crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text),
+  crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text, text),
   crove_finance.bank_feed_hook_sweep(),
   crove_finance.bank_feed_hook_claim(integer),
   crove_finance.bank_feed_hook_reject(uuid),
@@ -277,7 +282,7 @@ DECLARE
 BEGIN
   FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\_%' AND rolname <> current_user LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION crove_finance.bank_feed_hook_lookup(text, text), crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text), crove_finance.bank_feed_hook_sweep(), '
+      'REVOKE ALL ON FUNCTION crove_finance.bank_feed_hook_lookup(text, text), crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text, text), crove_finance.bank_feed_hook_sweep(), '
       'crove_finance.bank_feed_hook_claim(integer), crove_finance.bank_feed_hook_reject(uuid), crove_finance.bank_feed_hook_set(uuid, text), crove_finance.bank_feed_hook_status(uuid), '
       'crove_finance.personal_data_erase_bank_feed_notice(text, text) FROM %I',
       r.rolname);
@@ -286,7 +291,7 @@ END $$;
 -- The API's own login: the route's lookup and put, the owner's or admin's set and status, and the owner's erasure.
 GRANT EXECUTE ON FUNCTION
   crove_finance.bank_feed_hook_lookup(text, text),
-  crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text),
+  crove_finance.bank_feed_hook_put_notice(uuid, text, text, text, text, text),
   crove_finance.bank_feed_hook_set(uuid, text),
   crove_finance.bank_feed_hook_status(uuid),
   crove_finance.personal_data_erase_bank_feed_notice(text, text)
