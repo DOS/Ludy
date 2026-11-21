@@ -33,6 +33,8 @@ const ITEMS_PATH = '/orders/items/get';
 // while it is read skips orders): the window itself moves forward, see listOrders.
 const PAGE_SIZE = MARKETPLACE_PLATFORM_LIMITS.lazada.pageSize;
 const ITEMS_BATCH = 50;
+// The most orders of one window that offset paging may skip (Lazada's documented offset limit).
+const MAX_OFFSET = 5000;
 const WINDOW_DAYS = MARKETPLACE_PLATFORM_LIMITS.lazada.windowDays;
 // A resumed read starts this far before the newest order seen, so an order Lazada updated late is caught; the confirm step dedupes on (platform, order number, line) and moves a status forward only.
 // The price: the window never moves past ten minutes before the newest order, so a shop with nothing newer re-reads that newest order and its items on every poll (two calls) until a newer update moves
@@ -118,14 +120,14 @@ export function parseLazadaTime(text: unknown): number | null {
   return Number.isNaN(ms) || !isoDay(m[1]!) ? null : ms;
 }
 
-// The cursor: where the window of updated orders starts, `u:2026-11-02T03:04:05.000Z`. Never an offset: every read is offset 0 of a window that moves forward.
-const CURSOR = /^u:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/;
-function readCursor(since: string | null): number | null {
+// The cursor: where the window of updated orders starts, `u:2026-11-02T03:04:05.000Z`, and, only while a window cannot move (see listOrders), how many of its orders were already read: `u:...:100`.
+const CURSOR = /^u:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?::(\d{1,4}))?$/;
+function readCursor(since: string | null): { start: number; skip: number } | null {
   const m = since === null ? null : CURSOR.exec(since);
   const start = m ? Date.parse(m[1]!) : Number.NaN;
-  return Number.isNaN(start) ? null : start;
+  return m && !Number.isNaN(start) ? { start, skip: m[2] === undefined ? 0 : Number(m[2]) } : null;
 }
-const writeCursor = (start: number): string => `u:${new Date(start).toISOString()}`;
+const writeCursor = (start: number, skip = 0): string => `u:${new Date(start).toISOString()}${skip > 0 ? `:${skip}` : ''}`;
 
 export interface LazadaOptions {
   // Bound to LAZADA_HOSTS by the caller (hostBoundFetch); the adapter uses no other.
@@ -289,15 +291,19 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     },
 
     // The orders updated since the cursor, at most one page of 100 (raw orders: an order whose items are in different states answers as one port order for each state, so a port page may hold more
-    // port orders than that). The window starts at the cursor (never earlier than 30 days back: the capability's window) and is always read from offset 0, ascending by update time, and moves forward:
-    // a full page resumes a second before its newest order, a short page resumes ten minutes before it. An order Lazada updates between two pages moves to the end of the list and is read later, and no
-    // position is ever skipped, because there is no position to skip. Repeats are the confirm step's to dedupe.
+    // port orders than that). The window starts at the cursor (never earlier than 30 days back: the capability's window) and is read ascending by update time. Normally it is read from offset 0 and moves
+    // forward: a full page resumes a second before its newest order, a short page ten minutes before it, so an order Lazada updates between two pages moves to the end of the list and is read later, and
+    // no position is skipped. Only when a full page lies entirely within a second of the window's start (a bulk change) the window cannot move; the same window is then continued by offset until it is
+    // read to its end, or shown as `not_recognized` at Lazada's offset limit of 5000 (never skipped without a trace). Repeats are the confirm step's to dedupe.
     async listOrders(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceOrderPage> {
       if (platform !== 'lazada') throw new MarketplaceProviderError('unreachable');
       const credential = parseLazadaSecret(secret);
       const floor = now().getTime() - WINDOW_DAYS * DAY_MS;
-      const start = Math.max(readCursor(since) ?? floor, floor);
-      const raw = await readOrders(credential, { update_after: lazadaStamp(start), sort_by: 'updated_at', sort_direction: 'ASC', offset: '0', limit: String(PAGE_SIZE) });
+      const cursor = readCursor(since);
+      const start = Math.max(cursor?.start ?? floor, floor);
+      // A start the floor moved is a different window: the orders already read there are not known.
+      const skip = cursor && cursor.start >= floor && cursor.skip < MAX_OFFSET ? cursor.skip : 0;
+      const raw = await readOrders(credential, { update_after: lazadaStamp(start), sort_by: 'updated_at', sort_direction: 'ASC', offset: String(skip), limit: String(PAGE_SIZE) });
       // Nothing new: the cursor stays.
       if (raw.length === 0) return { orders: [], nextCursor: since };
       const items = await readItems(credential, raw);
@@ -315,17 +321,22 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
         .map((o) => ({ ...o, lines: [...o.lines].sort((a, b) => (a.lineKey < b.lineKey ? -1 : a.lineKey > b.lineKey ? 1 : 0)) }))
         .sort((a, b) => (a.orderNo === b.orderNo ? (a.stage < b.stage ? -1 : 1) : a.orderNo < b.orderNo ? -1 : 1));
       const newest = Math.max(...raw.map((o) => o.updatedAt));
-      let next: number;
+      let next: string;
       if (raw.length >= PAGE_SIZE) {
-        // A full page: more orders wait. The window cannot move when a hundred orders were all updated within a second of its start (a bulk change): that is shown as `not_recognized`, never read
-        // again in a loop and never skipped without a trace.
-        next = newest - TIE_MS;
-        if (next <= start) throw notRecognized();
+        // A full page: more orders wait.
+        const moved = newest - TIE_MS;
+        if (moved > start) {
+          next = writeCursor(moved);
+        } else {
+          // Every order of the page lies within a second of the window's start: continue the same window by offset, and stop (visibly) at the offset limit.
+          if (skip + raw.length >= MAX_OFFSET) throw notRecognized();
+          next = writeCursor(start, skip + raw.length);
+        }
       } else {
         // The window is read to its end: the next one starts a little before the newest order, and never earlier than this one.
-        next = Math.max(start, newest - OVERLAP_MS);
+        next = writeCursor(Math.max(start, newest - OVERLAP_MS));
       }
-      return { orders, nextCursor: writeCursor(next) };
+      return { orders, nextCursor: next };
     },
 
     // Not in this slice: the order's money lines come with the finance reads (S5); a poll never asks for them today.

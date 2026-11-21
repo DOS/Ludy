@@ -190,14 +190,42 @@ describe('listOrders', () => {
     expect(names.size).toBe(150);
   });
 
-  it('shows a window that cannot move (a hundred orders updated in the same second) as not_recognized, never loops on it and never skips it silently', async () => {
+  it('drains a window that cannot move (a hundred orders updated within a second of its start) by offset, and reads every order', async () => {
     const same = Array.from({ length: 120 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
-    const { provider } = setup(same);
-    expect(await kind(() => provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z'))).toBe('not_recognized');
-    // Spread over time, the same 120 orders are read.
-    const spread = same.map((o, i) => ({ ...o, updatedAt: `2026-11-09T10:${String(i % 60).padStart(2, '0')}:00+07:00` }));
-    const ok = await setup(spread).provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z');
-    expect(ok.orders.length).toBeGreaterThan(0);
+    const { provider, fake } = setup(same);
+    const first = await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z');
+    expect(first.orders).toHaveLength(100);
+    // The window cannot move, so the same window is continued by offset.
+    expect(first.nextCursor).toBe('u:2026-11-09T03:00:00.000Z:100');
+    const second = await provider.listOrders(SECRET, 'lazada', first.nextCursor);
+    expect(second.orders).toHaveLength(20);
+    expect(fake.calls.filter((c) => c.path === '/orders/get').map((c) => c.params.offset)).toEqual(['0', '100']);
+    expect(new Set([...first.orders, ...second.orders].map((o) => o.orderNo)).size).toBe(120);
+    // Read to its end: the cursor leaves the offset and moves on.
+    expect(second.nextCursor).toBe('u:2026-11-09T03:00:00.000Z');
+  });
+
+  it('reads the last order after a full page that spans two adjacent seconds (50 at one second, 50 at the next, one after)', async () => {
+    const at = (second: number, i: number) => fakeOrder({ id: String(1300000000000000 + i), number: `9112${String(i).padStart(6, '0')}`, updatedAt: `2026-11-09T10:00:0${second}+07:00` }, [{ id: String(1400000000000000 + i) }]);
+    const orders = [...Array.from({ length: 50 }, (_, i) => at(0, i)), ...Array.from({ length: 50 }, (_, i) => at(1, 50 + i)), at(2, 100)];
+    const { provider } = setup(orders);
+    const seen = new Set<string>();
+    let cursor: string | null = 'u:2026-11-09T03:00:00.000Z';
+    for (let poll = 0; poll < 3 && !seen.has('9112000100'); poll += 1) {
+      const page: Awaited<ReturnType<typeof provider.listOrders>> = await provider.listOrders(SECRET, 'lazada', cursor);
+      for (const o of page.orders) seen.add(o.orderNo);
+      cursor = page.nextCursor;
+    }
+    expect(seen.has('9112000100')).toBe(true);
+    expect(seen.size).toBe(101);
+  });
+
+  it('shows a window of more than 5000 orders within one second as not_recognized, at Lazada\'s offset limit, never skipping them silently', async () => {
+    const many = Array.from({ length: 5100 }, (_, i) => fakeOrder({ id: String(5000000000000000 + i), number: `9103${String(i).padStart(6, '0')}`, updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: String(6000000000000000 + i) }]));
+    const { provider } = setup(many);
+    expect(await kind(() => provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4900'))).toBe('not_recognized');
+    // Below the limit it still reads.
+    expect((await provider.listOrders(SECRET, 'lazada', 'u:2026-11-09T03:00:00.000Z:4800')).nextCursor).toBe('u:2026-11-09T03:00:00.000Z:4900');
   });
 
   it('answers a full page of orders whose items are in two states as more port orders than a page, and the poll job takes it (the limit is on orders)', async () => {
@@ -346,6 +374,8 @@ describe('ids and days a hostile answer could bend', () => {
     const name = '😀'.repeat(400);
     const page = await setup([fakeOrder({ id: '1', number: '9110000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', name }])]).provider.listOrders(SECRET, 'lazada', null);
     expect(Array.from(page.orders[0]!.lines[0]!.itemName)).toHaveLength(300);
+    // The same page passes the port's own check, which counts characters too (600 UTF-16 units).
+    expect(parseMarketplaceOrderPage(page)).not.toBeNull();
     expect(page.orders[0]!.lines[0]!.itemName).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
   });
 });
@@ -468,14 +498,26 @@ describe('what the adapter is allowed to reach', () => {
   const source = readFileSync(new URL('../src/marketplace-lazada.ts', import.meta.url), 'utf8');
   const code = source.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
 
-  it('names exactly two API paths, both read paths', () => {
-    const paths = [...code.matchAll(/'(\/[a-z]+(?:\/[a-z]+)*)'/g)].map((m) => m[1]);
-    expect([...new Set(paths)].sort()).toEqual(['/orders/get', '/orders/items/get']);
+  it('names exactly two API paths, both read paths, as the only values the one request function is ever given', () => {
+    const constants = [...code.matchAll(/const (\w+_PATH) = '([^']+)'/g)].map((m) => [m[1], m[2]]);
+    expect(constants).toEqual([['ORDERS_PATH', '/orders/get'], ['ITEMS_PATH', '/orders/items/get']]);
+    // No other string in the file looks like an API path.
+    const slashed = [...code.matchAll(/'(\/[A-Za-z0-9_/.-]*)'/g)].map((m) => m[1]);
+    expect([...new Set(slashed)].sort()).toEqual(['/orders/get', '/orders/items/get']);
+    // Every call of the one request function names one of the two constants, never a literal or a computed path.
+    const calls = [...code.matchAll(/\bcall\(credential, ([^,)]*)/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c === 'ORDERS_PATH' || c === 'ITEMS_PATH')).toBe(true);
+    expect([...code.matchAll(/\b(?:readOrders|readItems)\(/g)]).not.toHaveLength(0);
   });
 
-  it('uses GET only, the fetch it is given and no network module', () => {
-    expect(code).not.toMatch(/method:\s*'(POST|PUT|PATCH|DELETE)'/i);
-    expect(code).not.toMatch(/\bglobalThis\.fetch\b|[^.\w]fetch\(|node:https?|undici/);
+  it('has exactly one request site, an explicit GET to the one host through the fetch it is given', () => {
+    const sites = [...code.matchAll(/options\.fetch\(([^;]*)\);/g)].map((m) => m[1] ?? '');
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toContain("method: 'GET'");
+    expect(sites[0]).toContain('https://${LAZADA_API_HOST}/rest${path}?');
+    expect(code).not.toMatch(/(?<![\w])method:\s*'(?!GET')/i);
+    expect(code).not.toMatch(/\bglobalThis\.fetch\b|[^.\w]fetch\(|node:https?|undici|XMLHttpRequest|WebSocket/);
     expect(code).not.toMatch(/\/(product|order\/(cancel|reverse|status)|reverse|fulfillment|finance)\//);
     expect(LAZADA_HOSTS).toEqual(['api.lazada.vn']);
   });

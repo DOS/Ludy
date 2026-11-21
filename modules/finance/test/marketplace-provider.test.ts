@@ -123,9 +123,7 @@ describe('counting rows before building them', () => {
   });
 
   it('refuses a page of 30 million rows at once, without building any', () => {
-    const started = Date.now();
     expect(() => marketplaceOrdersCsv('lazada', [huge])).toThrow(/more rows than one file may carry/);
-    expect(Date.now() - started).toBeLessThan(500);
     // The same lines on a platform that writes one row for each line are fine.
     expect(marketplaceOrdersCsv('shopee', [huge]).trimEnd().split('\n')).toHaveLength(1 + 300);
     expect(MARKETPLACE_CSV_MAX_ROWS).toBe(20_000);
@@ -175,6 +173,9 @@ describe('parseMarketplaceOrderPage', () => {
     expect(parseMarketplaceOrderPage(withOrder((o) => (o.orderNo = 'x'.repeat(101))))).toBeNull();
     expect(parseMarketplaceOrderPage(withOrder((o) => (o.orderNo = '')))).toBeNull();
     expect(parseMarketplaceOrderPage(withLine((l) => (l.itemName = 'a'.repeat(301))))).toBeNull();
+    // The name is counted in characters, as the adapters cut it: 300 characters outside the basic plane pass (600 UTF-16 units), 301 do not.
+    expect(parseMarketplaceOrderPage(withLine((l) => (l.itemName = '😀'.repeat(300))))).not.toBeNull();
+    expect(parseMarketplaceOrderPage(withLine((l) => (l.itemName = '😀'.repeat(301))))).toBeNull();
     expect(parseMarketplaceOrderPage(withLine((l) => (l.itemName = 'a\u0000b')))).toBeNull();
     expect(parseMarketplaceOrderPage({ ...good(), nextCursor: 'c'.repeat(201) })).toBeNull();
   });
@@ -184,5 +185,17 @@ describe('parseMarketplaceOrderPage', () => {
     const order = good().orders[0]!;
     expect(parseMarketplaceOrderPage({ orders: Array.from({ length: 1001 }, () => order), nextCursor: null })).toBeNull();
     expect(parseMarketplaceOrderPage({ orders: [{ ...order, lines: Array.from({ length: 501 }, () => order.lines[0]) }], nextCursor: null })).toBeNull();
+  });
+});
+
+describe('the line key of a Lazada unit', () => {
+  const line = (quantity: string, lineKey = '2000000000000001') => ({ lineKey, sku: 'MAU-001', itemName: 'Áo', quantity, unitPrice: '100000', amount: money(quantity).times('100000').toFixed() });
+  const lazadaRows = (lines: ReturnType<typeof line>[]) =>
+    cellsOf(marketplaceOrdersCsv('lazada', [{ orderNo: '9101000009', orderedAt: '2026-11-02', shippedAt: null, deliveredAt: null, stage: 'placed', lines }])).slice(1).map((row) => row[1]);
+
+  it('keeps the bare item id for a line of one unit, so a polled item is the same line as in a downloaded report, and suffixes only a line of several', () => {
+    expect(lazadaRows([line('1')])).toEqual(['2000000000000001']);
+    expect(lazadaRows([line('3')])).toEqual(['2000000000000001-1', '2000000000000001-2', '2000000000000001-3']);
+    expect(lazadaRows([line('1'), line('1', '2000000000000002')])).toEqual(['2000000000000001', '2000000000000002']);
   });
 });

@@ -145,8 +145,8 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     return { state: 'not_recognized', orders: 0, staged: false };
   }
   const bytes = new TextEncoder().encode(csv);
-  const lineCount = csv.split('\n').length - 2;
-  if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes || lineCount > EXTRACT_LIMITS.maxOrderLines) {
+  // The rows were counted exactly above (the connection row and the head row are not order lines), so only the size is checked here.
+  if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes) {
     await record({ state: 'too_large' });
     return { state: 'too_large', orders: page.orders.length, staged: false };
   }

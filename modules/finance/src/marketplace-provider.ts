@@ -277,8 +277,9 @@ const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
   lazada: {
     head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice', 'deliveredTime'],
     rowPerUnit: true,
-    // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units).
-    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount), o.deliveredAt ?? ''],
+    // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units). A line of ONE unit keeps its item id as it is, so a polled item and the same item in a
+    // report a seller downloads (which carries the bare `orderItemId`) have the same line key and are one line; only a line of several units gets `-<unit>` after its key.
+    row: (o, l, unit, text) => [o.orderNo, l.quantity === '1' ? l.lineKey : `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount), o.deliveredAt ?? ''],
   },
 };
 
@@ -393,7 +394,8 @@ export const zMarketplaceOrderPage = z.strictObject({
             z.strictObject({
               lineKey: zIdent(120),
               sku: zIdent(100).nullable(),
-              itemName: z.string().max(300).refine(noControl),
+              // Counted in characters, as the adapters cut it: 300 characters outside the basic plane are 600 UTF-16 units. The unit bound only limits the work of counting.
+              itemName: z.string().max(1200).refine(noControl).refine((value) => Array.from(value).length <= 300),
               quantity: zQuantity,
               unitPrice: zAmount,
               amount: zAmount,

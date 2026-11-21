@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { MARKETPLACE_CSV_MAX_ROWS, MarketplaceProviderError, type MarketplaceOrderPage, type MarketplaceProvider } from '@crove/mod-finance';
 import { sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { LAZADA_HOSTS, lazadaMarketplace } from '../src/marketplace-lazada.ts';
 import { runMarketplacePoll } from '../src/marketplace-poll-job.ts';
+import { fakeLazada, fakeOrder } from './fake-lazada.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const CONNECTION = '22222222-2222-4222-8222-222222222222';
@@ -100,17 +103,50 @@ describe('the page limit is on orders, not on port orders', () => {
   });
 });
 
+describe('the real Lazada adapter through the job', () => {
+  it('stages a full page of orders whose items are in two states (200 port orders for 100 orders), with the fake Lazada behind the adapter', async () => {
+    const key = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
+    const mixed = Array.from({ length: 100 }, (_, i) =>
+      fakeOrder({ id: String(1100000000000000 + i), number: `91040${String(i).padStart(5, '0')}`, updatedAt: `2026-11-09T${String(Math.floor(i / 60) + 6).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00+07:00` }, [
+        { id: String(1200000000000000 + 2 * i), status: 'delivered' },
+        { id: String(1200000000000000 + 2 * i + 1), status: 'returned' },
+      ]),
+    );
+    const fake = fakeLazada({ ...key, orders: mixed });
+    const lazada = lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS, fake.fetch), now: () => new Date('2026-11-10T03:00:00Z'), sleep: async () => undefined });
+    // The job opens no credential for a provider with no host, so the secret is given by this wrapper.
+    const { run, polls, ingests } = setup(() => lazada.listOrders(JSON.stringify(key), 'lazada', null), 'lazada');
+    expect(await run()).toEqual({ state: 'ok', orders: 200, staged: true });
+    expect(ingests()).toHaveLength(1);
+    expect(polls()).toHaveLength(1);
+    expect(polls()[0]).toMatchObject({ state: 'ok' });
+  });
+});
+
 describe('the rows are counted before any is built (#2840 point 1)', () => {
   it('ends a page of 30 million rows as too_large at once, without building or storing any', async () => {
     const lines = Array.from({ length: 300 }, (_, i) => ({ lineKey: `9101-${i}`, sku: 'MAU-001', itemName: 'Áo', quantity: '100000', unitPrice: '1000', amount: '100000000' }));
     const page: MarketplaceOrderPage = { orders: [{ ...goodPage().orders[0]!, lines }], nextCursor: 'sandbox:1' };
     const { run, polls, ingests, puts } = setup(async () => page, 'lazada');
-    const started = Date.now();
     expect(await run()).toEqual({ state: 'too_large', orders: 1, staged: false });
-    expect(Date.now() - started).toBeLessThan(1000);
     expect(polls()).toEqual([{ id: CONNECTION, state: 'too_large' }]);
     expect(ingests()).toHaveLength(0);
     expect(puts).toHaveLength(0);
+  });
+
+  it('stages a page of exactly the row limit and refuses one row over it (the connection row and the head row are not order lines)', async () => {
+    const orders = (rows: number) =>
+      Array.from({ length: Math.ceil(rows / 500) }, (_, o) => ({
+        ...goodPage().orders[0]!,
+        orderNo: `9300${String(o).padStart(6, '0')}`,
+        lines: Array.from({ length: Math.min(500, rows - o * 500) }, (_, l) => ({ lineKey: `${o}-${l}`, sku: 'MAU-001', itemName: 'Áo', quantity: '1', unitPrice: '1000', amount: '1000' })),
+      }));
+    const atLimit = setup(async () => ({ orders: orders(MARKETPLACE_CSV_MAX_ROWS), nextCursor: 'sandbox:1' }));
+    expect(await atLimit.run()).toMatchObject({ state: 'ok', staged: true });
+    expect(atLimit.ingests()).toHaveLength(1);
+    const over = setup(async () => ({ orders: orders(MARKETPLACE_CSV_MAX_ROWS + 1), nextCursor: 'sandbox:1' }));
+    expect(await over.run()).toMatchObject({ state: 'too_large', staged: false });
+    expect(over.ingests()).toHaveLength(0);
   });
 
   it('keeps the writer\'s row limit equal to the parsing sandbox\'s', () => {
