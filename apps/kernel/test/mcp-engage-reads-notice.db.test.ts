@@ -10,9 +10,6 @@ import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts
 
 const suite = ADMIN ? describe : describe.skip;
 const KIND = 'kernel.mcp_engage_reads';
-// A grant made before the cutoff (2026-11-20 16:00 UTC) lives at most 90 days, so none can be live after 2027-02-18: from then on the notice has nobody left to tell and these cases have nothing to set up.
-const SETUP_POSSIBLE = Date.now() < Date.parse('2027-02-16T00:00:00Z');
-const before = it.skipIf(!SETUP_POSSIBLE);
 
 suite('the notice of the Engage reads (#4069)', () => {
   let h: Harness;
@@ -29,22 +26,23 @@ suite('the notice of the Engage reads (#4069)', () => {
     await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
     return id;
   };
-  // A grant of `userId`, made at `madeAt` (a date literal), kind company or member.
-  const grant = async (userId: string, madeAt: string, kind: 'company' | 'member' = 'company', scopes: string[] = ['ludy.read']) => {
+  // A grant of `userId`, kind company or member. `due` is what the column holds: the database's default is true for a grant made when the migration ran or in the hour after (every grant of this test), and
+  // false for one made later, which `due: false` stands for.
+  const grant = async (userId: string, due: boolean | 'default', kind: 'company' | 'member' = 'company', scopes: string[] = ['ludy.read']) => {
     const id = randomUUID();
     await h.q(
       `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
-       VALUES ($1, $2, $3, $4, $7, 'old-app.example.org', $5::text[], $6, $8::timestamptz, $8::timestamptz + interval '89 days', $3, $9, $10)`,
-      [h.orgId, id, userId, `client-${id}`, scopes, `oauth-${id}`, `Old app ${id.slice(0, 4)}`, madeAt, kind, kind === 'member' ? userId : null],
+       VALUES ($1, $2, $3, $4, $7, 'old-app.example.org', $5::text[], $6, now(), now() + interval '89 days', $3, $8, $9)`,
+      [h.orgId, id, userId, `client-${id}`, scopes, `oauth-${id}`, `Old app ${id.slice(0, 4)}`, kind, kind === 'member' ? userId : null],
     );
+    if (due !== 'default') await h.q('UPDATE crove_kernel.agent_grant SET engage_reads_due = $3 WHERE org_id = $1 AND id = $2', [h.orgId, id, due]);
     return id;
   };
-  const OLD = '2026-11-18T09:00:00Z';
-  const NEW = '2026-11-20T17:00:00Z';
+  const OLD = 'default' as const;
   const notices = async (userId: string) => (await h.q<{ detail: Record<string, string>; subject_type: string | null; dedupe_key: string }>(`SELECT detail, subject_type, dedupe_key FROM crove_kernel.notification WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [h.orgId, userId, KIND])).rows;
   const stamp = async (grantId: string) => (await h.q<{ at: Date | null }>('SELECT engage_reads_told_at AS at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, grantId])).rows[0]?.at ?? null;
 
-  before('tells the person of a grant made before the cutoff, once, and leaves the grant exactly as it was', async () => {
+  it('tells the person of a due grant (made before the consent screen named the reads), once, and leaves the grant exactly as it was', async () => {
     const owner = await person('owner');
     const g = await grant(owner, OLD);
     const beforeRow = (await h.q('SELECT scopes, max_risk, kind, revoked_at, expires_at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, g])).rows[0];
@@ -64,7 +62,7 @@ suite('the notice of the Engage reads (#4069)', () => {
     expect(await notices(owner)).toHaveLength(1);
   });
 
-  before('shows in the bell with no client name in it, and a person who muted the kind is told anyway', async () => {
+  it('shows in the bell with no client name in it, and a person who muted the kind is told anyway', async () => {
     const admin = await person('admin');
     await h.q('INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)', [h.orgId, admin, KIND]);
     const g = await grant(admin, OLD);
@@ -78,7 +76,7 @@ suite('the notice of the Engage reads (#4069)', () => {
     expect(JSON.stringify(item)).not.toContain('old-app.example.org');
   });
 
-  before('one notice for a person with several grants; a member grant alone says so; both says both', async () => {
+  it('one notice for a person with several grants; a member grant alone says so; both says both', async () => {
     const both = await person('admin');
     const a = await grant(both, OLD);
     const m = await grant(both, OLD, 'member', ['ludy.read']);
@@ -90,7 +88,7 @@ suite('the notice of the Engage reads (#4069)', () => {
     for (const id of [a, m, b]) expect(await stamp(id)).not.toBeNull();
   });
 
-  before('does not tell a revoked grant, a person who left (their grant ends with them), or a grant without `ludy.read`', async () => {
+  it('does not tell a revoked grant, a person who left (their grant ends with them), or a grant without `ludy.read`', async () => {
     const revoked = await person('owner');
     const r = await grant(revoked, OLD);
     await h.q('UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2', [h.orgId, r]);
@@ -109,12 +107,17 @@ suite('the notice of the Engage reads (#4069)', () => {
     }
   });
 
-  it('does not tell the person of a grant made after the cutoff: the consent screen named the reads', async () => {
+  it('a grant made now is due, the database default of the rollout window; one made after it is not, and its person is not told: the consent screen named the reads', async () => {
     const owner = await person('owner');
-    const g = await grant(owner, NEW);
+    const fresh = await grant(owner, 'default');
+    expect((await h.q<{ due: boolean }>('SELECT engage_reads_due AS due FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, fresh])).rows[0]?.due).toBe(true);
+    const g = await grant(await person('owner'), false);
+    const later = (await h.q<{ user_id: string }>('SELECT user_id FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2', [h.orgId, g])).rows[0]?.user_id as string;
     await pass();
-    expect(await notices(owner)).toEqual([]);
+    expect(await notices(later)).toEqual([]);
     expect(await stamp(g)).toBeNull();
+    // The one made inside the window is told.
+    expect(await notices(owner)).toHaveLength(1);
   });
 
   it('is a command only the system runs: a person, even an owner, cannot', async () => {
