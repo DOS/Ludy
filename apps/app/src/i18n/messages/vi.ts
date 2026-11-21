@@ -5792,7 +5792,7 @@ export const vi = {
       rotatedAt: 'Đổi lúc {when}',
       lastSeen: 'Thông báo gần nhất từ sàn: {when}',
       noNotice: 'Thông báo gần nhất từ sàn: chưa có',
-      rejected: 'Thông báo bị từ chối trong giờ này: {count}',
+      rejected: '{count, plural, other {Thông báo bị từ chối trong giờ này: #}}',
       stopped:
         'Địa chỉ này đã ngừng nhận thông báo vì có quá nhiều thông báo bị từ chối (10 trong một giờ). Hãy đổi địa chỉ mới rồi dán lại vào ứng dụng trên sàn.',
       shownOnce: 'Hãy sao chép địa chỉ này ngay. Địa chỉ chỉ hiện một lần; sau khi đóng, chỉ có thể tạo địa chỉ mới.',

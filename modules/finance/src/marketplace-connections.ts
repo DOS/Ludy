@@ -740,6 +740,14 @@ export async function marketplacePollDue(workerDb: Db, after: { orgId: string; i
 const marketplaceHookKey = () => randomBytes(16).toString('base64url');
 const marketplaceHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
 
+// What the definer's refusal of a connection that is no longer there or no longer active is to the caller: CHANNEL_NOT_ACTIVE, as when the command's own check sees it. Anything else is not this refusal.
+export function hookSetFailure(e: unknown): DomainError | null {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  return err !== null && typeof err === 'object' && err.code === '22023' && typeof err.message === 'string' && err.message.includes('MARKETPLACE_HOOK_NOT_FOUND')
+    ? new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối với sàn không còn hoạt động; hãy kết nối lại')
+    : null;
+}
+
 export const marketplaceConnectionPushHookSet = defineCommand({
   name: 'finance.marketplace_connection.push_hook_set',
   input: zMarketplacePushHookSet,
@@ -766,7 +774,10 @@ export const marketplaceConnectionPushHookSet = defineCommand({
     if (!pushAdapter) throw new DomainError('MARKETPLACE_PUSH_UNSUPPORTED', 422, 'Sàn này chưa nhận thông báo đẩy');
     if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối với sàn không còn hoạt động; hãy kết nối lại');
     const key = marketplaceHookKey();
-    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.marketplace_hook_set(${input.id}::uuid, ${marketplaceHookKeyHash(key)}) AS made`.execute(ctx.trx);
+    // A channel connection revoked between the check above and the definer's own check is the same refusal, not a generic error.
+    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.marketplace_hook_set(${input.id}::uuid, ${marketplaceHookKeyHash(key)}) AS made`.execute(ctx.trx).catch((e: unknown) => {
+      throw hookSetFailure(e) ?? e;
+    });
     const created = rows[0]?.made === true;
     ctx.audit({ created });
     return { adapter: pushAdapter, key, created };
@@ -778,6 +789,9 @@ export const marketplaceConnectionPushHook = defineQuery({
   input: zMarketplacePushHookSet,
   access: MANAGERS,
   handler: async (ctx, input): Promise<MarketplacePushHookStatus> => {
+    // A connection that is not this org's answers as the command does (404), whether it has no hook or does not exist, so an id of another org learns nothing from either.
+    const known = await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    if (!known) throw notFound();
     const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
       SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.marketplace_hook_status(${input.id}::uuid)`.execute(ctx.trx);
     const row = rows[0];

@@ -36,7 +36,7 @@ const esc = (text: string): string => text.replace(/&/g, '&amp;').replace(/'/g, 
 const at = '2026-11-03T00:00:00.000Z';
 const entity = (id: string, name: string, isDefault: boolean): LegalEntity => ({ id, name, kind: 'company', taxCode: '0100109100', parentId: null, isDefault, createdAt: at, updatedAt: at });
 const offered: MarketplaceProviders = {
-  adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['lazada', 'shopee', 'tiktok_shop'] }],
+  adapters: [{ id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['lazada', 'shopee', 'tiktok_shop'] }],
   platforms: [
     { platform: 'shopee', adapter: true, adapters: ['sandbox'] },
     { platform: 'tiktok_shop', adapter: true, adapters: ['sandbox'] },
@@ -47,7 +47,7 @@ const offered: MarketplaceProviders = {
 const none: MarketplaceProviders = { adapters: [], platforms: offered.platforms.map((p) => ({ platform: p.platform, adapter: false, adapters: [] })) };
 // One platform with an adapter and two without.
 const partial: MarketplaceProviders = {
-  adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['shopee'] }],
+  adapters: [{ id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['shopee'] }],
   platforms: [
     { platform: 'shopee', adapter: true, adapters: ['sandbox'] },
     { platform: 'tiktok_shop', adapter: false, adapters: [] },
@@ -179,7 +179,7 @@ describe('MarketplaceConnectionsCard', () => {
   });
 
   it('says a platform can be connected only where a real adapter serves it (ST-4)', () => {
-    const real: MarketplaceProviders = { ...partial, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] };
+    const real: MarketplaceProviders = { ...partial, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] };
     const html = card('owner', { providers: real, connections: [] });
     expect(html).toContain(`>${en.marketplaceConnections.adapterOn}<`);
     expect(html).not.toContain(`>${en.marketplaceConnections.adapterTest}<`);
@@ -187,7 +187,7 @@ describe('MarketplaceConnectionsCard', () => {
   });
 
   it('offers no pull button for an adapter that is not the offline one: the worker polls it', () => {
-    const real: MarketplaceProviders = { ...offered, adapters: [{ id: 'sandbox', offline: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] };
+    const real: MarketplaceProviders = { ...offered, adapters: [{ id: 'sandbox', offline: false, push: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] };
     expect(card('owner', { providers: real })).not.toContain(`>${en.marketplaceConnections.pollNow}<`);
   });
 
@@ -195,18 +195,32 @@ describe('MarketplaceConnectionsCard', () => {
     const several = card('owner', { entities: [entity('e1', 'Công ty TNHH Mẫu', true), entity('e2', 'Chi nhánh Hà Nội', false)] });
     expect(several).toContain(`aria-label="${en.marketplaceConnections.entity}"`);
     expect(several).toContain('Chi nhánh Hà Nội');
-    const real = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] }, connections: [] });
+    const real = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] }, connections: [] });
     // The fields are named in words, not by the adapter's raw field name; a name with no words of its own is shown as it is.
     expect(real).toMatch(/type="password"[^>]*aria-label="Password"|aria-label="Password"[^>]*type="password"/);
     expect(real).toMatch(/type="text"[^>]*aria-label="Username"|aria-label="Username"[^>]*type="text"/);
-    const odd = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['zzField'], platforms: ['shopee'] }] }, connections: [] });
+    const odd = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['zzField'], platforms: ['shopee'] }] }, connections: [] });
     expect(odd).toContain('aria-label="zzField"');
     expect(real).toContain(en.marketplaceConnections.fieldsNote);
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
   });
 
+  it('draws the push address card only for an owner or admin, a live connection and an adapter this deployment can give an address for (#4348)', () => {
+    const adapter = (push: boolean): MarketplaceProviders => ({ adapters: [{ id: 'shopee', offline: false, push, connectFields: ['partnerId', 'partnerKey'], platforms: ['shopee'] }], platforms: [{ platform: 'shopee', adapter: true, adapters: ['shopee'] }] });
+    const mine = (over: Partial<MarketplaceConnection> = {}) => connection({ provider: 'marketplace_shopee', platform: 'shopee', displayName: 'shopee (shopee)', ...over });
+    const title = esc(en.marketplaceConnections.pushHook.title);
+    expect(card('owner', { providers: adapter(true), connections: [mine()] })).toContain(title);
+    expect(card('admin', { providers: adapter(true), connections: [mine()] })).toContain(title);
+    // The deployment cannot give an address (no public URL, no broker, an adapter that takes no push): no card, so no button that the command would refuse.
+    expect(card('owner', { providers: adapter(false), connections: [mine()] })).not.toContain(title);
+    // A member who cannot manage, a connection that is no longer live and an adapter the deployment does not offer.
+    expect(card('member', { providers: adapter(true), connections: [mine()] })).not.toContain(title);
+    expect(card('owner', { providers: adapter(true), connections: [mine({ status: 'revoked' })] })).not.toContain(title);
+    expect(card('owner', { providers: { adapters: [], platforms: adapter(true).platforms }, connections: [mine()] })).not.toContain(title);
+  });
+
   it('tells a Lazada seller who has not authorized the app apart from one whose key was refused, and shows the App Key as text and the App Secret hidden', () => {
-    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, push: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
     const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
     const notYet = card('owner', { providers: lazada, connections: [mine({ lastTestState: 'api_not_enabled', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
     expect(notYet).toContain(esc(en.marketplaceConnections.testStatesLazada.api_not_enabled));
@@ -231,7 +245,7 @@ describe('MarketplaceConnectionsCard', () => {
   });
 
   it('offers Authorize on a live Lazada connection to an owner or admin, says where the authorization stands and until when, and offers it to no one else (#4238)', () => {
-    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
+    const lazada: MarketplaceProviders = { adapters: [{ id: 'lazada', offline: false, push: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] }], platforms: [{ platform: 'lazada', adapter: true, adapters: ['lazada'] }] };
     const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_lazada', platform: 'lazada', displayName: 'lazada (lazada)', ...over });
     const fresh = card('owner', { providers: lazada, connections: [mine({})] });
     expect(fresh).toContain(`>${en.marketplaceConnections.authorize}<`);
@@ -258,7 +272,7 @@ describe('MarketplaceConnectionsCard', () => {
   });
 
   it('words TikTok Shop on its own: not authorized yet, refused, the shop failure, and the Service ID as plain text (#4269)', () => {
-    const tiktok: MarketplaceProviders = { adapters: [{ id: 'tiktok_shop', offline: false, connectFields: ['appKey', 'appSecret', 'serviceId'], platforms: ['tiktok_shop'] }], platforms: [{ platform: 'tiktok_shop', adapter: true, adapters: ['tiktok_shop'] }] };
+    const tiktok: MarketplaceProviders = { adapters: [{ id: 'tiktok_shop', offline: false, push: false, connectFields: ['appKey', 'appSecret', 'serviceId'], platforms: ['tiktok_shop'] }], platforms: [{ platform: 'tiktok_shop', adapter: true, adapters: ['tiktok_shop'] }] };
     const mine = (over: Partial<MarketplaceConnection>) => connection({ provider: 'marketplace_tiktok_shop', platform: 'tiktok_shop', displayName: 'tiktok_shop (tiktok_shop)', ...over });
     const notYet = card('owner', { providers: tiktok, connections: [mine({ lastTestState: 'api_not_enabled', lastTestedAt: at, lastPolledAt: at, lastPollState: 'credentials' })] });
     expect(notYet).toContain(esc(en.marketplaceConnections.testStatesTiktok.api_not_enabled));
@@ -350,7 +364,7 @@ describe('the re-authorize notice (#4240 S3b)', () => {
     expect(reauthorizeNoticeKey('ended', true)).toBe('reauthorizeEnded');
     expect(reauthorizeNoticeKey('soon', false)).toBe('reauthorizeReconnect');
     expect(reauthorizeNoticeKey('ended', false)).toBe('reauthorizeReconnect');
-    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, push: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
     // The sweep marked it expired (the platform refused the refresh token): no Authorize button, so the notice says to connect again.
     const expired = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() - 2 * 86_400_000).toISOString(), { status: 'expired' })] });
     expect(expired).toContain(esc('cannot be authorized again'));
@@ -373,7 +387,7 @@ describe('the re-authorize notice (#4240 S3b)', () => {
   });
 
   it('shows the notice on the card in both languages, and only when there is one', () => {
-    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
+    const lazada = { providers: { adapters: [{ id: 'lazada', offline: false, push: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada' as const] }], platforms: [{ platform: 'lazada' as const, adapter: true, adapters: ['lazada'] }] } };
     const soon = card('owner', { ...lazada, connections: [authorized(new Date(Date.now() + 5 * 86_400_000).toISOString())] });
     expect(soon).toContain('data-testid="reauthorize-notice"');
     expect(soon).toContain(esc('The authorization given to the marketplace ends on'));

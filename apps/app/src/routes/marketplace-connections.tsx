@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { MARKETPLACE_PUSH_ADAPTERS, type LegalEntity, type MarketplaceAdapterInfo, type MarketplaceConnection, type MarketplacePlatformInfo } from '@ludy/kernel-contract';
+import type { LegalEntity, MarketplaceAdapterInfo, MarketplaceConnection, MarketplacePlatformInfo } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
@@ -151,8 +151,8 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           )}
         </div>
       )}
-      {/* The push address (#4348): only for an owner or admin, a live connection and a platform that pushes. */}
-      {canManage && live && (MARKETPLACE_PUSH_ADAPTERS as readonly string[]).includes(adapterIdOf(connection)) && <MarketplacePushHook connection={connection} />}
+      {/* The push address (#4348): only for an owner or admin, a live connection and an adapter this deployment can give an address for (the providers list says so: it pushes, the public URL is set, a broker runs). */}
+      {canManage && live && adapters.find((a) => a.id === adapterIdOf(connection))?.push === true && <MarketplacePushHook connection={connection} />}
       {watching && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
           {t('testQueued')}

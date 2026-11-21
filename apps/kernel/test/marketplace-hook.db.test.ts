@@ -63,6 +63,7 @@ suite('Marketplace push hook (#4316)', () => {
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;
+  let runtime: Runtime;
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-hook.test', session: randomUUID(), userId: '' };
   const outsider: Account = { subject: randomUUID(), email: 'outsider@marketplace-hook.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@marketplace-hook.test', session: randomUUID(), userId: '' };
@@ -132,7 +133,7 @@ suite('Marketplace push hook (#4316)', () => {
     pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
     workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
@@ -190,7 +191,8 @@ suite('Marketplace push hook (#4316)', () => {
 
     it('lets owners and admins make the address, refuses a member and an outsider, and keeps only the hash of the key', async () => {
       expect((await pushSet(member)).status).toBe(403);
-      expect((await pushSet(outsider)).status).not.toBe(200);
+      // The outsider's own org does not hold this connection: the same 404 an unknown id gets.
+      expect(await pushSet(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
       expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toHaveLength(0);
       const made = await pushSet(owner);
       expect(made.status).toBe(200);
@@ -212,9 +214,12 @@ suite('Marketplace push hook (#4316)', () => {
       for (const secret of [newKey, sha(newKey), address]) expect(JSON.stringify(status.body)).not.toContain(secret);
       expect(status.body).toMatchObject({ exists: true, stopped: false, rejectedCount: 0 });
       expect((await pushStatus(member)).status).toBe(403);
-      // A connection of another org is not found, whoever asks.
-      expect((await pushSet(owner, otherConnectionId)).status).toBeGreaterThanOrEqual(400);
-      expect((await pushStatus(owner, otherConnectionId)).body).toMatchObject({ exists: false });
+      // A connection of another org, or one that does not exist, is not found whichever of the two calls asks: the same 404 and code, so an id of another org learns nothing from either.
+      for (const id of [otherConnectionId, randomUUID()]) {
+        expect(await pushSet(owner, id)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+        expect(await pushStatus(owner, id)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+      }
+      expect(await pushStatus(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
     });
 
     it('replaces the address: the old key stops at once, waiting pushes go, and a hook stopped by refused pushes takes pushes again', async () => {
@@ -238,6 +243,23 @@ suite('Marketplace push hook (#4316)', () => {
       expect(await put(hookOfPush, newHash, sha('with-new-key'))).toBe('accepted');
       expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0 });
       await rows('DELETE FROM crove_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
+    });
+
+    it('refuses an adapter that takes no push, and a call that carries an idempotency key (the key would be replayed from the stored answer)', async () => {
+      // An offline adapter's connection: the command and the status answer, the first one refuses with MARKETPLACE_PUSH_UNSUPPORTED (422) and makes no hook.
+      const channel = randomUUID();
+      const offline = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_sandbox', $3, 'Sàn ngoại tuyến', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_sandbox', 'shopee')", [orgId, offline, channel]);
+      expect(await pushSet(owner, offline)).toMatchObject({ status: 422, body: { code: 'MARKETPLACE_PUSH_UNSUPPORTED' } });
+      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [offline])).toHaveLength(0);
+      expect(await pushStatus(owner, offline)).toMatchObject({ status: 200, body: { exists: false } });
+      // The runtime refuses an idempotency key on this command (its answer holds the key), and makes no hook for it either.
+      const before = await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      await expect(
+        runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: owner.userId, aal: 'aal1' }, orgId, idempotencyKey: randomUUID() }),
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
+      expect(await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toEqual(before);
     });
 
     it('refuses a connection whose channel connection is not active, and a connection that does not exist', async () => {

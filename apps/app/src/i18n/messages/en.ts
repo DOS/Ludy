@@ -5794,7 +5794,7 @@ export const en = {
       rotatedAt: 'Replaced {when}',
       lastSeen: 'Last notification from the marketplace: {when}',
       noNotice: 'Last notification from the marketplace: none yet',
-      rejected: 'Notifications refused this hour: {count}',
+      rejected: '{count, plural, one {# notification refused this hour} other {# notifications refused this hour}}',
       stopped:
         'This address stopped taking notifications because too many were refused (10 in an hour). Replace the address and paste the new one into the app on the marketplace.',
       shownOnce: 'Copy this address now. It is shown only once; after you close it, you can only make a new one.',

@@ -222,7 +222,7 @@ suite('marketplace connections (#2519)', () => {
 
   it('offers only the adapters the deployment turned on, lists the platforms with none as files to bring, and refuses a connect to any other', async () => {
     expect((await call('providers', member)).body).toEqual({
-      adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['lazada', 'shopee', 'tiktok_shop'] }],
+      adapters: [{ id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['lazada', 'shopee', 'tiktok_shop'] }],
       platforms: [
         { platform: 'shopee', adapter: true, adapters: ['sandbox'] },
         { platform: 'tiktok_shop', adapter: true, adapters: ['sandbox'] },

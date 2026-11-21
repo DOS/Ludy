@@ -85,7 +85,9 @@ describe('MarketplacePushHook', () => {
     expect(quiet).not.toContain(en.marketplaceConnections.pushHook.stopped);
     const seen = block({ ...fresh, lastSeenAt: '2026-11-21T01:00:00.000Z', rejectedCount: 3 });
     expect(seen).not.toContain(en.marketplaceConnections.pushHook.noNotice);
-    expect(seen).toContain('3');
+    expect(seen).toContain('3 notifications refused this hour');
+    // One is singular in English.
+    expect(block({ ...fresh, rejectedCount: 1 })).toContain('1 notification refused this hour');
     const stopped = block({ ...fresh, rejectedCount: 10, stopped: true });
     expect(stopped).toContain(en.marketplaceConnections.pushHook.stopped);
     expect(stopped).toContain('role="alert"');

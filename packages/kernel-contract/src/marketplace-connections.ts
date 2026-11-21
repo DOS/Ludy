@@ -17,8 +17,9 @@ export const zMarketplacePollState = z.enum(MARKETPLACE_POLL_STATE_KEYS);
 export type MarketplaceConnectionState = z.infer<typeof zMarketplaceConnectionState>;
 export type MarketplacePollState = z.infer<typeof zMarketplacePollState>;
 
-// An adapter this deployment offers: its id, whether it is the offline one (no host, nothing sent), the fields its connect form asks for (their names) and the platforms it serves.
-export const zMarketplaceAdapterInfo = z.object({ id: z.string(), offline: z.boolean(), connectFields: z.array(z.string()), platforms: z.array(zMarketplacePlatform) });
+// An adapter this deployment offers: its id, whether it is the offline one (no host, nothing sent), the fields its connect form asks for (their names) and the platforms it serves. `push`: this deployment can give the
+// seller a push address for it (the adapter takes pushes, it is not the offline one, the API's public URL is set and a credential broker runs), so the connection card shows the push address only then (#4348).
+export const zMarketplaceAdapterInfo = z.object({ id: z.string(), offline: z.boolean(), push: z.boolean(), connectFields: z.array(z.string()), platforms: z.array(zMarketplacePlatform) });
 export type MarketplaceAdapterInfo = z.infer<typeof zMarketplaceAdapterInfo>;
 
 // Every platform Ludy reads, whether an adapter serves it on this deployment or not. `adapter: false` means the org brings the platform's report as a file (the screen says "nhập file báo cáo").

@@ -92,7 +92,7 @@ export function MarketplacePushHook({ connection }: { connection: MarketplaceCon
               {hook.createdAt && <li>{t('createdAt', { when: f.dateTime(hook.createdAt) })}</li>}
               {hook.rotatedAt && <li>{t('rotatedAt', { when: f.dateTime(hook.rotatedAt) })}</li>}
               <li>{hook.lastSeenAt ? t('lastSeen', { when: f.dateTime(hook.lastSeenAt) }) : t('noNotice')}</li>
-              <li>{t('rejected', { count: String(hook.rejectedCount) })}</li>
+              <li>{t('rejected', { count: hook.rejectedCount })}</li>
             </>
           ) : (
             <li>{t('none')}</li>

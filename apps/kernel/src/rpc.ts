@@ -635,6 +635,9 @@ export function createRpcHandler(
   // Whether the seller authorizes this marketplace adapter on the platform's page (it then has an App Key beside its sealed secret).
   const isMarketplaceAuthorized = (id: string): boolean => (MARKETPLACE_AUTHORIZED_ADAPTERS as readonly string[]).includes(id);
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
+  // Whether this deployment can give a seller a push address for an adapter (#4348): the adapter takes pushes (its id is on the contract's list), the API's public URL is set and a credential broker runs, which the push route
+  // needs too. The providers list tells the card with it, so the card is not drawn where the command would refuse.
+  const pushOffered = (adapter: string): boolean => (MARKETPLACE_PUSH_ADAPTERS as readonly string[]).includes(adapter) && Boolean(channels?.apiUrl) && channels?.broker !== undefined && channels.broker.id !== 'none';
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
   // The commands check the role again; this answers first, in words, before anything is sealed or called.
@@ -3500,6 +3503,7 @@ export function createRpcHandler(
           const adapters = Object.entries(channels?.marketplaceProviders ?? {}).map(([id, provider]) => ({
             id,
             offline: provider.hosts.length === 0,
+            push: pushOffered(id),
             connectFields: [...provider.connectFields],
             platforms: (Object.keys(provider.capabilities.platforms) as Array<(typeof MARKETPLACE_PLATFORM_KEYS)[number]>).sort(),
           }));
@@ -3649,7 +3653,8 @@ export function createRpcHandler(
             if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
             const adapter = row.provider.slice('marketplace_'.length);
             const pushAdapter = MARKETPLACE_PUSH_ADAPTERS.find((id) => id === adapter);
-            if (!pushAdapter || !marketplaceProviderOf(adapter) || !channels?.apiUrl || !channels.broker || channels.broker.id === 'none') {
+            const provider = marketplaceProviderOf(adapter);
+            if (!pushAdapter || !provider || !channels?.apiUrl || !pushOffered(pushAdapter)) {
               throw new DomainError('MARKETPLACE_PUSH_UNSUPPORTED', 422, 'Sàn này chưa nhận thông báo đẩy ở hệ thống này');
             }
             const made = await runtime.execute<{ adapter: (typeof MARKETPLACE_PUSH_ADAPTERS)[number]; key: string; created: boolean }>('finance.marketplace_connection.push_hook_set', { id: row.id }, { actor, orgId });

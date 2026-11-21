@@ -97,7 +97,7 @@ describe('IntegrationsSection', () => {
       return section({ bank: false, providers: false });
     };
     const platforms = [{ platform: 'shopee', adapter: true, adapters: ['sandbox'] }];
-    const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['shopee'] }], platforms }, []);
+    const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['shopee'] }], platforms }, []);
     expect(on).toContain(`>${en.integrations.title}<`);
     expect(on).toContain(`>${en.marketplaceConnections.title}<`);
     expect(on).toContain('role="group"');
