@@ -2056,6 +2056,10 @@ export interface HrPayrollEmployeeTable {
   bank_code: string | null;
   department_id: string | null;
   job_title: string | null;
+  is_foreign: Generated<boolean>;
+  work_permit_exempt: Generated<boolean>;
+  work_permit_expires_on: string | null;
+  work_permit_number_sealed: string | null;
 }
 
 /** crove_hr.payroll_employment */
@@ -2078,6 +2082,10 @@ export interface HrPayrollEmploymentTable {
   probation_role_tier: ColumnType<string | null, string | null, NotGranted>;
   probation_end_on: ColumnType<string | null, string | null, NotGranted>;
   probation_wage: ColumnType<string | null, string | null, NotGranted>;
+  pay_basis: ColumnType<string, string | undefined, NotGranted>;
+  hourly_rate: ColumnType<string | null, string | null, NotGranted>;
+  piece_rate: ColumnType<string | null, string | null, NotGranted>;
+  tax_resident: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_hr.payroll_leave_entry */
