@@ -35,7 +35,8 @@ const PAGE_SIZE = MARKETPLACE_PLATFORM_LIMITS.lazada.pageSize;
 const ITEMS_BATCH = 50;
 const WINDOW_DAYS = MARKETPLACE_PLATFORM_LIMITS.lazada.windowDays;
 // A resumed read starts this far before the newest order seen, so an order Lazada updated late is caught; the confirm step dedupes on (platform, order number, line) and moves a status forward only.
-// The price is that a quiet shop re-reads its last ten minutes of orders on every poll (two calls); a shop with nothing new for ten minutes reads nothing.
+// The price: the window never moves past ten minutes before the newest order, so a shop with nothing newer re-reads that newest order and its items on every poll (two calls) until a newer update moves
+// the window on or the 30-day floor passes the order. At a poll every 15 minutes that is about 200 calls a day for a quiet shop, far under the 10,000 a day of a test app.
 const OVERLAP_MS = 10 * 60_000;
 // A full page resumes this far before its newest order, so the orders that share its last second are read again rather than lost (whether Lazada's `update_after` is inclusive is not documented).
 const TIE_MS = 1000;
@@ -46,6 +47,8 @@ const VIETNAM_OFFSET_MS = 7 * 3_600_000;
 
 // The fields of an order and of an order item the adapter reads. Anything else (customer_first_name, address_*, recipient_info, buyer_id, buyer_note, tax_code, ...) is never copied.
 const ORDER_FIELDS = ['order_id', 'order_number', 'created_at', 'updated_at'] as const;
+// The fields of an answer that hold an id, which may pass 2^53 and are kept as the digits Lazada wrote.
+const ID_KEYS = ['order_id', 'order_item_id'] as const;
 const ITEM_FIELDS = ['order_item_id', 'order_id', 'sku', 'name', 'item_price', 'paid_price', 'status', 'currency'] as const;
 
 // The stage of an order item by Lazada's status word (lower case, as the order API returns it). CLOSED: a status not in this table makes the page `not_recognized` and nothing is stored (no
@@ -144,16 +147,30 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
   const now = options.now ?? (() => new Date());
   const spacingMs = options.spacingMs ?? DEFAULT_SPACING_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  // The last call of each app key: Lazada limits per app, so one app's calls are spaced from each other and another app's are not held up by them.
-  const lastCalls = new Map<string, number>();
+  // Per app key (Lazada limits per app): the start time of its last call, and a queue that lets one call at a time wait for its turn. The interval is measured from when the last call ACTUALLY started
+  // (not from a slot reserved earlier), so a stalled event loop cannot release two waiting calls at once, and one app's calls never hold up another app's.
+  const lastStart = new Map<string, number>();
+  const queue = new Map<string, Promise<void>>();
+  async function takeTurn(appKey: string): Promise<void> {
+    const before = queue.get(appKey) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    queue.set(appKey, before.then(() => mine));
+    await before;
+    try {
+      const wait = (lastStart.get(appKey) ?? Number.NEGATIVE_INFINITY) + spacingMs - now().getTime();
+      if (wait > 0) await sleep(wait);
+      lastStart.set(appKey, now().getTime());
+    } finally {
+      release();
+    }
+  }
 
   // One signed GET; the `data` of an answer whose code is "0". A failure is one of the port's kinds, never Lazada's text.
   async function call(credential: LazadaCredential, path: string, apiParams: Record<string, string>): Promise<unknown> {
-    // The slot is taken before waiting, so two calls in flight at once are spaced from each other too.
-    const slot = Math.max(now().getTime(), (lastCalls.get(credential.appKey) ?? Number.NEGATIVE_INFINITY) + spacingMs);
-    const wait = slot - now().getTime();
-    lastCalls.set(credential.appKey, slot);
-    if (wait > 0) await sleep(wait);
+    await takeTurn(credential.appKey);
     const params: Record<string, string> = { ...apiParams, app_key: credential.appKey, timestamp: String(now().getTime()), sign_method: 'sha256', access_token: credential.accessToken };
     params.sign = signLazadaRequest(credential.appSecret, path, params);
     let response: Response;
@@ -169,7 +186,7 @@ export function lazadaMarketplace(options: LazadaOptions): MarketplaceProvider {
     }
     let answer: unknown;
     try {
-      answer = parseMarketplaceJson(await readCappedAnswer(response, () => new MarketplaceProviderError('unreachable')));
+      answer = parseMarketplaceJson(await readCappedAnswer(response, () => new MarketplaceProviderError('unreachable')), ID_KEYS);
     } catch (error) {
       if (error instanceof MarketplaceProviderError) throw error;
       throw new MarketplaceProviderError('unreachable');

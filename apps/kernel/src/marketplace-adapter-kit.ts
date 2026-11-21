@@ -92,11 +92,13 @@ export async function readCappedAnswer(response: Response, refuse: () => Error, 
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
-// An answer as JSON, with an integer too large for a JS number kept as the digits the platform wrote: order and item ids of fifteen or sixteen digits can pass 2^53, and a parse and a stringify would
-// silently turn them into other ids. (Money is never a number: an amount must be a string, marketplaceMoney.)
-export function parseMarketplaceJson(text: string): unknown {
-  const reviver = (_key: string, value: unknown, context?: { source?: string }): unknown =>
-    typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value) && typeof context?.source === 'string' && /^-?\d+$/.test(context.source) ? context.source : value;
+// An answer as JSON, with an integer too large for a JS number kept as the digits the platform wrote, but ONLY in the fields named in `idKeys`: order and item ids of fifteen or sixteen digits can pass
+// 2^53, and a parse and a stringify would silently turn them into other ids. Anywhere else (an amount above all) such an integer stays a number, which the decimal-string rule then refuses: money is
+// never a number, and this must not turn one into a string that passes.
+export function parseMarketplaceJson(text: string, idKeys: readonly string[]): unknown {
+  const ids = new Set(idKeys);
+  const reviver = (key: string, value: unknown, context?: { source?: string }): unknown =>
+    ids.has(key) && typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value) && typeof context?.source === 'string' && /^-?\d+$/.test(context.source) ? context.source : value;
   return JSON.parse(text, reviver as unknown as Parameters<typeof JSON.parse>[1]);
 }
 

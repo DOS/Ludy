@@ -314,6 +314,29 @@ describe('ids and days a hostile answer could bend', () => {
     expect(page.orders.map((o) => [o.orderNo, o.orderedAt])).toEqual([['9108000001', '2026-11-08'], ['9108000002', '2026-11-08'], ['9108000003', '2026-11-09']]);
   });
 
+  it('keeps an unquoted id past 2^53 as its digits, and refuses the same number as an amount (money is never a number)', async () => {
+    const big = '9007199254740993';
+    const asId = (path: string): Response | undefined =>
+      path === '/orders/items/get'
+        ? new Response(`{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":${big},"order_id":1,"sku":"A","name":"a","item_price":"1","paid_price":"1","status":"delivered"}]}]}`)
+        : undefined;
+    const page = await setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asId }).provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders[0]?.lines[0]?.lineKey).toBe(big);
+    for (const field of ['paid_price', 'item_price']) {
+      const asAmount = (path: string): Response | undefined =>
+        path === '/orders/items/get'
+          ? new Response(`{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":2,"order_id":1,"sku":"A","name":"a","item_price":${field === 'item_price' ? big : '"1"'},"paid_price":${field === 'paid_price' ? big : '"1"'},"status":"delivered"}]}]}`)
+          : undefined;
+      expect(await kind(() => setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: asAmount }).provider.listOrders(SECRET, 'lazada', null))).toBe('not_recognized');
+    }
+    // A quoted decimal amount is still taken.
+    const quoted = (path: string): Response | undefined =>
+      path === '/orders/items/get'
+        ? new Response('{"code":"0","data":[{"order_id":1,"order_items":[{"order_item_id":2,"order_id":1,"sku":"A","name":"a","item_price":"9007199254740993.5","paid_price":"1","status":"delivered"}]}]}')
+        : undefined;
+    expect((await setup([fakeOrder({ id: '1', number: '9111000001', updatedAt: '2026-11-09T10:00:00+07:00' })], { intercept: quoted }).provider.listOrders(SECRET, 'lazada', null)).orders[0]?.lines[0]?.unitPrice).toBe('9007199254740993.5');
+  });
+
   it('keeps an asterisk in a product name (a size, a footnote) and still refuses one in an order number', async () => {
     const page = await setup([fakeOrder({ id: '1', number: '9109000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', name: 'Áo 5* size M' }])]).provider.listOrders(SECRET, 'lazada', null);
     expect(page.orders[0]?.lines[0]?.itemName).toBe('Áo 5* size M');
@@ -362,6 +385,25 @@ describe('a call that fails', () => {
       );
     expect(await kind(() => setup(orders, { intercept: streamed }).provider.listOrders(SECRET, 'lazada', null))).toBe('unreachable');
     expect(sent).toBeLessThan(10);
+  });
+
+  it('starts the calls of one app a second apart even when they are all asked at once and the clock moves only when the adapter sleeps', async () => {
+    const { fake } = setup(orders);
+    let clock = NOW;
+    const provider = lazadaMarketplace({ fetch: fake.fetch, now: () => new Date(clock), sleep: async (ms) => void (clock += ms) });
+    await Promise.all([provider.testConnection(SECRET), provider.testConnection(SECRET), provider.testConnection(SECRET)]);
+    const stamps = fake.calls.map((c) => Number(c.params.timestamp));
+    expect(stamps).toEqual([NOW, NOW + 1000, NOW + 2000]);
+  });
+
+  it('keeps going after a call that failed: the next one is not held back', async () => {
+    const { fake } = setup(orders);
+    let clock = NOW;
+    const provider = lazadaMarketplace({ fetch: async () => Promise.reject(new Error('down')), now: () => new Date(clock), sleep: async (ms) => void (clock += ms) });
+    expect(await provider.testConnection(SECRET)).toBe('unreachable');
+    expect(await provider.testConnection(SECRET)).toBe('unreachable');
+    expect(fake.calls).toHaveLength(0);
+    expect(clock).toBe(NOW + 1000);
   });
 
   it('releases the body of an answer it refuses by status', async () => {
