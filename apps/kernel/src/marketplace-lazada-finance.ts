@@ -11,9 +11,11 @@
 // the currency is fixed by the connection, never taken from the answer), and a different or malformed one refuses the whole page. A transaction line carries NO currency, so lines are accepted only for
 // a window in which at least one statement was read and its currency checked, and only lines already PAID (a pending line is not income yet).
 //
-// WHAT IS NOT GUESSED. The fee of a line is its `fee_type` id looked up in the official table (marketplace-lazada-fees.ts), never the answer's `fee_name`; an id the table does not hold, a `paid_status`
+// WHAT IS NOT GUESSED. The fee of a line is its `fee_type` id looked up in the official table (marketplace-lazada-fees.ts), never the answer's `fee_name`; an id that is not an integer from 1 to 999999, a `paid_status`
 // that is neither paid nor not paid, a date that is not "17 May 2016", an order number that is not digits, a window that does not fit the pages read: `not_recognized`, nothing returned. Only five fee
-// types have a bucket of their own; every other goes to `other` with its id kept (`otherByFee`), until the accountant (#61) says how they post. Free text of the answer (details, comment, reference,
+// types have a bucket of their own; every other goes to `other` with its id kept (`otherByFee`), until the accountant (#61) says how they post. An id the table does not hold (the enum grows) is staged
+// in `other` with its sign from the answer and FLAGGED (`known: false`, `unknownFeeType` on the line) so the review screen shows it to a person (PO decision, #4242): refusing the page would block a
+// seller's whole payout import until a code release, and nothing posts without the accountant's account map and a person's approval anyway. Free text of the answer (details, comment, reference,
 // SKUs, shipping provider) is dropped at the edge by an allow-list of fields.
 import { Decimal } from '@crove/l10n-vn';
 import { isoDay, marketplaceDigits, marketplaceMoney, notRecognized } from './marketplace-adapter-kit.ts';
@@ -81,7 +83,10 @@ export interface LazadaIncomeLine {
   vatInAmount: string;
   whtAmount: string;
   // The fee types with no bucket of their own, by id, with their summed amount (signed): what `other` is made of besides the signs of the five named buckets.
-  otherByFee: Array<{ feeType: number; amount: string }>;
+  // `known` is false for an id the official table does not hold.
+  otherByFee: Array<{ feeType: number; amount: string; known: boolean }>;
+  // True when any of the lines has a fee id the table does not hold: the review screen shows the line to a person.
+  unknownFeeType: boolean;
 }
 
 export interface LazadaIncome {
@@ -177,12 +182,14 @@ function transactionOf(raw: unknown): Transaction {
   const orderNo = marketplaceDigits(raw.order_no, 32);
   const day = dayOf(raw.transaction_date);
   const amount = marketplaceMoney(raw.amount);
-  const feeId = typeof raw.fee_type === 'number' ? raw.fee_type : typeof raw.fee_type === 'string' && /^\d{1,6}$/.test(raw.fee_type) ? Number(raw.fee_type) : Number.NaN;
+  // A fee id is a whole number from 1 to 999999, written as a number or as digits; anything else (a name, a fraction, zero, a negative, a huge number) refuses the page.
+  const rawId = typeof raw.fee_type === 'number' ? raw.fee_type : typeof raw.fee_type === 'string' && /^\d{1,6}$/.test(raw.fee_type) ? Number(raw.fee_type) : Number.NaN;
+  const feeId = Number.isInteger(rawId) && rawId >= 1 && rawId <= 999_999 ? rawId : Number.NaN;
   const status = typeof raw.paid_status === 'string' ? raw.paid_status.trim().toLowerCase().replace(/\s+/g, ' ') : '';
   // The VAT and withholding fields are optional; when present they are decimal strings like any amount.
   const vat = raw.VAT_in_amount === undefined ? '0' : marketplaceMoney(raw.VAT_in_amount);
   const wht = raw.WHT_amount === undefined ? '0' : marketplaceMoney(raw.WHT_amount);
-  if (orderNo === null || day === null || amount === null || vat === null || wht === null || !LAZADA_FEE_TYPES.has(feeId) || (status !== 'paid' && status !== 'not paid')) throw notRecognized();
+  if (orderNo === null || day === null || amount === null || vat === null || wht === null || Number.isNaN(feeId) || (status !== 'paid' && status !== 'not paid')) throw notRecognized();
   return { orderNo, day, amount, feeType: feeId, paid: status === 'paid', vatInAmount: vat, whtAmount: wht };
 }
 
@@ -234,7 +241,8 @@ function aggregate(lines: readonly Transaction[]): LazadaIncomeLine[] {
       net: toMoney(net),
       vatInAmount: toMoney(vat),
       whtAmount: toMoney(wht),
-      otherByFee: [...byFee].sort((a, b) => a[0] - b[0]).map(([feeType, amount]) => ({ feeType, amount: toMoney(amount) })),
+      otherByFee: [...byFee].sort((a, b) => a[0] - b[0]).map(([feeType, amount]) => ({ feeType, amount: toMoney(amount), known: LAZADA_FEE_TYPES.has(feeType) })),
+      unknownFeeType: [...byFee.keys()].some((feeType) => !LAZADA_FEE_TYPES.has(feeType)),
     });
   }
   return out.sort((a, b) => (a.paidAt < b.paidAt ? -1 : a.paidAt > b.paidAt ? 1 : a.orderNo < b.orderNo ? -1 : a.orderNo > b.orderNo ? 1 : 0));

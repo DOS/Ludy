@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The fee types of Lazada's finance API (#2524, S5a = #4242): the official enum of `queryTransactionDetails` (open.lazada.com, doc 120956, read 2026-11-21 in a headless browser: 316 rows, each a
 // `fee_type` id with its transaction type and fee name), kept as data. A line of `GET /finance/transaction/details/get` names its fee by `fee_type` (an id): the id is looked up HERE, never the
-// `fee_name` text of the answer, so a line's meaning is the one Lazada published and nothing in the answer can change it. An id this table does not hold is not guessed at: the finance reader refuses
-// the page (`not_recognized`) so the table is brought up to date (the enum grows).
+// `fee_name` text of the answer, so a line's meaning is the one Lazada published and nothing in the answer can change it. An id this table does not hold is not guessed at: the finance reader stages it in `other`
+// and flags it for a person (the enum grows; PO decision on #4242), so the table is brought up to date without blocking a payout import.
 //
 // BUCKETS. Only the fee types whose official name matches, exactly and without ambiguity, a fee name that Lazada's own calculation of the payout statement names (doc 120249: item_revenue = Item Price
 // Credit, refunds = Reversal Item Price, fees_total = Commission, Payment Fee, ...) have a bucket of their own. The calculation table names several fees that are not in the enum under that name

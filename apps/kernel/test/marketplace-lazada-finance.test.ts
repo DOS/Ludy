@@ -53,7 +53,7 @@ describe('the income of an order', () => {
     expect(income.lines).toHaveLength(1);
     const l = income.lines[0]!;
     expect(l).toMatchObject({ orderNo: '8000001', paidAt: '2026-11-05', sales: '1000000', commission: '100000.5', paymentFee: '20000', refund: '0', sellerDiscount: '0', serviceFee: '0', shipping: '0', taxWithheld: '0', net: '849999.5', other: '-30000' });
-    expect(l.otherByFee).toEqual([{ feeType: 7, amount: '-30000' }]);
+    expect(l.otherByFee).toEqual([{ feeType: 7, amount: '-30000', known: true }]);
     const identity = new Decimal(l.sales).minus(l.commission).minus(l.paymentFee).minus(l.refund).plus(l.other);
     expect(identity.toFixed()).toBe(l.net);
   });
@@ -107,14 +107,34 @@ describe('the income of an order', () => {
   });
 });
 
+describe('a fee id the official table does not hold', () => {
+  it('is staged in `other` with its sign from the answer and flagged for a person, and the page is not refused', async () => {
+    expect(LAZADA_FEE_TYPES.has(999999)).toBe(false);
+    const { finance } = setup({ transactions: [...ORDER_LINES, line({ feeType: 999999, amount: '-1234.5' }), line({ orderNo: '8000002', feeType: 888888, amount: '700' })] });
+    const { lines } = await finance.income(SECRET, WINDOW);
+    expect(lines).toHaveLength(2);
+    const [a, b] = lines as [(typeof lines)[number], (typeof lines)[number]];
+    expect(a.unknownFeeType).toBe(true);
+    expect(a.otherByFee).toEqual([
+      { feeType: 7, amount: '-30000', known: true },
+      { feeType: 999999, amount: '-1234.5', known: false },
+    ]);
+    expect(a.other).toBe('-31234.5');
+    expect(b).toMatchObject({ orderNo: '8000002', unknownFeeType: true, other: '700', net: '700', sales: '0' });
+    for (const l of lines) expect(new Decimal(l.sales).minus(l.commission).minus(l.paymentFee).minus(l.refund).plus(l.other).toFixed()).toBe(l.net);
+  });
+
+  it('does not flag a line whose ids are all in the table', async () => {
+    const { finance } = setup({ transactions: ORDER_LINES });
+    expect((await finance.income(SECRET, WINDOW)).lines[0]!.unknownFeeType).toBe(false);
+  });
+});
+
 describe('what refuses the page', () => {
   const refused = async (transactions: FakeTransaction[], extra: Partial<Parameters<typeof setup>[0]> = {}) => kind(() => setup({ transactions, ...extra }).finance.income(SECRET, WINDOW));
 
-  it('a fee id the official table does not hold, however it is written', async () => {
-    expect(LAZADA_FEE_TYPES.has(999999)).toBe(false);
-    expect(await refused([line({ feeType: 999999, amount: '1000' })])).toBe('not_recognized');
-    expect(await refused([line({ feeType: 'Commission', amount: '1000' })])).toBe('not_recognized');
-    expect(await refused([line({ feeType: -1, amount: '1000' })])).toBe('not_recognized');
+  it('a fee id that is not a whole number from 1 to 999999, however it is written', async () => {
+    for (const feeType of ['Commission', -1, 0, 1.5, 1_000_000, '0', '1000000', '1e3', '', '1 3']) expect(await refused([line({ feeType, amount: '1000' })])).toBe('not_recognized');
   });
 
   it('a paid status that is neither paid nor not paid', async () => {
@@ -134,7 +154,7 @@ describe('what refuses the page', () => {
   });
 
   it('one bad line refuses the whole page: nothing partial is returned', async () => {
-    expect(await refused([...ORDER_LINES, line({ feeType: 999999, amount: '1' })])).toBe('not_recognized');
+    expect(await refused([...ORDER_LINES, line({ feeType: 13, amount: '1.23456' })])).toBe('not_recognized');
   });
 
   it('paid lines with no statement to settle the currency; pending lines alone are only counted', async () => {
