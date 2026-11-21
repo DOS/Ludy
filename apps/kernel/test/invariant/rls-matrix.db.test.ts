@@ -3417,6 +3417,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
   'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 4e (#3821): post-signature agreement terms, renewal notice windows, and milestone obligations bound to an envelope.
+  'crove_sign.envelope_obligation': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          counterparty_name: 'Cong ty TNHH Doi Tac Mau',
+          effective_date: '2026-11-01',
+          expiry_date: '2027-10-31',
+          renewal_notice_days: 30,
+          contract_value: '24000000.0000',
+          currency: 'VND',
+          obligations_json: '[]',
+          status: 'confirmed',
+          confirmed_by: o.owner,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
   // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
   'crove_sign.field': {
     make: (o) => {

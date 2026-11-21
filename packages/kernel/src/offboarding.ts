@@ -277,8 +277,9 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  // eSign (#3323, #3526): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, and reusable templates; bearer/direct-link token and OTP machinery tables stay out.
+  // eSign (#3323, #3526, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, and reusable templates; bearer/direct-link token and OTP machinery tables stay out.
   'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
+  'sign.envelope_obligation': { from: 'crove_sign.envelope_obligation', omit: [] },
   'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
   'sign.field': { from: 'crove_sign.field', omit: [] },
   'sign.ai_analysis': { from: 'crove_sign.ai_analysis', omit: [] },

@@ -14,6 +14,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
@@ -844,6 +845,19 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="space-y-4">
+          {envelope.status === 'completed' ? (
+            <EnvelopeObligationsCard
+              envelopeId={envelope.id}
+              sourceFileId={envelope.sourceFileId}
+              pdfBytes={
+                envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
+                  ? null
+                  : (pdfQuery.data ?? null)
+              }
+              onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            />
+          ) : null}
+
           <VyClausePanel
             aiAnalysis={effectiveAi}
             pendingProposals={pendingProposals}

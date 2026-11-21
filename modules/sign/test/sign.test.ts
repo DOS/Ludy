@@ -361,6 +361,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
     expect(Object.keys(signManifest.tables.crove_sign)).toEqual([
       'ai_analysis',
       'envelope',
+      'envelope_obligation',
       'field',
       'signer',
       'signing_event',

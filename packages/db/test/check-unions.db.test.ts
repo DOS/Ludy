@@ -257,6 +257,7 @@ import {
   SIGN_AI_ANALYSIS_STATUSES,
   SIGN_ACTOR_TYPES,
   SIGN_TEMPLATE_STATUSES,
+  SIGN_OBLIGATION_STATUSES,
   type Database,
 } from '../src/schema.ts';
 
@@ -391,6 +392,7 @@ const UNIONS = unions({
   'crove_sign.template_role.signer_role': SIGN_SIGNER_ROLES,
   'crove_sign.template_role.delivery_mode': SIGN_DELIVERY_MODES,
   'crove_sign.template_field.field_type': SIGN_FIELD_TYPES,
+  'crove_sign.envelope_obligation.status': SIGN_OBLIGATION_STATUSES,
   'crove_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,

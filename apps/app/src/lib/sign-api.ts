@@ -3,6 +3,13 @@
 import { client, fetchFile, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
 import type {
+  SignEnvelopeObligationRecordContract,
+  SignObligationCitationContract,
+  SignObligationItemContract,
+  SignObligationProposalContract,
+  SignObligationRenewalListItem,
+} from '@crove/kernel-contract';
+import type {
   SignDeliveryMode,
   SignDetectedTag,
   SignEnvelopeStatus,
@@ -454,6 +461,44 @@ export const signApi = {
     maxUses?: number | null;
     expiresAt?: string | null;
   }) => client.sign.template.direct_link_rotate(input),
+  getObligation: (envelopeId: string) => client.sign.obligation.get({ envelopeId }),
+  listRenewalEnvelopes: (input: { limit?: number } = {}) => client.sign.obligation.renewals_list(input),
+  extractObligations: (envelopeId: string, pages?: ReadonlyArray<{ page: number; text: string }>) =>
+    client.sign.obligation.extract({
+      envelopeId,
+      ...(pages && pages.length > 0 ? { pages: [...pages] } : {}),
+    }),
+  upsertObligation: (input: {
+    envelopeId: string;
+    counterpartyName?: string | null;
+    effectiveDate?: string | null;
+    expiryDate?: string | null;
+    renewalNoticeDays?: number | null;
+    autoRenew: boolean;
+    contractValue?: string | null;
+    currency: string;
+    obligations: Array<{
+      id?: string;
+      title: string;
+      dueDate?: string | null;
+      status?: 'pending' | 'completed';
+      pageNumber?: number | null;
+      quoteExcerpt?: string | null;
+      proposedByAi?: boolean;
+    }>;
+  }) => client.sign.obligation.upsert({ ...input, idempotencyKey: crypto.randomUUID() }),
+  dismissObligationProposal: (envelopeId: string) =>
+    client.sign.obligation.dismiss_proposal({ envelopeId, idempotencyKey: crypto.randomUUID() }),
+  completeObligationItem: (envelopeId: string, itemId: string, completed: boolean) =>
+    client.sign.obligation.complete_item({ envelopeId, itemId, completed, idempotencyKey: crypto.randomUUID() }),
+};
+
+export type {
+  SignEnvelopeObligationRecordContract,
+  SignObligationCitationContract,
+  SignObligationItemContract,
+  SignObligationProposalContract,
+  SignObligationRenewalListItem,
 };
 
 export type SignTemplateStatus = 'draft' | 'active' | 'archived';
