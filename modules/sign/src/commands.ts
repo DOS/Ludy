@@ -18,6 +18,10 @@ import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-r
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import {
+  assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanCreateMeetingMinutesEnvelope,
+} from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
@@ -105,6 +109,7 @@ async function lockEnvelope(ctx: CommandContext, envelopeId: string) {
     .executeTakeFirst();
   if (!row) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
   assertCanAccessEnvelopeRow(ctx, row);
+  await assertCanAccessMeetingMinutesEnvelopeRow(ctx, row);
   return row;
 }
 
@@ -167,8 +172,33 @@ export const envelopeCreate = defineCommand({
     if (expiresAt !== null && expiresAt.getTime() <= ctx.now.getTime()) {
       throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
     }
+    await assertCanCreateMeetingMinutesEnvelope(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
+    if (input.sourceKind !== 'hr_contract' && input.sourceKind !== 'meeting_minutes') {
+      const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM crove_sign.envelope e
+            WHERE e.org_id = ${ctx.orgId}::uuid
+              AND e.source_file_id = ${file.id}::uuid
+              AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM crove_sign.template t
+            WHERE t.org_id = ${ctx.orgId}::uuid
+              AND t.source_file_id = ${file.id}::uuid
+          )
+        ) AS restricted
+      `.execute(ctx.trx);
+      if (confidentialRefs[0]?.restricted) {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
+        );
+      }
+    }
 
     const row = await ctx.trx
       .insertInto('crove_sign.envelope')

@@ -3780,6 +3780,24 @@ export const vi = {
       draftNewer: 'Còn bản nháp mới chưa chia sẻ. Biên bản này chỉ có phần đã chia sẻ.',
       noContent: 'Chưa có nội dung được chia sẻ.',
     },
+    sign: {
+      send: 'Ký xác nhận qua eSign',
+      envelopeTitle: 'Biên bản cuộc họp - {title} ({date})',
+      recorderRoleLabel: 'Người ghi biên bản',
+      attendeeRoleLabel: 'Người tham dự',
+      externalRoleLabel: 'Khách tham dự',
+      openLabel: 'Mở hồ sơ ký biên bản {title} ({status})',
+      downloadSealed: 'Tải bản đã ký',
+      status: {
+        draft: 'Nháp',
+        sent: 'Đang chờ ký',
+        in_progress: 'Đang chờ ký',
+        completed: 'Đã ký xác nhận',
+        declined: 'Từ chối / Đã hủy',
+        voided: 'Từ chối / Đã hủy',
+        expired: 'Hết hạn',
+      },
+    },
     results: {
       title: 'Tóm tắt và việc cần làm',
       recorderNote: 'Bản tóm tắt và các việc là bản nháp, chỉ bạn thấy. Khi đã đúng, hãy chia sẻ cho người dự họp.',
@@ -14631,6 +14649,8 @@ export const vi = {
       SIGN_TEMPLATE_NOT_FOUND: 'Không tìm thấy mẫu tài liệu ký kết này',
       SIGN_TEMPLATE_NOT_INSPECTED: 'Tệp PDF nguồn cần kiểm tra đạt trước khi kích hoạt mẫu',
       SIGN_UNKNOWN_ROLE_KEY: 'Mã vai trò người nhận không tồn tại trong mẫu tài liệu',
+      SIGN_MINUTES_NOT_SHARED: 'Biên bản cuộc họp cần được chia sẻ trước khi tạo hồ sơ ký kết',
+      SIGN_SOURCE_NOT_FOUND: 'Không tìm thấy bản ghi nguồn tương ứng hoặc bạn không có quyền truy cập',
     },
     rules: {
       org_create_busy: 'Bạn đang tạo nhiều tổ chức cùng lúc, hãy thử lại sau',

@@ -31,6 +31,14 @@ export {
   type HrEnvelopeVisibilityCtx,
   type HrEnvelopeVisibilityRow,
 } from './hr-visibility.ts';
+export {
+  applyMeetingMinutesVisibilityFilter,
+  assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanCreateMeetingMinutesEnvelope,
+  canAccessMeetingMinutesEnvelopeRow,
+  type MeetingEnvelopeVisibilityCtx,
+  type MeetingEnvelopeVisibilityRow,
+} from './meeting-visibility.ts';
 export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
 export { signDirectPublicCommands } from './direct-public.ts';
 export {

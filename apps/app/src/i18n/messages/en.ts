@@ -3783,6 +3783,24 @@ export const en = {
       draftNewer: 'A newer draft is not shared yet. These minutes show only what was shared.',
       noContent: 'Nothing has been shared yet.',
     },
+    sign: {
+      send: 'Sign minutes via eSign',
+      envelopeTitle: 'Meeting minutes - {title} ({date})',
+      recorderRoleLabel: 'Minute taker',
+      attendeeRoleLabel: 'Attendee',
+      externalRoleLabel: 'External participant',
+      openLabel: 'Open minutes signing envelope {title} ({status})',
+      downloadSealed: 'Download signed copy',
+      status: {
+        draft: 'Draft',
+        sent: 'Awaiting signatures',
+        in_progress: 'Awaiting signatures',
+        completed: 'Signed and confirmed',
+        declined: 'Declined / Voided',
+        voided: 'Declined / Voided',
+        expired: 'Expired',
+      },
+    },
     results: {
       title: 'Summary and action items',
       recorderNote: 'Your summary and items are a draft only you see. Share them with the attendees when they are right.',
@@ -14632,6 +14650,8 @@ export const en = {
       SIGN_TEMPLATE_NOT_FOUND: 'Signing template not found.',
       SIGN_TEMPLATE_NOT_INSPECTED: 'The source PDF must pass inspection before activating this template.',
       SIGN_UNKNOWN_ROLE_KEY: 'Recipient references an unknown template role key.',
+      SIGN_MINUTES_NOT_SHARED: 'Share the meeting minutes before creating a signing envelope.',
+      SIGN_SOURCE_NOT_FOUND: 'The linked source record was not found or you do not have access to it.',
     },
     rules: {
       org_create_busy: 'You are creating several organizations at once. Try again later.',

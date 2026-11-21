@@ -252,7 +252,7 @@ export const SIGN_NORM_SCALE = 1_000_000;
 
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
-export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract'] as const;
+export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract', 'meeting_minutes'] as const;
 export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
 export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
 export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
