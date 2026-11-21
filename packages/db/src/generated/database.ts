@@ -916,6 +916,7 @@ export interface FinanceBankFeedAccountTable {
   last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  feed_from: string | null;
 }
 
 /** crove_finance.bank_feed_listed_account */
