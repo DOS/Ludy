@@ -624,6 +624,8 @@ export type SupplierPaymentTable = Refine<
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
+export const MARKETPLACE_AUTHORIZE_STATES = ['pending', 'authorized', 'refused', 'failed'] as const;
+export type MarketplaceAuthorizeState = (typeof MARKETPLACE_AUTHORIZE_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
 // A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
@@ -700,7 +702,7 @@ export type MisaAmisMatchTable = Refine<
 export type MarketplaceColumnProfileTable = Refine<G.FinanceMarketplaceColumnProfileTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, never> }>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
-  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
+  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; authorize_state: MarketplaceAuthorizeState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;

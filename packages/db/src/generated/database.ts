@@ -1462,6 +1462,14 @@ export interface FinanceMarketplaceConnectionTable {
   orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  app_key: string | null;
+  authorize_state: string | null;
+  authorize_state_hash: string | null;
+  authorize_expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authorize_by: string | null;
+  authorize_code_key_id: string | null;
+  authorize_code_envelope: string | null;
+  reauthorize_by: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_finance.marketplace_party */

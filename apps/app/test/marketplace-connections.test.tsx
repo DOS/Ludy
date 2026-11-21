@@ -67,6 +67,8 @@ const connection = (over: Partial<MarketplaceConnection> = {}): MarketplaceConne
   lastPolledAt: null,
   lastPollState: null,
   ordersWaiting: 0,
+  authorizeState: null,
+  reauthorizeBy: null,
   ...over,
 });
 
