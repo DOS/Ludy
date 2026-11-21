@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pre-export compliance coworker ("Ly", finance coworker) for Sổ quản lý lao động and Báo cáo 01/PLI (#3372 / #2541 stage 2b-1).
 //
-// Deterministic code computes every compliance finding and count from stored flags and @crove/l10n-vn contract rules:
+// Deterministic code computes every compliance finding and count from stored flags and @ludy/l10n-vn contract rules:
 // - missing identity number, missing social insurance number (when insured), missing birth date or address;
 // - unwritten employment (contractKind === 'none');
 // - Labor Code 2019 contract expiry and renewal alerts via `evaluateContractAlerts`.
@@ -13,7 +13,7 @@
 import { randomInt } from 'node:crypto';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { evaluateContractAlerts, type LaborContractKind, type ProbationRoleTier } from '@crove/l10n-vn';
+import { evaluateContractAlerts, type LaborContractKind, type ProbationRoleTier } from '@ludy/l10n-vn';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { statedFiguresProblem } from './overview.ts';

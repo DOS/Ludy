@@ -1090,6 +1090,73 @@ export type NotesExport = z.infer<typeof zNotesExport>;
 export const NOTE_VY_DISABLED_REASONS = ['off', 'paused', 'budget', 'forbidden'] as const;
 export type NoteVyDisabledReason = (typeof NOTE_VY_DISABLED_REASONS)[number];
 
+export const zTodoPlanInput = z.strictObject({
+  timeZone: zTimeZone.optional(),
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type TodoPlanInput = z.infer<typeof zTodoPlanInput>;
+
+export const zTodoPlanFocusItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  priority: zTodoPriority,
+  dueOn: zDay.nullable(),
+  dueTime: zTime.nullable(),
+  overdue: z.boolean(),
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanFocusItem = z.infer<typeof zTodoPlanFocusItem>;
+
+export const zTodoPlanRescheduleItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  currentDueOn: zDay.nullable(),
+  dueOn: zDay,
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanRescheduleItem = z.infer<typeof zTodoPlanRescheduleItem>;
+
+export const zTodoPlanResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  today: zDay,
+  focus: z.array(zTodoPlanFocusItem),
+  reschedules: z.array(zTodoPlanRescheduleItem),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type TodoPlanResult = z.infer<typeof zTodoPlanResult>;
+
+export const zNoteOrganizeInput = z.strictObject({
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type NoteOrganizeInput = z.infer<typeof zNoteOrganizeInput>;
+
+export const zNoteOrganizeSuggestion = z.object({
+  noteId: zId,
+  title: z.string(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  revision: z.number().int().min(1),
+  existingTags: zTags,
+  notebookId: zId.nullable(),
+  notebookName: z.string().nullable(),
+  tags: zTags,
+  reason: z.string(),
+  canEditTags: z.boolean(),
+});
+export type NoteOrganizeSuggestion = z.infer<typeof zNoteOrganizeSuggestion>;
+
+export const zNoteOrganizeResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  suggestions: z.array(zNoteOrganizeSuggestion),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type NoteOrganizeResult = z.infer<typeof zNoteOrganizeResult>;
+
 export const zNoteVyStatus = z.object({
   available: z.boolean(),
   reason: z.enum(NOTE_VY_DISABLED_REASONS).nullable(),

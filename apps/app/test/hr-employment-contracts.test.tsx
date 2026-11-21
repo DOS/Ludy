@@ -8,7 +8,7 @@ import {
   HR_PROBATION_ROLE_TIERS,
   type HrEmployee,
   type HrEmployeeSummary,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { describeError } from '../src/lib/errors.ts';

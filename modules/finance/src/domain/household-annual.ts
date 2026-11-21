@@ -6,8 +6,8 @@
 // - The VAT cut (Decree 174) applies only when the caller says so (the household's own answer): a percentage of each trade's VAT. The PIT cut (Decree 398) is a percentage of the PIT payable (the tax, not the
 //   rate), only while the year's revenue is at most the cut's ceiling.
 // - A period's tax is the year-to-date tax at its last day less the year-to-date tax the day before it starts, so the periods of a year add up to the year (the crossing period carries the catch-up).
-import type { HouseholdTrade } from '@crove/kernel-contract';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import type { HouseholdTrade } from '@ludy/kernel-contract';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { taxOn } from './household-tax.ts';
 
 export interface AnnualRates {

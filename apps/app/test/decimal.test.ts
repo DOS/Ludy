@@ -125,7 +125,7 @@ describe('zero amounts and balance', () => {
 });
 
 
-describe('vatPercent parity with @crove/l10n-vn', () => {
+describe('vatPercent parity with @ludy/l10n-vn', () => {
   it.each(['10%', '10', '8%', '3.5%', 'KCT', 'KKKNT', 'KHAC', 'KHAC:5.26%', 'KHAC:0%', '101', '150%', '100%', 'abc', '', null])(
     'reads %j the same as the server',
     (rate) => {

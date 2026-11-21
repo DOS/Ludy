@@ -7,11 +7,11 @@
 //
 // `hr.payroll.payment.verify` is what finance's record command compares the stored proposal with, in the approver's context, so a proposal row written some other way than by the preparer
 // (raw SQL) cannot pay lines the run does not hold.
-import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@crove/kernel-contract';
-import { isCashOverLimit, money, payrollPaymentReason, toMoney, type Obligation } from '@crove/l10n-vn';
+import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@ludy/kernel-contract';
+import { isCashOverLimit, money, payrollPaymentReason, toMoney, type Obligation } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { buildRunPosting, buildRunPostingFromTotals, groupProblem, type StoredGroup } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

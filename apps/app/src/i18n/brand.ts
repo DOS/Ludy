@@ -4,8 +4,8 @@
 // sends none). `{brandSlug}` is the same name as a file-name prefix ("ludy", "ten-moi"; #1045). `{gm}`, `{finance}`,
 // `{sales}`, `{marketing}` and `{system}` are the names of the AI coworkers by what they cover (#1683, #2410), whatever the brand: a
 // message names the coworker of its own area (Ludy Kế toán's and Ludy Nhân sự's, Engage's Inbox, customers and sales, Engage's marketing) and the
-// general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@crove/kernel-contract).
-import { COWORKER_KEYS, COWORKER_ROSTER, brandSlug, type CoworkerKey as RosterKey } from '@crove/kernel-contract';
+// general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@ludy/kernel-contract).
+import { COWORKER_KEYS, COWORKER_ROSTER, brandSlug, type CoworkerKey as RosterKey } from '@ludy/kernel-contract';
 
 export const DEFAULT_BRAND = 'Ludy';
 // The AI coworkers by role (DESIGN.md 1.1); the names are the roster's.

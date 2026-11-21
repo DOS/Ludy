@@ -12,9 +12,9 @@
 // - ads.account.list, ads.sync.runs: what the screens read.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { ADS_REQUEST_MIN_SECONDS, ADS_SPEND_SCOPES, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { ADS_REQUEST_MIN_SECONDS, ADS_SPEND_SCOPES, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { historyStart } from './domain.ts';
 import { hasOpenLaunch, openLaunchObjects } from './launch-ledger.ts';
 import { closeWriteConnections } from './write-connection.ts';

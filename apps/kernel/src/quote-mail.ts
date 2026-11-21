@@ -4,9 +4,9 @@
 // intake address (inbound_token), which is another pipeline (a reply there would be read as a document); with no conversation address the mail has no Reply-To (#2827).
 // The mail carries the quote's PDF (#3418, Q3's exit): the bytes are made here as the mail is sent, from the quote exactly as it was sent, and kept nowhere. If they cannot be made
 // the mail still goes out with the link only, and the failure is logged as a short code.
-import type { MailAttachment } from '@crove/mail';
-import { QUOTE_MAIL_TEMPLATE, readLogoImage, renderQuoteMail, renderQuotePdf, zQuoteMail, type QuoteDocumentData } from '@crove/mod-crm';
-import { BlobIntegrityError } from '@crove/kernel-runtime';
+import type { MailAttachment } from '@ludy/mail';
+import { QUOTE_MAIL_TEMPLATE, readLogoImage, renderQuoteMail, renderQuotePdf, zQuoteMail, type QuoteDocumentData } from '@ludy/mod-crm';
+import { BlobIntegrityError } from '@ludy/kernel-runtime';
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 import { opsAlert } from './ops-alert.ts';
 import { readLogoFile } from './quote-link.ts';

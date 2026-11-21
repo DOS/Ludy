@@ -1,6 +1,6 @@
 // Helpers for the event types card in Settings (issue #1314). The server enforces every rule; these only turn the form
 // into the saved shape and keep it from offering what cannot succeed.
-import { EVENT_TYPE_CO_HOSTS_MAX, slugOf, type EventType, type EventTypeAssignment, type EventTypeInput, type EventTypeLocationKind } from '@crove/kernel-contract';
+import { EVENT_TYPE_CO_HOSTS_MAX, slugOf, type EventType, type EventTypeAssignment, type EventTypeInput, type EventTypeLocationKind } from '@ludy/kernel-contract';
 
 export interface EventTypeMember {
   userId: string;

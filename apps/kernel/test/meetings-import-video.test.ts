@@ -6,10 +6,10 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { minimalMp4, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@crove/channel';
-import { MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES } from '@crove/kernel-contract';
-import { EgressError, LocalDiskStore, type EgressStream } from '@crove/kernel-runtime';
-import { MediaClientError, type MediaExtractClient } from '@crove/media-contract/extract';
+import { minimalMp4, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@ludy/channel';
+import { MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES } from '@ludy/kernel-contract';
+import { EgressError, LocalDiskStore, type EgressStream } from '@ludy/kernel-runtime';
+import { MediaClientError, type MediaExtractClient } from '@ludy/media-contract/extract';
 import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
 import { runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 

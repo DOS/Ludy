@@ -4,7 +4,7 @@
 // asset was stopped or disposed of (that month still counts). Sources (TT133, Articles 35 and 36 for 211 and 214;
 // Article 33 for 242): straight-line depreciation by month from the month of use; the useful life comes from the
 // accountant, within the bands of Circular 45/2013/TT-BTC.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { canonical } from './money.ts';
 
 export interface ScheduledAsset {

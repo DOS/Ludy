@@ -5,7 +5,7 @@
 // transaction (`ctx.trx`) so concurrent writers on the same logical resource serialize cleanly and release the
 // lock automatically on commit or rollback without holding session locks on pooled connections.
 import { sql } from 'kysely';
-import type { CommandContext } from '@crove/kernel-runtime';
+import type { CommandContext } from '@ludy/kernel-runtime';
 
 /** Builds a canonical colon-delimited advisory lock key (`<namespace>:<part1>:<part2>...`) from non-empty segments. */
 export function advisoryLockKey(namespace: string, ...parts: readonly string[]): string {

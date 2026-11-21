@@ -1,7 +1,7 @@
 // Entry point of one parser process (see sandbox.ts for the flags it runs under). The kind comes in argv, the
 // bytes on stdin; one JSON answer goes to stdout and the process exits.
 import { once } from 'node:events';
-import { maxRequestBytes, zExtractKind, type ExtractResponse } from '@crove/extract-contract';
+import { maxRequestBytes, zExtractKind, type ExtractResponse } from '@ludy/extract-contract';
 import { jsonChunks } from './json-chunks.ts';
 import { failure, parse } from './parse.ts';
 

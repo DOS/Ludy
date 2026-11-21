@@ -7,8 +7,8 @@
 // and the table deletes it the moment it is stored. A verified notice with no message in it (a follow, a delivery or a seen mark) is
 // answered 200 and not parked, so Zalo stops sending it and the queue holds messages only.
 import { sql } from 'kysely';
-import { ConversationNoticeError, parseZaloNotice, zaloSignatureOk } from '@crove/channel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { ConversationNoticeError, parseZaloNotice, zaloSignatureOk } from '@ludy/channel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const ZALO_WEBHOOK_PATH = '/api/channels/zalo/webhook';
 export const ZALO_SIGNATURE_HEADER = 'x-zevent-signature';

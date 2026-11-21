@@ -12,7 +12,7 @@
 // F01 rows of HTKK's fixed account list from the year's trial balance. What Crove does not hold stays empty for the
 // accountant: the note references (Thuyết minh), the audit opinion, the signers. The cash flow statement (B03-DNN) is
 // optional in the schema and not written; the notes (B09-DNN) are not part of this file.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { el, serializeXml, type XmlElement } from './xml.ts';
 import { HTKK_AMOUNT_LIMIT, HtkkAmountError } from './vat-01gtgt-xml.ts';
 import { B01_LINES, B02_LINES, type ReportLine, type ReportLineDef } from './tt133-reports.ts';

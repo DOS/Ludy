@@ -5,15 +5,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { defaultCoworkerName, isKnownModule } from '@crove/kernel-contract';
-import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { defaultCoworkerName, isKnownModule } from '@ludy/kernel-contract';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AiMeter } from '../components/ai-meter.tsx';
 import { FormDialog, useLive } from '../components/form-dialog.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
@@ -975,7 +975,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_stock_columns', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_marketplace_fee_note', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_misa_amis_blocker_notes', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_adherence', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_commitments', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'sign_acceptance_draft', 'sign_version_diff', 'sign_contract_draft', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_stock_columns', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_marketplace_fee_note', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_misa_amis_blocker_notes', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_adherence', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_commitments', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'notes_todo_plan', 'notes_organize', 'sign_field_propose', 'sign_clause_summary', 'sign_acceptance_draft', 'sign_version_diff', 'sign_contract_draft', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 export function AiUse({ agents }: { agents: Agent[] }) {

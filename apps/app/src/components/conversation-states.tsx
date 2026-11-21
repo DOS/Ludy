@@ -2,8 +2,8 @@
 // The states of the Inbox panes besides "rows" (#3638, Engage audit IN-7, DESIGN.md 5.3): an error that can be tried again, and the shapes the thread and the contact panel
 // take while they load (a spinner says nothing about what is coming).
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Skeleton } from '@crove/ui/components/skeleton';
+import { Button } from '@ludy/ui/components/button';
+import { Skeleton } from '@ludy/ui/components/skeleton';
 import { ErrorText } from './ui.tsx';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 

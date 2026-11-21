@@ -211,6 +211,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'crove_meetings.capture_session': MeetingsCaptureSessionTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.glossary_term': MeetingsGlossaryTermTable;
@@ -1453,9 +1454,10 @@ export interface FinanceMarketplaceColumnProfileTable {
 export interface FinanceMarketplaceConnectionFileTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
-  marketplace_connection_id: ColumnType<string, string, NotGranted>;
+  marketplace_connection_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  disconnected_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_finance.marketplace_connection */
@@ -3346,6 +3348,21 @@ export interface MeetingsCalendarAgendaTable {
   meeting_id: ColumnType<string | null, NotGranted, string | null>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
   series_id: ColumnType<string | null, NotGranted, NotGranted>;
+}
+
+/** crove_meetings.capture_session */
+export interface MeetingsCaptureSessionTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string, NotGranted, NotGranted>;
+  recorder_user_id: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  agenda_id: ColumnType<string | null, NotGranted, NotGranted>;
+  meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  last_seen_at: ColumnType<Date, NotGranted, Date | string>;
+  ended_at: ColumnType<Date | null, NotGranted, Date | string | null>;
+  ended_reason: ColumnType<string | null, NotGranted, string | null>;
 }
 
 /** crove_meetings.chat_channel */

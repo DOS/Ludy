@@ -9,8 +9,8 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { errors, type Adapter, type AdapterPayload } from 'oidc-provider';
-import type { Db } from '@crove/db';
-import { toDomainError } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { toDomainError } from '@ludy/kernel-runtime';
 
 // How long a record lives when the provider names no end: a registered client that never obtains a grant is gone after 30 days
 // (crove_kernel.mcp_grant_approve lifts it to 400 days when a person consents to it).

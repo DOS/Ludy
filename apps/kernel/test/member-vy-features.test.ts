@@ -3,13 +3,15 @@
 // commands check). Each side pins the same literal (packages/agent/test/member-vy-features.test.ts is the other), so the two cannot differ
 // without one of the tests failing (ADR-0049, issue #2782).
 import { describe, expect, it } from 'vitest';
-import { MEMBER_VY_FEATURES } from '@crove/kernel';
+import { MEMBER_VY_FEATURES } from '@ludy/kernel';
 
 describe('member-Vy features (kernel side)', () => {
   it('are the table both sides pin', () => {
     expect(MEMBER_VY_FEATURES).toEqual({
       'notes.summary': { module: 'notes', expiryMinutes: 30 },
       'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+      'notes.todo_plan': { module: 'notes', expiryMinutes: 30 },
+      'notes.organize': { module: 'notes', expiryMinutes: 30 },
       'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
       'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
       'meetings.live_notes': { module: 'meetings', expiryMinutes: 30 },

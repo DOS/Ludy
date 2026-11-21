@@ -4,8 +4,8 @@
 import { Link } from '@tanstack/react-router';
 import { useEffect, useId, useRef } from 'react';
 import { useTranslations } from 'use-intl';
-import { buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 
 export { useReviewShortcuts } from '../lib/review-shortcuts.ts';
 

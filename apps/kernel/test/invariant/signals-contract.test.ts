@@ -17,10 +17,10 @@ import {
   zFinanceSalesSignal,
   zFinanceSupplierBankChangeSignal,
   zFinanceSupplierPaymentsWaitingSignal,
-} from '@crove/kernel-contract';
-import { crmQueries } from '@crove/mod-crm';
-import { financeQueries } from '@crove/mod-finance';
-import { kernelQueries } from '@crove/kernel';
+} from '@ludy/kernel-contract';
+import { crmQueries } from '@ludy/mod-crm';
+import { financeQueries } from '@ludy/mod-finance';
+import { kernelQueries } from '@ludy/kernel';
 
 // The only keys a signal row may have: ids, days, counts and amounts. Adding a key is a change to this protected file and needs a privacy review.
 // `conversationId` and `since` belong to the conversation read of the fourth rule (#3124): the id of the thread and the moment its oldest unanswered customer message arrived, never a word of it.

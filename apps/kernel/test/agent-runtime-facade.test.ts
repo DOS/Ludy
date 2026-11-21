@@ -7,7 +7,7 @@ import {
   memberVyRuntime,
   type AgentActor,
   type Runtime,
-} from "@crove/kernel-runtime";
+} from "@ludy/kernel-runtime";
 
 type Call = { name: string; input: unknown; options: Record<string, unknown> };
 

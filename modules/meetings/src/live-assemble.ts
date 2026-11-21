@@ -22,9 +22,9 @@ import {
   type LiveAssemblePlanPiece,
   type LiveAssembleState,
   type MeetingLiveAssembled,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, fileKey, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, fileKey, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { vnDay } from './retention.ts';
 

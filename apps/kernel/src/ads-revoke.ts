@@ -20,10 +20,10 @@
 //    revoke is the person's, for the app, in every org: before the call, a definer says (a boolean, nothing else) whether another live connection of the same
 //    person needs the grant, and then the call is not made.
 import { sql } from 'kysely';
-import { AdPlatformError, type AdRevoker } from '@crove/ad-platform';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { PauseBegin, PauseRecorded } from '@crove/mod-ads';
+import { AdPlatformError, type AdRevoker } from '@ludy/ad-platform';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import type { PauseBegin, PauseRecorded } from '@ludy/mod-ads';
 import { pauseWork } from './ads-pause-run.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.revoke' };

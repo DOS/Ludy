@@ -3,7 +3,7 @@
 // matcher it reads (domain/bank-match.ts): a clean line has exactly one exact candidate and no warning, and every other
 // line says the first reason it needs a look. Nothing here is a model's read: "Vy's suggestion" is this rule, a person
 // approves every voucher, and the server checks each voucher again when it is approved.
-import type { BankLookWhy, BankMatchReason } from '@crove/kernel-contract';
+import type { BankLookWhy, BankMatchReason } from '@ludy/kernel-contract';
 
 // The reasons strong enough for a clean line: what the description itself names (the party's tax code, or an invoice of
 // the line's amount). The name, the open balance and what a person taught by matching such a line by hand (#2402: the words, the

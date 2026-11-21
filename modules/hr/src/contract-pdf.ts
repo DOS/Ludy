@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Deterministic Vietnamese Labor Contract PDF renderer (Labor Code 2019 Art. 21, #3548).
-// Pure function of its input: formats amounts through decimal.js (`money()` from @crove/l10n-vn),
+// Pure function of its input: formats amounts through decimal.js (`money()` from @ludy/l10n-vn),
 // renders zero em dashes, and leaves clean two-column signature boxes ready for Ludy eSign.
-import type { HrContractForm, HrPayFunction, HrProbationRoleTier, HrRegion } from '@crove/kernel-contract';
+import type { HrContractForm, HrPayFunction, HrProbationRoleTier, HrRegion } from '@ludy/kernel-contract';
 import {
   Decimal,
   compareCalendarDates,
@@ -10,7 +10,7 @@ import {
   deriveFixedTermEndDateIso,
   money,
   parseIsoCalendarDate,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import { contractFonts, type FontSet, type FontWeight } from './pdf/fonts.ts';
 import { A4_HEIGHT, A4_WIDTH, PdfDocument, type PdfPage, type Rgb } from './pdf/writer.ts';
 

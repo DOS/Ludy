@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The intent of a conversation in the Inbox (CV3, #2306): what a person applied, what the AI coworker suggests, and the order of the New list by it. A
 // suggestion is never the label: it shows beside the thread, and only a person's click turns it into one. No React imports, so it is unit tested.
-import type { ConversationIntent } from '@crove/kernel-contract';
+import type { ConversationIntent } from '@ludy/kernel-contract';
 
 // Most urgent first: a complaint, an invoice request, an order or a price, a question; a thread with no intent is after them, and spam is last.
 const URGENCY: readonly ConversationIntent[] = ['complaint', 'invoice_request', 'order_or_price', 'question'];

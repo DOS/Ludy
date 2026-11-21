@@ -17,7 +17,7 @@
 // in `other` with its sign from the answer and FLAGGED (`known: false`, `unknownFeeType` on the line) so the review screen shows it to a person (PO decision, #4242): refusing the page would block a
 // seller's whole payout import until a code release, and nothing posts without the accountant's account map and a person's approval anyway. Free text of the answer (details, comment, reference,
 // SKUs, shipping provider) is dropped at the edge by an allow-list of fields.
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 import { isoDay, marketplaceDigits, marketplaceMoney, notRecognized } from './marketplace-adapter-kit.ts';
 import { LAZADA_FEE_BUCKET, LAZADA_FEE_TYPES } from './marketplace-lazada-fees.ts';
 import { lazadaCaller, parseLazadaSecret, type LazadaCredential, type LazadaOptions } from './marketplace-lazada.ts';
@@ -113,7 +113,7 @@ function dayOf(value: unknown): string | null {
   return isoDay(day) ? day : null;
 }
 
-// `Decimal` of @crove/l10n-vn is the configured constructor (a value); its instances are typed through it.
+// `Decimal` of @ludy/l10n-vn is the configured constructor (a value); its instances are typed through it.
 type Dec = InstanceType<typeof Decimal>;
 const toMoney = (value: Dec): string => {
   const text = value.toDecimalPlaces(4, Decimal.ROUND_HALF_UP);

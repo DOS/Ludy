@@ -4,9 +4,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ContentChanges } from './social-review-diff.tsx';
 import { TickedChecks } from './social-review-checklist.tsx';
 import { ErrorText, Notice, Spinner } from './ui.tsx';

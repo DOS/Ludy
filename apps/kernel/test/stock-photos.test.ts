@@ -7,8 +7,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MAX_UPLOAD_BYTES } from '@crove/kernel-contract';
-import { EgressError, LocalDiskStore, fileKey, sha256Hex, type EgressOptions, type EgressResponse, type GuardedRequest, type Runtime } from '@crove/kernel-runtime';
+import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
+import { EgressError, LocalDiskStore, fileKey, sha256Hex, type EgressOptions, type EgressResponse, type GuardedRequest, type Runtime } from '@ludy/kernel-runtime';
 import { PEXELS_API, StockPhotoBudget, createPexels, parsePexelsPhoto } from '../src/stock-photos.ts';
 
 // A low-entropy fake key: never a real one.

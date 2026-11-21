@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
-import { isVietnamHoliday, zonedDate, zonedInstant, type EventTypeInput } from '@crove/kernel-contract';
-import { Runtime, type AgentProgram } from '@crove/kernel-runtime';
-import { crmAgentPrograms, crmCommands, crmQueries, proposalText, type NextSlots } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { isVietnamHoliday, zonedDate, zonedInstant, type EventTypeInput } from '@ludy/kernel-contract';
+import { Runtime, type AgentProgram } from '@ludy/kernel-runtime';
+import { crmAgentPrograms, crmCommands, crmQueries, proposalText, type NextSlots } from '@ludy/mod-crm';
 import { bookingManageAsk, bookingRequest } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

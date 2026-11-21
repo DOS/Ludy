@@ -90,7 +90,7 @@ export type TenantTable = Refine<
 export type TenantMemberTable = Refine<G.KernelTenantMemberTable, { role: MemberRole }>;
 
 // The tax calendar of an org (issue #921): the obligations that apply to it and its settings (one row per org), and
-// the obligations marked done per period. The rules themselves are data in @crove/kernel-contract (tax-calendar.ts).
+// the obligations marked done per period. The rules themselves are data in @ludy/kernel-contract (tax-calendar.ts).
 export const TAX_OBLIGATION_CODES = ['vat_return', 'pit_withholding', 'cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements', 'license_fee'] as const;
 export const PIT_FILING_PERIODS = ['month', 'quarter'] as const;
 export type TaxProfileTable = Refine<
@@ -123,7 +123,7 @@ export const NUMBER_RESETS = ['yearly', 'monthly', 'never'] as const;
 export type NumberSeriesPolicyTable = Refine<G.KernelNumberSeriesPolicyTable, { reset: (typeof NUMBER_RESETS)[number] }>;
 
 // The calendar core (issue #1313): a member's weekly working hours and the events on their calendar. Holidays and the
-// slot rules are in @crove/kernel-contract (calendar.ts).
+// slot rules are in @ludy/kernel-contract (calendar.ts).
 export const CALENDAR_EVENT_KINDS = ['manual', 'time_off', 'booking', 'google', 'microsoft', 'caldav'] as const;
 export const CALENDAR_CONNECTION_STATUSES = ['active', 'expired', 'disconnecting'] as const;
 export const CALENDAR_PROVIDERS = ['google', 'microsoft', 'caldav'] as const;
@@ -1376,6 +1376,16 @@ export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
 export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
 export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
 
+// The capture session of a call (ADR-0055 slice 1, #4123): which kind of client holds a capture, and why a finished one ended.
+export const MEETING_CAPTURE_KINDS = ['extension', 'app'] as const;
+export type MeetingCaptureKind = (typeof MEETING_CAPTURE_KINDS)[number];
+export const MEETING_CAPTURE_ENDED_REASONS = ['media', 'stopped', 'lost'] as const;
+export type MeetingCaptureEndedReason = (typeof MEETING_CAPTURE_ENDED_REASONS)[number];
+export type MeetingsCaptureSessionTable = Refine<
+  G.MeetingsCaptureSessionTable,
+  { kind: MeetingCaptureKind; ended_reason: MeetingCaptureEndedReason | null }
+>;
+
 // Projects that group kernel tasks (#2591, ADR-0048).
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -1518,6 +1528,7 @@ type Refined = Tables<{
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
+  'crove_meetings.capture_session': MeetingsCaptureSessionTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;

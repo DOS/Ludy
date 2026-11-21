@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const meetingsManifest = defineModule({
   id: 'meetings',
@@ -42,6 +42,8 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii', join_url: 'sensitive' },
       ),
+      // The record that a call is being captured right now (ADR-0055 slice 1, #4123): the kind of client, the times and a hash that tells one call from another. No content, no address, no title.
+      capture_session: columns(['org_id', 'id', 'meeting_id', 'recorder_user_id', 'kind', 'agenda_id', 'meeting_key', 'started_at', 'last_seen_at', 'ended_at', 'ended_reason']),
       // The org's channels for minutes, Slack or Teams (B4, #3168): a name and the address's host. No secret: the address is sealed in chat_channel_target.
       chat_channel: columns(['org_id', 'id', 'kind', 'label', 'host', 'created_by', 'created_at', 'updated_at']),
       // The sealed address of a minutes channel (B4, #3168): definer-only, opened by the worker's job (the API seals it and never opens it).
@@ -155,4 +157,4 @@ export const VIDEO_RETENTION_DAYS = 7;
 export const AUDIO_MAX_BYTES = 300 * 1024 * 1024;
 export const VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // The version of the notice text lives in the contract (a client sends the version it showed); the current one is the default.
-export { CONSENT_NOTICE_VERSION } from '@crove/kernel-contract';
+export { CONSENT_NOTICE_VERSION } from '@ludy/kernel-contract';

@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
     void (async (): Promise<StartReply> => {
       if (current) return { ok: false, reason: 'busy' };
       const started = await startCapture(command);
-      if (!started.ok) return { ok: false, reason: started.reason };
+      if (!started.ok) return { ok: false, reason: started.reason, ...(started.held ? { held: started.held } : {}) };
       current = started.running;
       // A recording that ends without the member's click (A1, #3159): what was saved is uploaded with the reason code, and the
       // worker is told so the badge and the popup say so. The same running object, so a stop the member clicks is not reported.

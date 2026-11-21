@@ -3,7 +3,7 @@
 // hints of that app's entities, an org_apps hint makes it check again first and then goes to every stream of the org, and every hint type names its app.
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { STREAM_HINT_TYPES } from '@crove/kernel-contract';
+import { STREAM_HINT_TYPES } from '@ludy/kernel-contract';
 import { ALL_ENTITIES, HINT_APPS, STREAM_FILTERED_APPS, StreamConnection, parseHint, type StreamScope } from '../src/stream.ts';
 
 const ORG = randomUUID();

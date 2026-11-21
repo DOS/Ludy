@@ -1,7 +1,7 @@
 // The event types card's helpers (issue #1314): the form to the saved input and back, the slug that follows the
 // title, and who may host or manage; team types (#1373) with their co-hosts.
 import { describe, expect, it } from 'vitest';
-import { slugOf, type EventType } from '@crove/kernel-contract';
+import { slugOf, type EventType } from '@ludy/kernel-contract';
 import { coHostChoices, draftOf, EVENT_TYPE_CHECKED_FIELDS, eventTypeFieldInvalid, hostChoices, inputOf, mayManage, withCoHost, withHost, withTitle, type EventTypeMember } from '../src/lib/event-types.ts';
 
 const ME = '00000000-0000-7000-8000-000000000001';

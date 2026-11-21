@@ -7,7 +7,7 @@
 // decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the people of an approved run that are paid (the net of their pay line and their corrections, above zero)
 // are in it, and a person's corrections are added to their pay, one amount per person (a person whose total is below zero, or a line not calculated, gets no file). A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist.
 //
-// One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@crove/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
+// One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@ludy/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
 // people of the run whose record names that bank, with the bank's short name from the list in the `bank` column. A person with no bank on record refuses the whole file with a count, like a missing
 // account number: no file may leave someone out unseen. The check that nothing is lost is on the whole run: the amounts of every bank together must equal the net pay frozen at approval, to the dong, before
 // any file is made; the file's own total is its bank's part, and the answer says how many people are in other banks' files (a count). A code not in the list is refused. More people in one file than the
@@ -19,10 +19,10 @@
 // found, or belongs to another legal entity than the run, is refused as not found.
 //
 // `hr.payroll.bank_file.export` is the audit row of a downloaded file: the run and a count, never a name, an account number or an amount. The route writes it before it answers, so no row, no download.
-import type { MemberRole } from '@crove/db';
-import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, zHrBankLayout, type HrBankFile, type HrBankFileColumn, type HrBankFileExport } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
-import { Decimal, bankByCode, money } from '@crove/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, zHrBankLayout, type HrBankFile, type HrBankFileColumn, type HrBankFileExport } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@ludy/kernel-runtime';
+import { Decimal, bankByCode, money } from '@ludy/l10n-vn';
 import { ACCOUNT_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

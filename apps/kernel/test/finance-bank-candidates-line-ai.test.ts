@@ -2,8 +2,8 @@
 // The coworker's one sentence on an open bank line the matcher could not settle (#4219), on the API side: code reads the matcher's candidates, a line with nothing open to choice asks no model, the model is asked
 // once with the direction, date, amount and the number of candidates (no name), an answer is kept, and every state with no text is named and never quoted. A stub model stands in for the real one.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type BankCandidatesLineFacts, type BankCandidatesLineResult } from '@crove/agent';
-import type { BankLineCandidate, BankLineVoucher } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type BankCandidatesLineFacts, type BankCandidatesLineResult } from '@ludy/agent';
+import type { BankLineCandidate, BankLineVoucher } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { BANK_CANDIDATES_LINE_KEEP_MS, BANK_CANDIDATES_LINE_REFUSED_KEEP_MS, bankCandidatesLineAi, bankCandidatesLineFacts, explainBankCandidatesLine } from '../src/finance-bank-candidates-line-ai.ts';
 

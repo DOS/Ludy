@@ -7,23 +7,28 @@ import { isLocalhost, ludyUrl } from './ludy-address.ts';
 import type { Me } from './features.ts';
 import { readAgendaNext, type AgendaNext } from './agenda.ts';
 import type { ConsentMethod } from './consent.ts';
-import type { RecordingStopReason } from '@crove/meeting-recorder';
+import type { RecordingStopReason } from '@ludy/meeting-recorder';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export class LudyError extends Error {
   code: string;
   status: number;
-  constructor(code: string, status: number, message: string) {
+  // What the server added to the refusal (a DomainError's details), when it did: the kind and time of CAPTURE_ALREADY_RUNNING.
+  details: unknown;
+  constructor(code: string, status: number, message: string, details?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
+// The body of a refusal: the route's own `{code, message}`, or the RPC wire form `{json: {code, message, data}}` that the app's procedures answer in.
 async function failure(response: Response): Promise<LudyError> {
-  const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown } | null;
-  return new LudyError(typeof body?.code === 'string' ? body.code : 'HTTP_ERROR', response.status, typeof body?.message === 'string' ? body.message : `HTTP ${response.status}`);
+  const raw = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown; data?: unknown; json?: { code?: unknown; message?: unknown; data?: unknown } } | null;
+  const body = raw?.json && typeof raw.json === 'object' ? raw.json : raw;
+  return new LudyError(typeof body?.code === 'string' ? body.code : 'HTTP_ERROR', response.status, typeof body?.message === 'string' ? body.message : `HTTP ${response.status}`, body?.data);
 }
 
 // A signed form's address: https, no credentials. Plain http is accepted only when the configured Ludy address is itself
@@ -73,6 +78,13 @@ export interface MeetingCreate {
   consentNoticeVersion?: string;
   // Live notes (ADR-0052 L4a): the server defaults to off.
   liveNotes: boolean;
+  // The address of the tab being recorded, when the browser gave it (ADR-0055 slice 1, #4123): the server reads which call it names, so a second capture of the same call is refused. Never stored.
+  joinUrl?: string;
+}
+
+// The server's answer to a heartbeat: whether this capture still holds its call. False never stops the recording.
+export interface CaptureBeat {
+  open: boolean;
 }
 
 export interface Client {
@@ -86,6 +98,8 @@ export interface Client {
   createMeeting(input: MeetingCreate): Promise<{ meetingId: string }>;
   // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
+  // The capture is alive (every 30 seconds), or over when `end` is set because the member stopped (ADR-0055 slice 1, #4123). Callers never fail on it.
+  captureHeartbeat(input: { meetingId: string; end?: boolean }): Promise<CaptureBeat>;
   // `stopReason`: the recording stopped without the member's click (A1, #3159); the server keeps the code on the meeting.
   // The recording ended and no media will reach the server (nothing saved, the upload failed, the capture failed to start): the meeting gets its end time
   // and the code, once, so the app's recording chip lets go (#3196). The server ignores it when the meeting already has a recording; callers never fail on it.
@@ -167,7 +181,7 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     },
     async createMeeting(input) {
       // oRPC's wire format: the input in `json`. Language and visibility take the server's defaults of the app's recorder.
-      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, ...(input.consentNoticeVersion ? { consentNoticeVersion: input.consentNoticeVersion } : {}), liveNotes: input.liveNotes } };
+      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, ...(input.consentNoticeVersion ? { consentNoticeVersion: input.consentNoticeVersion } : {}), liveNotes: input.liveNotes, ...(input.joinUrl ? { capture: { joinUrl: input.joinUrl } } : {}) } };
       const out = (await (await call('/api/rpc/meetings/create', json(body))).json()) as { json?: { meetingId?: unknown } };
       if (typeof out.json?.meetingId !== 'string') throw new LudyError('BAD_RESPONSE', 502, 'Máy chủ trả lời không đúng dạng');
       return { meetingId: out.json.meetingId };
@@ -178,6 +192,10 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const base = blob.type.split(';')[0]!.trim();
       const type = /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream';
       await call(`/api/meetings/${encodeURIComponent(meetingId)}/live-chunk?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: blob });
+    },
+    async captureHeartbeat({ meetingId, end }) {
+      const out = (await (await call('/api/rpc/meetings/captureHeartbeat', json({ json: { meetingId, ...(end ? { end: true } : {}) } }))).json()) as { json?: { open?: unknown } };
+      return { open: out.json?.open === true };
     },
     async recordingStopped({ meetingId, reason, lengthSeconds }) {
       await call('/api/rpc/meetings/recordingStopped', json({ json: { meetingId, ...(reason ? { reason } : {}), ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) } }));

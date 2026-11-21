@@ -18,10 +18,10 @@ import {
   type JournalVoucherRequest,
   type StockSurplusSource,
   type SurplusResolutionRequest,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { SURPLUS_ACCOUNT } from './domain/stock-count.ts';
 import { isSurplusVoucher, surplusAmount, surplusDescription, surplusVoucherLines } from './domain/stock-surplus.ts';
 import { databaseToday } from './period-lock.ts';

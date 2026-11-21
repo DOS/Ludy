@@ -11,7 +11,7 @@
 // shop, so the orders poll and the later reads (returns, escrow) share the pace; the platform publishes no rate figure, so the start is conservative and `rate_limited` backs the worker off.
 //
 // THE TOKEN IN THE ADDRESS. A shop call carries the access token and the signature in the query, so the URL is built here, handed only to the host-bound fetch and never kept, logged or put in an error.
-import { MarketplaceProviderError, type MarketplaceTestResult } from '@crove/mod-finance';
+import { MarketplaceProviderError, type MarketplaceTestResult } from '@ludy/mod-finance';
 import { cleanLabel, marketplaceIdentifier, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 import { signShopeeRequest } from './marketplace-shopee-sign.ts';
 import { SHOPEE_API_HOST } from './marketplace-shopee-token.ts';

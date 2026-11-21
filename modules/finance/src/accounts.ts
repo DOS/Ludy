@@ -9,9 +9,9 @@
 // The database holds the same rules (20261019060000_crove_finance_sub_accounts.sql); the checks here come first so the
 // refusal says what to do.
 import { z } from 'zod';
-import { isTaggedCode, subAccountCodeProblem, zAccountCode, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { isTaggedCode, subAccountCodeProblem, zAccountCode, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import type { OpeningChartAccount } from './domain/opening-balance.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];

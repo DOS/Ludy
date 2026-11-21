@@ -2,9 +2,9 @@
 // The finance coworker on payroll, API side (#2534): the stored run is read through the audited queries, the model is told the pseudonymized sheet only (a planted name, the employer's
 // name and an account never reach a request), a text with a figure it was not given or an alias that does not exist gives no text, and every state of `ai` is an answer, never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, InboxReader } from '@crove/agent';
-import type { HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+import { AiBudgetExhaustedError, InboxReader } from '@ludy/agent';
+import type { HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { explainPayslip, flagMonth, payrollSource, prepareMonth, type PayrollAi, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 

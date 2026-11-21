@@ -158,7 +158,7 @@ const zLine = z.strictObject({
   vatRate: zText.nullable(),
 });
 
-// The invoice a replacement or an adjustment corrects (RelatedInvoice in @crove/l10n-vn, #916).
+// The invoice a replacement or an adjustment corrects (RelatedInvoice in @ludy/l10n-vn, #916).
 const zRelatedInvoice = z.strictObject({
   kind: z.enum(['replacement', 'adjustment']),
   template: zText.nullable(),
@@ -169,7 +169,7 @@ const zRelatedInvoice = z.strictObject({
 });
 
 // The signature verification of an e-invoice XML (#674). The same lists as SIGNATURE_STATUSES and SIGNATURE_REASONS
-// in @crove/l10n-vn (apps/extract tests compare them); this package does not depend on it.
+// in @ludy/l10n-vn (apps/extract tests compare them); this package does not depend on it.
 export const SIGNATURE_STATUSES = ['verified', 'unverified', 'not_applicable'] as const;
 export const SIGNATURE_REASONS = [
   'missing',
@@ -199,7 +199,7 @@ export const zInvoiceSignature = z
   })
   .refine((s) => (s.status === 'verified') === (s.reason === null), 'reason is null exactly when the signature is verified');
 
-// The shape of ParsedInvoice in @crove/l10n-vn for an e-invoice XML.
+// The shape of ParsedInvoice in @ludy/l10n-vn for an e-invoice XML.
 export const zExtractedInvoice = z.strictObject({
   source: z.literal('einvoice_xml'),
   invoiceType: zText.nullable(),
@@ -856,7 +856,7 @@ export const zExtractedMarketplaceColumns = z.strictObject({
   sheet: z
     .strictObject({
       headerRow: z.number().int().min(0).max(1_048_576),
-      // sha-256 (hex) of the header row's text (@crove/l10n-vn headerRowText), the key a saved column mapping is found by (#4037); the sandbox always sets it, and a sheet without one (an older sandbox) simply cannot be saved. A hash of header words: no value, no buyer text can be read back from it.
+      // sha-256 (hex) of the header row's text (@ludy/l10n-vn headerRowText), the key a saved column mapping is found by (#4037); the sandbox always sets it, and a sheet without one (an older sandbox) simply cannot be saved. A hash of header words: no value, no buyer text can be read back from it.
       headerDigest: z
         .string()
         .regex(/^[0-9a-f]{64}$/)

@@ -5,8 +5,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { LookupHint } from '@crove/kernel-contract';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
+import type { LookupHint } from '@ludy/kernel-contract';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));

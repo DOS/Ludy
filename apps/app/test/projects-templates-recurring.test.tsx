@@ -11,7 +11,7 @@ import type {
   ProjectSeat,
   ProjectTaskCard,
   ProjectTaskRecurrenceView,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));

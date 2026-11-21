@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { MEMBER_VY_FEATURES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { MEMBER_VY_FEATURES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -121,7 +121,7 @@ suite('one live Vy run per member per feature (#3029)', () => {
   it('bounds a member at one live run per declared feature, whatever the starts', async () => {
     for (let round = 0; round < 2; round++) for (const feature of FEATURES) await start(users.carol, feature);
     expect(await liveOf(users.carol)).toEqual([...FEATURES].sort());
-    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(17);
+    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(19);
   });
 
   it('ends every live run of the member, whichever the feature, when vy.use is denied, a kill switch is engaged and the member is removed', async () => {

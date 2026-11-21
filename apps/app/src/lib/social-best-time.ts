@@ -1,7 +1,7 @@
 // "Giờ đẹp" next to a channel's time picker (#980): the channel's best weekday-and-hour slots from its history
 // (bestTimes, the same ranking as the Metrics tab's card), each turned into the next time it comes round in the post's
 // time zone, so a click sets the picker to it. Pure: callers pass `now` and the times already taken.
-import { bestTimes, localTime, zonedToEpoch, type BestTime, type PublishedSample } from '@crove/mod-social/contract';
+import { bestTimes, localTime, zonedToEpoch, type BestTime, type PublishedSample } from '@ludy/mod-social/contract';
 
 // Posts with metrics a channel needs before it gets suggestions: bestTimes' own default, passed explicitly so the
 // button's rule and the ranking cannot drift apart.

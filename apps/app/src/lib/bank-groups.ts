@@ -2,7 +2,7 @@
 // The bank screen's clean group and the review page of matched lines (#2385): what asking for one clean line sends, the
 // words that say why a line matched or why it needs a look, and how a batch's results read. No React imports, so it is
 // unit tested. The grouping itself is the server's (finance.bank.match_groups); nothing here decides a match.
-import type { BankMatchLine, BankMatchedBy, BankMatchReason, CashVoucherRequest } from '@crove/kernel-contract';
+import type { BankMatchLine, BankMatchedBy, BankMatchReason, CashVoucherRequest } from '@ludy/kernel-contract';
 import type { BulkResult } from './review.ts';
 
 // What kernel.proposal.request takes for a clean line: the voucher the line makes with the party and invoice the matcher

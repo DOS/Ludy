@@ -4,8 +4,9 @@
 // path and one set of rules for the key, the file row, the segment and the live pieces.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MeetingMediaRecord } from '@crove/kernel-contract';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import type { MeetingMediaRecord } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
+import { endCapture } from './capture.ts';
 import { readRetentionSettings, retentionDates } from './retention.ts';
 
 const MEDIA_EXTENSIONS: Record<string, string> = {
@@ -133,6 +134,8 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
     UPDATE crove_meetings.meeting
     SET ended_at = LEAST(started_at + (${input.lengthSeconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
     WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
+  // Its media reached the server, so the capture of the call is over (ADR-0055 slice 1, #4123).
+  await endCapture(ctx, meetingId, 'media');
   return { fileId, liveChunksDiscarded, replaced };
 }
 

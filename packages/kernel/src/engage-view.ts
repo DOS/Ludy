@@ -3,8 +3,8 @@
 // sends exactly what was stored, so the card shows exactly that: a control character, a bidirectional embedding, override or isolate or a zero-width mark is NOT dropped (the customer would then read something
 // other than what the approver read) but written out as a visible marker, <U+202E>. Each value is cut to a bounded length.
 import { sql, type Transaction } from 'kysely';
-import { isEngageProposalKind, type EngageProposalView } from '@crove/kernel-contract';
-import type { Database } from '@crove/db';
+import { isEngageProposalKind, type EngageProposalView } from '@ludy/kernel-contract';
+import type { Database } from '@ludy/db';
 
 const MAX_FIELDS = 40;
 const VALUE_MAX = 8000;
@@ -89,6 +89,8 @@ export async function engageAboutOf(trx: Transaction<Database>, orgId: string, c
     case 'ads.budget.lower_approved':
     case 'ads.schedule.shorten_approved':
       return launchAbout(trx, orgId, command, p);
+    case 'ads.manage.cancel_approved':
+      return changeAbout(trx, orgId, p);
     default:
       return [];
   }
@@ -184,6 +186,25 @@ async function postAbout(trx: Transaction<Database>, orgId: string, p: Record<st
   const out: About = [];
   push(out, 'post', post.shown);
   push(out, 'channels', channels.map((c) => textOf(c.name ?? '').slice(0, 100)).filter(Boolean).join(', '), 700);
+  return out;
+}
+
+// The queued change the ask would cancel: the launch it is on (as below) and the change's kind, its state and what it would set (a budget with its currency, a last day, or the object it would start again).
+async function changeAbout(trx: Transaction<Database>, orgId: string, p: Record<string, unknown>): Promise<About> {
+  const changeId = idOf(p.changeId);
+  if (!changeId) return [];
+  const { rows } = await sql<{ launch_id: string; kind: string; state: string; slot: string; budget: string | null; ends: string | null; currency: string | null }>`
+    SELECT c.launch_id AS launch_id, c.kind AS kind, c.state AS state, c.slot AS slot, c.to_budget::text AS budget, c.to_end_on::text AS ends, l.currency AS currency
+    FROM crove_ads.ad_manage_change c
+    LEFT JOIN crove_ads.ad_launch l ON l.org_id = c.org_id AND l.id = c.launch_id
+    WHERE c.org_id = ${orgId}::uuid AND c.id = ${changeId}::uuid
+    LIMIT 1`.execute(trx);
+  const row = rows[0];
+  if (!row) return [];
+  const out = await launchAbout(trx, orgId, 'ads.manage.cancel_approved', { launchId: row.launch_id });
+  push(out, 'changeKind', row.kind);
+  push(out, 'changeState', row.state);
+  push(out, 'changeTo', row.budget ? [row.budget, row.currency].filter(Boolean).join(' ') : (row.ends ?? row.slot));
   return out;
 }
 

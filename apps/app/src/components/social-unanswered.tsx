@@ -6,8 +6,8 @@
 import { keepPreviousData, useQueries } from '@tanstack/react-query';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { CONVERSATION_POST_COUNTS_MAX } from '@crove/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { CONVERSATION_POST_COUNTS_MAX } from '@ludy/kernel-contract';
 import { orpc } from '../lib/api.ts';
 
 // A minute: the Inbox polls faster, but a post list is a place to plan, not to answer, and the badge only points at the post's Bình luận tab.

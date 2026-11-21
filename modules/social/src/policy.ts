@@ -3,9 +3,9 @@
 // content hash its reviewer saw (post_approval), and a person approves a variant's content once.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { approvedValues, base, lockPost, lockVariants, refreshPostStatus, regateValues, setVariant, type Trx, type VariantRow } from './variants.ts';
 import { bannedChecker, bannedCommandBudget, bannedWordsOf, isBlocked } from './banned-words.ts';

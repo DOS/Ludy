@@ -4,15 +4,15 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DataClass, ModuleManifest } from '@crove/kernel-contract';
-import { kernelManifest } from '@crove/kernel';
-import { crmManifest } from '@crove/mod-crm';
-import { financeManifest } from '@crove/mod-finance';
-import { hrManifest } from '@crove/mod-hr';
-import { notesManifest } from '@crove/mod-notes';
-import { socialManifest } from '@crove/mod-social';
-import { meetingsManifest } from '@crove/mod-meetings';
-import { signManifest } from '@crove/mod-sign';
+import type { DataClass, ModuleManifest } from '@ludy/kernel-contract';
+import { kernelManifest } from '@ludy/kernel';
+import { crmManifest } from '@ludy/mod-crm';
+import { financeManifest } from '@ludy/mod-finance';
+import { hrManifest } from '@ludy/mod-hr';
+import { notesManifest } from '@ludy/mod-notes';
+import { socialManifest } from '@ludy/mod-social';
+import { meetingsManifest } from '@ludy/mod-meetings';
+import { signManifest } from '@ludy/mod-sign';
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 export const SCANNED = ['packages', 'modules', 'apps/kernel/src'];

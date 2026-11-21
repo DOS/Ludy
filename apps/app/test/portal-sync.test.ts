@@ -1,7 +1,7 @@
 // The tax portal sync on the reconciliation screen (#325): who sees it, when a new CAPTCHA is needed, and the order of
 // the steps after the login.
 import { describe, expect, it } from 'vitest';
-import type { PortalListResult, PortalXmlResult } from '@crove/kernel-contract';
+import type { PortalListResult, PortalXmlResult } from '@ludy/kernel-contract';
 import { canSyncFromPortal, needsNewCaptcha, runPortalSync, type SyncProgress } from '../src/lib/portal-sync.ts';
 
 const LIST = '00000000-0000-7000-8000-000000000001';

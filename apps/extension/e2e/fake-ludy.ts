@@ -90,6 +90,8 @@ export async function startFakeLudy(): Promise<FakeLudy> {
         fake.created.push(input);
         return json({ json: { meetingId: '11111111-1111-4111-8111-111111111111' } });
       }
+      // The heartbeat of a running capture, and its end when the member stops (ADR-0055 slice 1, #4123): always open here.
+      if (path === '/api/rpc/meetings/captureHeartbeat') return json({ json: { open: true } });
       const media = /^\/api\/meetings\/([0-9a-f-]{36})\/media$/.exec(path);
       if (media) {
         if (fake.failUploads) return json({ code: 'INTERNAL', message: 'down' }, 500);

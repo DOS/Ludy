@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { reviewAnswer, reviewView } from '../src/review-link.ts';
 
 // The input checks run before any database call: this runtime fails the test if one is made.

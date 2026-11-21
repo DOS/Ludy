@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { EgressError, LocalDiskStore, type EgressOptions, type EgressResponse, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { EgressError, LocalDiskStore, type EgressOptions, type EgressResponse, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { createMediaUrls, mediaUrl, urlFileName } from '../src/media-urls.ts';
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.from('a recorded jpeg')]);

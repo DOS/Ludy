@@ -3,7 +3,7 @@
 // or on NOT_EXPORTED with the reason (#3201). EXPORT_TABLES is a hand-kept list, so a table a migration adds would
 // otherwise be left out of the owner's copy of their data without anyone noticing. offboarding.db.test.ts reads the catalog of its
 // migrated database and fails on such a table; org-export-coverage.test.ts checks the reading and the messages on planted catalogs.
-import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@crove/kernel';
+import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@ludy/kernel';
 
 // The schemas the check covers: every crove_* schema with org_id tables. A new schema is a failure until its tables are decided (exported or named below).
 export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign'];
@@ -57,6 +57,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_meetings.meeting_chapter': "the meeting's recorder, or its readers once published: the system context is refused by the row policy (a user context only), so it is not exported; the titles are derived from the transcript, which is not exported either",
   'crove_meetings.live_chunk': "the meeting's recorder only: a live transcript in progress",
   'crove_meetings.live_line': "the meeting's recorder only: a live transcript in progress",
+  'crove_meetings.capture_session': "the meeting's recorder only: the record that a call is being captured (the kind of client and times; no content, no address)",
   'crove_meetings.meeting_note': "the meeting's recorder only",
   'crove_meetings.meeting_reader': "who may read a meeting: readable through is_meeting_reader only, which refuses the system context",
   'crove_meetings.meeting_result': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",

@@ -8,7 +8,7 @@ import type {
   HrSelfLeaveBalanceResult,
   HrSelfPayslipSummary,
   HrSelfProfile,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 

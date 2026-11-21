@@ -5,14 +5,14 @@
 import { ENGLISH, T } from './strings.ts';
 import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
 import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
-import { visibleFeatures, FEATURES, type Me } from './features.ts';
+import { permissionsToRemove, visibleFeatures, FEATURES, type Me } from './features.ts';
 import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
-import { LOST_KEY, readLost, RECORDING_KEY, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
+import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
 import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
-import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
+import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
 
 const root = document.getElementById('root') as HTMLElement;
@@ -356,9 +356,10 @@ async function toggleWebClipper(enable: boolean): Promise<void> {
     await saveState(area, withFeature(latest, 'clipper', granted));
     if (!granted) notice = T.clipperPermissionDenied;
   } else {
-    await chrome.permissions.remove({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
-    captureDraft.sourceUrl = null;
     const latest = await loadState(area);
+    const remove = permissionsToRemove('clipper', latest.enabled);
+    if (remove.length > 0) await chrome.permissions.remove({ permissions: remove }).catch(() => false);
+    captureDraft.sourceUrl = null;
     await saveState(area, withFeature(latest, 'clipper', false));
   }
   await render();
@@ -468,7 +469,7 @@ async function meetingsView(state: State, me: Me, token: string): Promise<Node[]
   if (!granted || state.enabled.meetings !== true) {
     out.push(
       h('p', { class: 'note' }, T.meetingsNote),
-      h('button', { class: 'primary', onclick: () => void turnOn(state) }, T.meetingsOn),
+      h('button', { class: 'primary', onclick: () => void turnOn() }, T.meetingsOn),
     );
     return out;
   }
@@ -525,7 +526,7 @@ async function meetingsView(state: State, me: Me, token: string): Promise<Node[]
     h('div', { class: 'row' }, liveNotes, h('label', { for: 'live' }, T.liveNotes)),
     h('p', { class: 'note' }, T.liveNotesHint),
     h('button', { class: 'primary', id: 'start', onclick: () => void startRecording() }, T.start),
-    h('button', { onclick: () => void turnOff(state) }, T.meetingsOff),
+    h('button', { onclick: () => void turnOff() }, T.meetingsOff),
   );
   return out;
 }
@@ -583,14 +584,14 @@ async function dismissLost(): Promise<void> {
   await render();
 }
 
-async function turnOn(state: State): Promise<void> {
+async function turnOn(): Promise<void> {
   notice = '';
   const feature = FEATURES.find((f) => f.id === 'meetings')!;
-  // The browser asks for tab capture and the offscreen document on this click, and nothing is asked before it.
+  // The browser asks for tab capture, offscreen, and activeTab (to read the active meeting tab URL on click) on this click, and nothing is asked before it.
   if (!(await chrome.permissions.request({ permissions: [...feature.permissions] }))) {
     notice = T.permissionDenied;
   } else {
-    await saveState(area, withFeature(state, 'meetings', true));
+    await saveState(area, withFeature(await loadState(area), 'meetings', true));
     // The microphone prompt cannot show in an offscreen document: the member answers it once on a page of the extension.
     const mic = await navigator.permissions.query({ name: 'microphone' as PermissionName }).catch(() => null);
     if (mic?.state !== 'granted') await chrome.tabs.create({ url: chrome.runtime.getURL('mic.html') });
@@ -598,10 +599,11 @@ async function turnOn(state: State): Promise<void> {
   await render();
 }
 
-async function turnOff(state: State): Promise<void> {
-  const feature = FEATURES.find((f) => f.id === 'meetings')!;
-  await chrome.permissions.remove({ permissions: [...feature.permissions] });
-  await saveState(area, withFeature(state, 'meetings', false));
+async function turnOff(): Promise<void> {
+  const latest = await loadState(area);
+  const remove = permissionsToRemove('meetings', latest.enabled);
+  if (remove.length > 0) await chrome.permissions.remove({ permissions: remove });
+  await saveState(area, withFeature(latest, 'meetings', false));
   await render();
 }
 
@@ -618,12 +620,22 @@ async function startRecording(): Promise<void> {
     if (tab?.id === undefined) throw new Error('no tab');
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
+    // The tab's address, when the browser gave it, so the server can tell a second capture of the same call; nothing of it is kept.
+    const joinUrl = tabAddress(tab.url);
+    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId, ...(joinUrl ? { joinUrl } : {}) })) as StartReply;
     if (reply.ok) {
       draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
       agendaNote = '';
     } else {
       notice = T.blockers[reply.reason];
+      // Another capture of this call exists: which kind of client and since when, in words (ADR-0055 slice 1, #4123).
+      if (reply.reason === 'captureRunning') {
+        const since = reply.held ? new Date(reply.held.since) : null;
+        notice =
+          reply.held && since && !Number.isNaN(since.getTime())
+            ? T.blockers.captureRunning.replace('{kind}', T.captureKinds[reply.held.kind]).replace('{time}', since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+            : T.blockers.captureRunningUnknown;
+      }
       if (reply.reason === 'consentPolicy') {
         strictOrg = true;
         if (draft.consentMethod === 'told_at_start') draft.consentMethod = '';

@@ -1,7 +1,7 @@
 // What the AI agents screens decide on their own (ADR-0029, issue #258): the chart as a tree, who may use which
 // control, and how far a budget is spent. The server enforces every rule; these only hide what can never succeed.
 import { z } from 'zod';
-import { COWORKER_BY_MODULE, COWORKER_ROSTER, todoDueInstant, type CoworkerKey } from '@crove/kernel-contract';
+import { COWORKER_BY_MODULE, COWORKER_ROSTER, todoDueInstant, type CoworkerKey } from '@ludy/kernel-contract';
 import type { Role } from './members.ts';
 import { readSearch, type Defined } from './search.ts';
 

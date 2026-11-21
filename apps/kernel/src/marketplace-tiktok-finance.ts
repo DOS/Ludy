@@ -24,10 +24,10 @@
 // refused. `serviceFee` and `taxWithheld` stay 0. `vn_fix_infrastructure_fee`, `pit_amount` and `local_vat_amount` are CARRIED as fields of their own and never booked. Adjustments (penalties, charge backs, stamp
 // duty, ...) and reserves are a separate list, never mixed into an order's line. Only a statement whose payment status is PAID is income (its day is the payment day in Vietnam); the others are counted and left out.
 // Seller, bank and buyer fields (the masked bank account, names) are never read: every record is read through an allow-list.
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 import { cleanLabel, isoDay, marketplaceDigits, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
 import { parseTiktokSecret, tiktokCaller, type TiktokCaller, type TiktokCredential, type TiktokOptions } from './marketplace-tiktok.ts';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 
 // The paths this reader calls, all GET: the statements of a window, the transactions of one statement, and the payments of a window.
 const STATEMENTS_PATH = '/finance/202309/statements';
@@ -51,7 +51,7 @@ export const TIKTOK_CURRENCY = 'VND';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-// `Decimal` of @crove/l10n-vn is the configured constructor (a value); its instances are typed through it.
+// `Decimal` of @ludy/l10n-vn is the configured constructor (a value); its instances are typed through it.
 type Dec = InstanceType<typeof Decimal>;
 const ZERO = new Decimal(0);
 const toMoney = (value: Dec): string => {

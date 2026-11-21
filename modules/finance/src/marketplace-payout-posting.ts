@@ -5,8 +5,8 @@
 // posted there: sales minus the seller discounts minus the refunds (marketplace-settlement-posting.ts). The three debits add up to the credit only when the lines carry no other adjustment, so a
 // settlement with one is refused, never balanced by a guessed line: the accountant explains it first.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap).
-import { DomainError } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { DomainError } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import type { ProposedJournalLine } from './marketplace-settlement-posting.ts';

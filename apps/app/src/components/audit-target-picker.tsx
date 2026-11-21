@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Input } from '@crove/ui/components/input';
+import { Input } from '@ludy/ui/components/input';
 import { client } from '../lib/api.ts';
 import { auditTargetChoices, type AuditTargetChoice } from '../lib/audit.ts';
 import { searchTerm } from '../lib/palette.ts';

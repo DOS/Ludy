@@ -10,9 +10,9 @@
 // description and a void reason are text a person, a supplier's XML or an import wrote, and they reach the client as data, never as an instruction. The legal entity is
 // not chosen here: the row policy of the caller's scope decides which entities' invoices are visible, as it does on the documents screen. Money stays a decimal string.
 import { z } from 'zod';
-import { plainLine, zLocalDate } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { plainLine, zLocalDate } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { mcpOpenBalances } from './mcp-open-balances.ts';
 import { mcpPaymentReminder } from './mcp-payment-reminder.ts';
 import { mcpOverview } from './mcp-overview.ts';

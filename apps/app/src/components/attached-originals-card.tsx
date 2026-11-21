@@ -4,9 +4,9 @@
 // document's, warns a person to look: the books are never changed by the file.
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { InboxOriginal } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { InboxOriginal } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { errorMessage, fetchFile } from '../lib/api.ts';
 import { useFormat } from '../i18n/provider.tsx';
 

@@ -5,9 +5,9 @@
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { selectedRange, type SelectedRange } from '../lib/social-suggest.ts';

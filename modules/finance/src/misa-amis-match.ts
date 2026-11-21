@@ -23,10 +23,10 @@ import {
   type MisaAmisPreviewAsk,
   type MisaAmisProduct,
   type MisaAmisUnitRow,
-} from '@crove/kernel-contract';
-import type { Database, MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { Database, MemberRole } from '@ludy/db';
 import { sql, type Transaction } from 'kysely';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { aliasesOf } from './misa-amis-connections.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

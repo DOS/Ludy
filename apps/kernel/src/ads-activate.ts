@@ -13,9 +13,9 @@
 //    reads the object's status and takes "active" as the answer.
 // 3. `ads.activate.record` settles the row (`succeeded`; `failed`; or `ambiguous` when the answer cannot be told). When every object is on, the record moves the launch to live.
 // The secret lives in one function's scope and is never logged, never put in an error, never sent to a command.
-import { AdPlatformError, type AdActivator } from '@crove/ad-platform';
-import type { ActivateBegin, ActivateRecorded, ActivateResult } from '@crove/mod-ads';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AdPlatformError, type AdActivator } from '@ludy/ad-platform';
+import type { ActivateBegin, ActivateRecorded, ActivateResult } from '@ludy/mod-ads';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.activate' };

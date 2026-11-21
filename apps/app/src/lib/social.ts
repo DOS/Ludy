@@ -1,8 +1,8 @@
 // Shared pieces of the Social screens: status tones, provider names, the effective text of a variant as the composer
 // shows it, and grouping by day for the agenda.
-import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@crove/mod-social/contract';
-import { videoTitleRule } from '@crove/mod-social/contract';
-import { SOCIAL_VIEW_TABS } from '@crove/kernel-contract';
+import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@ludy/mod-social/contract';
+import { videoTitleRule } from '@ludy/mod-social/contract';
+import { SOCIAL_VIEW_TABS } from '@ludy/kernel-contract';
 import { getConfig } from './auth.ts';
 import { translator } from '../i18n/runtime.ts';
 

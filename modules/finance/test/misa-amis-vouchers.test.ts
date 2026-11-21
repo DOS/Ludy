@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, checkVoucher, toJsonText, type AmisVoucher } from '@crove/misa-amis';
-import { accountParents } from '@crove/kernel-contract';
+import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, checkVoucher, toJsonText, type AmisVoucher } from '@ludy/misa-amis';
+import { accountParents } from '@ludy/kernel-contract';
 import {
   AMIS_PURCHASE_PURPOSES,
   cashAmisVouchers,

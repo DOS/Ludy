@@ -15,9 +15,9 @@
 // short title a post may carry, which the org's own members typed. A href is a path inside the org (Home puts the org in front).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { TodayItem } from '@crove/kernel-contract';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { TodayItem } from '@ludy/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { ATTENTION_CHANNEL_STATUSES } from './attention-inbox.ts';
 import { channelScope, connectionInScope } from './channel-access.ts';
 import { SOCIAL_FIGURE_MAX } from './client-overview.ts';

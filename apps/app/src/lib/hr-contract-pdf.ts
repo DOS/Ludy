@@ -2,7 +2,7 @@
 // Deterministic client-side Labor Contract PDF 1.4 builder for Ludy Nhan su -> Ludy eSign handoff (#3553).
 // Produces a clean A4 PDF (automatically paginating before the signature block when fields are long) using built-in
 // Type1 Helvetica (WinAnsi) with zero external parser/PDF libraries. Monetary amounts stay string-based.
-import type { HrContractForm, HrContractType, HrProbationRoleTier, HrRegion } from '@crove/kernel-contract';
+import type { HrContractForm, HrContractType, HrProbationRoleTier, HrRegion } from '@ludy/kernel-contract';
 
 export interface HrContractPdfInput {
   employerName: string;

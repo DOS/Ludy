@@ -18,8 +18,8 @@
 import { sql } from 'kysely';
 import { createLocalJWKSet, exportJWK, importJWK, jwtVerify, type JSONWebKeySet, type JWK } from 'jose';
 import Provider, { errors, type Configuration } from 'oidc-provider';
-import type { Db } from '@crove/db';
-import { MCP_SCOPE_IDS, MCP_WRITE_SCOPE_IDS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import { MCP_SCOPE_IDS, MCP_WRITE_SCOPE_IDS } from '@ludy/kernel-contract';
 import { createAccountEmailAccess } from './auth-access.ts';
 import type { Config } from './config.ts';
 import { oauthAdapterFor } from './oauth-adapter.ts';

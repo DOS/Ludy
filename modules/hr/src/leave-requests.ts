@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Employee self-service portal & multi-level leave approval workflow (issue #4300, Stage 4A).
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { memberProfiles } from '@crove/kernel';
+import type { MemberRole } from '@ludy/db';
+import { memberProfiles } from '@ludy/kernel';
 import {
   tableWrite,
   auditValue,
@@ -23,9 +23,9 @@ import {
   type HrSelfLeaveSubmitResult,
   type HrSelfPayslipSummary,
   type HrSelfProfile,
-} from '@crove/kernel-contract';
-import { money, toMoney } from '@crove/l10n-vn';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { money, toMoney } from '@ludy/l10n-vn';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { MANAGERS, memberLabel, userOf } from './employees.ts';
 import { evaluateLeaveBalanceSummary, loadEmployeeForLeave, validateMonthlyLeaveBounds } from './leave.ts';
 import { hrManifest } from './manifest.ts';

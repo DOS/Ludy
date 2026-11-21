@@ -4,9 +4,9 @@
 // only a mark: it never blocks or moves a schedule.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_LABEL_COLORS, zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialLabelColor } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_LABEL_COLORS, zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialLabelColor } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

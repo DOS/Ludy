@@ -6,10 +6,10 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { CONTACT_PAGE_MAX, type Contact, type FilterAst } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { CONTACT_PAGE_MAX, type Contact, type FilterAst } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { refreshParties } from './party-edit.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';

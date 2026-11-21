@@ -1,7 +1,7 @@
 // Org creation limits (External-tenant gate T4, issue #94), unit part: configuration and error mapping.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ORG_CREATE_LIMITS, buildKernelCommands, orgCreateCommand } from '@crove/kernel';
-import { toDomainError } from '@crove/kernel-runtime';
+import { DEFAULT_ORG_CREATE_LIMITS, buildKernelCommands, orgCreateCommand } from '@ludy/kernel';
+import { toDomainError } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { toORPCError } from '../src/rpc.ts';
 

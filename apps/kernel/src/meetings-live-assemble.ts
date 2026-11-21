@@ -19,8 +19,8 @@ import {
   type CredentialBroker,
   type Runtime,
   type UserActor,
-} from '@crove/kernel-runtime';
-import { LIVE_CHUNK_MAX_BYTES, LIVE_CHUNK_MAX_TOTAL_BYTES, type LiveAssemblePlan, type LiveAssemblePlanPiece, type MeetingLiveAssembled } from '@crove/kernel-contract';
+} from '@ludy/kernel-runtime';
+import { LIVE_CHUNK_MAX_BYTES, LIVE_CHUNK_MAX_TOTAL_BYTES, type LiveAssemblePlan, type LiveAssemblePlanPiece, type MeetingLiveAssembled } from '@ludy/kernel-contract';
 import { decryptedWindows, unavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { sealMedia } from './media-seal.ts';
 

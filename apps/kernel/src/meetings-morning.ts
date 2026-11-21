@@ -6,8 +6,8 @@
 // The definer lists only notices still to send (not told, not muted, Meetings on), in no fixed order, so a pass that hits the limit goes on with the rest on the next one and a group of members that fail the same way cannot hold the same first rows for ever (#4085). A failure for one member never stops the others.
 // Nothing here runs Vy: the briefs stay the member's own click.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const MEETINGS_MORNING_CRON = '*/5 * * * *';
 // Notices one pass handles at most; the rest wait for the next pass.

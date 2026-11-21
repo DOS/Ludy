@@ -9,8 +9,8 @@
 // The file is built in one pass after the caller has the audit row for it; the document is bounded by HR_DECLARATION_MAX_PEOPLE, so it is never cut short.
 import { PassThrough } from 'node:stream';
 import ExcelJS from 'exceljs';
-import type { HrDeclarationDocument as DeclarationDocument } from '@crove/kernel-contract';
-import { Decimal, money } from '@crove/l10n-vn';
+import type { HrDeclarationDocument as DeclarationDocument } from '@ludy/kernel-contract';
+import { Decimal, money } from '@ludy/l10n-vn';
 
 type DeclarationSheet = DeclarationDocument['sheets'][number];
 type DeclarationColumn = DeclarationSheet['columns'][number];

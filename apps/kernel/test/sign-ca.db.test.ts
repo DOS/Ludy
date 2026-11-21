@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import { buildKernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
 import type {
   SignCaConnectionRecord,
   SignCaSettingsResult,
   SignCaSigningRequestRecord,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   CredentialVault,
   Runtime,
@@ -27,7 +27,7 @@ import {
   parseVaultKey,
   sha256Hex,
   type BlobStore,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import {
   setSignCaBrokerAvailable,
   setSignLiveCaEnabled,
@@ -35,13 +35,13 @@ import {
   signAiQueries,
   signCommands,
   signQueries,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import {
   createMisaWeSignAdapter,
   createSandboxCaAdapter,
   createViettelMySignAdapter,
   createVnptSmartCaAdapter,
-} from '@crove/sign';
+} from '@ludy/sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

@@ -8,7 +8,7 @@
 import { foldMathAlphanumerics } from './text-styles.ts';
 
 // What social.publish.record keeps as the error code when X or LinkedIn refused a text identical to a recent post: the
-// adapters' DUPLICATE_CONTENT in @crove/channel, which the browser cannot import.
+// adapters' DUPLICATE_CONTENT in @ludy/channel, which the browser cannot import.
 export const DUPLICATE_CONTENT = 'DUPLICATE_CONTENT';
 // Facebook's 506 ("duplicate status message"): unclear, since the post it matched may be Crove's own earlier attempt.
 export const POSSIBLE_DUPLICATE = 'POSSIBLE_DUPLICATE';
@@ -28,7 +28,7 @@ export interface DuplicateOf {
   status: DuplicateStatus;
 }
 
-// Links X finds without a scheme, on the common TLDs (comparableText in @crove/channel uses the same list).
+// Links X finds without a scheme, on the common TLDs (comparableText in @ludy/channel uses the same list).
 const BARE_LINK = /(?<![@\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|vn|io|co|ai|app|dev|me|info|biz|xyz|shop|store|online|site|tech|asia|edu|gov|us|uk|jp|sg|tv|ly|gg|link)\b(?:\/\S*)?/giu;
 const ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>', amp: '&' };
 

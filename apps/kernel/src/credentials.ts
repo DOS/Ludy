@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { CredentialVault, DomainError, generateVaultKey, parseVaultKey, type CredentialBroker } from '@crove/kernel-runtime';
+import { CredentialVault, DomainError, generateVaultKey, parseVaultKey, type CredentialBroker } from '@ludy/kernel-runtime';
 import type { Config } from './config.ts';
 
 // Without a key nothing is sealed or opened: connecting a channel answers 503.

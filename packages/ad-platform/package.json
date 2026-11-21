@@ -1,5 +1,5 @@
 {
-  "name": "@crove/ad-platform",
+  "name": "@ludy/ad-platform",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,6 +12,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/channel": "workspace:*"
+    "@ludy/channel": "workspace:*"
   }
 }

@@ -7,10 +7,10 @@
 //   "Số liệu tạm, kế toán chưa xác nhận bố cục sổ" (no rate stands behind it); the label goes by itself when a later dated `confirmed` row exists (owner's direction of 2026-11-17). No rate is involved.
 // - Nothing in it is AI: every figure is a bank or cash fact from the ledger; matching bank lines is #2514.
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import { zHouseholdS2e, zHouseholdS2eGet, type HouseholdS2e } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { zHouseholdS2e, zHouseholdS2eGet, type HouseholdS2e } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { cashBook } from './domain/household-cash.ts';
 import { pickInForce } from './domain/household-rules.ts';
 import { HOUSEHOLD_S1A_ROW_LIMIT, householdBookWindow } from './household-books.ts';

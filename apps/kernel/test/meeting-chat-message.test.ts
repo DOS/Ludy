@@ -2,8 +2,8 @@
 // The message of approved minutes posted to a channel (Meetings B4, #3168): the contract builds it from the published facts, the app shows its text, and the Slack and Teams adapter sends the same lines, so
 // what the recorder reads is what the channel gets. This pins the three together and the limits of the build.
 import { describe, expect, it } from 'vitest';
-import { minutesLines, slackMinutesBody } from '@crove/channel';
-import { CHAT_MESSAGE_MAX_CHARS, RESULT_SUMMARY_MAX, buildChatMessage, chatMessageCanonical, chatMessageText, chatMessageTooLong, zChatMessage } from '@crove/kernel-contract';
+import { minutesLines, slackMinutesBody } from '@ludy/channel';
+import { CHAT_MESSAGE_MAX_CHARS, RESULT_SUMMARY_MAX, buildChatMessage, chatMessageCanonical, chatMessageText, chatMessageTooLong, zChatMessage } from '@ludy/kernel-contract';
 
 const facts = {
   summary: 'Chốt báo giá tuần này.\nGặp khách thứ hai.',

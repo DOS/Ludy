@@ -13,8 +13,8 @@ import {
   zExtractResponse,
   zExtractedMarketplaceColumns,
   type MarketplaceColumnsInput,
-} from '@crove/extract-contract';
-import { COLUMN_REFUSALS, findOrderColumns } from '@crove/l10n-vn';
+} from '@ludy/extract-contract';
+import { COLUMN_REFUSALS, findOrderColumns } from '@ludy/l10n-vn';
 import { readMarketplaceColumns } from '../src/marketplace-columns.ts';
 import { readSheetGrid } from '../src/bank-statement.ts';
 import { parse } from '../src/parse.ts';

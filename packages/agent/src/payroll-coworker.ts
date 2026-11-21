@@ -16,7 +16,7 @@
 import { randomInt } from 'node:crypto';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
 import { amountText, statedFiguresProblem as figuresProblem } from './overview.ts';

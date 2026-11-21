@@ -8,9 +8,9 @@
 // type, change its co-hosts or change how it assigns; a member who leads one still edits everything else.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { GOOGLE_CALENDAR_EVENTS_SCOPE, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, type EventType, type EventTypeAssignment, type EventTypeInput } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { GOOGLE_CALENDAR_EVENTS_SCOPE, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, type EventType, type EventTypeAssignment, type EventTypeInput } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];

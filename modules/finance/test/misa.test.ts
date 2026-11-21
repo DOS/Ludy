@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { money, sum } from '@crove/l10n-vn';
+import { money, sum } from '@ludy/l10n-vn';
 import {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
@@ -24,7 +24,7 @@ import {
   type PurchaseVoucher,
   type SalesVoucher,
 } from '../src/misa.ts';
-import { MISA_GOODS_DEFAULTS, accountParents, isStockAccount, resolveMisaGoodsCodes } from '@crove/kernel-contract';
+import { MISA_GOODS_DEFAULTS, accountParents, isStockAccount, resolveMisaGoodsCodes } from '@ludy/kernel-contract';
 
 // An org chart: the TT133 stock accounts and some sub-accounts, as finance.accounts.list gives them. 152.A and 152.AB
 // are siblings under 152; 15212 was created under 152 before 1521 existed, so it is not 1521's child either.

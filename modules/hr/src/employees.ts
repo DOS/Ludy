@@ -11,8 +11,8 @@
 //
 // Audit facts carry ids, counts, the changed field names and a marker for every classified value (auditValue), never a value. Results carry ids only (idempotency rows keep them).
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { kernelManifest, memberProfiles } from '@crove/kernel';
+import type { MemberRole } from '@ludy/db';
+import { kernelManifest, memberProfiles } from '@ludy/kernel';
 import {
   HR_ERASED_NAME,
   HR_RETENTION_YEARS,
@@ -46,9 +46,9 @@ import {
   type HrPayFunction,
   type HrProbationRoleTier,
   type HrWritten,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { calculateJobLossAllowance, calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { calculateJobLossAllowance, calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@ludy/l10n-vn';
 import {
   contractFilename,
   contractTitle,
@@ -227,7 +227,7 @@ export async function resolveEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, re
   return row.id;
 }
 
-// A bank code of the list kept as data in @crove/l10n-vn: a code that is not in it is refused, so the file cut by bank never meets a code nobody can name (#2897).
+// A bank code of the list kept as data in @ludy/l10n-vn: a code that is not in it is refused, so the file cut by bank never meets a code nobody can name (#2897).
 function requireKnownBank(code: string | null | undefined): void {
   if (code !== null && code !== undefined && !isBankCode(code)) throw new DomainError('HR_BANK_UNKNOWN', 422, 'Ngân hàng này chưa có trong danh sách');
 }

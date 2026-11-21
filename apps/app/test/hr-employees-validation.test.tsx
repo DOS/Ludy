@@ -3,7 +3,7 @@ import { isValidElement, type FormEvent, type ReactElement, type ReactNode } fro
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrEmployee } from '@crove/kernel-contract';
+import type { HrEmployee } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
@@ -127,7 +127,7 @@ const {
   hasEditEmployeeChanges,
   idNumberOk,
 } = await import('../src/routes/hr-employees.tsx');
-const { Button } = await import('@crove/ui/components/button');
+const { Button } = await import('@ludy/ui/components/button');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 
 const EMP_ID = '00000000-0000-7000-8000-000000000031';

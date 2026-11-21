@@ -3,8 +3,8 @@
 // open action item (its title, who it is with, whether it is accepted as a task and its status, and the day it is due). A person is named by the org's own names, never by an id.
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { briefItemDue, type SeriesOpenItem } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
+import { briefItemDue, type SeriesOpenItem } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
 import { memberLabel } from './meeting-results.tsx';
 import { useMe } from './conversation-inbox.tsx';
 

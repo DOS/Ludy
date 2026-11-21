@@ -3,7 +3,7 @@
 // rules as the other exports (export.ts): amounts exact through moneyCell, text never read as a formula. Labels stay
 // Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import type { FixedAsset } from '@crove/kernel-contract';
+import type { FixedAsset } from '@ludy/kernel-contract';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 
 const monthLabel = (month: string) => `${month.slice(5, 7)}/${month.slice(0, 4)}`;

@@ -10,7 +10,7 @@
 //
 // READ ONLY: GET and a signed POST body for the search calls of the next slices. Every failure is one of the port's kinds (with a short `reason` for the test mapping), never TikTok's text, the URL or a
 // token. One signed turn-taking per app key and shop, so the orders poll and the finance reader of the next slices share the pace; the platform's capacity is dynamic per app and shop (rate-limits page).
-import { MarketplaceProviderError, type MarketplaceTestResult } from '@crove/mod-finance';
+import { MarketplaceProviderError, type MarketplaceTestResult } from '@ludy/mod-finance';
 import { cleanLabel, marketplaceIdentifier, parseMarketplaceJson, pickAllowed, readCappedAnswer, type Fetch } from './marketplace-adapter-kit.ts';
 import { signTiktokRequest } from './marketplace-tiktok-sign.ts';
 

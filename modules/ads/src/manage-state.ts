@@ -2,7 +2,7 @@
 // What a launch's changes add up to (ads W4, issue #3835): the recorded objects, the changes asked so far and the management state the Campaigns screen shows. Reads only; the
 // commands that write a change are in manage.ts, and the rules (what a launch holds, an object's status) in manage-rules.ts.
 import { sql } from 'kysely';
-import type { AdsManageChangeView, AdsManageObjectView, AdsManageSlot, AdsManageStateView } from '@crove/kernel-contract';
+import type { AdsManageChangeView, AdsManageObjectView, AdsManageSlot, AdsManageStateView } from '@ludy/kernel-contract';
 import type { Db } from './launch-run.ts';
 import { heldValues, objectStatusOf, type ChangeRow } from './manage-rules.ts';
 import { currentSetting } from './write.ts';

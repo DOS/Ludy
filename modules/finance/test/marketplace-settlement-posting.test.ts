@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { MARKETPLACE_POSTING_MAPS, requireConfirmedMarketplaceMap, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { settlementProposal, type SettlementProposalInput } from '../src/marketplace-settlement-posting.ts';
 
 const confirmed = (): Record<string, MarketplacePostingMap> => {

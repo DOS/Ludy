@@ -13,13 +13,13 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
-import { calculatePayroll, PAYROLL_RULES } from '@crove/l10n-vn';
-import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
+import { calculatePayroll, PAYROLL_RULES } from '@ludy/l10n-vn';
+import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
@@ -69,8 +69,8 @@ function zipEntry(zip: Uint8Array, name: string): string | null {
 
 // Every rule of the shipped set is `commentary` until the accountant confirms it (#2535), so a real approval cannot pass yet. The tests that approve confirm the rows for the test: the
 // array module code reads is the one mutated here, in place; a test that needs the gate puts the status back.
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
 const setRuleStatus = (status: 'confirmed' | 'commentary') => {

@@ -2,10 +2,10 @@
 // block of the page with arrows to move it, a box per extra that goes along with the numbers, and how many best posts.
 // What is left unticked is not returned by the server at all, so the client never gets it.
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { REPORT_EXTRAS, hasBlock, moveBlock, type ReportSection, type SectionsDraft } from '../lib/social-report.ts';
 
 export function ReportSectionsPicker({ id, value, onChange }: { id: string; value: SectionsDraft; onChange: (next: SectionsDraft) => void }) {

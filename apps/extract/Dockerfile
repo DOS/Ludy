@@ -11,7 +11,7 @@ ENV CI=true
 RUN npm install -g pnpm@10.34.7 --no-fund --no-audit
 COPY . .
 # Only crove-extract and its workspace dependencies, production dependencies only.
-RUN pnpm install --frozen-lockfile --prod --filter "@crove/extract..." \
+RUN pnpm install --frozen-lockfile --prod --filter "@ludy/extract..." \
  && rm -rf apps/extract/test packages/extract-contract/test packages/l10n-vn/test
 
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0

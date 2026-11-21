@@ -2,7 +2,7 @@
 // The cash and bank book of a household on the income method (S2e-HKD, #2517), as a pure function over posted journal lines: for every account that is 111 or 112 or a sub-account of them, the opening
 // balance, one row per journal line of the book's days (cash in = debit, cash out = credit, the accounts on the other side of the entry, the running balance) and the closing balance. A line belongs to
 // its own account only, so a parent never repeats the lines of its sub-accounts and the sections add up without double counting. Amounts are decimal strings through decimal.js, never JS numbers.
-import type { Money } from '@crove/l10n-vn';
+import type { Money } from '@ludy/l10n-vn';
 import { Chart, type ChartAccount, type OpeningBalance, type PeriodLine } from './ledger-reports.ts';
 import { canonical, parseDecimal } from './money.ts';
 

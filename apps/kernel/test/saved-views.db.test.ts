@@ -11,8 +11,8 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   amountCompare,
   createOrg,
@@ -34,9 +34,9 @@ import {
   withinLastDays,
   type FieldCondition,
   type FilterContext,
-} from '@crove/kernel';
-import { SAVED_VIEW_LIMIT, SAVED_VIEW_SCOPES, type FilterAst, type SavedView } from '@crove/kernel-contract';
-import { Runtime, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import { SAVED_VIEW_LIMIT, SAVED_VIEW_SCOPES, type FilterAst, type SavedView } from '@ludy/kernel-contract';
+import { Runtime, defineQuery } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 

@@ -6,9 +6,9 @@
 // ids, finds the connections whose listing holds them (the org comes from that stored listing, never from the notice)
 // and queues a sync of each (apps/kernel/src/worker.ts); a sync pulls what the provider reports, as the daily sweep does.
 import { sql, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
-import { BankFeedWebhookRejected, type BankFeedProvider, type BankFeedWebhookRequest } from '@crove/bank-feed';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Database } from '@ludy/db';
+import { BankFeedWebhookRejected, type BankFeedProvider, type BankFeedWebhookRequest } from '@ludy/bank-feed';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 // A notice names at most 100 accounts; this bounds what the API reads before checking its signature.
 export const MAX_BANK_FEED_WEBHOOK_BYTES = 64 * 1024;

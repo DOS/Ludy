@@ -7,9 +7,9 @@
 //   not the org's (one answer for both, so nothing says whether another entity exists).
 // "May see" is the legal-entity scope of the sealed context, applied by crove_kernel.legal_entity's own policy.
 import { z } from 'zod';
-import type { BookEntity } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { BookEntity } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 

@@ -60,7 +60,7 @@ const TITLE_MAX = 150;
 const DESCRIPTION_MAX = 300;
 const AUTHOR_MAX = 50;
 // Images per article (#943): Zalo's article docs set no count, so this is Crove's cap, kept in step with the zalo_oa
-// media rule of @crove/mod-social. Zalo refuses an image file over 1 MB.
+// media rule of @ludy/mod-social. Zalo refuses an image file over 1 MB.
 const IMAGES_MAX = 10;
 const IMAGE_MAX_BYTES = 1024 * 1024;
 // A video article's file (#1429): Zalo takes MP4 and AVI up to 50 MB; Crove's uploads are MP4 or QuickTime, so MP4.

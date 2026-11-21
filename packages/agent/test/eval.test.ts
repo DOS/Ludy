@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkInvoice, parseTaxCode } from '@crove/l10n-vn';
+import { checkInvoice, parseTaxCode } from '@ludy/l10n-vn';
 import {
   documentType,
   expectedAsParsed,

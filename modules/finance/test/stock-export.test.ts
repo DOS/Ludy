@@ -3,7 +3,7 @@
 // no text read as a formula, as in the other exports.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { StockCard, StockReportRow } from '@crove/kernel-contract';
+import type { StockCard, StockReportRow } from '@ludy/kernel-contract';
 import { buildStockWorkbook } from '../src/index.ts';
 import { expectExcelSheetNames } from './sheet-names.ts';
 

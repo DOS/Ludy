@@ -13,7 +13,7 @@
 // document or a model's answer.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { NoObjectGeneratedError } from 'ai';
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 
 // Every use of a model, by feature key ('<module>.<what>'), with the module whose budget it counts against. A new use
 // (Marketing's campaign drafts, Vy's reply drafts, the daily brief) is added here first.
@@ -142,6 +142,10 @@ export const AI_FEATURES = {
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.
   'notes.todo_suggest': 'notes',
+  // Member-scoped Vy daily focus planner & overdue reschedule suggestions on My Work (notes v2 T4b, #3563, ADR-0049): stores counts only; caller confirms every reschedule.
+  'notes.todo_plan': 'notes',
+  // Member-scoped Vy inbox organizer proposing notebooks & #tags for unfiled notes (notes v2 E5b, #3563, ADR-0049): stores counts only; caller confirms every move/tag update.
+  'notes.organize': 'notes',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

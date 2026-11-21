@@ -4,7 +4,7 @@
 // - Learning: when a purchase invoice is approved (finance.purchase.record), every line whose account a user chose on
 //   the approved revision (finance.purchase.revise marks it) writes or updates the vendor's description rule, with the
 //   approver, the time and the new document as provenance, in the same audited command.
-// - Suggesting: extraction reads the vendor's rules and every vendor's rules (rulesForSuggestion) and @crove/l10n-vn
+// - Suggesting: extraction reads the vendor's rules and every vendor's rules (rulesForSuggestion) and @ludy/l10n-vn
 //   (suggestDebitAccount) applies them in order: the vendor's own rules, the vendor's default account, every vendor's
 //   rules, then the built-in keyword list. A rule only proposes an account: the approver confirms every line and the
 //   posting checks the account again.
@@ -13,10 +13,10 @@
 // and the lookup reads at most LEARNED_RULE_LIMIT rules of each scope.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isRevenueAccount, zAccountCode, zId, type CategorizationRule } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { descriptionRuleText, keywordRuleText, money, type LearnedRule, type ProposedLine } from '@crove/l10n-vn';
+import { isRevenueAccount, zAccountCode, zId, type CategorizationRule } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { descriptionRuleText, keywordRuleText, money, type LearnedRule, type ProposedLine } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

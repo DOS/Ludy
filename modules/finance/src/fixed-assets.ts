@@ -23,10 +23,10 @@ import {
   zId,
   type DepreciationProposal,
   type FixedAsset,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { lastMonth, monthAmount, monthsBetween, remainingValue } from './domain/depreciation.ts';
 import { journalVoucherTitle, journalVoucherTotal } from './domain/journal-voucher.ts';

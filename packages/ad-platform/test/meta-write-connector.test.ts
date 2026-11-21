@@ -5,7 +5,7 @@
 // registry.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { AD_PLATFORM_PROVIDERS, MetaAdsConnector, MetaWriteConnector, META_WRITE_PROVIDER, META_WRITE_SCOPES, adPlatforms, isAdPlatformProvider, platformUserHash } from '../src/index.ts';
 
 const NOW = new Date('2026-11-02T08:00:00Z');

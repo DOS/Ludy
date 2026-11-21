@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { BlobNotFoundError, LocalDiskStore, inboundKey, newInboundBlobId, sha256Hex } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { BlobNotFoundError, LocalDiskStore, inboundKey, newInboundBlobId, sha256Hex } from '@ludy/kernel-runtime';
 import { INBOUND_BLOB_MAX_AGE_DAYS, sweepInboundBlobs } from '../src/retention.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 

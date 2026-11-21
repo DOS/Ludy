@@ -5,7 +5,7 @@
 //   one, a manual move) carries none and is priced at the month's average.
 // - Out is what leaves at that average: the quantity of the moves without value, negated. The closing value is the opening plus the value in less the value out, so the three always add up.
 // - A month with nothing to average (no quantity to spread the value over) has no unit cost, and what leaves is valued at zero: the screens say the cost is provisional until a person closes the month.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 
 export interface CostMove {
   // YYYY-MM-DD, the move's date.

@@ -136,7 +136,7 @@ const TODO_SUGGEST_INSTRUCTION = (today: string, language: NoteAiLanguage): stri
       : 'Trả lời bằng tiếng Việt dưới dạng JSON thuần túy: {"suggestions": [{"title": "<hành động ngắn>", "details": "<chi tiết ngắn hoặc chuỗi rỗng>", "dueOn": "YYYY-MM-DD" | null}]}.',
   ].join(' ');
 
-function extractJsonObject(raw: string, errorCode: NoteAiErrorCode): unknown {
+export function extractJsonObject(raw: string, errorCode: NoteAiErrorCode): unknown {
   const start = raw.indexOf('{');
   if (start < 0) throw new NoteAiError(errorCode);
   let depth = 0;
@@ -350,7 +350,7 @@ export function sanitizeNoteAiText(raw: string, maxChars: number): string {
   return collapsed.slice(0, maxChars).trimEnd();
 }
 
-function hasPromptTagLeak(raw: string): boolean {
+export function hasPromptTagLeak(raw: string): boolean {
   const lower = raw.toLowerCase();
   return lower.includes('<subject-') || lower.includes('</subject-') || lower.includes('<memory-') || lower.includes('<knowledge-');
 }

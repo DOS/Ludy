@@ -8,13 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { BlobNotFoundError, DomainError, Runtime, decryptBlobBuffer, fileKey, sha256Hex, unwrapMediaKeyWithSubkey, type BlobStore, type CredentialBroker, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { BlobNotFoundError, DomainError, Runtime, decryptBlobBuffer, fileKey, sha256Hex, unwrapMediaKeyWithSubkey, type BlobStore, type CredentialBroker, type UserActor } from '@ludy/kernel-runtime';
 import { hashExtensionSecret } from '../src/auth-extension.ts';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
@@ -451,11 +451,14 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
   });
 
   it('replaces the pieces with the final recording: the audio is kept once, the pieces lose their keys at once and their objects in the next sweep', async () => {
-    const meetingId = await liveMeeting();
+    // A live capture (ADR-0055 slice 1, #4123): the recorder's app opens it with the meeting, and the final recording ends it.
+    const meetingId = await liveMeeting('recorder', { capture: {} });
+    expect(await rows('SELECT kind, ended_reason FROM crove_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ kind: 'app', ended_reason: null }]);
     for (const seq of [0, 1, 2]) expect((await sendChunk('recorder', meetingId, seq, piece('s', seq))).status).toBe(200);
     const pieces = await chunkObjects(meetingId);
     expect(pieces).toHaveLength(3);
     const finalBytes = await upload('recorder', meetingId, 'audio', 'final');
+    expect(await rows('SELECT ended_reason FROM crove_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ ended_reason: 'media' }]);
     // One audio segment, one audio key; the pieces' rows and keys are gone in the same commit.
     expect(await count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
     expect((await rows<{ kind: string }>('SELECT kind FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).map((r) => r.kind)).toEqual(['audio']);

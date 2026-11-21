@@ -4,11 +4,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { accentReadable, BRAND_ACCENT_START, BRAND_LOGO_TYPES, BRAND_MIN_CONTRAST, BRAND_NAME_MAX, accentContrast, normalizeAccent } from '@crove/mod-social/contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { accentReadable, BRAND_ACCENT_START, BRAND_LOGO_TYPES, BRAND_MIN_CONTRAST, BRAND_NAME_MAX, accentContrast, normalizeAccent } from '@ludy/mod-social/contract';
 import { ErrorText, Logo, Spinner } from './ui.tsx';
 import { LibraryPicker } from './social-media.tsx';
 import { client, ClientError, errorMessage, fetchFile, orpc, queryClient, uploadFiles } from '../lib/api.ts';

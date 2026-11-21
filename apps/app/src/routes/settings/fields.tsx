@@ -2,11 +2,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { PROFILE_OBLIGATIONS, type TaxProfile } from '@crove/kernel-contract';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { PROFILE_OBLIGATIONS, type TaxProfile } from '@ludy/kernel-contract';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { StepUpPrompt } from '../../components/two-factor.tsx';
 import { ErrorText, Spinner } from '../../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../../lib/api.ts';

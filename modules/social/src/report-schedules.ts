@@ -10,10 +10,10 @@
 // mail carries only the chosen sections' numbers, and each mail's link takes the options when it is minted.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialReportSections, zSocialReportTopCount } from '@crove/kernel-contract';
-import type { Db, MemberRole, SocialReportSection } from '@crove/db';
-import { createMailMessage } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime } from '@crove/kernel-runtime';
+import { zId, zSocialReportSections, zSocialReportTopCount } from '@ludy/kernel-contract';
+import type { Db, MemberRole, SocialReportSection } from '@ludy/db';
+import { createMailMessage } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime } from '@ludy/kernel-runtime';
 import { isValidTimeZone } from './domain/queue.ts';
 import { storedZone } from './zones.ts';
 import { nextReportRun, reportPeriodAt, type ReportScheduleSpec } from './domain/report-schedule.ts';

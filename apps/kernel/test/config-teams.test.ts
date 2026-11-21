@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Microsoft Entra app of the Teams recording import (Meetings C4, #3176): off by default, both settings or neither, and the adapter exists only with both.
 import { describe, expect, it } from 'vitest';
-import { TeamsMeetingPlatform } from '@crove/channel';
-import { MEETING_PLATFORM_OAUTH_PROVIDERS } from '@crove/kernel-contract';
+import { TeamsMeetingPlatform } from '@ludy/channel';
+import { MEETING_PLATFORM_OAUTH_PROVIDERS } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { meetingPlatformsOf } from '../src/kernel.ts';
 

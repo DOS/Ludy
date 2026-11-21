@@ -4,8 +4,8 @@
 // and the source reading as read only. No call to TikTok: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { findOrderColumns, orderLines, type StatementGrid } from '@crove/l10n-vn';
-import { MarketplaceProviderError, marketplaceOrdersCsv, splitWritableOrders, type MarketplaceOrder } from '@crove/mod-finance';
+import { findOrderColumns, orderLines, type StatementGrid } from '@ludy/l10n-vn';
+import { MarketplaceProviderError, marketplaceOrdersCsv, splitWritableOrders, type MarketplaceOrder } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { TIKTOK_HOSTS } from '../src/marketplace-tiktok.ts';
 import { TIKTOK_ORDER_STAGE, TIKTOK_RETURN_STATUS, TIKTOK_RETURN_TYPES, tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';

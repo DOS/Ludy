@@ -8,7 +8,7 @@
 // its transparency). Not taken, so no logo on the PDF (the page and the screen are not affected): a 16-bit or interlaced PNG, a CMYK or lossless or arithmetic-coded JPEG, a picture over
 // MAX_SIDE on a side or MAX_PIXELS in all (1024 and 1 Mpixel).
 import { inflateSync } from 'node:zlib';
-import { QUOTE_LOGO_MAX_PIXELS, QUOTE_LOGO_MAX_SIDE } from '@crove/kernel-contract';
+import { QUOTE_LOGO_MAX_PIXELS, QUOTE_LOGO_MAX_SIDE } from '@ludy/kernel-contract';
 
 // The size the settings allow (the command refuses a bigger logo): a PNG is decoded on the API's thread, about 80 ms for the most this allows.
 export const MAX_SIDE = QUOTE_LOGO_MAX_SIDE;

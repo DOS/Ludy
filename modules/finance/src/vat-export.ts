@@ -4,7 +4,7 @@
 // moneyCell, text never read as a formula. Headers and labels stay Vietnamese in every locale: the file goes to
 // Vietnamese accountants and their software.
 import ExcelJS from 'exceljs';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 import type { VatRate } from './domain/vat-return.ts';
 import type { VatInvoiceView, VatReport, VatSide, VatWarning } from './vat.ts';
