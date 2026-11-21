@@ -3,6 +3,7 @@
 -- crove_finance.bank_feed_webhook_notice (a signed notice waiting for the worker, whose raw body is personal data) are tables of Finance with an org_id. This replaces crove_kernel.org_purge with the previous
 -- version (the latest on main when this was written, 20270127310000, which adds the marketplace column profile) plus the two tables in the first list, the notices ahead of the hooks and both ahead of the
 -- connections they reference (the channel connections are deleted after the lists); nothing else changes.
+SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
