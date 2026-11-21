@@ -55,7 +55,7 @@ describe('the page is checked before anything of it is used (#2840 point 2)', ()
   };
 
   it('files a page through the link command with the connection and no entity or source of its own, and keeps the cursor when the command fails (#4250)', async () => {
-    const { run, polls, ingests } = setup(async () => goodPage());
+    const { run, ingests } = setup(async () => goodPage());
     await run();
     const input = ingests()[0]?.input ?? {};
     expect(input).toMatchObject({ marketplaceConnectionId: CONNECTION, contentType: 'text/csv' });
