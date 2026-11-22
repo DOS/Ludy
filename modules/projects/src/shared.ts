@@ -116,7 +116,12 @@ export function assertNotArchived(row: Pick<ProjectRow, 'status'>): void {
   }
 }
 
-export async function loadProject(trx: Trx, orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
+export async function loadProject(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  lock: boolean | 'share' = false,
+): Promise<ProjectRow> {
   let q = trx
     .selectFrom('crove_projects.project')
     .select([
@@ -136,7 +141,8 @@ export async function loadProject(trx: Trx, orgId: string, projectId: string, lo
     .where('org_id', '=', orgId)
     .where('id', '=', projectId)
     .where('is_template', '=', false);
-  if (lock) q = q.forUpdate();
+  if (lock === true) q = q.forUpdate();
+  else if (lock === 'share') q = q.forShare();
   const row = await q.executeTakeFirst();
   if (!row) throw projectNotFound();
   return { ...row, status: row.status as ProjectStatus, visibility: row.visibility as ProjectVisibility };

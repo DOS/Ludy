@@ -317,6 +317,39 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     expect((await query<ProjectDetail>(o.bystander.userId, o.orgId, 'projects.project.get', { id: projectId })).visibility).toBe('org');
   });
 
+  it('does not retain acting non-owner admin in project_member on private update or owner transfer (#2604)', async () => {
+    const o = await setupTeamOrg();
+    const { projectId } = await exec<{ projectId: string }>(o.creator.userId, o.orgId, 'projects.project.create', {
+      name: 'Dự án Không Phải Của Admin',
+      visibility: 'org',
+      memberUserIds: [],
+    });
+
+    // Org admin toggles someone else's org project -> private: only project owner is auto-added, not acting admin.
+    await exec(o.admin.userId, o.orgId, 'projects.project.update', { projectId, visibility: 'private' });
+    const afterUpdate = await query<ProjectBoard>(o.admin.userId, o.orgId, 'projects.board', { projectId });
+    expect(afterUpdate.members.filter((m) => m.onProject).map((m) => m.userId)).toEqual([o.creator.userId]);
+
+    // Org admin transfers ownership to invited: incoming + prior owner keep membership, acting admin is not added.
+    await exec(o.admin.userId, o.orgId, 'projects.project.set_owner', { projectId, ownerUserId: o.invited.userId });
+    const afterTransfer = await query<ProjectBoard>(o.admin.userId, o.orgId, 'projects.board', { projectId });
+    expect(afterTransfer.members.filter((m) => m.onProject).map((m) => m.userId).sort()).toEqual(
+      [o.creator.userId, o.invited.userId].sort(),
+    );
+
+    // Demoting admin to member immediately revokes access cleanly (404).
+    await withAdmin((c) =>
+      c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+        o.orgId,
+        o.admin.userId,
+      ]),
+    );
+    await expect(query(o.admin.userId, o.orgId, 'projects.project.get', { id: projectId })).rejects.toMatchObject({
+      code: 'PROJECT_NOT_FOUND',
+      status: 404,
+    });
+  });
+
   it('blocks switching an org project with an existing project_acceptance eSign envelope to private (#2604)', async () => {
     const o = await setupTeamOrg();
     const { projectId } = await exec<{ projectId: string }>(o.owner.userId, o.orgId, 'projects.project.create', {

@@ -219,7 +219,7 @@ export const projectUpdate = defineCommand({
             'Không thể gắn dự án riêng tư vào bảng lộ trình công khai',
           );
         }
-        await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [userId, row.owner_user_id], ctx.now);
+        await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [row.owner_user_id], ctx.now);
       }
       await ctx.trx
         .updateTable('crove_projects.project')
@@ -341,7 +341,7 @@ export const projectSetOwner = defineCommand({
           ctx.trx,
           ctx.orgId,
           row.id,
-          [input.ownerUserId, row.owner_user_id, userId],
+          [input.ownerUserId, row.owner_user_id],
           ctx.now,
         );
       }

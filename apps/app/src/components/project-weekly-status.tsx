@@ -37,6 +37,12 @@ export interface WeeklyStatusDraftState {
   aiUnedited: boolean;
 }
 
+export function weeklyStatusShareSuccessKey(
+  projectVisibility?: ProjectVisibility,
+): 'composer.sharedPrivateSuccess' | 'composer.sharedSuccess' {
+  return projectVisibility === 'private' ? 'composer.sharedPrivateSuccess' : 'composer.sharedSuccess';
+}
+
 function truncateByCodePoint(value: string, max: number): string {
   const chars = Array.from(value);
   return (chars.length <= max ? value : chars.slice(0, max).join('')).trim();
@@ -643,7 +649,7 @@ export function ProjectWeeklyStatus({
 
                     {shareResult && (
                       <p className="text-xs text-foreground" data-testid="project-weekly-status-share-result">
-                        {t('composer.sharedSuccess')}
+                        {t(weeklyStatusShareSuccessKey(projectVisibility))}
                       </p>
                     )}
 

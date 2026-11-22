@@ -15,6 +15,7 @@ import {
   type ProjectStatus,
   type ProjectTaskCard,
   type ProjectTaskRecurrenceView,
+  type ProjectUpdateInput,
   type ProjectVisibility,
   type TaskChecklistStep,
 } from '@ludy/kernel-contract';
@@ -772,6 +773,28 @@ export function EditProjectTaskDialog({
   );
 }
 
+export function buildProjectDetailsUpdateInput(params: {
+  projectId: string;
+  name: string;
+  description: string | null;
+  visibility: ProjectVisibility;
+  currentVisibility: ProjectVisibility;
+  cyclesEnabled: boolean;
+  cycleDurationWeeks: number;
+  pointsEnabled: boolean;
+}): ProjectUpdateInput {
+  return {
+    projectId: params.projectId,
+    name: params.name,
+    description: params.description,
+    // Omit unchanged visibility so saving name/description/cycles never overwrites a concurrent org <-> private transition.
+    ...(params.visibility !== params.currentVisibility ? { visibility: params.visibility } : {}),
+    cyclesEnabled: params.cyclesEnabled,
+    cycleDurationWeeks: params.cycleDurationWeeks,
+    pointsEnabled: params.pointsEnabled,
+  };
+}
+
 export function ProjectSettingsDialog({
   open,
   onOpenChange,
@@ -843,13 +866,16 @@ export function ProjectSettingsDialog({
     }
     const nextDesc = description.trim() ? description.trim() : null;
     update.mutate({
-      projectId: project.id,
-      name: trimmed,
-      description: nextDesc,
-      visibility,
-      cyclesEnabled,
-      cycleDurationWeeks,
-      pointsEnabled,
+      ...buildProjectDetailsUpdateInput({
+        projectId: project.id,
+        name: trimmed,
+        description: nextDesc,
+        visibility,
+        currentVisibility: project.visibility,
+        cyclesEnabled,
+        cycleDurationWeeks,
+        pointsEnabled,
+      }),
       idempotencyKey: crypto.randomUUID(),
     });
   };

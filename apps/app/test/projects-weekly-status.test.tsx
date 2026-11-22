@@ -28,6 +28,7 @@ const {
   buildWeeklyStatusDraftSeed,
   projectWeeklyStatusQueryKey,
   updateWeeklyStatusDraftBody,
+  weeklyStatusShareSuccessKey,
 } = await import('../src/components/project-weekly-status.tsx');
 const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 
@@ -269,5 +270,8 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
       defaultComposerOpen: true,
     });
     expect(privateHtml).toContain('data-testid="project-weekly-status-private-note-hint"');
+    expect(weeklyStatusShareSuccessKey('private')).toBe('composer.sharedPrivateSuccess');
+    expect(weeklyStatusShareSuccessKey('org')).toBe('composer.sharedSuccess');
+    expect(weeklyStatusShareSuccessKey(undefined)).toBe('composer.sharedSuccess');
   });
 });

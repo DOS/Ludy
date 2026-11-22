@@ -68,7 +68,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
 const { ProjectsPage, ProjectDetailPage, boardOrderClientForOrg, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
-const { ProjectVisibilityField } = await import('../src/components/project-task-dialog.tsx');
+const { buildProjectDetailsUpdateInput, ProjectVisibilityField } = await import('../src/components/project-task-dialog.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
   <QueryClientProvider client={queryClientState.current}>
@@ -844,5 +844,29 @@ describe('projects SSR screens & board (#2591)', () => {
     );
     expect(privateNoticeHtml).toContain('data-visibility="private"');
     expect(privateNoticeHtml).toContain('Only organization owners, admins, and invited project members');
+
+    const unchangedDetails = buildProjectDetailsUpdateInput({
+      projectId: '00000000-0000-4000-8000-000000000001',
+      name: 'Chiến dịch Tết',
+      description: null,
+      visibility: 'org',
+      currentVisibility: 'org',
+      cyclesEnabled: false,
+      cycleDurationWeeks: 2,
+      pointsEnabled: false,
+    });
+    expect('visibility' in unchangedDetails).toBe(false);
+
+    const changedDetails = buildProjectDetailsUpdateInput({
+      projectId: '00000000-0000-4000-8000-000000000001',
+      name: 'Chiến dịch Tết',
+      description: null,
+      visibility: 'private',
+      currentVisibility: 'org',
+      cyclesEnabled: false,
+      cycleDurationWeeks: 2,
+      pointsEnabled: false,
+    });
+    expect(changedDetails.visibility).toBe('private');
   });
 });

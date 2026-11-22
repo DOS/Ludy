@@ -578,7 +578,8 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         'task.private_project_scope',
       ]);
 
-      // Verify SECURITY DEFINER helpers pin search_path and limit EXECUTE to crove_tenant.
+      // Verify SECURITY DEFINER helpers pin search_path and limit direct EXECUTE ACL grants strictly to crove_tenant
+      // (NOTE: crove_definer_tenant has GRANT crove_tenant WITH INHERIT, so check direct ACL grantees via aclexplode).
       const { rows: fns } = await c.query<{
         sig: string;
         prosecdef: boolean;
@@ -588,6 +589,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         pub_exec: boolean;
         auth_exec: boolean;
         tenant_exec: boolean;
+        grantees: string[];
       }>(
         `SELECT p.oid::pg_catalog.regprocedure::text AS sig,
                 p.prosecdef,
@@ -596,7 +598,17 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
                 pg_catalog.pg_get_functiondef(p.oid) AS def,
                 pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub_exec,
                 pg_catalog.has_function_privilege('crove_auth_reader', p.oid, 'EXECUTE') AS auth_exec,
-                pg_catalog.has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant_exec
+                pg_catalog.has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant_exec,
+                COALESCE(
+                  (SELECT pg_catalog.array_agg(DISTINCT (
+                     CASE WHEN x.grantee = 0 THEN 'PUBLIC'
+                          ELSE (SELECT r.rolname FROM pg_catalog.pg_roles r WHERE r.oid = x.grantee)::text
+                     END
+                   )::text)
+                     FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) x
+                    WHERE x.grantee <> p.proowner),
+                  '{}'::text[]
+                ) AS grantees
            FROM pg_catalog.pg_proc p
            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
           WHERE (n.nspname = 'crove_projects' AND p.proname IN (
@@ -623,6 +635,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         expect(fn.pub_exec, `${fn.sig} revoked from PUBLIC`).toBe(false);
         expect(fn.auth_exec, `${fn.sig} revoked from crove_auth_reader`).toBe(false);
         expect(fn.tenant_exec, `${fn.sig} granted to crove_tenant`).toBe(true);
+        expect(fn.grantees, `${fn.sig} direct grantees strictly limited to crove_tenant`).toEqual(['crove_tenant']);
       }
 
       const { rows: trigFns } = await c.query<{

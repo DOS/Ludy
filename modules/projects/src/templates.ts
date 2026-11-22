@@ -346,7 +346,7 @@ export const projectTemplateCreate = defineCommand({
     let items: ProjectTemplateTaskItem[] = [];
 
     if (input.sourceProjectId !== undefined) {
-      const source = await loadProject(ctx.trx, ctx.orgId, input.sourceProjectId, false);
+      const source = await loadProject(ctx.trx, ctx.orgId, input.sourceProjectId, 'share');
       if (source.visibility === 'private') {
         throw new DomainError(
           'PROJECT_PRIVATE_TEMPLATE_FORBIDDEN',
