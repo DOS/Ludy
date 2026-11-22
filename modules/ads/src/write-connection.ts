@@ -32,7 +32,7 @@ const notFound = () => new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tì
 // account, by the provider of its twin and its platform account. Switching writing off leaves no spend-capable token behind that no
 // account refers to. `except` spares the connection that was just attached.
 export async function closeWriteConnections(ctx: CommandContext, scope: { adAccountId?: string; except?: string; otherGrantor?: boolean }): Promise<number> {
-  let query = ctx.trx.selectFrom('crove_kernel.channel_connection as c').select('c.id').where('c.org_id', '=', ctx.orgId).where('c.status', '<>', 'revoked').orderBy('c.id');
+  let query = ctx.trx.selectFrom('ludy_kernel.channel_connection as c').select('c.id').where('c.org_id', '=', ctx.orgId).where('c.status', '<>', 'revoked').orderBy('c.id');
   if (scope.adAccountId) {
     const account = await ctx.trx
       .selectFrom('crove_ads.ad_account')
@@ -80,7 +80,7 @@ const SHARED_APP_WRITE_PROVIDERS = AD_WRITE_PROVIDERS.filter((provider) => provi
 export async function closeSpendCapableReadConnections(ctx: CommandContext, options: { switchWasOn: boolean; sharedApp?: boolean }): Promise<number> {
   const spend = [...ADS_SPEND_SCOPES];
   const madeWrite = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('provider', 'in', SHARED_APP_WRITE_PROVIDERS)
@@ -90,7 +90,7 @@ export async function closeSpendCapableReadConnections(ctx: CommandContext, opti
   // caller says which, from the deployment's config, and when it says nothing the close fails safe.
   const sharedApp = options.sharedApp !== false && (madeWrite || options.switchWasOn) ? SHARED_APP_WRITE_PROVIDERS.map((provider) => READ_PROVIDER_OF_WRITE[provider]) : [];
   const open = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection as c')
+    .selectFrom('ludy_kernel.channel_connection as c')
     .select('c.id')
     .where('c.org_id', '=', ctx.orgId)
     .where('c.provider', 'like', '%\\_ads')
@@ -118,7 +118,7 @@ export const adsAccountLinkWrite = defineCommand({
     const setting = await ctx.trx.selectFrom('crove_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
     if (!setting?.write_enabled) throw new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'external_account_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -127,7 +127,7 @@ export const adsAccountLinkWrite = defineCommand({
     if (connection.status !== 'active') throw new DomainError('ADS_CONNECTION_INACTIVE', 422, 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại');
     const account = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.write_connection_id', 'rc.status as read_status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.provider', '=', READ_PROVIDER_OF_WRITE[connection.provider])
@@ -163,7 +163,7 @@ export const adsAccountDisconnect = defineCommand({
   handler: async (ctx, input): Promise<{ adAccountId: string; closed: number }> => {
     const account = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'a.write_enabled', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
@@ -230,7 +230,7 @@ export const adsAccountWriteReady = defineQuery({
     if (input.externalAccountIds.length === 0) return [];
     const rows = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
       .select('a.external_account_id')
       .where('a.org_id', '=', ctx.orgId)
       .where('a.provider', '=', READ_PROVIDER_OF_WRITE[input.provider])

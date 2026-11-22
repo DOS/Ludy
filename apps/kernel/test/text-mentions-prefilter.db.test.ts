@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// crove_kernel.text_mentions after its prefilter (#3832): the answer must be exactly what the unchanged pattern gives. The reference is `text ~* crove_kernel.text_mention_pattern(kind, value)`,
+// ludy_kernel.text_mentions after its prefilter (#3832): the answer must be exactly what the unchanged pattern gives. The reference is `text ~* ludy_kernel.text_mention_pattern(kind, value)`,
 // which is what text_mentions was before the prefilter (the pattern function is not touched); the cases are the shared table of the free-text matcher (pii-text-cases.ts), a hostile set of
 // Vietnamese phone formats, and a seeded random set of texts and values. A prefilter that rejects a text the pattern accepts would be a personal-data erasure that misses a phone number, so every
 // disagreement fails, and the sets are checked to hold both matches and non-matches (a test with only one kind of answer proves nothing).
@@ -34,7 +34,7 @@ function rng(seed: number): () => number {
   };
 }
 
-suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
+suite('ludy_kernel.text_mentions with its prefilter (#3832)', () => {
   const dbName = `crove_test_text_mentions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let client: pg.Client;
@@ -45,7 +45,7 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
     for (let at = 0; at < cases.length; at += 2000) {
       const part = cases.slice(at, at + 2000);
       const { rows } = await client.query<{ got: boolean; ref: boolean }>(
-        `SELECT crove_kernel.text_mentions(c.t, c.k, c.v) AS got, (c.t ~* crove_kernel.text_mention_pattern(c.k, c.v)) AS ref
+        `SELECT ludy_kernel.text_mentions(c.t, c.k, c.v) AS got, (c.t ~* ludy_kernel.text_mention_pattern(c.k, c.v)) AS ref
            FROM unnest($1::text[], $2::text[], $3::text[]) WITH ORDINALITY AS c(t, k, v, n) ORDER BY c.n`,
         [part.map((c) => c.text), part.map((c) => c.kind), part.map((c) => c.value)],
       );
@@ -166,7 +166,7 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
   });
 
   it('keeps the validation, the NULL answer and the function\'s shape', async () => {
-    const ask = (text: string | null, kind: string, value: string | null) => client.query(`SELECT crove_kernel.text_mentions($1, $2, $3) AS found`, [text, kind, value]);
+    const ask = (text: string | null, kind: string, value: string | null) => client.query(`SELECT ludy_kernel.text_mentions($1, $2, $3) AS found`, [text, kind, value]);
     // A bad kind or value raises whatever the text is, a NULL text included (so a caller's mistake is never read as "not found").
     await expect(ask('abc', 'phone', '0912345678')).rejects.toMatchObject({ code: '22023' });
     await expect(ask(null, 'phone', '0912345678')).rejects.toMatchObject({ code: '22023' });
@@ -176,12 +176,12 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
     expect((await ask(null, 'digits', '0912345678')).rows[0].found).toBe(false);
     expect((await ask(null, 'email', 'ab@x.example')).rows[0].found).toBe(false);
     // Still an immutable, parallel-safe invoker function with a pinned search path, for the tenant role alone.
-    const meta = (await client.query(`SELECT provolatile, proparallel, prosecdef, proconfig FROM pg_catalog.pg_proc WHERE oid = 'crove_kernel.text_mentions(text, text, text)'::regprocedure`)).rows[0];
+    const meta = (await client.query(`SELECT provolatile, proparallel, prosecdef, proconfig FROM pg_catalog.pg_proc WHERE oid = 'ludy_kernel.text_mentions(text, text, text)'::regprocedure`)).rows[0];
     expect([meta.provolatile, meta.proparallel, meta.prosecdef]).toEqual(['i', 's', false]);
     expect(JSON.stringify(meta.proconfig)).toContain('search_path=pg_catalog, pg_temp');
     // The ACL names the tenant role alone besides the owner (the other logins reach it through that role), as the first migration gave it.
-    const acl = (await client.query<{ acl: string[] }>(`SELECT proacl::text[] AS acl FROM pg_catalog.pg_proc WHERE oid = 'crove_kernel.text_mentions(text, text, text)'::regprocedure`)).rows[0]?.acl ?? [];
-    expect(acl.filter((entry) => !/^(?:postgres|crove_migrator|crove_owner)=/.test(entry)).map((entry) => entry.split('=')[0])).toEqual(['crove_tenant']);
-    expect((await client.query(`SELECT has_function_privilege('public', 'crove_kernel.text_mentions(text, text, text)', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
+    const acl = (await client.query<{ acl: string[] }>(`SELECT proacl::text[] AS acl FROM pg_catalog.pg_proc WHERE oid = 'ludy_kernel.text_mentions(text, text, text)'::regprocedure`)).rows[0]?.acl ?? [];
+    expect(acl.filter((entry) => !/^(?:postgres|crove_migrator|crove_owner)=/.test(entry)).map((entry) => entry.split('=')[0])).toEqual(['ludy_tenant']);
+    expect((await client.query(`SELECT has_function_privilege('public', 'ludy_kernel.text_mentions(text, text, text)', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
   });
 });

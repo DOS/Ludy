@@ -33,8 +33,8 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
       ['finance.invoice_extract', 'finance', '0.001'],
     ] as const) {
       exec(
-        `INSERT INTO crove_kernel.org_usage (org_id, metric, amount, feature, module, input_tokens, output_tokens)
-         SELECT t.org_id, 'ai_cost', :'amount'::numeric, :'feature', :'module', 1000, 100 FROM crove_kernel.tenant t WHERE t.slug = :'slug'`,
+        `INSERT INTO ludy_kernel.org_usage (org_id, metric, amount, feature, module, input_tokens, output_tokens)
+         SELECT t.org_id, 'ai_cost', :'amount'::numeric, :'feature', :'module', 1000, 100 FROM ludy_kernel.tenant t WHERE t.slug = :'slug'`,
         { slug, feature, module, amount },
       );
     }

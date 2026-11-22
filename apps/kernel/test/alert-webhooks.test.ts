@@ -23,7 +23,7 @@ const alert: Alert = {
   at: AT,
   findings: [
     { check: 'outbox', value: 400, threshold: 300, message: 'oldest unpublished outbox event is 400 s old (limit 300 s, 2 pending): the relay is behind or stopped' },
-    { check: 'probe', value: null, threshold: null, message: 'crove_kernel.health() said <b>no</b> & @everyone *loud* _x_ `y` ~z~ |s|' },
+    { check: 'probe', value: null, threshold: null, message: 'ludy_kernel.health() said <b>no</b> & @everyone *loud* _x_ `y` ~z~ |s|' },
   ],
 };
 const text = alertText(alert);
@@ -67,7 +67,7 @@ describe('recorded request shapes', () => {
     expect(Object.keys(body)).toEqual(['content', 'allowed_mentions']);
     expect(body.allowed_mentions).toEqual({ parse: [] });
     expect(body.content).toContain('said <b>no</b> & @everyone \\*loud\\* \\_x\\_ \\`y\\` \\~z\\~ \\|s\\|');
-    expect(body.content).toContain('crove\\_kernel.health()');
+    expect(body.content).toContain('ludy\\_kernel.health()');
     // The findings stay a Markdown list.
     expect(String(body.content).split('\n')[1]).toMatch(/^- oldest unpublished/);
     // Escaping can double the text: the limit holds on what is sent, and no escape is left dangling.

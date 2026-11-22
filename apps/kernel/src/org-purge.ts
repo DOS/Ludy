@@ -1,11 +1,11 @@
 // The `org-purge` image role (issue #1024, plan §7.9 step 3): the deployment operator applies the offboarding
 // deletion map (docs/runbooks/org-offboarding.md) to an org and closes it. Run by hand in the worker's container,
-// never automatically (the worker login is the only role that may execute crove_kernel.org_purge_check and
-// crove_kernel.org_purge, and enter the system context the purge runs in):
+// never automatically (the worker login is the only role that may execute ludy_kernel.org_purge_check and
+// ludy_kernel.org_purge, and enter the system context the purge runs in):
 //
 //   org-purge <org slug or id> --reason <text>
 //
-// The database decides whether the org may go (crove_kernel.org_purge_refusal): it is in offboarding, has an export of
+// The database decides whether the org may go (ludy_kernel.org_purge_refusal): it is in offboarding, has an export of
 // the current format that the owner has not asked to replace since, and that export is at least ORG_PURGE_MIN_DAYS old
 // (30 at least). The purge runs as one command, kernel.org.purge, in one transaction: the definer deletes the rows,
 // sets status = 'closed' and answers the storage keys of the deleted files, whose blobs the command deletes before it
@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { DomainError, defineCommand, type Actor, type BlobStore, type CommandDef, type Runtime } from '@ludy/kernel-runtime';
 
 export const ORG_PURGE_EXIT = { ok: 0, refused: 1, failed: 2 } as const;
-// The database refuses fewer days (crove_kernel.org_purge_refusal); a deployment may only wait longer.
+// The database refuses fewer days (ludy_kernel.org_purge_refusal); a deployment may only wait longer.
 export const ORG_PURGE_MIN_DAYS_FLOOR = 30;
 export const ORG_PURGE_MAX_DAYS = 3650;
 // Blob deletes in flight at once, as the retention sweeps.
@@ -26,7 +26,7 @@ const BLOB_DELETES_IN_FLIGHT = 10;
 
 const OPERATOR: Actor = { type: 'system', component: 'operator' };
 
-// Why the database refused, for the operator. Same words as the outcomes of crove_kernel.org_purge_refusal.
+// Why the database refused, for the operator. Same words as the outcomes of ludy_kernel.org_purge_refusal.
 export const ORG_PURGE_REFUSALS: Record<string, string> = {
   invalid: `ORG_PURGE_MIN_DAYS must be ${ORG_PURGE_MIN_DAYS_FLOOR} to ${ORG_PURGE_MAX_DAYS}`,
   not_found: 'no org has this id or slug',
@@ -39,7 +39,7 @@ export const ORG_PURGE_REFUSALS: Record<string, string> = {
 
 // Whether a blob is under a retention hold, which the purge then leaves in place and reports. Unset in the operator's
 // runtime: the evidence holds of #1009 go only on the original files of posted invoices, and the purge keeps every file
-// a purchase document references (crove_kernel.org_purge), so no key it hands back is held by Crove. A store-side hold
+// a purchase document references (ludy_kernel.org_purge), so no key it hands back is held by Crove. A store-side hold
 // Crove did not set (a bucket default retention) refuses the delete itself on a versioned bucket's version.
 export type HeldCheck = (key: string) => Promise<boolean>;
 
@@ -97,7 +97,7 @@ export function orgPurgeCommand(deps: { store: BlobStore; held?: HeldCheck | nul
         ctx.trx,
       );
       const { rows } = await sql<{ outcome: string; counts: OrgPurgeCounts | null; blob_keys: string[] | null }>`
-        SELECT outcome, counts, blob_keys FROM crove_kernel.org_purge(${input.minDays}::int)`.execute(ctx.trx);
+        SELECT outcome, counts, blob_keys FROM ludy_kernel.org_purge(${input.minDays}::int)`.execute(ctx.trx);
       const row = rows[0];
       if (!row) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       if (row.outcome !== 'ok' || !row.counts) {
@@ -155,10 +155,10 @@ export type OrgPurgeOutcome =
 
 export async function purgeOrg(runtime: Pick<Runtime, 'orgless' | 'execute'>, minDays: number, args: OrgPurgeArgs): Promise<OrgPurgeOutcome> {
   const check = await runtime.orgless(async (db) => {
-    const { rows } = await sql<CheckRow>`SELECT outcome, org_id, status, exported_at, refusal FROM crove_kernel.org_purge_check(${args.ref})`.execute(db);
+    const { rows } = await sql<CheckRow>`SELECT outcome, org_id, status, exported_at, refusal FROM ludy_kernel.org_purge_check(${args.ref})`.execute(db);
     return rows[0];
   });
-  if (!check) throw new Error('crove_kernel.org_purge_check returned no row');
+  if (!check) throw new Error('ludy_kernel.org_purge_check returned no row');
   if (check.outcome !== 'ok' || !check.org_id) return { kind: 'refused', orgId: null, refusal: check.outcome };
   if (check.status === 'closed') return { kind: 'already_closed', orgId: check.org_id };
   try {

@@ -51,7 +51,7 @@ function requireUser(ctx: CommandContext): string {
 async function checkFiles(ctx: CommandContext, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'content_type'])
     .where('org_id', '=', ctx.orgId)
     .where('source', '=', 'social')
@@ -237,7 +237,7 @@ async function toIdeas(ctx: { trx: CommandContext['trx']; orgId: string }, rows:
   const files = new Map<string, IdeaMedia>();
   if (fileIds.length > 0) {
     const found = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'content_type', 'size_bytes', 'duration_ms', 'image_width', 'image_height'])
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', 'social')

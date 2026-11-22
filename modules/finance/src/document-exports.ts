@@ -47,7 +47,7 @@ export const documentExports = defineQuery({
           AND j.reverses_entry_id IS NULL
       )
       SELECT e.id, e.occurred_at, e.actor_id, e.detail ->> 'format' AS format, e.detail ->> 'from' AS "from", e.detail ->> 'to' AS "to"
-      FROM crove_kernel.audit_event e
+      FROM ludy_kernel.audit_event e
       WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.journal.export' AND e.outcome = 'ok'
         AND e.detail ? 'from' AND e.detail ? 'to'
         AND EXISTS (
@@ -66,7 +66,7 @@ export const documentExports = defineQuery({
     const names = new Map<string, string>();
     if (users.length > 0) {
       const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     return rows.map((r) => ({

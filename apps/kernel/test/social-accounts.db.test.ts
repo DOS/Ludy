@@ -85,15 +85,15 @@ suite('social account growth on PostgreSQL (#645)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -155,7 +155,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     const stranger = await org();
     const live = await connect(o, 'acct-live');
     const gone = await connect(o, 'acct-gone');
-    await admin((cl) => cl.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [gone]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [gone]));
     const platform = new FakeAccounts();
     platform.answers.set('acct-live', { followers: 10 });
     platform.answers.set('acct-gone', { followers: 99 });
@@ -174,7 +174,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     await expect(worker.execute('social.account.record', { connectionId: live, capturedOn: '2026-01-01', followers: 1 }, { actor: { type: 'system', component: 'test' }, orgId: stranger.orgId })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     // Append-only for tenant roles.
     const grants = await admin(async (cl) =>
-      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
     // The scan is the worker's alone.
@@ -313,7 +313,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     for (const audience of bad) expect([JSON.stringify(audience).slice(0, 60), await insert(audience)]).toEqual([JSON.stringify(audience).slice(0, 60), 'account_snapshot_audience_shape']);
     // The table stays append-only for tenant roles, the new column with it.
     const grants = await admin(async (cl) =>
-      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
   });

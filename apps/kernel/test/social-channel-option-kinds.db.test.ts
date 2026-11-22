@@ -69,8 +69,8 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     const member = await person('member');
     const viewer = await person('viewer');
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
     });
     return { orgId, owner, member, viewer };
   }
@@ -102,7 +102,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
   const request = (o: Org, user: string, connectionId: string) => rt.execute<ChannelOptionList>('social.channel_option.request', { connectionId }, { actor: asUser(user), orgId: o.orgId });
   const get = (o: Org, user: string, connectionId: string) => rt.query<ChannelOptionList | null>('social.channel_option.get', { connectionId }, { actor: asUser(user), orgId: o.orgId });
   const events = (o: Org) =>
-    admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at", [o.orgId])).rows);
+    admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at", [o.orgId])).rows);
   const optionId = async (o: Org, connectionId: string) =>
     admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
   const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM crove_social.channel_option WHERE id = $1', [id])).rows[0]);
@@ -115,7 +115,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
       return await c.query(text, params);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -132,15 +132,15 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    pool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -254,7 +254,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
       await expect(get(o, o.viewer, connectionId)).rejects.toMatchObject({ status: 403 });
     }
     // The member is limited to the site (#1081).
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, w.connectionId, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, w.connectionId, o.owner]));
     await expect(request(o, o.member, y.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     await expect(get(o, o.member, y.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     expect((await request(o, o.member, w.connectionId)).status).toBe('pending');
@@ -262,7 +262,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     await expect(request(stranger, stranger.owner, y.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     await expect(request(stranger, stranger.owner, w.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     // A site that needs reconnecting: refused to members, and the request already queued is dropped by the worker.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [w.connectionId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [w.connectionId]));
     await expect(request(o, o.owner, w.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
     const untouched = platform({});
     expect(await job(o, await optionId(o, w.connectionId), { wordpress: new WordPressPublisher(untouched.fetchImpl) })).toBe('none');

@@ -153,13 +153,13 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     u.pathname = `/${dbName}`;
     adminUrl = u.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
     workerUrl = wUrl.toString();
 
@@ -244,7 +244,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await adminClient.connect();
     try {
       await adminClient.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES
          ($1, $2, 'member'), ($1, $3, 'viewer')`,
         [orgId, member.userId, viewer.userId],
       );
@@ -312,7 +312,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await workerClient.connect();
     try {
       await workerClient.query('BEGIN');
-      await workerClient.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agentActor.agentId, agentActor.runId]);
+      await workerClient.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agentActor.agentId, agentActor.runId]);
       await expect(
         workerClient.query(
           `INSERT INTO crove_projects.project_cycle (org_id, project_id, number, name, starts_on, ends_on, created_by)
@@ -550,7 +550,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id });
     await exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 });
 
-    // Export, offboard, and backdate audit events so crove_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
+    // Export, offboard, and backdate audit events so ludy_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
     const sealer = new ExportSealer(randomBytes(32));
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, orgId, {
@@ -573,7 +573,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       await purgeAdmin.query('BEGIN');
       await purgeAdmin.query('SET LOCAL session_replication_role = replica');
       await purgeAdmin.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
          SET occurred_at = $1
          WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), orgId],
@@ -629,32 +629,32 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     try {
       defaultEntityId = (
         await guardAdmin.query<{ id: string }>(
-          'SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default',
+          'SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default',
           [guardOrg.orgId],
         )
       ).rows[0]?.id as string;
       branchEntityId = (
         await guardAdmin.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh Guard', 'branch', $2) RETURNING id`,
           [guardOrg.orgId, guardOwner.userId],
         )
       ).rows[0]?.id as string;
       await guardAdmin.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [guardOrg.orgId, branchManager.userId, branchEntityId, guardOwner.userId],
       );
       hiddenUpcomingTaskId = (
         await guardAdmin.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Việc trụ sở ẩn upcoming', 'human', 'user', $2) RETURNING id`,
           [guardOrg.orgId, defaultEntityId],
         )
       ).rows[0]?.id as string;
       hiddenActiveTaskId = (
         await guardAdmin.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Việc trụ sở ẩn active', 'human', 'user', $2) RETURNING id`,
           [guardOrg.orgId, defaultEntityId],
         )
@@ -849,7 +849,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     const taintAdmin = new pg.Client({ connectionString: adminUrl });
     await taintAdmin.connect();
     try {
-      await taintAdmin.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [
+      await taintAdmin.query(`UPDATE ludy_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [
         guardOrg.orgId,
         taintedTaskId,
       ]);

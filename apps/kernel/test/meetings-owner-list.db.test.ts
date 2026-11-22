@@ -106,7 +106,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
 
   async function userIdOf(name: string): Promise<string> {
     const email = accounts.get(name)?.email;
-    return admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email])).rows[0]!.id);
+    return admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email])).rows[0]!.id);
   }
 
   async function join(name: string, role: 'admin' | 'member' | 'viewer') {
@@ -129,7 +129,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
     admin(async (c) =>
       (
         await c.query<{ detail: Record<string, unknown> }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.owner_list' AND outcome = 'ok' ORDER BY occurred_at, id`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.owner_list' AND outcome = 'ok' ORDER BY occurred_at, id`,
           [orgId],
         )
       ).rows.map((r) => r.detail),
@@ -141,7 +141,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(userId, org)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(userId, org)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -163,10 +163,10 @@ suite('the owner compliance list of meetings (#2703)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 6 });
@@ -344,7 +344,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
     expect(
       await outcome(asUserContext(userIds.get('owner')!, orgId, (c) => c.query(`SELECT * FROM crove_meetings.meeting_owner_list_page($1::uuid, 200, now(), NULL)`, [orgId]))),
     ).toMatchObject({ ok: false, code: '22023' });
-    // EXECUTE is granted to crove_tenant alone (not PUBLIC, not the worker role directly), as for meeting_owner_delete.
+    // EXECUTE is granted to ludy_tenant alone (not PUBLIC, not the worker role directly), as for meeting_owner_delete.
     const grantees = await admin(async (c) =>
       (
         await c.query<{ grantee: string }>(
@@ -355,7 +355,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
         )
       ).rows.map((r) => r.grantee),
     );
-    expect(grantees).toEqual(['crove_tenant']);
+    expect(grantees).toEqual(['ludy_tenant']);
     // The older, narrower list it replaces is gone: one owner-list definer.
     const lists = await admin(async (c) =>
       (await c.query<{ name: string }>(`SELECT p.proname AS name FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'crove_meetings' AND p.proname LIKE 'meeting\\_owner\\_list%' ORDER BY 1`)).rows.map((r) => r.name),

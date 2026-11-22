@@ -71,7 +71,7 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
 
     const stored = sql<{ body: string }>(
       `SELECT n.body FROM crove_notes.note n
-       JOIN crove_kernel.tenant t ON t.org_id = n.org_id
+       JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
        WHERE t.slug = :'slug' AND n.title = 'Kế hoạch quý 4'`,
       { slug },
     );
@@ -108,9 +108,9 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
       await otherPage.goto('/');
       await signInNewUser(otherPage, otherEmail);
       exec(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          SELECT t.org_id, u.id, 'member'
-           FROM crove_kernel.tenant t, crove_kernel.user_account u
+           FROM ludy_kernel.tenant t, ludy_kernel.user_account u
           WHERE t.slug = :'slug' AND u.email = :'otherEmail'`,
         { slug, otherEmail },
       );

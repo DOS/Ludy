@@ -94,9 +94,9 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
 
     adminPool = new pg.Pool({ connectionString: adminUrl, max: 2 });
@@ -278,7 +278,7 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
 
     // member_vy_result is sealed strictly to Alice (private_read = true) and keeps counts only (no private note text).
     const resultRow = await sqlAdmin<{ member_user_id: string; private_read: boolean; status: string; body: string }>(
-      `SELECT member_user_id, private_read, status, body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`,
+      `SELECT member_user_id, private_read, status, body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`,
       [org.orgId, proposed.runId],
     );
     expect(resultRow.rows[0]).toMatchObject({ member_user_id: alice.userId, private_read: true, status: 'ready' });
@@ -291,7 +291,7 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
       ).rejects.toMatchObject({ code: 'RESULT_NOT_FOUND' });
     }
     const startAudit = await sqlAdmin<{ target_type: string | null; target_id: string | null; detail: Record<string, unknown> }>(
-      `SELECT target_type, target_id, detail FROM crove_kernel.audit_event
+      `SELECT target_type, target_id, detail FROM ludy_kernel.audit_event
         WHERE org_id = $1 AND command = 'projects.tasks_from_note.start' AND detail->>'runId' = $2`,
       [org.orgId, proposed.runId],
     );
@@ -350,7 +350,7 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
 
     // Every confirmed task is tainted: true, has source_ref notes.note, sits on the project board, and is linked from note.
     const dbTasks = await sqlAdmin<{ id: string; tainted: boolean; source_ref: { type: string; id: string }; assignee_position_id: string | null }>(
-      `SELECT id, tainted, source_ref, assignee_position_id FROM crove_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+      `SELECT id, tainted, source_ref, assignee_position_id FROM ludy_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
       [org.orgId, confirmRes.taskIds],
     );
     expect(dbTasks.rows).toHaveLength(2);
@@ -369,7 +369,7 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
 
     // Audit rows never leak Alice's private note text or confirmed titles.
     const audits = await sqlAdmin<{ command: string; detail: unknown }>(
-      `SELECT command, detail FROM crove_kernel.audit_event
+      `SELECT command, detail FROM ludy_kernel.audit_event
         WHERE org_id = $1 AND command IN ('projects.tasks_from_note.start', 'projects.tasks_from_note.confirm', 'kernel.task.create_from_note')`,
       [org.orgId],
     );
@@ -460,13 +460,13 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
     const engageSql = async (scope: string, target: string) =>
       (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+          `INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`,
           [org.orgId, scope, target, owner.userId],
         )
       ).rows[0]!.id;
 
     const agentRow = await sqlAdmin<{ id: string }>(
-      `SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
+      `SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
       [org.orgId, alice.userId],
     );
     const aliceVyAgentId = agentRow.rows[0]!.id;
@@ -487,14 +487,14 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
           runProjectsTasksFromNote(deps(), org.orgId, asUser(alice.userId), { noteId: sharedNoteId, projectId }),
         ).rejects.toMatchObject({ code: 'AI_PAUSED' });
       } finally {
-        await sqlAdmin(`DELETE FROM crove_kernel.kill_switch WHERE id = $1`, [ksId]);
+        await sqlAdmin(`DELETE FROM ludy_kernel.kill_switch WHERE id = $1`, [ksId]);
       }
     }
 
     // Manual Notes + Projects stay 100% functional when AI is stopped or budget spent.
     await sqlAdmin(
-      `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
-       VALUES ($1, 'module', 'projects', crove_kernel.ai_budget_spent($1::uuid, 'module', 'projects'), true, $2)`,
+      `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
+       VALUES ($1, 'module', 'projects', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'projects'), true, $2)`,
       [org.orgId, owner.userId],
     );
     try {
@@ -524,7 +524,7 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
       const noteCheck = await rt.query<Note>('notes.note.get', { noteId: sharedNoteId }, { actor: asUser(alice.userId), orgId: org.orgId });
       expect(noteCheck.id).toBe(sharedNoteId);
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
     }
 
     // Revoking vy.use stops Bob without calling model.

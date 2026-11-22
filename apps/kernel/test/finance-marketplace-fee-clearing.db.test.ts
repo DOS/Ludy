@@ -73,19 +73,19 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const admin = await person('admin');
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `Đối soát sàn ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
+        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
       );
     }
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
     // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
     await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
-        await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
+        await c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
         await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
         await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
       });
@@ -134,7 +134,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   // The settlement posted (Dr 131 / Cr 5111), the state a payout needs.
   const post = async (o: Org, settlementId: string) => approve(o, (await askSettlement(o, settlementId)).proposalId);
   const payloadOf = async (o: Org, proposalId: string) =>
-    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
       'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
@@ -204,8 +204,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
@@ -238,7 +238,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const done = await approve(o, proposalId);
     expect(await clearingsOf(o, doc)).toEqual([{ id: done.voucherId, proposal_id: proposalId }]);
     expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['331', '28000', '0', party], ['1388', '0', '28000', party]]);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
     expect(await fees1388(o)).toBe('0');
     // The invoice's own VAT stays as posted: the 2 800 left on 331 is the platform's, not cleared by 1388.
     await expect(askFee(o, doc)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409 });
@@ -309,7 +309,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     // A purchase document with no entry cannot be stored (the database holds that a document is posted in its own transaction), so NOT_POSTED has no case here.
     await refused(await invoice(o, party, { credit: '1111' }), 'NO_PAYABLE');
     // A supplier that is not a platform's party.
-    const [other] = await rows<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Nhà cung cấp khác') RETURNING id`, [o.orgId]);
+    const [other] = await rows<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Nhà cung cấp khác') RETURNING id`, [o.orgId]);
     await refused(await invoice(o, other?.id as string), 'NOT_PLATFORM');
     // A reversed invoice no longer stands.
     const doc = await invoice(o, party);
@@ -340,11 +340,11 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       await rt.execute('kernel.proposal.reject', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     };
     // A larger amount (balanced, so only the rebuild catches it), other accounts, another entity, a party the link does not hold, a swapped side.
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"30800"'), '{lines,1,credit}', '"30800"'), '{total}', '"30800"'), '{amount}', '"30800"') WHERE org_id = $1 AND id = $2`);
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"1381"') WHERE org_id = $1 AND id = $2`);
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, randomUUID());
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,party}', jsonb_build_object('id', $3::text, 'name', 'Shopee', 'taxCode', null)) WHERE org_id = $1 AND id = $2`, randomUUID());
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{waiting}', '"99000"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"30800"'), '{lines,1,credit}', '"30800"'), '{total}', '"30800"'), '{amount}', '"30800"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"1381"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, randomUUID());
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,party}', jsonb_build_object('id', $3::text, 'name', 'Shopee', 'taxCode', null)) WHERE org_id = $1 AND id = $2`, randomUUID());
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{waiting}', '"99000"') WHERE org_id = $1 AND id = $2`);
     expect(await clearingsOf(o, doc)).toHaveLength(0);
     expect(await fees1388(o)).toBe('28000');
   });
@@ -368,7 +368,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const { proposalId } = await askFee(o, doc);
     await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
     expect(await clearingsOf(o, doc)).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     // The payout rows stay commentary (only the sales path is applied, #4303 S3b), and the retired clearing is refused whatever the map.
     expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });

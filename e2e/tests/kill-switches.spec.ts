@@ -36,7 +36,7 @@ const dbNow = (): string => sql<{ now: string }>('SELECT now()::text AS now')[0]
 function refusedWakeups(slug: string, since: string): number {
   return (
     sql<{ n: number }>(
-      `SELECT count(*)::int AS n FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t USING (org_id)
+      `SELECT count(*)::int AS n FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND a.command = 'kernel.agent.run.start' AND a.detail->>'reason' = 'kill_switch'
           AND a.occurred_at > :'since'::timestamptz`,
       { slug, since },
@@ -47,7 +47,7 @@ function refusedWakeups(slug: string, since: string): number {
 function runsStarted(slug: string, since: string): number {
   return (
     sql<{ n: number }>(
-      `SELECT count(*)::int AS n FROM crove_kernel.ai_run r JOIN crove_kernel.tenant t USING (org_id)
+      `SELECT count(*)::int AS n FROM ludy_kernel.ai_run r JOIN ludy_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND r.started_at > :'since'::timestamptz`,
       { slug, since },
     )[0]?.n ?? 0
@@ -86,7 +86,7 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
     await page.getByRole('button', { name: 'Xác nhận' }).click();
     await expect(page.getByText('Đã cài đồng nghiệp AI và vị trí của nó.')).toBeVisible();
     const [position] = sql<{ id: string }>(
-      `SELECT p.id FROM crove_kernel.position p JOIN crove_kernel.tenant t USING (org_id)
+      `SELECT p.id FROM ludy_kernel.position p JOIN ludy_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND p.holder_agent_id IS NOT NULL AND p.status = 'active'`,
       { slug },
     );
@@ -112,7 +112,7 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
       await page.getByRole('button', { name: 'Bật lại AI' }).click();
       await expect(page.getByText('AI đang bị dừng')).toHaveCount(0);
       expect(sql<{ n: number }>(
-        `SELECT count(*)::int AS n FROM crove_kernel.kill_switch k JOIN crove_kernel.tenant t USING (org_id)
+        `SELECT count(*)::int AS n FROM ludy_kernel.kill_switch k JOIN ludy_kernel.tenant t USING (org_id)
           WHERE t.slug = :'slug' AND k.released_at IS NULL`,
         { slug },
       )).toEqual([{ n: 0 }]);
@@ -132,8 +132,8 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
       await page.locator('input[type=file]').setInputFiles({ name: 'hoa-don-dien-tap.pdf', mimeType: 'application/pdf', buffer: PDF });
       await expect(page.getByText(/^AI đang tạm dừng trong tổ chức nên chưa đọc tệp này/)).toBeVisible({ timeout: 60_000 });
       const [file] = sql<{ status: string; error: string | null }>(
-        `SELECT e.status, e.error FROM crove_kernel.extraction e JOIN crove_kernel.tenant t USING (org_id)
-          JOIN crove_kernel.file f ON f.org_id = e.org_id AND f.id = e.file_id
+        `SELECT e.status, e.error FROM ludy_kernel.extraction e JOIN ludy_kernel.tenant t USING (org_id)
+          JOIN ludy_kernel.file f ON f.org_id = e.org_id AND f.id = e.file_id
          WHERE t.slug = :'slug' AND f.filename = 'hoa-don-dien-tap.pdf'`,
         { slug },
       );
@@ -145,7 +145,7 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
   // Released: the switch's history keeps who engaged it and why, then who released it.
   expect(
     sql<{ engaged: boolean; changed_by: string; reason: string | null }>(
-      `SELECT engaged, changed_by, reason FROM crove_kernel.global_kill_switch WHERE key = 'ai' ORDER BY changed_at DESC, id DESC LIMIT 2`,
+      `SELECT engaged, changed_by, reason FROM ludy_kernel.global_kill_switch WHERE key = 'ai' ORDER BY changed_at DESC, id DESC LIMIT 2`,
     ),
   ).toEqual([
     { engaged: false, changed_by: REHEARSAL_BY, reason: null },
@@ -163,16 +163,16 @@ test('the deployment relay and mail switches hold a booking and its mail, and re
   await test.step('the host keeps every hour open for a 30-minute event type', async () => {
     const vars = { slug, email };
     exec(
-      `INSERT INTO crove_kernel.availability_rule (org_id, user_id, weekday, start_minute, end_minute, time_zone, created_by)
+      `INSERT INTO ludy_kernel.availability_rule (org_id, user_id, weekday, start_minute, end_minute, time_zone, created_by)
        SELECT t.org_id, u.id, d, 0, 1440, 'Asia/Ho_Chi_Minh', u.id
-         FROM crove_kernel.tenant t, crove_kernel.user_account u, generate_series(1, 7) d
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u, generate_series(1, 7) d
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       vars,
     );
     exec(
       `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
        SELECT t.org_id, 'dien-tap', 'Diễn tập', 30, 0, u.id, u.id
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       vars,
     );
@@ -182,14 +182,14 @@ test('the deployment relay and mail switches hold a booking and its mail, and re
   const booking = () =>
     sql<{ status: string; pending: boolean }>(
       `SELECT b.status,
-              EXISTS (SELECT 1 FROM crove_kernel.outbox_event e JOIN crove_kernel.outbox_pending p ON p.org_id = e.org_id AND p.event_id = e.id
+              EXISTS (SELECT 1 FROM ludy_kernel.outbox_event e JOIN ludy_kernel.outbox_pending p ON p.org_id = e.org_id AND p.event_id = e.id
                        WHERE e.org_id = b.org_id AND e.type = :'type' AND e.payload->>'booking_id' = b.id::text) AS pending
-         FROM crove_crm.booking b JOIN crove_kernel.tenant t USING (org_id) WHERE t.slug = :'slug'`,
+         FROM crove_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug'`,
       { slug, type: RELAY_TYPE },
     );
   const mails = () =>
     sql<{ status: string }>(
-      `SELECT m.status FROM crove_kernel.mail_message m JOIN crove_kernel.tenant t USING (org_id)
+      `SELECT m.status FROM ludy_kernel.mail_message m JOIN ludy_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND m.to_address = :'to' AND m.source = 'crm.booking.confirmed'`,
       { slug, to: visitorEmail },
     );

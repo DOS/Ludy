@@ -85,7 +85,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -147,7 +147,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
   async function xChannel(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'x', `acct-${id.slice(0, 8)}`, 'Kênh X', o.owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'x', `acct-${id.slice(0, 8)}`, 'Kênh X', o.owner]),
     );
     return id;
   }
@@ -170,15 +170,15 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -204,7 +204,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
       const e = await evergreen(a);
       const s = await published(a);
       await setRule(a, s.postId, { time: '09:00' });
-      await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [[e.connectionId, s.connectionId]]));
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [[e.connectionId, s.connectionId]]));
     }
     const e = await evergreen(b);
     const s = await published(b);
@@ -219,11 +219,11 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
       (
         await c.query<{ fn: string; role: string }>(
           `SELECT f AS fn, r AS role FROM unnest(ARRAY['crove_social.evergreen_due(int, uuid[])', 'crove_social.recurring_due(int, uuid[])']) f,
-             unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r WHERE has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
+             unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
         )
       ).rows,
     );
-    expect(can.map((r) => r.role)).toEqual(['crove_worker', 'crove_worker']);
+    expect(can.map((r) => r.role)).toEqual(['ludy_worker', 'ludy_worker']);
     await expect(appPool.query("SELECT * FROM crove_social.recurring_due(10, '{}')")).rejects.toMatchObject({ code: '42501' });
   });
 
@@ -336,7 +336,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     expect(await nextCopy(o, postId)).toEqual({ postId: null, reason: 'taken_down' });
     expect((await get(o, postId)).recurrence).toBeNull();
     expect(await copies(postId)).toEqual([]);
-    const audit = await admin(async (c) => (await c.query<{ detail: { reason?: string } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.recurring.next' AND outcome = 'ok'", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: { reason?: string } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.recurring.next' AND outcome = 'ok'", [o.orgId])).rows);
     expect(audit.map((r) => r.detail.reason)).toContain('taken_down');
   });
 

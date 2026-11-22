@@ -155,7 +155,7 @@ suite('missing invoice requests (#669)', () => {
   }
 
   const mailRow = (id: string) =>
-    admin(async (c) => (await c.query('SELECT source, stream, status, to_address, subject, template_key, payload, error_code FROM crove_kernel.mail_message WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query('SELECT source, stream, status, to_address, subject, template_key, payload, error_code FROM ludy_kernel.mail_message WHERE id = $1', [id])).rows[0]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -167,17 +167,17 @@ suite('missing invoice requests (#669)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
@@ -240,13 +240,13 @@ suite('missing invoice requests (#669)', () => {
     expect(set.body).toEqual({ contactEmail: 'ketoan@khach.test' });
     expect((await rpc('org/get', viewer, undefined)).body.contactEmail).toBe('ketoan@khach.test');
     // The audit row and the activity feed say it changed, never the address.
-    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.org.set_contact_email' AND outcome = 'ok'`)).rows);
+    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.org.set_contact_email' AND outcome = 'ok'`)).rows);
     expect(JSON.stringify(audit)).not.toContain('khach.test');
     // A writer outside the command (here the worker in the org's system context) is refused by the guard.
     await expect(
       workerDb.transaction().execute(async (trx) => {
-        await sql`SELECT crove_kernel.enter_system_context(${org.orgId}::uuid)`.execute(trx);
-        await sql`UPDATE crove_kernel.tenant SET contact_email = 'attacker@evil.test' WHERE org_id = ${org.orgId}::uuid`.execute(trx);
+        await sql`SELECT ludy_kernel.enter_system_context(${org.orgId}::uuid)`.execute(trx);
+        await sql`UPDATE ludy_kernel.tenant SET contact_email = 'attacker@evil.test' WHERE org_id = ${org.orgId}::uuid`.execute(trx);
       }),
     ).rejects.toThrow(/CONTACT_EMAIL_FORBIDDEN/);
   });
@@ -275,7 +275,7 @@ suite('missing invoice requests (#669)', () => {
     const { mailer, sent: outbox } = recordingMailer();
     const deps = { runtime: workerRuntime, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://crove.test', bounceDomain: INBOUND, sleep: async () => {} };
     expect(await runMailJob(deps, { orgId: org.orgId, messageId: sent.body.messageId })).toEqual({ action: 'recorded', outcome: 'sent', code: null });
-    const token = await admin(async (c) => (await c.query('SELECT inbound_token FROM crove_kernel.tenant WHERE org_id = $1', [org.orgId])).rows[0].inbound_token as string);
+    const token = await admin(async (c) => (await c.query('SELECT inbound_token FROM ludy_kernel.tenant WHERE org_id = $1', [org.orgId])).rows[0].inbound_token as string);
     expect(outbox).toHaveLength(1);
     expect(outbox[0]).toMatchObject({ to: 'ketoan@khach.test', subject: 'Đề nghị bổ sung hóa đơn đầu vào tháng 9/2026', replyTo: `${token}@${INBOUND}` });
     expect(outbox[0]?.text).toContain('hóa đơn số 9007');
@@ -295,7 +295,7 @@ suite('missing invoice requests (#669)', () => {
   it('records a request to a suppressed contact as suppressed and sends nothing', async () => {
     await importList([spec('1001', '02/10/2026')], '2026-10');
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.mail_suppression (org_id, to_hash, scope, reason) SELECT $1, crove_kernel.mail_address_hash('ketoan@khach.test'), 'all', 'manual' ON CONFLICT DO NOTHING`, [org.orgId]),
+      c.query(`INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason) SELECT $1, ludy_kernel.mail_address_hash('ketoan@khach.test'), 'all', 'manual' ON CONFLICT DO NOTHING`, [org.orgId]),
     );
     const sent = await rpc('missingInvoices/request', owner, { period: '2026-10' });
     expect(sent.status, JSON.stringify(sent.body)).toBe(200);
@@ -304,7 +304,7 @@ suite('missing invoice requests (#669)', () => {
     const { mailer, sent: outbox } = recordingMailer();
     expect(await runMailJob({ runtime: workerRuntime, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://crove.test', bounceDomain: INBOUND }, { orgId: org.orgId, messageId: sent.body.messageId })).toMatchObject({ action: 'none' });
     expect(outbox).toEqual([]);
-    await admin((c) => c.query(`UPDATE crove_kernel.mail_suppression SET lifted_at = now(), lifted_by = $2, lift_reason = 'test' WHERE org_id = $1 AND lifted_at IS NULL`, [org.orgId, owner.userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.mail_suppression SET lifted_at = now(), lifted_by = $2, lift_reason = 'test' WHERE org_id = $1 AND lifted_at IS NULL`, [org.orgId, owner.userId]));
   });
 
   it('reminds once a month while invoices are missing, and turns itself off when none are', async () => {
@@ -322,7 +322,7 @@ suite('missing invoice requests (#669)', () => {
     expect((await rpc('missingInvoices/status', member, undefined)).body.reminderDay).toBe(5);
 
     // The other org: a reminder on, a contact, nothing missing (no list): no mail, and the reminder is off.
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET contact_email = 'ketoan@khac.test', missing_invoice_reminder_day = 7 WHERE org_id = $1`, [otherOrg.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET contact_email = 'ketoan@khac.test', missing_invoice_reminder_day = 7 WHERE org_id = $1`, [otherOrg.orgId]));
     expect(await workerRuntime.execute('finance.missing_invoices.remind', {}, { actor: ACTOR, orgId: otherOrg.orgId })).toEqual({ action: 'stopped' });
     expect((await rpc('missingInvoices/status', outsider, undefined, otherOrg.slug)).body).toMatchObject({ reminderDay: null, mails: [] });
 
@@ -337,7 +337,7 @@ suite('missing invoice requests (#669)', () => {
     const due = async () => admin(async (c) => (await c.query('SELECT org_id FROM crove_finance.missing_invoice_reminders_due(100)')).rows.map((r) => r.org_id as string));
     if (today > 28) return;
     // The org reminded this month is not due again; the other org (contact, reminder today) is, from 08:00.
-    await admin((c) => c.query('UPDATE crove_kernel.tenant SET missing_invoice_reminder_day = $2 WHERE org_id = ANY($1::uuid[])', [[org.orgId, otherOrg.orgId], today]));
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET missing_invoice_reminder_day = $2 WHERE org_id = ANY($1::uuid[])', [[org.orgId, otherOrg.orgId], today]));
     const rows = await due();
     expect(rows).not.toContain(org.orgId);
     if (local.getUTCHours() >= 8) {
@@ -348,11 +348,11 @@ suite('missing invoice requests (#669)', () => {
       // A run that could reconcile none of its periods (detail.skipped) counts as this month's run.
       const third = await rpc('org/create', member, { name: 'Công ty thứ ba', idempotencyKey: randomUUID() }, null);
       const thirdId = String(third.body?.orgId);
-      await admin((c) => c.query(`UPDATE crove_kernel.tenant SET contact_email = 'ketoan@thuba.test', missing_invoice_reminder_day = $2 WHERE org_id = $1`, [thirdId, today]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET contact_email = 'ketoan@thuba.test', missing_invoice_reminder_day = $2 WHERE org_id = $1`, [thirdId, today]));
       expect(await due()).toContain(thirdId);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
            VALUES ($1, 'system', 'finance.missing_invoices.remind', gen_random_uuid(), 'ok', repeat('0', 64), '{"skipped":["2026-09"]}')`,
           [thirdId],
         ),

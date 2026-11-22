@@ -134,7 +134,7 @@ interface CallRow {
 // The ledger rows of every activation call of a launch, of every attempt, locked.
 async function activationRows(ctx: Db, launchId: string): Promise<CallRow[]> {
   const { rows } = await sql<CallRow>`
-    SELECT id, key, state, calls, error_code, started_at, updated_at FROM crove_kernel.external_call
+    SELECT id, key, state, calls, error_code, started_at, updated_at FROM ludy_kernel.external_call
     WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} FOR UPDATE`.execute(ctx.trx);
   return rows.filter((r) => {
     const parsed = parseLaunchCallKey(r.key);
@@ -285,7 +285,7 @@ export const adsActivateBegin = defineCommand({
         earlierUnsettled = true;
         for (const e of earlier) {
           await ctx.trx
-            .updateTable('crove_kernel.external_call')
+            .updateTable('ludy_kernel.external_call')
             .set({ state: 'failed', error_kind: 'unknown', error_code: 'SUPERSEDED', finished_at: ctx.now, updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', e.id)
@@ -301,11 +301,11 @@ export const adsActivateBegin = defineCommand({
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
     if (action === 'call' || earlierUnsettled) {
-      await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step, retry_safety: 'idempotent', started_at: ctx.now }).execute();
-      if (earlierUnsettled) await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
+      await ctx.trx.insertInto('ludy_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step, retry_safety: 'idempotent', started_at: ctx.now }).execute();
+      if (earlierUnsettled) await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
     } else if (row) {
       // A reconcile: the row is taken by this run (a call begun and never settled, and old enough to be lost, is unclear now), so a job that begins at the same moment waits.
-      await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     }
     return {
       action: action === 'reconcile' ? 'reconcile' : 'call',
@@ -341,11 +341,11 @@ export const adsActivateRecord = defineCommand({
     if (!found) return { recorded: false, reason: 'not_found' };
     const launch = await launchSelect(ctx).where('id', '=', launchId).forUpdate().executeTakeFirst();
     const result = input.result;
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!launch || !row) return { recorded: false, reason: 'stale' };
     if (row.state === 'succeeded' || row.state === 'failed') return { recorded: false, reason: 'settled' };
     const settle = (values: { state: 'started' | 'succeeded' | 'failed' | 'ambiguous'; calls?: number; error_kind?: 'token_expired' | 'permission' | 'bad_request' | 'rate_limited' | 'transient' | 'unknown'; error_code?: string; finished_at?: Date }) =>
-      ctx.trx.updateTable('crove_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      ctx.trx.updateTable('ludy_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     // Whether this launch is still at the attempt and the state this call was begun under: a result for a launch that moved on (stopped, retried) never moves it.
     const current = launch.state === 'launching' && launch.attempt === parsed.attempt;
 

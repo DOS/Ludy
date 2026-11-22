@@ -44,8 +44,8 @@ suite('request context on a hot standby (#105)', () => {
     await admin.end();
     const adminUrl = withDatabase(ADMIN as string, dbName);
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const primaryPool = createPool({ connectionString: withDatabase(ADMIN as string, dbName, { user: 'crove_app', password: 'test-app-pw' }), max: 1 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const primaryPool = createPool({ connectionString: withDatabase(ADMIN as string, dbName, { user: 'ludy_app', password: 'test-app-pw' }), max: 1 });
     try {
       const db = createDb(primaryPool);
       const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
@@ -75,7 +75,7 @@ suite('request context on a hot standby (#105)', () => {
       await primary.end();
       await standby.end();
     }
-    standbyAppUrl = withDatabase(STANDBY as string, dbName, { user: 'crove_app', password: 'test-app-pw' });
+    standbyAppUrl = withDatabase(STANDBY as string, dbName, { user: 'ludy_app', password: 'test-app-pw' });
   }, 120_000);
 
   afterAll(async () => {
@@ -93,16 +93,16 @@ suite('request context on a hot standby (#105)', () => {
       for (const begin of ['BEGIN', 'BEGIN READ ONLY']) {
         await c.query(begin);
         try {
-          const entered = await c.query<{ role: string }>('SELECT crove_kernel.enter_user_context($1::uuid, $2::text) AS role', [orgId, contextToken(owner, orgId)]);
+          const entered = await c.query<{ role: string }>('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text) AS role', [orgId, contextToken(owner, orgId)]);
           expect(entered.rows[0]?.role).toBe('owner');
           const { rows } = await c.query<{ org: string; locks: number }>(
-            `SELECT crove_kernel.ctx_org_id()::text AS org,
-                    (SELECT count(*)::int FROM pg_locks l WHERE l.locktype = 'advisory' AND l.classid = 1129467734::oid
+            `SELECT ludy_kernel.ctx_org_id()::text AS org,
+                    (SELECT count(*)::int FROM pg_locks l WHERE l.locktype = 'advisory' AND l.classid = 1280656473::oid
                        AND l.objid = pg_backend_pid()::oid AND l.objsubid = 2 AND l.pid = pg_backend_pid()) AS locks`,
           );
           expect(rows[0]).toEqual({ org: orgId, locks: 1 });
-          await c.query(`SELECT set_config('crove.ctx', '', true), set_config('crove.ctx_seal', '', true)`);
-          await expect(c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)])).rejects.toMatchObject({
+          await c.query(`SELECT set_config('ludy.ctx', '', true), set_config('ludy.ctx_seal', '', true)`);
+          await expect(c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)])).rejects.toMatchObject({
             code: '42501',
             message: 'CONTEXT_REENTRY',
           });
@@ -124,8 +124,8 @@ suite('request context on a hot standby (#105)', () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
-        await expect(c.query(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'x')`, [orgId])).rejects.toMatchObject({ code: '25006' });
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+        await expect(c.query(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'x')`, [orgId])).rejects.toMatchObject({ code: '25006' });
         await c.query('ROLLBACK');
       } finally {
         c.release();

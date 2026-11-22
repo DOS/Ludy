@@ -176,7 +176,7 @@ suite('period lock (#329)', () => {
       async (c) =>
         (
           await c.query<{ actor_id: string; outcome: string; detail: Record<string, unknown> }>(
-            `SELECT actor_id, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
+            `SELECT actor_id, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
             [org.orgId, command],
           )
         ).rows,
@@ -219,17 +219,17 @@ suite('period lock (#329)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands, ...RAW_COMMANDS],
@@ -361,7 +361,7 @@ suite('period lock (#329)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_app');
+          await c.query('SET LOCAL ROLE ludy_app');
           await c.query(`UPDATE crove_finance.period_lock SET locked_through = NULL WHERE org_id = $1`, [org.orgId]);
         } finally {
           await c.query('ROLLBACK');
@@ -455,14 +455,14 @@ suite('period lock (#329)', () => {
   // refused; one that starts after the unlock waits for it. Raw calls in the admin's context, as the commands make them.
   it("serializes the lock and unlock with a change of the caller's role or permission (#1348)", async () => {
     const appLogin = new URL(adminUrl);
-    appLogin.username = 'crove_app';
+    appLogin.username = 'ludy_app';
     appLogin.password = 'test-app-pw';
     const grant = () =>
       admin(
         async (c) =>
           (
             await c.query<{ id: string }>(
-              `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+              `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
                VALUES ($1, $2, 'finance.chief_accountant', NULL, $3) RETURNING id`,
               [org.orgId, adminUser.userId, owner.userId],
             )
@@ -473,7 +473,7 @@ suite('period lock (#329)', () => {
       const c = new pg.Client({ connectionString: adminUrl });
       await c.connect();
       await c.query('BEGIN');
-      await c.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [org.orgId, adminUser.userId]);
+      await c.query('SELECT 1 FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [org.orgId, adminUser.userId]);
       await change(c);
       return c;
     };
@@ -490,7 +490,7 @@ suite('period lock (#329)', () => {
     try {
       // The chief accountant role is revoked while the admin unlocks November 2025: the unlock waits, then is refused.
       const first = await grant();
-      const revoking = await held((c) => c.query('DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND id = $2', [org.orgId, first]));
+      const revoking = await held((c) => c.query('DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND id = $2', [org.orgId, first]));
       clients.push(revoking);
       const unlocker = await asAdmin();
       clients.push(unlocker);
@@ -509,14 +509,14 @@ suite('period lock (#329)', () => {
       await later.connect();
       clients.push(later);
       await later.query('BEGIN');
-      const locking = later.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [org.orgId, adminUser.userId]);
+      const locking = later.query('SELECT 1 FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [org.orgId, adminUser.userId]);
       expect(await settledWithin(locking, 500)).toBe('pending');
       await second.query('ROLLBACK');
       await locking;
       await later.query('ROLLBACK');
 
       // The admin is made a member while locking December 2025: the lock waits, then is refused.
-      const demoting = await held((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]));
+      const demoting = await held((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]));
       clients.push(demoting);
       const locker = await asAdmin();
       clients.push(locker);
@@ -531,8 +531,8 @@ suite('period lock (#329)', () => {
         await c.end().catch(() => {});
       }
       await admin(async (c) => {
-        await c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]);
-        await c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2 AND role_key = 'finance.chief_accountant'`, [
+        await c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]);
+        await c.query(`DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND user_id = $2 AND role_key = 'finance.chief_accountant'`, [
           org.orgId,
           adminUser.userId,
         ]);
@@ -554,7 +554,7 @@ suite('period lock (#329)', () => {
         async (c) =>
           (
             await c.query<{ id: string }>(
-              `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+              `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
                VALUES ($1, $2, 'finance.chief_accountant', NULL, $3) RETURNING id`,
               [org.orgId, who.userId, owner.userId],
             )
@@ -565,7 +565,7 @@ suite('period lock (#329)', () => {
       // Two chief accountants, so that the change of one keeps the preset's rule.
       await grant(owner);
       const revoked = await grant(adminUser);
-      await admin((c) => c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'accountant' WHERE org_id = $1`, [org.orgId]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET approval_preset = 'accountant' WHERE org_id = $1`, [org.orgId]));
       const changes: Array<[string, () => Promise<unknown>, unknown]> = [
         [
           'kernel.member.role.revoke',
@@ -586,7 +586,7 @@ suite('period lock (#329)', () => {
         try {
           await unlocker.query('BEGIN');
           await enterUser(unlocker, owner.userId, org.orgId);
-          await unlocker.query('SELECT 1 FROM crove_kernel.tenant WHERE org_id = $1 FOR KEY SHARE', [org.orgId]);
+          await unlocker.query('SELECT 1 FROM ludy_kernel.tenant WHERE org_id = $1 FOR KEY SHARE', [org.orgId]);
           let settled = false;
           const changing = change().then(
             (value) => {
@@ -604,7 +604,7 @@ suite('period lock (#329)', () => {
             const { rows } = await admin((c) =>
               c.query(
                 `SELECT 1 FROM pg_catalog.pg_locks l JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
-                 WHERE NOT l.granted AND a.usename = 'crove_app' AND a.datname = pg_catalog.current_database()`,
+                 WHERE NOT l.granted AND a.usename = 'ludy_app' AND a.datname = pg_catalog.current_database()`,
               ),
             );
             if (rows.length > 0) break;
@@ -626,14 +626,14 @@ suite('period lock (#329)', () => {
       }
       const role = await admin(
         async (c) =>
-          (await c.query<{ role: string }>('SELECT role FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [org.orgId, adminUser.userId])).rows[0]?.role,
+          (await c.query<{ role: string }>('SELECT role FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [org.orgId, adminUser.userId])).rows[0]?.role,
       );
       expect(role).toBe('viewer');
     } finally {
       await admin(async (c) => {
-        await c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [org.orgId]);
-        await c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]);
-        await c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND role_key = 'finance.chief_accountant'`, [org.orgId]);
+        await c.query(`UPDATE ludy_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [org.orgId]);
+        await c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [org.orgId, adminUser.userId]);
+        await c.query(`DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND role_key = 'finance.chief_accountant'`, [org.orgId]);
       });
     }
     expect(await state()).toMatchObject({ status: 200, body: { lockedThrough: '2025-11-30' } });

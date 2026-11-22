@@ -4,7 +4,7 @@
 //   duplicate merged into it), with channel, kind, status and last message time, and never a message body;
 // - crm.deal.conversations returns the conversations of the deal's contact since the deal opened (opened_at >= deal.created_at
 //   or last_message_at >= deal.created_at);
-// - both queries read crove_kernel.conversation under its RLS (conversation_access), so a member limited to another channel
+// - both queries read ludy_kernel.conversation under its RLS (conversation_access), so a member limited to another channel
 //   sees no comment thread from the restricted channel, and a member or viewer without desk.agent (kernel.conversation.direct.read)
 //   sees no direct or email conversation entry;
 // - erasing a customer (kernel.conversation.erase_contact, CV6) removes the conversation entries on the next read.
@@ -57,12 +57,12 @@ suite("a contact's conversations on its timeline and on its deals (#2333)", () =
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const wrk = new URL(adminUrl);
-    wrk.username = 'crove_worker';
+    wrk.username = 'ludy_worker';
     wrk.password = 'test-worker-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     workerPool = createPool({ connectionString: wrk.toString(), max: 2 });
@@ -88,25 +88,25 @@ suite("a contact's conversations on its timeline and on its deals (#2333)", () =
     const [desk, member, scopedMember, viewer] = [await person('desk'), await person('member'), await person('scoped'), await person('viewer')];
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')",
+        "INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')",
         [orgId, desk, member, scopedMember, viewer],
       ),
     );
     // desk holds desk.agent (kernel.conversation.direct.read); member, scopedMember and viewer do not.
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [orgId, desk, owner]),
+      c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [orgId, desk, owner]),
     );
 
     const [channelA, channelB] = [randomUUID(), randomUUID()];
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Trang Chính', $5), ($1, $4, 'sandbox', $6, 'Trang Phụ', $5)",
+        "INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Trang Chính', $5), ($1, $4, 'sandbox', $6, 'Trang Phụ', $5)",
         [orgId, channelA, `acct-a-${randomUUID().slice(0, 6)}`, channelB, owner, `acct-b-${randomUUID().slice(0, 6)}`],
       ),
     );
     // scopedMember is limited to channelB only.
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_access (org_id, channel_connection_id, user_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, channelB, scopedMember, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_access (org_id, channel_connection_id, user_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, channelB, scopedMember, owner]),
     );
 
     const exec = <T>(user: string, command: string, input: unknown, mfa = false) =>
@@ -133,7 +133,7 @@ suite("a contact's conversations on its timeline and on its deals (#2333)", () =
       };
       await worker.execute('kernel.conversation.ingest', { connectionId, events: [ev] }, { actor: SYSTEM, orgId });
       const { rows } = await admin((c) =>
-        c.query<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [orgId, connectionId, threadId]),
+        c.query<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [orgId, connectionId, threadId]),
       );
       return rows[0]!.id;
     };
@@ -145,7 +145,7 @@ suite("a contact's conversations on its timeline and on its deals (#2333)", () =
     // 1. An older comment thread on channelA, linked to the duplicate party and closed before the deal is created.
     const oldCommentId = await ingest(channelA, 'comment_thread', 't-old', 'Bình luận tuần trước', oldAt, 'cust-old');
     await admin((c) =>
-      c.query('UPDATE crove_kernel.conversation SET opened_at = $3, last_message_at = $3, party_id = $4 WHERE org_id = $1 AND id = $2', [orgId, oldCommentId, oldAt, duplicateId]),
+      c.query('UPDATE ludy_kernel.conversation SET opened_at = $3, last_message_at = $3, party_id = $4 WHERE org_id = $1 AND id = $2', [orgId, oldCommentId, oldAt, duplicateId]),
     );
 
     // Create a deal for the company now.

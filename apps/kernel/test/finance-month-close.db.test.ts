@@ -79,9 +79,9 @@ suite('the month-close checklist', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -94,10 +94,10 @@ suite('the month-close checklist', () => {
       [o.member, 'member'],
       [o.viewer, 'viewer'],
     ] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     }
-    defaultEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
-    branch = String((await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))).rows[0]?.id);
+    defaultEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+    branch = String((await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))).rows[0]?.id);
     const lone = await person('lone');
     other = { orgId: (await createOrg(rt, asUser(lone), `Org ${randomUUID().slice(0, 6)}`)).orgId, owner: lone };
   }, 120_000);
@@ -165,13 +165,13 @@ suite('the month-close checklist', () => {
   });
 
   it('asks a quarterly filer about the return of the quarter, in the last month of it only', async () => {
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = 'quarter' WHERE org_id = $1`, [o.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = 'quarter' WHERE org_id = $1`, [o.orgId]));
     expect(item(await close('2026-10'), 'vat')).toBeUndefined();
     expect(item(await close('2026-11'), 'vat')).toBeUndefined();
     expect(item(await close('2026-12'), 'vat')).toEqual({ key: 'vat', count: 1, period: '2026-Q4' });
     await rt.execute('finance.vat.return_mark', { period: '2026-Q3', done: true }, { actor: asMfa(o.owner), orgId: o.orgId });
     expect(item(await close('2026-09'), 'vat')).toEqual({ key: 'vat', count: 0, period: '2026-Q3' });
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [o.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [o.orgId]));
   });
 
   it('reads a viewer the same checklist, refuses an entity of another org and a member limited to another entity, and shows another org nothing of this one', async () => {
@@ -179,8 +179,8 @@ suite('the month-close checklist', () => {
     await expect(close('2026-10', other.owner, other.orgId, defaultEntity)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED' });
     const scoped = await person('scoped');
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scoped]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, scoped, defaultEntity, o.owner]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scoped]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, scoped, defaultEntity, o.owner]);
     });
     expect(count(await close('2026-10', scoped), 'bank')).toBe(2);
     await expect(close('2026-10', scoped, o.orgId, branch)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED' });
@@ -214,7 +214,7 @@ suite('the month-close checklist', () => {
   const proposal = (command: string, kind: string, payload: unknown, createdAt: string | null = null) =>
     admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors${createdAt ? ', created_at' : ''})
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors${createdAt ? ', created_at' : ''})
          VALUES ($1, $2, $3, 'Đề xuất thử', $4, ARRAY[$5::uuid], '[]'${createdAt ? ', $6' : ''})`,
         createdAt ? [o.orgId, kind, command, JSON.stringify(payload), o.owner, createdAt] : [o.orgId, kind, command, JSON.stringify(payload), o.owner],
       ),
@@ -315,7 +315,7 @@ suite('the month-close checklist', () => {
     await proposal('finance.voucher.record', 'finance.cash_voucher', { bankLineId: line, date: '2026-08-05' });
     expect(count(await close('2026-08'), 'bank')).toBe(1);
     // A decided proposal holds nothing.
-    await admin((c) => c.query(`UPDATE crove_kernel.proposal SET status = 'rejected' WHERE org_id = $1 AND payload->>'bankLineId' = $2`, [o.orgId, line]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET status = 'rejected' WHERE org_id = $1 AND payload->>'bankLineId' = $2`, [o.orgId, line]));
     expect(count(await close('2026-08'), 'bank')).toBe(2);
   });
 
@@ -324,7 +324,7 @@ suite('the month-close checklist', () => {
     admin(async (a) => {
       const fileId = randomUUID();
       const sha = randomUUID().replaceAll('-', '').repeat(2);
-      await a.query(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'ds.xlsx', 'application/octet-stream', 10, 'upload')`, [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`]);
+      await a.query(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'ds.xlsx', 'application/octet-stream', 10, 'upload')`, [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`]);
       const id = String(
         (await a.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, direction, legal_entity_id) VALUES ($1, $2, $3, 'ds.xlsx', $4, $5) RETURNING id`, [o.orgId, period, fileId, direction, defaultEntity])).rows[0]?.id,
       );
@@ -355,7 +355,7 @@ suite('the month-close checklist', () => {
   });
 
   it('reads each direction from its own list: a quarterly filer\'s quarter list for purchases and the month\'s own list for sales, and opens the sales tab when only sales are unmatched', async () => {
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = 'quarter' WHERE org_id = $1`, [o.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = 'quarter' WHERE org_id = $1`, [o.orgId]));
     // March ends the first quarter: a Q1 purchase list of two missing invoices, and a March sales list of one. Neither list is dropped for the other.
     await portalList('2026-Q1', 'purchase', ['201', '202']);
     await portalList('2026-03', 'sale', ['301']);
@@ -366,7 +366,7 @@ suite('the month-close checklist', () => {
     await portalList('2026-Q2', 'purchase', []);
     await portalList('2026-06', 'sale', ['501']);
     expect(item(await close('2026-06'), 'invoices')).toEqual({ key: 'invoices', count: 1, period: '2026-06', direction: 'sale' });
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [o.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [o.orgId]));
   });
 
   // A settlement of one line with a delivery day, so its entry is known: sales, refund and net as given; a reversal of another settlement when `reversalOf` names it.

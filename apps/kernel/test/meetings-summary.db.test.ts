@@ -80,9 +80,9 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -94,7 +94,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     const names: Record<string, string> = { owner: 'Chủ', recorder: 'Hà', attendee: 'Nguyễn Thị Lan', another: 'Trần Văn Nam', twin: 'Phạm Văn Nam', stranger: 'Người ngoài' };
     for (const key of Object.keys(names)) users[key] = await upsertIdentity(createDb(pool), { issuer: 'summary', subject: key, email: `${key}@summary.test`, name: names[key] as string });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tóm tắt')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.recorder, users.attendee, users.another, users.twin, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.recorder, users.attendee, users.another, users.twin, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -161,7 +161,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect((await results('recorder', meetingId)).draft).toBeNull();
     // A second real org, where the recorder is a member too, with a meeting of its own and a finished summary run of the recorder's there.
     const other = (await createOrg(runtime, asUser('stranger'), 'Org thứ hai')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
     const foreignMeeting = randomUUID();
     await sqlAdmin(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)

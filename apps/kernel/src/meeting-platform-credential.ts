@@ -119,7 +119,7 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
       // 1. The lock. A second refresh of this connection waits here (up to LOCAL lock_timeout) until the first one commits, and then finds the token renewed.
       await sql`SELECT pg_catalog.set_config('lock_timeout', ${LOCK_WAIT}, true)`.execute(ctx.trx);
       const row = await ctx.trx
-        .selectFrom('crove_kernel.meeting_platform_connection')
+        .selectFrom('ludy_kernel.meeting_platform_connection')
         .select(['status', 'provider'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -136,7 +136,7 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
       await sql`SAVEPOINT meeting_platform_credential_read`.execute(ctx.trx);
       try {
         sealed = (
-          await sql<SealedRow>`SELECT key_id, envelope, provider, external_account FROM crove_kernel.meeting_platform_credential_get(${input.connectionId}::uuid)`.execute(ctx.trx)
+          await sql<SealedRow>`SELECT key_id, envelope, provider, external_account FROM ludy_kernel.meeting_platform_credential_get(${input.connectionId}::uuid)`.execute(ctx.trx)
         ).rows[0];
         await sql`RELEASE SAVEPOINT meeting_platform_credential_read`.execute(ctx.trx);
       } catch (error) {
@@ -164,7 +164,7 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
       }
       // The provider will not renew the grant: the connection expires in this transaction, and the member connects again.
       if ('refused' in renewed) {
-        await sql`SELECT crove_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${'connection_expired'}, ${true})`.execute(ctx.trx);
+        await sql`SELECT ludy_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${'connection_expired'}, ${true})`.execute(ctx.trx);
         ctx.audit({ connection_id: input.connectionId, provider: row.provider, refreshed: false, expired: true, outcome: 'expired' });
         return { outcome: 'expired' };
       }
@@ -181,9 +181,9 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
         expiresAt: renewed.expiresAt ?? new Date(now().getTime() + DEFAULT_TOKEN_LIFE_MS),
       };
       const resealed = deps.broker.seal(textOf(next), binding);
-      await sql`SELECT crove_kernel.meeting_platform_credential_put(${input.connectionId}::uuid, ${resealed.keyId}, decode(${resealed.envelope.toString('base64')}, 'base64'))`.execute(ctx.trx);
+      await sql`SELECT ludy_kernel.meeting_platform_credential_put(${input.connectionId}::uuid, ${resealed.keyId}, decode(${resealed.envelope.toString('base64')}, 'base64'))`.execute(ctx.trx);
       await ctx.trx
-        .updateTable('crove_kernel.meeting_platform_connection')
+        .updateTable('ludy_kernel.meeting_platform_connection')
         .set({ expires_at: next.expiresAt ?? null, updated_at: now() })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)

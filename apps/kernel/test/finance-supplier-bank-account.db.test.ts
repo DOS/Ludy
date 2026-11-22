@@ -64,10 +64,10 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     const adminUser = await identity('admin');
     const member = await identity('member');
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]);
     });
     const supplier = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
     return { orgId, owner, admin: adminUser, member, supplier };
   }
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true, runtime = rt) =>
@@ -86,9 +86,9 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -126,7 +126,7 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     const dump = JSON.stringify([
       await rows('SELECT * FROM crove_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]),
       await rows('SELECT * FROM crove_finance.supplier_bank_account_change WHERE org_id = $1', [o.orgId]),
-      await rows('SELECT detail, target_id, input_sha256 FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]),
+      await rows('SELECT detail, target_id, input_sha256 FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId]),
     ]);
     expect(dump).not.toContain(DIGITS);
     expect(dump).not.toContain(NUMBER);
@@ -200,7 +200,7 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
   it('lists in the rule 3 signal the suppliers changed in the last 30 days with the day of the latest change, and drops an older change', async () => {
     const o = await org();
     const quiet = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp cũ')", [o.orgId, quiet]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp cũ')", [o.orgId, quiet]));
     await add(o);
     await add(o, { partyId: quiet });
     // A change of 40 days ago (the database owner may edit the history; no tenant role may).
@@ -263,7 +263,7 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, false))).toBe('STEP_UP_REQUIRED');
     const erased = await execute<{ shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier });
     expect(erased).toMatchObject({ shreddedKeys: 1, retired: 1 });
-    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
+    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
     // The sealed text stays in its row byte for byte, and reads as erased.
     expect((await rows<{ number_sealed: string }>('SELECT number_sealed FROM crove_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0]?.number_sealed).toBe(stored.number_sealed);
     expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toEqual({ erased: true });

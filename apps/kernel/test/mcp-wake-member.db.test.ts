@@ -48,7 +48,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', $3, 'member', $3)`,
         [orgA, id, userId, `client-${id}`, `oauth-${id}`],
       ),
@@ -72,7 +72,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     }
     throw new Error('expected a refusal');
   }
-  const setSwitch = (on: boolean) => admin((c) => c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgA, on]));
+  const setSwitch = (on: boolean) => admin((c) => c.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgA, on]));
 
   beforeAll(async () => {
     if (!ADMIN) return;
@@ -84,13 +84,13 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 6 });
     pools.push(pool);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     workerUrl = url.toString();
     const workerPool = createPool({ connectionString: workerUrl, max: 2 });
@@ -106,8 +106,8 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     orgA = (await createOrg(runtime, browser(users.ownerA), 'Org A')).orgId;
     system.orgId = orgA;
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgA, users.adminA, users.memberA, users.viewerA]);
-      await c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgA, users.adminA, users.memberA, users.viewerA]);
+      await c.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
     });
   }, 120_000);
 
@@ -160,9 +160,9 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     const worker = new pg.Client({ connectionString: workerUrl });
     await worker.connect();
     try {
-      expect((await worker.query(`SELECT * FROM crove_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount).toBe(1);
-      await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgA, grant]));
-      expect((await worker.query(`SELECT * FROM crove_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount).toBe(0);
+      expect((await worker.query(`SELECT * FROM ludy_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount).toBe(1);
+      await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgA, grant]));
+      expect((await worker.query(`SELECT * FROM ludy_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount).toBe(0);
     } finally {
       await worker.end();
     }
@@ -183,7 +183,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     const rotated = makeWakeSecret(vault, orgA, grant);
     const answer = await runtime.execute('kernel.mcp.wake.rotate_secret', { grantId: grant, credential: rotated.credential }, as(users.viewerA));
     const everything = JSON.stringify([first.result, answer, await get(users.viewerA, grant)]);
-    const audit = await admin((c) => c.query(`SELECT row_to_json(a)::text AS row FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE 'kernel.mcp.wake.%'`, [orgA]));
+    const audit = await admin((c) => c.query(`SELECT row_to_json(a)::text AS row FROM ludy_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE 'kernel.mcp.wake.%'`, [orgA]));
     const stored = JSON.stringify(audit.rows);
     for (const secret of [first.made.secret, rotated.secret, first.made.credential.envelope, rotated.credential.envelope]) {
       expect(everything).not.toContain(secret);
@@ -202,7 +202,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     // Nine earlier pings in the hour, then the next minute's ping is the tenth in the hour and the one after is refused.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body, created_at)
+        `INSERT INTO ludy_kernel.agent_wake_delivery (org_id, id, grant_id, type, body, created_at)
          SELECT $1, i, $2, 'ping', jsonb_build_object('id', i, 'type', 'ping', 'created_at', '2026-11-12T03:00:00.000Z', 'org', $1::uuid, 'grant', $2::uuid, 'data', '{}'::jsonb),
                 now() - interval '5 minutes'
          FROM (SELECT gen_random_uuid() AS i FROM generate_series(1, 9)) s`,
@@ -218,7 +218,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     const worker = new pg.Client({ connectionString: workerUrl });
     await worker.connect();
     try {
-      const due = await worker.query<{ grant_id: string; signals_due: boolean }>(`SELECT grant_id, signals_due FROM crove_kernel.mcp_wake_due(100)`);
+      const due = await worker.query<{ grant_id: string; signals_due: boolean }>(`SELECT grant_id, signals_due FROM ludy_kernel.mcp_wake_due(100)`);
       expect(due.rows.filter((r) => r.grant_id === grant).every((r) => r.signals_due === false)).toBe(true);
     } finally {
       await worker.end();
@@ -234,7 +234,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     };
     const refused = await refusal(workerRuntime.execute('kernel.mcp.wake.enqueue', { id, grantId: grant, type: 'signal.fired', body, keys: [body.data.items[0]?.key as string] }, system));
     expect(refused.status).toBe(422);
-    const stored = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_wake_delivery WHERE org_id = $1 AND grant_id = $2 AND type = 'signal.fired'`, [orgA, grant]));
+    const stored = await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.agent_wake_delivery WHERE org_id = $1 AND grant_id = $2 AND type = 'signal.fired'`, [orgA, grant]));
     expect(stored.rows[0].n).toBe(0);
   });
 
@@ -243,7 +243,7 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
     await set(users.memberA, grant);
     const worker = new pg.Client({ connectionString: workerUrl });
     await worker.connect();
-    const target = async () => (await worker.query(`SELECT * FROM crove_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount;
+    const target = async () => (await worker.query(`SELECT * FROM ludy_kernel.mcp_wake_target($1, $2)`, [orgA, grant])).rowCount;
     try {
       expect(await target()).toBe(1);
       await setSwitch(false);
@@ -251,11 +251,11 @@ suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () 
       expect((await refusal(set(users.memberA, grant))).status).toBeGreaterThanOrEqual(400);
       await setSwitch(true);
       expect(await target()).toBe(1);
-      await admin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, users.memberA]));
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, users.memberA]));
       expect(await target()).toBe(0);
     } finally {
       await worker.end();
-      await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [orgA, users.memberA]));
+      await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [orgA, users.memberA]));
     }
   });
 });

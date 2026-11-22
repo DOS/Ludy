@@ -136,9 +136,9 @@ suite('opening balances from Excel (#320)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     db = createDb(pool);
@@ -247,7 +247,7 @@ suite('opening balances from Excel (#320)', () => {
       ],
     });
     const audit = await admin((c) =>
-      c.query(`SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [org.orgId]),
+      c.query(`SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [org.orgId]),
     );
     expect(audit.rows).toEqual([
       expect.objectContaining({ detail: expect.objectContaining({ as_of: '2025-12-31', lines: 3, total_debit: '100000000', aal: 'aal2' }) }),
@@ -506,7 +506,7 @@ suite('opening balances from Excel (#320)', () => {
     const orgId = String(fresh.body?.orgId);
     // A vendor already in the books is reused by its tax code; the others are created. Fake tax codes only.
     const known = randomUUID();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Cũ', '0312345670')`, [orgId, known]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Cũ', '0312345670')`, [orgId, known]));
     const party = (accountCode: string, debit: string, credit: string, partyTaxCode: string, partyName: string) => ({
       ...row(accountCode, debit, credit),
       ...(partyTaxCode ? { partyTaxCode } : {}),
@@ -527,7 +527,7 @@ suite('opening balances from Excel (#320)', () => {
     // A party on another account is refused, and nothing is created while the sheet is refused.
     const refused = await post(owner, { ...input, rows: [...input.rows.slice(0, -1), party('411', '', '112000000', '0309876546', '')] }, slug);
     expect(refused).toMatchObject({ status: 422, body: { code: 'OPENING_BALANCE_INVALID' } });
-    expect((await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);
+    expect((await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_kernel.party WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);
 
     const preview = await rpc('openingBalance/preview', await tokenFor(owner), input, slug);
     expect(preview.body).toMatchObject({ ok: true, lines: 6 });
@@ -543,7 +543,7 @@ suite('opening balances from Excel (#320)', () => {
     expect(posted).toMatchObject({ status: 200, body: { lines: 6 } });
 
     const parties = await admin(
-      async (c) => (await c.query<{ id: string; name: string; tax_code: string | null }>('SELECT id, name, tax_code FROM crove_kernel.party WHERE org_id = $1 ORDER BY name', [orgId])).rows,
+      async (c) => (await c.query<{ id: string; name: string; tax_code: string | null }>('SELECT id, name, tax_code FROM ludy_kernel.party WHERE org_id = $1 ORDER BY name', [orgId])).rows,
     );
     expect(parties.map((p) => [p.name, p.tax_code])).toEqual([
       ['Công ty Khách A', '0101234564'],
@@ -564,7 +564,7 @@ suite('opening balances from Excel (#320)', () => {
       ['331', known],
       ['411', null],
     ]);
-    const audit = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [orgId]));
+    const audit = await admin((c) => c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [orgId]));
     expect(audit.rows[0].detail).toMatchObject({ lines: 6, parties: 3 });
 
     // The receivables and payables report of the next month opens with each party's balance and the unallocated rest.

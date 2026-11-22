@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit checks for the SQL redaction detector (#4001, Slice 1):
 // - Migration 20270209180000 defines pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions pinned to pg_catalog, pg_temp,
-//   revoked from PUBLIC, and granted to crove_tenant (matching crove_kernel.text_mentions).
+//   revoked from PUBLIC, and granted to ludy_tenant (matching ludy_kernel.text_mentions).
 // - Character constants stay aligned with 20261122040000_crove_kernel_text_mention_long_digits.sql.
 // - No duplicate TypeScript regex detector was introduced outside SQL.
 // - PII_DETECT_CASES covers every redaction kind and near-miss category non-vacuously.
@@ -13,11 +13,11 @@ import { PII_DETECT_CASES, REDACTION_KINDS } from './pii-detect-cases.ts';
 const readMigration = (name: string) =>
   readFileSync(fileURLToPath(new URL(`../../../supabase/migrations/${name}`, import.meta.url)), 'utf8');
 
-describe('crove_kernel.text_detect migration contract (#4001 Slice 1)', () => {
+describe('ludy_kernel.text_detect migration contract (#4001 Slice 1)', () => {
   const detectSql = readMigration('20270209180000_crove_kernel_text_detect.sql');
   const patternSql = readMigration('20261122040000_crove_kernel_text_mention_long_digits.sql');
 
-  it('declares pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions with pinned search_path and crove_tenant-only EXECUTE', () => {
+  it('declares pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE functions with pinned search_path and ludy_tenant-only EXECUTE', () => {
     expect(detectSql).not.toMatch(/SECURITY\s+DEFINER/i);
     expect(detectSql).not.toMatch(/CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+/i);
 

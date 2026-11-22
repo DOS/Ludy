@@ -89,7 +89,7 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
       let after = null as { sealed: Date; id: string } | null;
       for (let page = 0; page < RESEAL_PAGES; page += 1) {
         const { rows } = await sql<{ org_id: string; connection_id: string; key_id: string; sealed_at: Date }>`
-          SELECT org_id, connection_id, key_id, sealed_at FROM crove_kernel.credential_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+          SELECT org_id, connection_id, key_id, sealed_at FROM ludy_kernel.credential_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
         for (const row of rows) {
           const done = await resealOne(deps, row).catch((error: unknown) => {
             // The connection id only: never the envelope or what it holds.
@@ -120,7 +120,7 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
           console.error('[credential-reseal] minutes channel pass', error instanceof Error ? error.name : typeof error);
         });
       }
-      const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_kernel.credential_key_counts()`.execute(db);
+      const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_kernel.credential_key_counts()`.execute(db);
       // Counted whatever is installed: the tables exist with Social left out too (ADR-0031), and a target left under the
       // previous key must keep it from being retired (#1878).
       const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db);
@@ -392,7 +392,7 @@ export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<Sub
       let after = null as { orgId: string; id: string } | null;
       for (let page = 0; page < RESEAL_PAGES; page += 1) {
         const { rows } = await sql<{ org_id: string; id: string; key_id: string; wrapped_key: Buffer }>`
-          SELECT org_id, id, key_id, wrapped_key FROM crove_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
+          SELECT org_id, id, key_id, wrapped_key FROM ludy_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
         // Rows come in (org, id) order: one batch per org.
         const byOrg = new Map<string, Array<{ id: string; fromKeyId: string; fromWrapped: string; keyId: string; wrapped: string }>>();
         for (const row of rows) {
@@ -420,7 +420,7 @@ export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<Sub
         if (!last || rows.length < SUBJECT_RESEAL_LIMIT) break;
         after = { orgId: last.org_id, id: last.id };
       }
-      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM crove_kernel.subject_key_key_counts()`.execute(db);
+      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM ludy_kernel.subject_key_key_counts()`.execute(db);
       const openableIds = new Set(openable);
       for (const c of counts) {
         if (c.key_id === current) continue;

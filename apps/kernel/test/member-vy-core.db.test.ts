@@ -52,8 +52,8 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       await c.end();
     }
   }
-  const asUser = (userId: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
-  const asSystem = (c: pg.Client) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+  const asUser = (userId: string) => (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+  const asSystem = (c: pg.Client) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
   const outcome = <T>(p: Promise<T>) => p.then((value) => ({ ok: true as const, value }), (error: { message: string }) => ({ ok: false as const, message: error.message }));
 
   // A member's Vy agent, a run and a result and a memory entry, seeded as the superuser with the binding set aside.
@@ -64,17 +64,17 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       const agentId = randomUUID();
       const runId = randomUUID();
       agents[key] = agentId;
-      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, userId]);
-      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
+      await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, userId]);
+      await c.query(`INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
       await c.query(
-        `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
+        `INSERT INTO ludy_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
          VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : `${born}, now() + interval '30 days'`})`,
         [orgId, randomUUID(), userId, runId, randomUUID()],
       );
-      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [orgId, randomUUID(), userId]);
+      await c.query(`INSERT INTO ludy_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [orgId, randomUUID(), userId]);
     });
   }
-  const rows = (table: string) => admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table}`)).rows[0]?.n);
+  const rows = (table: string) => admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.${table}`)).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -85,15 +85,15 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     const pool = createPool({ connectionString: appUrl, max: 4 });
     pools.push(pool);
     const db = createDb(pool);
@@ -102,18 +102,18 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       users[key] = await upsertIdentity(db, { issuer: 'member-vy-core', subject: key, email: `${key}@member-vy-core.test`, name: null });
     }
     orgId = (await createOrg(runtime, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Vy lõi')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, users.admin, users.member]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, users.admin, users.member]));
     await seed(users.member, 'member', true);
     // A former member: no tenant_member row.
     await seed(users.gone, 'gone', false);
     // Two members removed through the command: one now, one 31 days ago by the audit trail.
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recent, users.old]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recent, users.old]));
     for (const user of [users.recent, users.old]) await runtime.execute('kernel.member.remove', { userId: user }, { actor: asMfa(users.owner), orgId });
     // The audit trail is append-only, so its trigger is set aside for this statement.
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, users.old]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, users.old]);
       await c.query('COMMIT');
     });
     await seed(users.recent, 'recent', false);
@@ -132,13 +132,13 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
 
   it('counts results and memory per member for an owner or admin, ids and numbers only, and refuses a member', async () => {
     for (const who of [users.owner, users.admin]) {
-      const out = await inContext(appUrl, asUser(who), (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()'));
+      const out = await inContext(appUrl, asUser(who), (c) => c.query('SELECT * FROM ludy_kernel.member_vy_private_counts()'));
       expect(out.rows.map((r) => [r.member_user_id, r.results, r.memories]).sort()).toEqual(
         [[users.gone, '1', '1'], [users.member, '1', '1'], [users.recent, '1', '1'], [users.old, '1', '1']].sort(),
       );
       expect(Object.keys(out.fields.reduce((o, f) => ({ ...o, [f.name]: 1 }), {}))).toEqual(['org_id', 'member_user_id', 'results', 'memories']);
     }
-    const refused = await outcome(inContext(appUrl, asUser(users.member), (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()')));
+    const refused = await outcome(inContext(appUrl, asUser(users.member), (c) => c.query('SELECT * FROM ludy_kernel.member_vy_private_counts()')));
     expect(refused.ok, 'a plain member asking for the counts').toBe(false);
   });
 
@@ -147,11 +147,11 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       [appUrl, asUser(users.owner), 'the API login in a user context'],
       [workerUrl, asUser(users.owner), 'the worker in a user context'],
     ] as const) {
-      const refused = await outcome(inContext(url, enter, (c) => c.query('SELECT crove_kernel.member_vy_results_expire(100)')));
+      const refused = await outcome(inContext(url, enter, (c) => c.query('SELECT ludy_kernel.member_vy_results_expire(100)')));
       expect(refused.ok, name).toBe(false);
     }
     const expired = await inContext(workerUrl, asSystem, async (c) => {
-      const out = await c.query<{ n: string }>('SELECT crove_kernel.member_vy_results_expire(100) AS n');
+      const out = await c.query<{ n: string }>('SELECT ludy_kernel.member_vy_results_expire(100) AS n');
       await c.query('COMMIT');
       return out.rows[0]?.n;
     });
@@ -160,12 +160,12 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
   });
 
   it('purges a former member\'s results and memory once their latest exit is recorded and 30 days old, and nothing of a member who is back or whose exit is not recorded', async () => {
-    const wrongOrg = await outcome(inContext(workerUrl, asSystem, (c) => c.query('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [randomUUID(), users.gone])));
+    const wrongOrg = await outcome(inContext(workerUrl, asSystem, (c) => c.query('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [randomUUID(), users.gone])));
     expect(wrongOrg.ok, 'another org id').toBe(false);
-    const present = await inContext(workerUrl, asSystem, (c) => c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, users.member]));
+    const present = await inContext(workerUrl, asSystem, (c) => c.query<{ n: string }>('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, users.member]));
     expect(present.rows[0]?.n, 'a member who is still in the org').toBe('0');
     const purged = await inContext(workerUrl, asSystem, async (c) => {
-      const out = await c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, users.gone]);
+      const out = await c.query<{ n: string }>('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, users.gone]);
       await c.query('COMMIT');
       return out.rows[0]?.n;
     });
@@ -174,7 +174,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     // The audit trail's 30 days: a member removed now keeps everything, one removed 31 days ago loses it.
     const purgeOf = (user: string) =>
       inContext(workerUrl, asSystem, async (c) => {
-        const out = await c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user]);
+        const out = await c.query<{ n: string }>('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user]);
         await c.query('COMMIT');
         return out.rows[0]?.n;
       });
@@ -190,9 +190,9 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     try {
       await holder.query('BEGIN');
       await asSystem(holder);
-      await holder.query('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [orgId, users.gone]);
+      await holder.query('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [orgId, users.gone]);
       await other.query(`SET lock_timeout = '500ms'`);
-      const waited = await outcome(other.query('SELECT crove_kernel.membership_lock($1::uuid, $2::uuid)', [orgId, users.gone]));
+      const waited = await outcome(other.query('SELECT ludy_kernel.membership_lock($1::uuid, $2::uuid)', [orgId, users.gone]));
       expect(waited, 'a re-add taking the membership lock while the purge runs').toMatchObject({ ok: false });
       expect(waited.ok ? '' : waited.message).toMatch(/lock timeout/);
     } finally {
@@ -209,11 +209,11 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
   });
 
   it('never moves a run to another agent, and answers agent_member_of for the context\'s org only', async () => {
-    const moved = await outcome(admin((c) => c.query('UPDATE crove_kernel.ai_run SET agent_id = $2 WHERE org_id = $1 AND agent_id = $3', [orgId, agents.gone, agents.member])));
+    const moved = await outcome(admin((c) => c.query('UPDATE ludy_kernel.ai_run SET agent_id = $2 WHERE org_id = $1 AND agent_id = $3', [orgId, agents.gone, agents.member])));
     expect(moved.ok, 'a run moved to another agent').toBe(false);
-    const own = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT crove_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [orgId, agents.member]));
+    const own = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT ludy_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [orgId, agents.member]));
     expect(own.rows[0]?.m).toBe(users.member);
-    const foreign = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT crove_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [randomUUID(), agents.member]));
+    const foreign = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT ludy_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [randomUUID(), agents.member]));
     expect(foreign.rows[0]?.m, 'another org id').toBeNull();
   });
 });

@@ -1030,7 +1030,7 @@ ensure_context_token_key() {
 # merge while there are any): the query as the superuser inside the database container (the table is under row-level
 # security, so only a role that bypasses it counts every org), in a session that is read only and times out. It writes
 # `plain idempotency rows: <n>` to the log and never fails the deploy: a count that did not run says so and the deploy goes on.
-PLAIN_IDEMPOTENCY_SQL="SELECT count(*) FROM crove_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')"
+PLAIN_IDEMPOTENCY_SQL="SELECT count(*) FROM ludy_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')"
 count_plain_idempotency_rows() {
   local n='' why='' errfile
   errfile="$(mktemp "$(state_dir)/count-err.XXXXXX" 2>/dev/null)" || errfile=/dev/null

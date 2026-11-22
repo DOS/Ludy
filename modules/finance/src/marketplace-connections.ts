@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // An org's connection to a marketplace (#2519, ADR-0045 point 7, plan stock-and-marketplaces.md section 8.7), modeled on the e-invoice connection (#2501):
-// - finance.marketplace_connection.connect (owners and admins; R2): runs kernel.channel.connect (provider `marketplace_<adapter>`, the credential sealed in crove_kernel.credential) and
+// - finance.marketplace_connection.connect (owners and admins; R2): runs kernel.channel.connect (provider `marketplace_<adapter>`, the credential sealed in ludy_kernel.credential) and
 //   files the connection under a legal entity and a platform in ONE transaction. It sees no credential: the sealing is the API edge's, and the worker alone opens it.
 // - finance.marketplace_connection.record_test (same; R1): records the state the connection test came back with. The test itself is the API's for the offline provider and the worker's
 //   for a real one; this command takes only a state.
@@ -166,7 +166,7 @@ export const marketplaceConnectionRecordTest = defineCommand({
   handler: async (ctx, input): Promise<MarketplaceConnectionTested> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -197,7 +197,7 @@ export const marketplaceConnectionUnlink = defineCommand({
     // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
     const live = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('c.id')
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -225,7 +225,7 @@ export const marketplaceConnectionRequestPoll = defineCommand({
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -254,7 +254,7 @@ export const marketplaceConnectionRequestTest = defineCommand({
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'c.last_tested_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -282,7 +282,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
   handler: async (ctx, input): Promise<MarketplacePollTarget> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'c.last_polled_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -399,7 +399,7 @@ export const marketplaceConnectionAuthorizeBegin = defineCommand({
     const userId = requireUser(ctx);
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'c.app_key', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -460,7 +460,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
     // in the org it was made in, and only before it ends. A refusal changes nothing (the transaction ends), so the rightful member can still finish.
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.authorize_expires_at', 'c.authorize_by', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.authorize_state_hash', '=', input.stateHash)
@@ -502,7 +502,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
   handler: async (ctx, input): Promise<MarketplaceAuthorizeTarget> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'c.authorize_pending_at', 'ch.status', 'ch.updated_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -644,7 +644,7 @@ export const marketplaceConnectionList = defineQuery({
   handler: async (ctx): Promise<MarketplaceConnection[]> => {
     const rows = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select([
         'c.id',
         'c.channel_connection_id',
@@ -673,10 +673,10 @@ export const marketplaceConnectionList = defineQuery({
         SELECT c.id::text AS id, COALESCE(SUM((x.result -> 'summary' ->> 'orders')::int), 0)::text AS n
         FROM crove_finance.marketplace_connection c
         JOIN crove_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
-        JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
-        JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
+        JOIN ludy_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
+        JOIN ludy_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
         WHERE c.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
-          AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+          AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
         GROUP BY c.id`.execute(ctx.trx);
       for (const r of counted) waiting.set(r.id, Number(r.n));
     }
@@ -715,10 +715,10 @@ export const marketplaceConnectionStaged = defineQuery({
       SELECT f.id::text AS file_id
       FROM crove_finance.marketplace_connection c
       JOIN crove_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
-      JOIN crove_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
-      JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
+      JOIN ludy_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
+      JOIN ludy_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.id}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
-        AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+        AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
       ORDER BY f.created_at, f.id
       LIMIT ${MARKETPLACE_DISCARD_MAX + 1}`.execute(ctx.trx);
     if (rows.length > MARKETPLACE_DISCARD_MAX) throw new DomainError('MARKETPLACE_TOO_MANY_STAGED', 409, 'Có quá nhiều báo cáo đang chờ để bỏ một lần; hãy xác nhận hoặc bỏ bớt trong hộp thư đến rồi ngắt kết nối lại');
@@ -756,14 +756,14 @@ export const marketplaceConnectionPushHookSet = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  // The answer holds the key in plaintext, so it must never be stored for a replay (crove_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
+  // The answer holds the key in plaintext, so it must never be stored for a replay (ludy_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
   noIdempotency: true,
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ adapter: (typeof MARKETPLACE_PUSH_ADAPTERS)[number]; key: string; created: boolean }> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của sàn');
     const connection = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['ch.provider as provider', 'ch.status as status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)

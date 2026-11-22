@@ -81,12 +81,12 @@ const targetMissing = () => new DomainError('LINK_TARGET_NOT_FOUND', 404, 'The p
 // booking (a synced busy block is deleted and rewritten by every calendar sync, and would take the link with it), a deal by the CRM module's query.
 async function checkTarget(ctx: CommandContext, kind: MeetingLinkKind, targetId: string, userId: string): Promise<void> {
   if (kind === 'party') {
-    const found = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
     if (!found) throw targetMissing();
     return;
   }
   if (kind === 'calendar_event') {
-    const found = await ctx.trx.selectFrom('crove_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).where('kind', 'in', ['manual', 'booking']).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).where('kind', 'in', ['manual', 'booking']).executeTakeFirst();
     if (!found) throw targetMissing();
     return;
   }
@@ -184,8 +184,8 @@ export const meetingLinkList = defineQuery({
     // linked their own event (link.add takes no other), and the meeting's readers are the people the recorder chose.
     const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
     const eventIds = links.flatMap((l) => (l.calendar_event_id ? [l.calendar_event_id] : []));
-    const parties = partyIds.length ? await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];
-    const events = eventIds.length ? await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'title']).where('org_id', '=', ctx.orgId).where('id', 'in', eventIds).execute() : [];
+    const parties = partyIds.length ? await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];
+    const events = eventIds.length ? await ctx.trx.selectFrom('ludy_kernel.calendar_event').select(['id', 'title']).where('org_id', '=', ctx.orgId).where('id', 'in', eventIds).execute() : [];
     const names = new Map<string, string | null>([...parties.map((p) => [p.id, p.name] as const), ...events.map((e) => [e.id, e.title] as const)]);
     return links.map((l) => toLink(l, names.get((l.party_id ?? l.calendar_event_id) ?? '') ?? null));
   },
@@ -255,7 +255,7 @@ export const meetingLinkSuggest = defineQuery({
     const raw = segments.map((r) => r.text).join(' ').slice(0, TRANSCRIPT_SCAN_MAX);
     if (raw.trim() === '') return none;
     // One fold for the transcript and the names alike (the search's own, in SQL), so a name and the text are always read the same way.
-    const folded = await sql<{ body: string }>`SELECT crove_kernel.search_fold(${raw}) AS body`.execute(ctx.trx);
+    const folded = await sql<{ body: string }>`SELECT ludy_kernel.search_fold(${raw}) AS body`.execute(ctx.trx);
     const body = ` ${folded.rows[0]?.body ?? ''} `;
     if (body.trim() === '') return none;
     const linked = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
@@ -264,8 +264,8 @@ export const meetingLinkSuggest = defineQuery({
 
     // Contacts: the folded name, as a whole phrase, of at least three characters, not yet linked. The kernel party table is read under the recorder's own policies.
     const { rows } = await sql<{ id: string; name: string; folded: string }>`
-      SELECT p.id, p.name, f.folded FROM crove_kernel.party p
-      CROSS JOIN LATERAL (SELECT crove_kernel.search_fold(p.name) AS folded) f
+      SELECT p.id, p.name, f.folded FROM ludy_kernel.party p
+      CROSS JOIN LATERAL (SELECT ludy_kernel.search_fold(p.name) AS folded) f
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.id <> ALL(${linkedParties}::uuid[])
         AND pg_catalog.length(f.folded) >= 3 AND pg_catalog.strpos(${body}, ' ' || f.folded || ' ') > 0
       ORDER BY p.id LIMIT ${PARTY_SCAN_MAX}`.execute(ctx.trx);
@@ -288,7 +288,7 @@ export const meetingLinkSuggest = defineQuery({
     const deals: MeetingLinkSuggested['deals'] = [];
     if (open.length > 0) {
       const titles = await sql<{ i: string; folded: string }>`
-        SELECT t.i::text AS i, crove_kernel.search_fold(t.title) AS folded FROM unnest(${open.map((d) => d.title)}::text[]) WITH ORDINALITY AS t(title, i)`.execute(ctx.trx);
+        SELECT t.i::text AS i, ludy_kernel.search_fold(t.title) AS folded FROM unnest(${open.map((d) => d.title)}::text[]) WITH ORDINALITY AS t(title, i)`.execute(ctx.trx);
       for (const row of titles.rows) {
         const d = open[Number(row.i) - 1];
         if (d && mentionsOf(body, row.folded) > 0) deals.push({ dealId: d.id, title: d.title, partyId: d.partyId, partyName: d.partyName });

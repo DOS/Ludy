@@ -75,11 +75,11 @@ export function orgOverviewQuery(options: { now?: () => Date; contributions?: re
     input: z.object({}),
     access: ALL,
     handler: async (ctx): Promise<OrgOverview> => {
-      const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+      const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
       // Not the proposals of an app the org turned off: the Inbox does not list them, and this count links to it (ADR-0053, slice e).
       const off = await offAppsOf(ctx.trx, ctx.orgId);
       let pendingQuery = ctx.trx
-        .selectFrom('crove_kernel.proposal')
+        .selectFrom('ludy_kernel.proposal')
         .select(sql<string>`count(*)`.as('n'))
         .where('org_id', '=', ctx.orgId)
         .where('status', '=', 'pending');
@@ -87,7 +87,7 @@ export function orgOverviewQuery(options: { now?: () => Date; contributions?: re
       const pending = await pendingQuery.executeTakeFirstOrThrow();
       const files = await fileStatuses(ctx, { recent: RECENT_FILES });
       const last = await ctx.trx
-        .selectFrom('crove_kernel.activity')
+        .selectFrom('ludy_kernel.activity')
         .select(sql<Date | null>`max(occurred_at)`.as('at'))
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();

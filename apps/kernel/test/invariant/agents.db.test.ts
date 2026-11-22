@@ -1590,7 +1590,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     // Writes an Inbox item straight from the handler.
     const raise = async (ctx: { trx: Parameters<CommandDef<unknown, unknown>['handler']>[0]['trx']; orgId: string; now: Date }, key: string) => {
       await ctx.trx
-        .insertInto('crove_kernel.inbox_item')
+        .insertInto('ludy_kernel.inbox_item')
         .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1710:${key}`, detail: JSON.stringify({ queue: 't1710', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
         .execute();
     };
@@ -1681,7 +1681,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     const suffix = randomUUID().slice(0, 8);
     const raise = async (ctx: { trx: Parameters<CommandDef<unknown, unknown>['handler']>[0]['trx']; orgId: string; now: Date }, key: string) => {
       await ctx.trx
-        .insertInto('crove_kernel.inbox_item')
+        .insertInto('ludy_kernel.inbox_item')
         .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1797:${key}`, detail: JSON.stringify({ queue: 't1797', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
         .execute();
     };
@@ -1898,7 +1898,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
             new Promise((resolve) => {
               setTimeout(() => {
                 ctx.trx
-                  .insertInto('crove_kernel.inbox_item')
+                  .insertInto('ludy_kernel.inbox_item')
                   .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1831:late-${tag}-${suffix}`, detail: JSON.stringify({ queue: 't1831', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
                   .execute()
                   .then(

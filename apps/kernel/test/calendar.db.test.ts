@@ -63,7 +63,7 @@ suite('calendar core on PostgreSQL (#1313)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(user), orgId });
     return { orgId, owner, member, viewer, exec, query };
@@ -78,9 +78,9 @@ suite('calendar core on PostgreSQL (#1313)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -121,7 +121,7 @@ suite('calendar core on PostgreSQL (#1313)', () => {
     await expect(o.exec(o.viewer, 'kernel.calendar.hours.save', hours)).rejects.toMatchObject({ status: 403 });
     await expect(o.exec(o.viewer, 'kernel.calendar.event.add', { startsAt: range.from, endsAt: range.to, timeZone: VN, kind: 'time_off' })).rejects.toMatchObject({ status: 403 });
 
-    const audit = await admin((c) => c.query<{ command: string }>("SELECT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.calendar.%' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId]));
+    const audit = await admin((c) => c.query<{ command: string }>("SELECT command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.calendar.%' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId]));
     expect(audit.rows.map((r) => r.command)).toEqual(['kernel.calendar.hours.save', 'kernel.calendar.hours.save']);
   });
 
@@ -172,7 +172,7 @@ suite('calendar core on PostgreSQL (#1313)', () => {
     const day = nextWorkday();
     const book = (user: string, from: number, to: number) =>
       admin((c) =>
-        c.query("INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'booking', $2) RETURNING id", [
+        c.query("INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'booking', $2) RETURNING id", [
           o.orgId,
           user,
           at(day, from),
@@ -188,14 +188,14 @@ suite('calendar core on PostgreSQL (#1313)', () => {
     await o.exec(o.member, 'kernel.calendar.event.add', { startsAt: at(day, 600), endsAt: at(day, 630), timeZone: VN, kind: 'manual' });
     // A member does not cancel a booking from the calendar.
     await expect(o.exec(o.member, 'kernel.calendar.event.cancel', { eventId: first.id })).rejects.toMatchObject({ code: 'CALENDAR_EVENT_IS_BOOKING' });
-    await admin((c) => c.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), cancelled_by = user_id WHERE org_id = $1 AND id = $2", [o.orgId, first.id]));
+    await admin((c) => c.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), cancelled_by = user_id WHERE org_id = $1 AND id = $2", [o.orgId, first.id]));
     await book(o.member, 615, 630);
   });
 
   it('keeps events ordered, at most 31 days long, and a cancellation stamped', async () => {
     const o = await org();
     const insert = (starts: string, ends: string, extra = '') =>
-      admin((c) => c.query(`INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, created_by${extra ? ', status' : ''}) VALUES ($1, $2, $3, $4, $5, $2${extra ? `, '${extra}'` : ''})`, [o.orgId, o.member, starts, ends, VN]));
+      admin((c) => c.query(`INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, created_by${extra ? ', status' : ''}) VALUES ($1, $2, $3, $4, $5, $2${extra ? `, '${extra}'` : ''})`, [o.orgId, o.member, starts, ends, VN]));
     await expect(insert('2030-01-01T10:00:00Z', '2030-01-01T10:00:00Z')).rejects.toThrow(/calendar_event_order/);
     await expect(insert('2030-01-01T00:00:00Z', '2030-02-02T00:00:00Z')).rejects.toThrow(/calendar_event_length/);
     await expect(insert('2030-01-01T00:00:00Z', '2030-01-01T01:00:00Z', 'cancelled')).rejects.toThrow(/calendar_event_cancelled/);

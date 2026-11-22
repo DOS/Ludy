@@ -53,7 +53,7 @@ test('a file is uploaded, the summary is written, edited and shared twice, and t
   });
 
   await test.step('the audio is stored and plays back from the meeting page', async () => {
-    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM crove_meetings.audio_segment s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM crove_meetings.audio_segment s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.length_seconds).toBeGreaterThanOrEqual(3);
     await expect(page.locator('audio')).toBeVisible({ timeout: 30_000 });

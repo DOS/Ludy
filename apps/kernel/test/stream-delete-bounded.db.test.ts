@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A bulk delete of notes or to-dos sends a bounded number of stream hints (issue #1992), on PostgreSQL 17: one per org
-// and audience, routed as a row's hint is (crove_kernel.stream_notify: a to-do to its owner, a note to its author, a
+// and audience, routed as a row's hint is (ludy_kernel.stream_notify: a to-do to its owner, a note to its author, a
 // shared note also with `+shared`), never one per row. A delete of one row sends that row's hint, as before. Deleting
 // notes sends no hint for each to-do made from them, which the foreign key unlinks (#2036): neither the trash sweep nor
 // a former member's purge. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
@@ -46,13 +46,13 @@ suite('stream hints of a bulk delete (#1992)', () => {
   // Runs fn as the worker login in the org's system context, as the notes jobs do.
   async function asWorker(orgId: string, fn: (c: pg.Client) => Promise<unknown>): Promise<void> {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       await fn(c);
       await c.query('COMMIT');
     } finally {
@@ -78,7 +78,7 @@ suite('stream hints of a bulk delete (#1992)', () => {
     );
   }
 
-  // The crove_stream payloads the statements send, in the order they come, up to a marker sent after them.
+  // The ludy_stream payloads the statements send, in the order they come, up to a marker sent after them.
   async function hintsOf(statements: (c: pg.Client) => Promise<unknown>): Promise<string[]> {
     const listener = new pg.Client({ connectionString: adminUrl });
     await listener.connect();
@@ -88,14 +88,14 @@ suite('stream hints of a bulk delete (#1992)', () => {
       done = resolve;
     });
     listener.on('notification', (m) => {
-      if (m.channel !== 'crove_stream' || !m.payload) return;
+      if (m.channel !== 'ludy_stream' || !m.payload) return;
       if (m.payload === DONE) done();
       else payloads.push(m.payload);
     });
-    await listener.query('LISTEN crove_stream');
+    await listener.query('LISTEN ludy_stream');
     try {
       await admin(statements);
-      await admin((c) => c.query(`SELECT pg_catalog.pg_notify('crove_stream', $1)`, [DONE]));
+      await admin((c) => c.query(`SELECT pg_catalog.pg_notify('ludy_stream', $1)`, [DONE]));
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([finished, new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`timed out; ${payloads.length} payloads`)), 10_000)))]).finally(() =>
         clearTimeout(timer),
@@ -115,9 +115,9 @@ suite('stream hints of a bulk delete (#1992)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     app = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
@@ -255,7 +255,7 @@ suite('stream hints of a bulk delete (#1992)', () => {
         (
           await c.query<{ role: string }>(
             `SELECT r.rolname AS role FROM pg_catalog.pg_roles r
-             WHERE r.rolname = ANY (ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_prober'])
+             WHERE r.rolname = ANY (ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_prober'])
                AND pg_catalog.has_function_privilege(r.oid, 'crove_notes.stream_notify_deleted()', 'EXECUTE')`,
           )
         ).rows,

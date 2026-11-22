@@ -54,7 +54,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
 
   async function member(o: Org, role: 'admin' | 'member' | 'viewer'): Promise<string> {
     const id = await person(role);
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
     return id;
   }
 
@@ -92,9 +92,9 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
   const deps = (platform: Publisher) => ({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 });
   const variant = async (o: Org, postId: string) => (await get(o, postId)).variants[0] as PostView['variants'][number];
   const events = (o: Org, type: string) =>
-    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
+    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
   const editCalls = (id: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:edit%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:edit%`])).rows);
   const approvals = (id: string) =>
     admin(async (c) => (await c.query<{ revision: number; content_hash: string; decided_by: string; snapshot: { body: string }; checklist: unknown }>("SELECT revision, content_hash, decided_by, snapshot, checklist FROM crove_social.post_approval WHERE variant_id = $1 ORDER BY id", [id])).rows);
   const editColumns = (id: string) =>
@@ -116,15 +116,15 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -170,7 +170,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     expect(await editColumns(id)).toMatchObject({ edit_state: null, edit_body: null, revision: 2, published_revision: 1 });
     expect(await editCalls(id)).toEqual([{ key: `social.publish:${id}:1:1:edit`, state: 'succeeded', retry_safety: 'idempotent', error_code: null }]);
     expect(await events(o, 'social.variant.edited')).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', by: o.owner, revision: 2 }]);
-    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.edit_published' AND outcome = 'ok'", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.edit_published' AND outcome = 'ok'", [o.orgId])).rows);
     expect(audit).toEqual([{ actor_id: o.owner, target_id: id, detail: { post_id: postId, variant_id: id, provider: 'sandbox', revision: 2, content_hash: asked[1]?.content_hash } }]);
 
     // The versions show the text before and after, the new one the person's, with their approval.
@@ -192,7 +192,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     expect(await runEditJob(deps(sandbox), o.orgId, id, 'sandbox', null)).toEqual({ action: 'none', reason: 'not_asked' });
     await exec(o, 'social.variant.remove', { variantId: id });
     expect(await runRemoveJob(deps(sandbox), o.orgId, id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });
-    expect(await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM crove_kernel.external_call WHERE key LIKE $1", [`social.publish:${id}:%:remove%`])).rows)).toEqual([{ key: `social.publish:${id}:1:1:remove` }]);
+    expect(await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM ludy_kernel.external_call WHERE key LIKE $1", [`social.publish:${id}:%:remove%`])).rows)).toEqual([{ key: `social.publish:${id}:1:1:remove` }]);
   });
 
   it("hands the adapter the connection's stored scopes, and a reconnect asked for keeps the live text (#1474)", async () => {
@@ -273,7 +273,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     const other = await connect(o, `acct-${randomUUID().slice(0, 8)}`);
     const adminId = await member(o, 'member');
     await exec(o, 'social.channel_access.set', { userId: adminId, channelConnectionIds: [other.connectionId] });
-    await admin((c) => c.query("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [o.orgId, adminId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [o.orgId, adminId]));
     expect(await exec(o, 'social.variant.edit_published', { variantId: id, revision: 1, body: 'Sửa giá' }, adminId)).toMatchObject({ queued: true });
   });
 
@@ -343,7 +343,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
   const quietCall = (o: Org, id: string, key: string) =>
     admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at)
+        `INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at)
          SELECT org_id, $2, 'social', provider, 'edit', 'idempotent', edit_content_hash, now() - interval '2 hours' FROM crove_social.post_variant WHERE id = $1`,
         [id, key],
       );

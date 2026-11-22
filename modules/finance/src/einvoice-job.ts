@@ -43,14 +43,14 @@ type ErrorKind = 'token_expired' | 'permission' | 'bad_request' | 'rate_limited'
 // Records a call as started before it is made: a new row, or, for the same key, the same call made again (only while it has not ended).
 async function startCall(ctx: CommandContext, call: { key: string; target: string; step: string; safety: Safety }): Promise<'new' | 'again' | 'closed'> {
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.external_call')
+    .insertInto('ludy_kernel.external_call')
     .values({ org_id: ctx.orgId, key: call.key, module: 'finance', target: call.target, step: call.step, retry_safety: call.safety, started_at: ctx.now })
     .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
     .returning('id')
     .executeTakeFirst();
   if (inserted) return 'new';
   const again = await ctx.trx
-    .updateTable('crove_kernel.external_call')
+    .updateTable('ludy_kernel.external_call')
     .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', call.key)
@@ -69,11 +69,11 @@ async function endCall(ctx: CommandContext, key: string, end: CallEnd): Promise<
       : end.state === 'failed'
         ? { state: 'failed' as const, error_kind: end.kind, error_code: end.code, finished_at: ctx.now, updated_at: ctx.now }
         : { state: 'ambiguous' as const, error_kind: end.kind, error_code: end.code, updated_at: ctx.now };
-  await ctx.trx.updateTable('crove_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
+  await ctx.trx.updateTable('ludy_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
 }
 
 const selectCall = (ctx: CommandContext, key: string) =>
-  ctx.trx.selectFrom('crove_kernel.external_call').select(['state', 'calls', 'external_ref', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
+  ctx.trx.selectFrom('ludy_kernel.external_call').select(['state', 'calls', 'external_ref', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
 
 const selectDraft = (ctx: CommandContext, draftId: string) =>
   ctx.trx.selectFrom('crove_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', draftId.toLowerCase()).forUpdate().executeTakeFirst();
@@ -147,10 +147,10 @@ export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, '
     ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['provider', 'template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.series_id).executeTakeFirst()
     : undefined;
   if (!series) return { code: EINVOICE_ERROR_CODES.providerNotReady } as const;
-  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', draft.legal_entity_id).executeTakeFirst();
+  const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', draft.legal_entity_id).executeTakeFirst();
   const rows = await ctx.trx
     .selectFrom('crove_finance.einvoice_connection as c')
-    .innerJoin('crove_kernel.channel_connection as cc', (join) => join.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
+    .innerJoin('ludy_kernel.channel_connection as cc', (join) => join.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
     .select(['c.channel_connection_id', 'c.provider', 'c.seller_tax_code'])
     .where('c.org_id', '=', ctx.orgId)
     .where('c.legal_entity_id', '=', draft.legal_entity_id)
@@ -287,7 +287,7 @@ export const einvoiceJobBegin = defineCommand({
     } else if (action === 'ask') {
       // The call was started and never answered: it is ambiguous now, and what is asked next is the provider's record under the key.
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'ambiguous', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', issueKey(draft.idempotency_key))
@@ -396,7 +396,7 @@ export const einvoiceJobRecord = defineCommand({
         // Asked by the key and the provider has nothing: the send never happened. The call goes back to started, made again, and the request is handed back to send.
         await closeStatus({ state: 'succeeded' });
         const again = await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('key', '=', issueCall)

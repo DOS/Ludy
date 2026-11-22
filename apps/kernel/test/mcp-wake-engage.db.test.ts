@@ -59,30 +59,30 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, name: string, input: unknown = {}) => rt.query<T>(name, input, { actor: asUser(user), orgId });
 
     // A channel and the threads of this org. `sinceMinutes`: how long the customer's oldest unanswered message has waited.
     const channel = randomUUID();
-    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [orgId, channel, `ext-${channel.slice(0, 8)}`, `Trang ${CANARY}`, owner]);
+    await rows(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [orgId, channel, `ext-${channel.slice(0, 8)}`, `Trang ${CANARY}`, owner]);
     const thread = async (opts: { kind: 'direct' | 'email' | 'comment_thread'; sinceMinutes: number; status?: string; windowMinutes?: number; post?: boolean; answeredBeforeMinutes?: number }) => {
       const id = randomUUID();
       const identity = randomUUID();
-      await rows(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, $4)`, [orgId, identity, `u-${id.slice(0, 8)}`, CANARY]);
+      await rows(`INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, $4)`, [orgId, identity, `u-${id.slice(0, 8)}`, CANARY]);
       await rows(
-        `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, external_post_id, identity_id, status, last_seq, last_inbound_at, reply_window_until)
+        `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, external_post_id, identity_id, status, last_seq, last_inbound_at, reply_window_until)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 3, now() - make_interval(mins => $9), CASE WHEN $10::int IS NULL THEN NULL ELSE now() + make_interval(mins => $10::int) END)`,
         [orgId, id, channel, opts.kind, `t-${id}`, opts.post ? `post-${id.slice(0, 8)}` : null, identity, opts.status ?? 'new', opts.sinceMinutes, opts.windowMinutes ?? null],
       );
       let seq = 1;
       if (opts.answeredBeforeMinutes !== undefined) {
         // The customer wrote, the org answered, then the customer wrote again: the wait counts from the later message.
-        await rows(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, 1, 'in', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'contact', $6, true)`, [orgId, id, channel, opts.kind, opts.answeredBeforeMinutes + 60, `${CANARY} hỏi giá`]);
-        await rows(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state) VALUES ($1, $2, $3, $4, 2, 'out', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'member', $6, 'sent')`, [orgId, id, channel, opts.kind, opts.answeredBeforeMinutes, `${CANARY} đã trả lời`]);
+        await rows(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, 1, 'in', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'contact', $6, true)`, [orgId, id, channel, opts.kind, opts.answeredBeforeMinutes + 60, `${CANARY} hỏi giá`]);
+        await rows(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state) VALUES ($1, $2, $3, $4, 2, 'out', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'member', $6, 'sent')`, [orgId, id, channel, opts.kind, opts.answeredBeforeMinutes, `${CANARY} đã trả lời`]);
         seq = 3;
       }
-      await rows(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, $5, 'in', now() - make_interval(mins => $6), now() - make_interval(mins => $6), 'contact', $7, true)`, [orgId, id, channel, opts.kind, seq, opts.sinceMinutes, `${CANARY} cần báo giá gấp`]);
+      await rows(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, $5, 'in', now() - make_interval(mins => $6), now() - make_interval(mins => $6), 'contact', $7, true)`, [orgId, id, channel, opts.kind, seq, opts.sinceMinutes, `${CANARY} cần báo giá gấp`]);
       return id;
     };
 
@@ -94,19 +94,19 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
           const id = randomUUID();
           const identity = randomUUID();
           const minutes = startMinutes - i;
-          await c.query(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, $4)`, [orgId, identity, `u-${id.slice(0, 8)}`, CANARY]);
+          await c.query(`INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, $4)`, [orgId, identity, `u-${id.slice(0, 8)}`, CANARY]);
           await c.query(
-            `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, external_post_id, identity_id, status, last_seq, last_inbound_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', 1, now() - make_interval(mins => $8))`,
+            `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, external_post_id, identity_id, status, last_seq, last_inbound_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', 1, now() - make_interval(mins => $8))`,
             [orgId, id, channel, kind, `t-${id}`, kind === 'comment_thread' ? `post-${id.slice(0, 8)}` : null, identity, minutes],
           );
-          await c.query(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, 1, 'in', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'contact', 'x', true)`, [orgId, id, channel, kind, minutes]);
+          await c.query(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) VALUES ($1, $2, $3, $4, 1, 'in', now() - make_interval(mins => $5), now() - make_interval(mins => $5), 'contact', 'x', true)`, [orgId, id, channel, kind, minutes]);
           ids.push(id);
         }
         return ids;
       });
 
     // The CRM: a party, a deal that is called by a name, a quote sent `sentDaysAgo` days ago.
-    const party = () => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, CANARY]).then((r) => (r[0] as { id: string }).id);
+    const party = () => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, CANARY]).then((r) => (r[0] as { id: string }).id);
     const dealWithQuote = async (sentDaysAgo: number) => {
       await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
       const deal = await exec<Deal>(owner, 'crm.deal.create', { partyId: await party(), title: DEAL_TITLE, amount: '15000000', expectedClose: null });
@@ -126,7 +126,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       const type = randomUUID();
       const event = randomUUID();
       await rows('INSERT INTO crove_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [orgId, type, `t-${type.slice(0, 8)}`, `Tư vấn ${CANARY}`, owner]);
-      await rows("INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [orgId, event, owner, starts, ends]);
+      await rows("INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [orgId, event, owner, starts, ends]);
       const id = randomUUID();
       await rows("INSERT INTO crove_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, note, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7, 'khach@canary.test', $7, 'Asia/Ho_Chi_Minh')", [orgId, id, type, event, starts, ends, CANARY]);
       return { id, on: tomorrow };
@@ -135,7 +135,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const wakeUp = async (scopes: string[] = ALL_SCOPES, kind: 'company' | 'member' = 'company') => {
       const grantId = randomUUID();
       await rows(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $5, 'Dy', 'client.example.com', $6::text[], $4, now(), now() + interval '30 days', $3, $7, $8)`,
         [orgId, grantId, owner, `oauth-${grantId}`, `client-${grantId}`, scopes, kind, kind === 'member' ? owner : null],
       );
@@ -143,13 +143,13 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       await exec(owner, 'kernel.mcp.wake.set', { grantId, url: 'https://hooks.example.com/ludy', credential: made.credential, schedule: 'off', enabled: true });
       return grantId;
     };
-    const deliveries = (grantId: string) => rows<{ id: string; type: string; body: { data: Record<string, string> } }>(`SELECT id, type, body FROM crove_kernel.agent_wake_delivery WHERE org_id = $1 AND grant_id = $2 ORDER BY created_at, id`, [orgId, grantId]);
+    const deliveries = (grantId: string) => rows<{ id: string; type: string; body: { data: Record<string, string> } }>(`SELECT id, type, body FROM ludy_kernel.agent_wake_delivery WHERE org_id = $1 AND grant_id = $2 ORDER BY created_at, id`, [orgId, grantId]);
     const sweep = async (feeds: readonly LineWakeFeed[]) => {
       const done = await runWakeSweep({ runtime: worker, workerDb, send: async () => undefined, evaluate: async () => ({ items: [], complete: [] }), feeds });
       return done;
     };
     // Makes the signals due again (the sweep looks at a grant's signals every five minutes).
-    const due = (grantId: string) => rows("UPDATE crove_kernel.agent_grant_wake SET signals_checked_at = now() - interval '6 minutes' WHERE grant_id = $1", [grantId]);
+    const due = (grantId: string) => rows("UPDATE ludy_kernel.agent_grant_wake SET signals_checked_at = now() - interval '6 minutes' WHERE grant_id = $1", [grantId]);
     return { orgId, owner, member, exec, query, thread, bulk, dealWithQuote, raise, bookingTomorrow, wakeUp, deliveries, sweep, due };
   }
 
@@ -162,15 +162,15 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     db = createDb(appPool);
     workerDb = createDb(workerPool);
@@ -199,9 +199,9 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(set).toEqual({ unansweredHours: 8, replyWindowHours: 6, quoteDays: 2, isDefault: false });
     expect(await o.query<EngageWakeRulesView>(o.member, 'kernel.conversation.wake_rules')).toEqual(set);
     // The database holds the bounds too, whatever writes the row.
-    await expect(rows('UPDATE crove_kernel.conversation_setting SET wake_quote_days = 1 WHERE org_id = $1', [o.orgId])).rejects.toThrow();
+    await expect(rows('UPDATE ludy_kernel.conversation_setting SET wake_quote_days = 1 WHERE org_id = $1', [o.orgId])).rejects.toThrow();
     // The audit row holds the numbers and nothing else.
-    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.wake_rules_set'`, [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.wake_rules_set'`, [o.orgId]);
     expect(audit.map((a) => a.detail)).toContainEqual({ unansweredHours: 8, replyWindowHours: 6, quoteDays: 2 });
   });
 
@@ -313,7 +313,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     for (const secret of [CANARY, 'Canary', DEAL_TITLE, 'BG-2026', 'khach@canary.test', 'Dòng bí mật', 'cần báo giá']) expect(all).not.toContain(secret);
     for (const r of rows1) expect(() => wakeBody(r.body)).not.toThrow();
     // One check for the whole grant in the pass, whatever the number of types (a command leaves an audit row each): the readOnly and member-bound grants ask nothing, so one row for this org.
-    const checks = await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.line_check'`, [o.orgId]);
+    const checks = await rows<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.line_check'`, [o.orgId]);
     expect(checks[0]?.n).toBe('1');
     // A grant that only reads, and a member-bound grant, got none of it.
     expect(await o.deliveries(readOnly)).toHaveLength(0);
@@ -327,8 +327,8 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(rows1b).toHaveLength(9);
 
     // A new window is a new event: the org answered, and the customer wrote again two days ago (a later wait, another day).
-    await rows(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state) SELECT org_id, id, channel_connection_id, kind, 4, 'out', now() - interval '50 hours', now() - interval '50 hours', 'member', 'x', 'sent' FROM crove_kernel.conversation WHERE id = $1`, [unanswered]);
-    await rows(`INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) SELECT org_id, id, channel_connection_id, kind, 5, 'in', now() - interval '48 hours', now() - interval '48 hours', 'contact', 'lại hỏi', true FROM crove_kernel.conversation WHERE id = $1`, [unanswered]);
+    await rows(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state) SELECT org_id, id, channel_connection_id, kind, 4, 'out', now() - interval '50 hours', now() - interval '50 hours', 'member', 'x', 'sent' FROM ludy_kernel.conversation WHERE id = $1`, [unanswered]);
+    await rows(`INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, tainted) SELECT org_id, id, channel_connection_id, kind, 5, 'in', now() - interval '48 hours', now() - interval '48 hours', 'contact', 'lại hỏi', true FROM ludy_kernel.conversation WHERE id = $1`, [unanswered]);
     await o.due(grantId);
     await o.sweep(feeds);
     const rows2 = await o.deliveries(grantId);
@@ -336,7 +336,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(new Set(rows2.filter((r) => r.type === 'engage.conversation_unanswered').map((r) => r.body.data.since)).size).toBe(2);
 
     // The keys are kept with the events, one each, and a line key is never mistaken for a signal's.
-    const seen = await rows<{ key: string }>(`SELECT key FROM crove_kernel.agent_wake_signal_seen WHERE org_id = $1 AND grant_id = $2 ORDER BY key`, [o.orgId, grantId]);
+    const seen = await rows<{ key: string }>(`SELECT key FROM ludy_kernel.agent_wake_signal_seen WHERE org_id = $1 AND grant_id = $2 ORDER BY key`, [o.orgId, grantId]);
     expect(seen).toHaveLength(10);
     expect(seen.every((s) => /^(engage|social|ads)_[a-z_]+:[0-9a-f-]{36}:\d{4}-\d{2}-\d{2}$/.test(s.key))).toBe(true);
   });
@@ -428,11 +428,11 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const o = await org();
     await o.thread({ kind: 'direct', sinceMinutes: 6 * 60 });
     await o.thread({ kind: 'comment_thread', sinceMinutes: 60, post: true });
-    await rows("UPDATE crove_kernel.tenant SET apps_off = ARRAY['social'] WHERE org_id = $1", [o.orgId]);
+    await rows("UPDATE ludy_kernel.tenant SET apps_off = ARRAY['social'] WHERE org_id = $1", [o.orgId]);
     const grantId = await o.wakeUp();
     await o.sweep([engageWakeFeed(worker)]);
     expect(await o.deliveries(grantId)).toHaveLength(0);
-    await rows("UPDATE crove_kernel.tenant SET apps_off = ARRAY[]::text[] WHERE org_id = $1", [o.orgId]);
+    await rows("UPDATE ludy_kernel.tenant SET apps_off = ARRAY[]::text[] WHERE org_id = $1", [o.orgId]);
     await o.due(grantId);
     await o.sweep([engageWakeFeed(worker)]);
     expect((await o.deliveries(grantId)).length).toBeGreaterThan(0);
@@ -468,7 +468,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
   });
 
   it('has the same types in the catalog as in the registry in code, each with the scope of its line', async () => {
-    const catalog = await rows<{ type: string; scope: string; fields: unknown }>('SELECT type, scope, fields FROM crove_kernel.mcp_wake_event_type ORDER BY type');
+    const catalog = await rows<{ type: string; scope: string; fields: unknown }>('SELECT type, scope, fields FROM ludy_kernel.mcp_wake_event_type ORDER BY type');
     expect(catalog.map((r) => [r.type, r.scope, r.fields])).toEqual(Object.keys(LINE_WAKE_EVENTS).sort().map((t) => [t, LINE_WAKE_EVENTS[t]?.scope, LINE_WAKE_EVENTS[t]?.fields]));
   });
 

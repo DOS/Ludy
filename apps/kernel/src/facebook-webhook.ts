@@ -6,7 +6,7 @@
 //
 // Delivery (`POST /api/channels/facebook/webhook`): the route checks `X-Hub-Signature-256` against the raw request bytes before anything
 // else. A missing, malformed or wrong signature is refused with 401 and nothing is read, stored or logged from the body. A verified
-// notice that carries Page comment events is parked in `crove_kernel.conversation_inbound_pending` (`facebook_page`) for the worker, which
+// notice that carries Page comment events is parked in `ludy_kernel.conversation_inbound_pending` (`facebook_page`) for the worker, which
 // finds the org from the stored connection by the Page id; the notice names no org, and neither does the path or any answer (ADR-0039).
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
@@ -156,7 +156,7 @@ export async function acceptFacebookWebhook(
   if (freshKeys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
-      await sql`SELECT crove_kernel.conversation_inbound_enqueue(${provider}, ${Buffer.from(request.body)}::bytea)`.execute(db);
+      await sql`SELECT ludy_kernel.conversation_inbound_enqueue(${provider}, ${Buffer.from(request.body)}::bytea)`.execute(db);
     });
   } catch (error) {
     if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'BACKLOG' };

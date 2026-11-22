@@ -160,7 +160,7 @@ export const postVersions = defineQuery({
     // The type of each file a version names, to show a removed video as a video.
     const fileIds = [...new Set(versions.flatMap((v) => v.variants.flatMap((x) => x.content.media.map((m) => m.fileId))).filter((id) => UUID.test(id)))];
     const mimes = new Map(
-      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
+      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
     );
     // The approvals of the channels shown (#1105), matched with a version by the content they were given to: the
     // snapshot an approval keeps, compared with the version's content of that channel.
@@ -180,12 +180,12 @@ export const postVersions = defineQuery({
       list.push({ key: snapshotContentKey(a.snapshot), decidedBy: a.decided_by, at: a.created_at.toISOString(), checklist: tickedOf(a.checklist) });
       approvalsOf.set(a.variant_id, list);
     }
-    // Names while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names while they are members (ludy_kernel.member_profiles answers only members of the org).
     const people = [...new Set([...rows.map((r) => r.created_by), ...approvalRows.map((a) => a.decided_by)].filter((id): id is string => id !== null))];
     const names = new Map<string, string>();
     if (people.length > 0) {
       const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
       for (const p of profiles) names.set(p.user_id, p.display_name ?? p.email);
     }
     return {

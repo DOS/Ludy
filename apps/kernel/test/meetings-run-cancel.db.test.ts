@@ -65,9 +65,9 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -79,7 +79,7 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'recorder', 'reader']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'run-cancel', subject: key, email: `${key}@run-cancel.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Huỷ lượt chạy')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recorder, users.reader]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recorder, users.reader]);
   }, 300_000);
 
   afterAll(async () => {
@@ -93,11 +93,11 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
   });
 
   const runStart = (who: string, feature: string, meetingId: string) => exec<{ runId: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: 'meeting', subjectId: meetingId });
-  const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
-  const runRow = (runId: string) => sqlAdmin<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]).then((r) => r.rows[0]);
+  const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
+  const runRow = (runId: string) => sqlAdmin<{ status: string; error: string | null }>(`SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]).then((r) => r.rows[0]);
   const audits = (feature: string, meetingId: string) =>
     sqlAdmin<{ detail: { runId: string; meetingId: string; feature: string; reason: string } }>(
-      `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail->>'feature' = $2 AND detail->>'meetingId' = $3`,
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail->>'feature' = $2 AND detail->>'meetingId' = $3`,
       [orgId, feature, meetingId],
     ).then((r) => r.rows);
 

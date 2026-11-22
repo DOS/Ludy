@@ -48,7 +48,7 @@ export async function repostCopy(ctx: CommandContext, sourceId: string, options:
   const published = variants.filter((v) => v.status === 'published');
   if (published.length === 0) throw new DomainError('NOTHING_TO_REPOST', 409, 'Bài này chưa đăng lên kênh nào');
   const live = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['id', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -137,7 +137,7 @@ async function copyPost(
   const present = new Set(
     ownIds.length === 0
       ? []
-      : (await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ownIds).execute()).map((f) => f.id),
+      : (await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ownIds).execute()).map((f) => f.id),
   );
   const channels = outs.map(({ v, kept, ownMedia }) => {
     const own = ownMedia ? ownMedia.filter((m) => present.has(m.fileId)) : null;
@@ -309,7 +309,7 @@ export const postDuplicate = defineCommand({
         : new Set(
             (
               await ctx.trx
-                .selectFrom('crove_kernel.channel_connection')
+                .selectFrom('ludy_kernel.channel_connection')
                 .select('id')
                 .where('org_id', '=', ctx.orgId)
                 .where(

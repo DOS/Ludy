@@ -79,7 +79,7 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
     const { orgId } = await createOrg(app, asUser(owner.userId), `Notes v2 Vy ${tag}`);
 
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
       [orgId, alice.userId, carol.userId, viewer.userId],
     );
@@ -114,12 +114,12 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
 
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, {
-      crove_app: 'test-app-pw',
-      crove_worker: 'test-worker-pw',
+      ludy_app: 'test-app-pw',
+      ludy_worker: 'test-worker-pw',
     });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -317,7 +317,7 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
 
     // 6. Verify member_vy_result stored counts only, NEVER plaintext titles/tags/reasons, and audit/outbox stayed clean.
     const storedResults = await sqlAdmin<{ feature: string; body: string | null; private_read: boolean }>(
-      `SELECT feature, body, private_read FROM crove_kernel.member_vy_result
+      `SELECT feature, body, private_read FROM ludy_kernel.member_vy_result
        WHERE org_id = $1 AND feature IN ('notes.todo_plan', 'notes.organize')`,
       [orgId],
     );
@@ -385,22 +385,22 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
 
       // 3. Budget exhausted rejects with 422 AI_BUDGET_EXHAUSTED.
       await sqlAdmin(
-        `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
-         VALUES ($1, 'module', 'notes', crove_kernel.ai_budget_spent($1::uuid, 'module', 'notes'), true, $2)`,
+        `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
+         VALUES ($1, 'module', 'notes', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'notes'), true, $2)`,
         [orgId, owner.userId],
       );
       await expect(runNotesOrganize(okModelDeps, orgId, asUser(alice.userId), {})).rejects.toMatchObject({
         code: 'AI_BUDGET_EXHAUSTED',
         status: 422,
       });
-      await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
 
       // 4. Mid-run kill switch discards model output (AI_STOPPED) instead of returning proposals.
       let ksId = '';
       const stopMidRunDeps = makeDeps({
         generate: async (_who, prompt) => {
           const rows = await sqlAdmin<{ id: string }>(
-            `INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'notes', $2) RETURNING id`,
+            `INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'notes', $2) RETURNING id`,
             [orgId, owner.userId],
           );
           ksId = rows[0]?.id ?? '';
@@ -415,7 +415,7 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
       });
       const stoppedRes = await runNotesOrganize(stopMidRunDeps, orgId, asUser(alice.userId), {});
       expect(stoppedRes).toEqual({ state: 'failed', runId: expect.any(String), suggestions: [], dropped: 0, errorCode: 'AI_STOPPED' });
-      if (ksId) await sqlAdmin(`DELETE FROM crove_kernel.kill_switch WHERE id = $1`, [ksId]);
+      if (ksId) await sqlAdmin(`DELETE FROM ludy_kernel.kill_switch WHERE id = $1`, [ksId]);
     } finally {
       spyErr.mockRestore();
     }

@@ -18,16 +18,16 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     const vars = { slug, email };
     // Every day, all day, in Vietnam time, and no notice: the test finds a slot whatever day it runs.
     exec(
-      `INSERT INTO crove_kernel.availability_rule (org_id, user_id, weekday, start_minute, end_minute, time_zone, created_by)
+      `INSERT INTO ludy_kernel.availability_rule (org_id, user_id, weekday, start_minute, end_minute, time_zone, created_by)
        SELECT t.org_id, u.id, d, 0, 1440, 'Asia/Ho_Chi_Minh', u.id
-         FROM crove_kernel.tenant t, crove_kernel.user_account u, generate_series(1, 7) d
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u, generate_series(1, 7) d
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       vars,
     );
     exec(
       `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
        SELECT t.org_id, 'tu-van', 'Tư vấn thuế', 30, 0, u.id, u.id
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       vars,
     );
@@ -54,7 +54,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     await visitor.close();
     const [booking] = sql<{ starts_at: string }>(
       `SELECT to_char(b.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS starts_at
-         FROM crove_crm.booking b JOIN crove_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND b.status = 'confirmed'`,
+         FROM crove_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND b.status = 'confirmed'`,
       { slug },
     );
     startsAt = booking?.starts_at ?? '';
@@ -88,7 +88,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
   await test.step('the slot is offered again, and the visitor got a cancel mail', async () => {
     expect(await slots()).toContain(startsAt);
     const mails = sql<{ source: string }>(
-      `SELECT m.source FROM crove_kernel.mail_message m JOIN crove_kernel.tenant t USING (org_id)
+      `SELECT m.source FROM ludy_kernel.mail_message m JOIN ludy_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND m.to_address = 'khach-e2e@example.test' ORDER BY m.created_at`,
       { slug },
     );
@@ -109,7 +109,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     await page.getByRole('button', { name: 'Lưu giờ làm việc' }).click();
     const monday = () =>
       sql<{ start_minute: number; end_minute: number }>(
-        `SELECT r.start_minute, r.end_minute FROM crove_kernel.availability_rule r JOIN crove_kernel.tenant t USING (org_id)
+        `SELECT r.start_minute, r.end_minute FROM ludy_kernel.availability_rule r JOIN ludy_kernel.tenant t USING (org_id)
           WHERE t.slug = :'slug' AND r.weekday = 1`,
         { slug },
       );
@@ -129,7 +129,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     const off = sql<{ starts: string; ends: string }>(
       `SELECT to_char(e.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI') AS starts,
               to_char(e.ends_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI') AS ends
-         FROM crove_kernel.calendar_event e JOIN crove_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND e.kind = 'time_off'`,
+         FROM ludy_kernel.calendar_event e JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND e.kind = 'time_off'`,
       { slug },
     );
     expect(off).toEqual([{ starts: `${from} 00:00`, ends: `${day(24)} 00:00` }]);

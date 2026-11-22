@@ -205,7 +205,7 @@ async function cycleTaskTotalsMap(
 ): Promise<Map<string, CycleTaskTotals>> {
   const map = new Map<string, CycleTaskTotals>();
   if (cycleIds.length === 0) return map;
-  // Join crove_kernel.task so counts obey caller le_scope RLS automatically.
+  // Join ludy_kernel.task so counts obey caller le_scope RLS automatically.
   const { rows } = await sql<{
     cycle_id: string;
     open_n: string;
@@ -221,7 +221,7 @@ async function cycleTaskTotalsMap(
            COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status <> 'cancelled'), 0)::text AS total_pts,
            COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status = 'done'), 0)::text AS done_pts
       FROM crove_projects.project_task pt
-      JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+      JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
        AND pt.cycle_id = ANY(${[...cycleIds]}::uuid[])
@@ -388,7 +388,7 @@ async function computeMetricsForProject(
          AND pt.project_id = ${projectId}::uuid
          AND pt.cycle_id = ${selectedRaw.id}::uuid
          AND NOT EXISTS (
-           SELECT 1 FROM crove_kernel.task t
+           SELECT 1 FROM ludy_kernel.task t
             WHERE t.org_id = pt.org_id AND t.id = pt.task_id
          )`.execute(trx);
     hiddenByEntityCount = Number(hiddenRows[0]?.count ?? 0);
@@ -428,7 +428,7 @@ async function computeMetricsForProject(
   if (selectedCycle) {
     const taskRows = await trx
       .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select(['t.status', 'pt.story_points', 't.created_at', 't.updated_at'])
       .where('pt.org_id', '=', orgId)
       .where('pt.project_id', '=', projectId)
@@ -644,7 +644,7 @@ async function assertCycleTasksAccessibleAndFree(
 
   const visibleTasks = await trx
     .selectFrom('crove_projects.project_task as pt')
-    .innerJoin('crove_kernel.task as t', (join) =>
+    .innerJoin('ludy_kernel.task as t', (join) =>
       join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
     )
     .select(['pt.task_id', 't.status', 't.checkout_run_id', 't.lock_expires_at'])
@@ -806,7 +806,7 @@ export const projectCycleComplete = defineCommand({
            AND pt.project_id = ${project.id}::uuid
            AND pt.cycle_id = ${cycle.id}::uuid
            AND EXISTS (
-             SELECT 1 FROM crove_kernel.task t
+             SELECT 1 FROM ludy_kernel.task t
               WHERE t.org_id = pt.org_id
                 AND t.id = pt.task_id
                 AND t.status NOT IN ('done', 'cancelled')
@@ -873,7 +873,7 @@ async function assertProjectTaskMutable(
 ): Promise<void> {
   const link = await trx
     .selectFrom('crove_projects.project_task as pt')
-    .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+    .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
     .select(['pt.task_id', 't.checkout_run_id', 't.lock_expires_at'])
     .where('pt.org_id', '=', orgId)
     .where('pt.project_id', '=', projectId)
@@ -1000,7 +1000,7 @@ export const projectCycleList = defineQuery({
         SELECT pg_catalog.count(*)::text AS task_n,
                COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)), 0)::text AS pts_n
           FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+          JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND pt.cycle_id IS NULL
@@ -1011,7 +1011,7 @@ export const projectCycleList = defineQuery({
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND NOT EXISTS (
-             SELECT 1 FROM crove_kernel.task t
+             SELECT 1 FROM ludy_kernel.task t
               WHERE t.org_id = pt.org_id AND t.id = pt.task_id
            )`.execute(ctx.trx),
     ]);
@@ -1054,15 +1054,15 @@ export const projectCycleSummarySource = defineQuery({
       SELECT
         pg_catalog.now() AS now_ts,
         (
-          crove_kernel.global_kill_switch_on('ai')
+          ludy_kernel.global_kill_switch_on('ai')
           OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
+            SELECT 1 FROM ludy_kernel.kill_switch k
              WHERE k.org_id = ${ctx.orgId}::uuid
                AND k.released_at IS NULL
                AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = 'projects'))
           )
         ) AS ai_stopped,
-        crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(ctx.trx);
+        ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(ctx.trx);
 
     const meta = metaRows[0];
     const metrics = await computeMetricsForProject(
@@ -1079,7 +1079,7 @@ export const projectCycleSummarySource = defineQuery({
     if (selected !== null) {
       const taskRows = await ctx.trx
         .selectFrom('crove_projects.project_task as pt')
-        .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+        .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
         .select(['t.id', 't.title', 't.tainted', 't.status', 't.due'])
         .where('pt.org_id', '=', ctx.orgId)
         .where('pt.project_id', '=', project.id)
@@ -1103,13 +1103,13 @@ export const projectCycleSummarySource = defineQuery({
         const [{ rows: countCommentRows }, { rows: snippetRows }] = await Promise.all([
           sql<{ task_id: string; n: string }>`
             SELECT task_id, pg_catalog.count(*)::text AS n
-              FROM crove_kernel.task_comment
+              FROM ludy_kernel.task_comment
              WHERE org_id = ${ctx.orgId}::uuid
                AND task_id = ANY(${sampleIds}::uuid[])
              GROUP BY task_id`.execute(ctx.trx),
           sql<{ task_id: string; body: string }>`
             SELECT DISTINCT ON (task_id) task_id, body
-              FROM crove_kernel.task_comment
+              FROM ludy_kernel.task_comment
              WHERE org_id = ${ctx.orgId}::uuid
                AND task_id = ANY(${sampleIds}::uuid[])
                AND NOT tainted

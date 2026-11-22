@@ -84,15 +84,15 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (role: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = role;
       url.password = password;
       return createPool({ connectionString: url.toString(), max: 4 });
     };
-    const appPool = login('crove_app', 'test-app-pw');
-    const workerPool = login('crove_worker', 'test-worker-pw');
+    const appPool = login('ludy_app', 'test-app-pw');
+    const workerPool = login('ludy_worker', 'test-worker-pw');
     pools.push(appPool, workerPool);
     const register = (pool: pg.Pool) =>
       new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
@@ -104,7 +104,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     worker = register(workerPool);
     for (const key of ['owner', 'recorder', 'attendee', 'other']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'hook', subject: key, email: `${key}@hook.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Webhook biên bản')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.attendee, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.attendee, users.other]);
   }, 300_000);
 
   afterAll(async () => {
@@ -121,14 +121,14 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     // Off: no member can save an address.
     expect(await refuses(setHook('recorder', ['summary']))).toBe('MEETING_HOOKS_OFF');
     // An admin, a member: refused. The owner: on.
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other]);
     expect(await refuses(exec('other', 'meetings.hooks.switch.set', { on: true }))).not.toBeNull();
     expect(await refuses(exec('recorder', 'meetings.hooks.switch.set', { on: true }))).not.toBeNull();
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other]);
     expect(await setSwitch(true)).toEqual({ on: true });
     expect(await query('recorder', 'meetings.hook.get', {})).toEqual({ switchOn: true, hook: null });
     // A direct write to the column is refused by the guard trigger, whoever the member is.
-    expect(await sqlAdmin(`SELECT meeting_hooks FROM crove_kernel.tenant WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.meeting_hooks)).toBe(true);
+    expect(await sqlAdmin(`SELECT meeting_hooks FROM ludy_kernel.tenant WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.meeting_hooks)).toBe(true);
   });
 
   it('gives a member one address of their own, with the fields they ticked, and no one else sees or changes it', async () => {
@@ -146,7 +146,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     expect((await query<{ hook: unknown }>('owner', 'meetings.hook.get', {})).hook).toBeNull();
     expect(await sqlAdmin(`SELECT count(*)::int AS n FROM crove_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(1);
     // The audit rows hold the host and the fields, never the address or the sealed envelope.
-    const audits = await sqlAdmin<{ payload: unknown }>(`SELECT payload FROM crove_kernel.audit_event WHERE org_id = $1 AND action IN ('meetings.hook.set')`, [orgId]).catch(() => ({ rows: [] as { payload: unknown }[] }));
+    const audits = await sqlAdmin<{ payload: unknown }>(`SELECT payload FROM ludy_kernel.audit_event WHERE org_id = $1 AND action IN ('meetings.hook.set')`, [orgId]).catch(() => ({ rows: [] as { payload: unknown }[] }));
     for (const row of audits.rows) {
       const text = JSON.stringify(row.payload);
       expect(text).not.toContain('/ludy-minutes');
@@ -410,15 +410,15 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     const [row] = await deliveries(k);
     const hookId = (await sysQuery<{ hookId: string }>('meetings.hook.delivery', { id: row?.id }))?.hookId as string;
     expect(await sysQuery('meetings.hook.target', { hookId })).not.toBeNull();
-    await sqlAdmin(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.recorder]);
+    await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.recorder]);
     expect(await sysQuery('meetings.hook.target', { hookId })).toBeNull();
-    await sqlAdmin(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.recorder]);
+    await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.recorder]);
     expect(await sysQuery('meetings.hook.target', { hookId })).not.toBeNull();
     // A member who leaves the org takes the hook and its deliveries with them.
-    await sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]);
     expect(await sqlAdmin(`SELECT count(*)::int AS n FROM crove_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(0);
     expect(await deliveries(k)).toEqual([]);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.recorder]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.recorder]);
   });
 
   it('sends a test ping with no meeting data, at most once a minute, and clears the member\'s own hook', async () => {
@@ -437,7 +437,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
   });
 
   it('is deleted with the org: the purge reaches both tables', async () => {
-    const tables = await sqlAdmin<{ n: number }>(`SELECT pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.hook_delivery' AND pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.member_hook' AS n`);
+    const tables = await sqlAdmin<{ n: number }>(`SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.hook_delivery' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.member_hook' AS n`);
     expect(tables.rows[0]?.n).toBe(true);
   });
 });

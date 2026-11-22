@@ -84,7 +84,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hóa Đơn ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -95,9 +95,9 @@ suite('sales e-invoice drafts (#2500)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
-      // A forged purge mark (the real one is set inside crove_kernel.org_purge only): the guards must not take it for the purge.
-      if (mark) await c.query("SELECT pg_catalog.set_config('crove.org_purge', $1, true)", [mark]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      // A forged purge mark (the real one is set inside ludy_kernel.org_purge only): the guards must not take it for the purge.
+      if (mark) await c.query("SELECT pg_catalog.set_config('ludy.org_purge', $1, true)", [mark]);
       const result = await c.query(sqlText, params);
       await c.query('COMMIT');
       return result;
@@ -140,7 +140,7 @@ suite('sales e-invoice drafts (#2500)', () => {
   };
   const sync = async (o: Org, legalEntityId: string | null = null) => execute<{ added: number; series: Series[] }>(o, 'finance.einvoice_series.sync', { legalEntityId, provider: 'sandbox' });
   const auditOf = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown>; target_id: string | null }>(`SELECT detail, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows);
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown>; target_id: string | null }>(`SELECT detail, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -151,14 +151,14 @@ suite('sales e-invoice drafts (#2500)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -278,7 +278,7 @@ suite('sales e-invoice drafts (#2500)', () => {
 
   it('keeps a draft in the entity of its series: a series of another entity is refused, here and by the database', async () => {
     const o = await org();
-    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
+    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
     const main = (await sync(o)).series;
     const branchSeries = (await sync(o, branch)).series;
     expect(branchSeries.every((s) => s.legalEntityId === branch)).toBe(true);
@@ -293,7 +293,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     await expect(admin((c) => c.query('UPDATE crove_finance.einvoice_draft SET series_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, ok.id, mainSeriesId]))).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('holds the row policies, the grants and the state guard in SQL, as crove_app in each role\'s context', async () => {
+  it('holds the row policies, the grants and the state guard in SQL, as ludy_app in each role\'s context', async () => {
     const o = await org();
     const [series] = (await sync(o)).series;
     const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null));
@@ -472,7 +472,7 @@ suite('sales e-invoice drafts (#2500)', () => {
 
   it('writes a tax code in its written form, keeps no buyer details on a consumer and lists the drafts of one entity', async () => {
     const o = await org();
-    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh danh sách', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
+    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh danh sách', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
     const [series] = (await sync(o)).series;
     const [branchSeries] = (await sync(o, branch)).series;
     // A branch code typed as 13 digits is kept with its dash (the shape a provider takes), a spaced code without its spaces.
@@ -573,7 +573,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'individual', partyId: null, taxCode: '012345678901', name: 'Nguyễn Văn Bí Mật', address: '9 Phố Kín', email: 'bi.mat@example.test', identity: { kind: 'cccd', value: '987654321098' } } }));
     await execute(o, 'finance.einvoice_draft.delete', { draftId: saved.id });
     const events = await admin(async (c) =>
-      (await c.query<{ blob: string }>(`SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice%'`, [o.orgId])).rows.map((r) => r.blob).join(' '),
+      (await c.query<{ blob: string }>(`SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice%'`, [o.orgId])).rows.map((r) => r.blob).join(' '),
     );
     for (const secret of ['Bí Mật', 'Phố Kín', 'bi.mat@example.test', '012345678901', '987654321098']) expect(events).not.toContain(secret);
     expect(await auditOf(o, 'finance.einvoice_draft.save')).toMatchObject([{ detail: { lines: 2, total: '274000', created: true, hasIdentity: true } }]);

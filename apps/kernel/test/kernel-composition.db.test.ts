@@ -76,15 +76,15 @@ suite('composition root on PostgreSQL (ADR-0030)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    appUrl = loginUrl('crove_app', 'test-app-pw');
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    appUrl = loginUrl('ludy_app', 'test-app-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 2 });
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: [] });

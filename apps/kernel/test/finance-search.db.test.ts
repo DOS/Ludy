@@ -70,7 +70,7 @@ suite('finance search (#673)', () => {
       await c.query('BEGIN');
       for (const r of rows) {
         const party = await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3)
+          `INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3)
            ON CONFLICT (org_id, tax_code) WHERE tax_code IS NOT NULL DO UPDATE SET name = excluded.name RETURNING id`,
           [orgId, r.party.name, r.party.taxCode],
         );
@@ -102,9 +102,9 @@ suite('finance search (#673)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -262,14 +262,14 @@ suite('finance search (#673)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_kernel.party (org_id, name, tax_code)
+          `INSERT INTO ludy_kernel.party (org_id, name, tax_code)
            SELECT $1, 'Công ty TNHH Thương mại ' || g, pg_catalog.lpad(g::text, 10, '0') FROM pg_catalog.generate_series(1, $2::int) g`,
           [big.orgId, PARTIES],
         );
         await c.query(
           `CREATE TEMP TABLE seeded ON COMMIT DROP AS
-           SELECT g, crove_kernel.uuid_v7() AS doc_id, crove_kernel.uuid_v7() AS entry_id,
-                  (SELECT p.id FROM crove_kernel.party p WHERE p.org_id = $1 AND p.tax_code = pg_catalog.lpad((1 + g % $3::int)::text, 10, '0')) AS party_id,
+           SELECT g, ludy_kernel.uuid_v7() AS doc_id, ludy_kernel.uuid_v7() AS entry_id,
+                  (SELECT p.id FROM ludy_kernel.party p WHERE p.org_id = $1 AND p.tax_code = pg_catalog.lpad((1 + g % $3::int)::text, 10, '0')) AS party_id,
                   DATE '2024-01-01' + (g % 1000) AS day, (100000 + g * 7)::numeric AS total
            FROM pg_catalog.generate_series(1, $2::int) g`,
           [big.orgId, DOCUMENTS, PARTIES],
@@ -291,7 +291,7 @@ suite('finance search (#673)', () => {
         );
         await c.query('COMMIT');
         // VACUUM as autovacuum would: it also moves the GIN indexes' pending lists (rows inserted since) into the indexes.
-        await c.query('VACUUM ANALYZE crove_kernel.party, crove_finance.purchase_document, crove_finance.journal_entry, crove_finance.journal_line');
+        await c.query('VACUUM ANALYZE ludy_kernel.party, crove_finance.purchase_document, crove_finance.journal_entry, crove_finance.journal_line');
       });
     }, 300_000);
 
@@ -336,7 +336,7 @@ suite('finance search (#673)', () => {
         // A word few rows hold: one document, one entry. (A word every row holds is read faster by org, and 2,000
         // parties are read faster whole.)
         const vector = (table: string, q: string) =>
-          c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t.search @@ crove_kernel.search_query($2)`, [
+          c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t.search @@ ludy_kernel.search_query($2)`, [
             big.orgId,
             q,
           ]);

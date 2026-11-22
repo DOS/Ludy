@@ -16,6 +16,7 @@ import type { TaxDueView } from '@ludy/kernel-contract';
 import { Runtime, type InputHashMode } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
   let adminUrl = '';
   let appUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
@@ -39,7 +41,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await client.connect();
     try {
       return await fn(client);
@@ -49,9 +51,9 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
   }
 
   // The database starts before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
-  // crove_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
-  function connect(inputHash: InputHashMode = 'keyed') {
-    pool = createPool({ connectionString: appUrl, max: 4 });
+  // ludy_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
+  function connect(inputHash: InputHashMode = 'keyed', preCutover = false) {
+    pool = preCutover ? createPreCutoverPool({ connectionString: appUrl, max: 4 }) : createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     // No context token key: the database starts at a version before enter_user_context (#1822).
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -80,14 +82,18 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     app.username = 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
-    connect('sha256');
+    connect('sha256', true);
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@tax-le.test', name: null });
     accountant = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'accountant@tax-le.test', name: null });
     ({ orgId: legacyOrgId } = await createOrg(rt, asUser(owner), 'Sổ cũ'));
     // A mark written before this migration, with no entity.
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tax_obligation_done (org_id, obligation, period, done_by) VALUES ($1, 'license_fee', '2026', $2)`, [legacyOrgId, owner]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tax_obligation_done (org_id, obligation, period, done_by) VALUES ($1, 'license_fee', '2026', $2)`, [legacyOrgId, owner]));
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    app.username = 'ludy_app';
+    appUrl = app.toString();
     // Connections opened before the migration may hold plans of the table as it was.
     await pool.end();
     connect();
@@ -95,19 +101,19 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     ({ orgId } = await createOrg(rt, asUser(owner), 'Hai pháp nhân'));
     await admin(async (c) => {
       // The VAT return monthly, and the PIT withholding return monthly from the org's tax profile.
-      await c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1`, [orgId]);
-      await c.query(`INSERT INTO crove_kernel.tax_profile (org_id, obligations, pit_filing_period, updated_by) VALUES ($1, '{pit_withholding}', 'month', $2)`, [orgId, owner]);
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      await c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1`, [orgId]);
+      await c.query(`INSERT INTO ludy_kernel.tax_profile (org_id, obligations, pit_filing_period, updated_by) VALUES ($1, '{pit_withholding}', 'month', $2)`, [orgId, owner]);
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       // A branch that has existed for years, so it owes every period the calendar lists.
       branch = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, 'Chi nhánh', 'branch', $2, '2020-01-01') RETURNING id`, [
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, 'Chi nhánh', 'branch', $2, '2020-01-01') RETURNING id`, [
           orgId,
           owner,
         ])
       ).rows[0]?.id as string;
       // The accountant keeps the branch's books only (an entity-scoped assignment narrows the context's le_scope).
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, accountant]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, accountant]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         accountant,
         branch,
@@ -129,8 +135,8 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
   it("gives every mark written before the migration its org's default entity", async () => {
     const rows = await admin((c) =>
       c.query<{ is_default: boolean }>(
-        `SELECT e.is_default FROM crove_kernel.tax_obligation_done d
-         JOIN crove_kernel.legal_entity e ON e.org_id = d.org_id AND e.id = d.legal_entity_id WHERE d.org_id = $1`,
+        `SELECT e.is_default FROM ludy_kernel.tax_obligation_done d
+         JOIN ludy_kernel.legal_entity e ON e.org_id = d.org_id AND e.id = d.legal_entity_id WHERE d.org_id = $1`,
         [legacyOrgId],
       ),
     );
@@ -155,7 +161,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     expect(await exec(owner, 'kernel.tax_obligation.done', { ...mark, legalEntityId: branch })).toEqual({ ...mark, legalEntityId: branch, done: true });
     expect(await listed(owner, due!)).toBe(false);
     const rows = await admin((c) =>
-      c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = $2 AND period = $3', [
+      c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = $2 AND period = $3', [
         orgId,
         mark.obligation,
         mark.period,
@@ -167,7 +173,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     expect(await exec(owner, 'kernel.tax_obligation.undo', { ...mark, legalEntityId: branch })).toEqual({ ...mark, legalEntityId: branch, done: false });
     expect(await listed(owner, due!)).toBe(true);
     expect(await exec(owner, 'kernel.tax_obligation.undo', mark)).toEqual({ ...mark, legalEntityId: defaultEntity, done: false });
-    expect((await admin((c) => c.query('SELECT 1 FROM crove_kernel.tax_obligation_done WHERE org_id = $1', [orgId]))).rowCount).toBe(0);
+    expect((await admin((c) => c.query('SELECT 1 FROM ludy_kernel.tax_obligation_done WHERE org_id = $1', [orgId]))).rowCount).toBe(0);
   });
 
   it('lets a member limited to one entity mark and see only that entity', async () => {
@@ -194,7 +200,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     expect(await listed(owner, due!)).toBe(false);
     await exec(accountant, 'kernel.tax_obligation.undo', { ...mark, legalEntityId: branch });
     expect(await listed(accountant, due!)).toBe(true);
-    const left = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_kernel.tax_obligation_done WHERE org_id = $1', [orgId]));
+    const left = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_kernel.tax_obligation_done WHERE org_id = $1', [orgId]));
     expect(left.rows).toEqual([{ legal_entity_id: defaultEntity }]);
   });
 
@@ -212,13 +218,13 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     };
     try {
       // The owner's mark of the default entity (left by the previous test) is invisible to the accountant.
-      expect((await asAccountant('SELECT legal_entity_id FROM crove_kernel.tax_obligation_done')).rows).toEqual([]);
+      expect((await asAccountant('SELECT legal_entity_id FROM ludy_kernel.tax_obligation_done')).rows).toEqual([]);
       // Naming the default entity fails le_scope, and so does naming none (no default entity in scope leaves it null).
-      const insert = `INSERT INTO crove_kernel.tax_obligation_done (org_id, legal_entity_id, obligation, period, done_by) VALUES ($1, $2, 'license_fee', '2027', $3)`;
+      const insert = `INSERT INTO ludy_kernel.tax_obligation_done (org_id, legal_entity_id, obligation, period, done_by) VALUES ($1, $2, 'license_fee', '2027', $3)`;
       await expect(asAccountant(insert, [orgId, defaultEntity, accountant])).rejects.toThrow(/row-level security/);
       await expect(asAccountant(insert, [orgId, null, accountant])).rejects.toThrow(/row-level security/);
       expect((await asAccountant(`${insert} RETURNING legal_entity_id`, [orgId, branch, accountant])).rows).toEqual([{ legal_entity_id: branch }]);
-      expect((await asAccountant('DELETE FROM crove_kernel.tax_obligation_done')).rowCount).toBe(0);
+      expect((await asAccountant('DELETE FROM ludy_kernel.tax_obligation_done')).rowCount).toBe(0);
     } finally {
       await client.end();
     }
@@ -246,7 +252,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
     expect(await listed(owner, due!)).toBe(false);
     // An entity whose row is younger than the period owes nothing for it; one that existed by then does.
     const add = (createdAt: string) =>
-      admin((c) => c.query(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, $2, 'branch', $3, $4)`, [orgId, `Chi nhánh ${createdAt}`, owner, createdAt]));
+      admin((c) => c.query(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, $2, 'branch', $3, $4)`, [orgId, `Chi nhánh ${createdAt}`, owner, createdAt]));
     await add('2099-01-01');
     expect(await listed(owner, due!)).toBe(false);
     await add('2020-01-01');
@@ -254,7 +260,7 @@ suite('tax obligations done per legal entity on PostgreSQL (#1496)', () => {
   });
 
   it("refuses a write that changes a mark's entity", async () => {
-    await expect(admin((c) => c.query('UPDATE crove_kernel.tax_obligation_done SET legal_entity_id = $2 WHERE org_id = $1', [orgId, branch]))).rejects.toThrow(
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.tax_obligation_done SET legal_entity_id = $2 WHERE org_id = $1', [orgId, branch]))).rejects.toThrow(
       /LEGAL_ENTITY_IMMUTABLE/,
     );
   });

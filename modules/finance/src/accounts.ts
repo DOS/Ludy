@@ -199,7 +199,7 @@ export const updateAccount = defineCommand({
     if (account.active && !active) {
       const vendors = await ctx.trx
         .selectFrom('crove_finance.vendor_account_rule as r')
-        .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
+        .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
         .select(['p.id', 'p.name'])
         .where('r.org_id', '=', ctx.orgId)
         .where('r.debit_account', '=', code)
@@ -272,7 +272,7 @@ export const setVendorDefaultAccount = defineCommand({
   access: MANAGERS,
   handler: async (ctx, { partyId, accountCode }) => {
     const party = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)

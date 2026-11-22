@@ -128,8 +128,8 @@ type SealedEmployeeRow = {
 
 async function resolveLegalEntity(ctx: QueryContext, legalEntityId?: string): Promise<LegalEntityRow> {
   const entity = legalEntityId
-    ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst()
-    : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
+    ? await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst()
+    : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
   if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng kê');
   return entity;
 }
@@ -581,7 +581,7 @@ export const declarationGet = defineQuery({
     if (ctx.actor.type !== 'user' || !hasFreshMfa(ctx.actor)) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const tenantAddress = entity.is_default
-      ? ((await ctx.trx.selectFrom('crove_kernel.tenant').select('address').where('org_id', '=', ctx.orgId).executeTakeFirst())?.address ?? null)
+      ? ((await ctx.trx.selectFrom('ludy_kernel.tenant').select('address').where('org_id', '=', ctx.orgId).executeTakeFirst())?.address ?? null)
       : null;
     const employer = { name: entity.name, taxCode: entity.tax_code, address: tenantAddress };
 

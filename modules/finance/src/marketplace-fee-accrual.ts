@@ -66,7 +66,7 @@ export async function feeAccrualOffers(
 ): Promise<{ accruals: FeeAccrualOffer[]; reversals: FeeAccrualReversalOffer[] }> {
   let links = ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
-    .innerJoin('crove_kernel.legal_entity as le', (join) => join.onRef('le.org_id', '=', 'm.org_id').onRef('le.id', '=', 'm.legal_entity_id'))
+    .innerJoin('ludy_kernel.legal_entity as le', (join) => join.onRef('le.org_id', '=', 'm.org_id').onRef('le.id', '=', 'm.legal_entity_id'))
     .select(['m.legal_entity_id', 'm.platform', 'm.party_id', 'le.kind'])
     .where('m.org_id', '=', ctx.orgId);
   if (legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', legalEntityId);
@@ -93,7 +93,7 @@ export async function feeAccrualOffers(
           .where('entry_id', '=', s.entryId)
           .executeTakeFirst();
         const proposal = await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('kind', '=', REVERSAL_KIND)

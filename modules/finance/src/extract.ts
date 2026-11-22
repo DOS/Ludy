@@ -45,7 +45,7 @@ export const fileForExtraction = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -54,7 +54,7 @@ export const fileForExtraction = defineQuery({
     // the extraction, order, income and bank statement readers all end here, as for a file that is not there.
     if (file?.original_deleted_at) return null;
     let query = ctx.trx
-      .selectFrom('crove_kernel.extraction')
+      .selectFrom('ludy_kernel.extraction')
       .select(['status', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId);
@@ -64,7 +64,7 @@ export const fileForExtraction = defineQuery({
     // "Dừng AI" (#886): a kill switch engaged for the org, or for the finance module, stops the AI reads of PDFs and
     // images; e-invoice XML is parsed without AI and goes on.
     const stopped = await ctx.trx
-      .selectFrom('crove_kernel.kill_switch')
+      .selectFrom('ludy_kernel.kill_switch')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
@@ -72,11 +72,11 @@ export const fileForExtraction = defineQuery({
       .limit(1)
       .executeTakeFirst();
     // And the operator's switch for every org (#886).
-    const { rows: global } = await sql<{ on: boolean }>`SELECT crove_kernel.global_kill_switch_on('ai') AS on`.execute(ctx.trx);
+    const { rows: global } = await sql<{ on: boolean }>`SELECT ludy_kernel.global_kill_switch_on('ai') AS on`.execute(ctx.trx);
     // Waiting for the org's AI budget of the month (#2382): a deferral of the file that is not due yet, so a read that finds the
     // budget still spent adds nothing to the file's history.
     const waiting = await ctx.trx
-      .selectFrom('crove_kernel.usage_deferral')
+      .selectFrom('ludy_kernel.usage_deferral')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('subject_type', '=', 'file')
@@ -92,7 +92,7 @@ export const fileForExtraction = defineQuery({
 });
 
 export interface InvoiceLookup {
-  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is crove_kernel.tenant.tax_code for the default entity,
+  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is ludy_kernel.tenant.tax_code for the default entity,
   // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
   // The books regime the sale is posted under on the invoice's issue date ('tt133', 'tt99'); set only for a sale whose issue date was asked for (#3712 slice 4).
@@ -156,7 +156,7 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
     proposalIds.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           // An account a photo gave is left out: nothing in the document confirms the model read it right (one read from a PDF was checked against its text, one from an XML was printed by the seller's software).
           .select(['id', sql<string | null>`CASE WHEN payload ->> 'extractionMethod' IN ('einvoice_xml', 'pdf_text_ai') THEN payload #>> '{seller,bankAccount}' END`.as('account')])
           .where('org_id', '=', ctx.orgId)
@@ -207,7 +207,7 @@ export const purchaseLookup = defineQuery({
     const party =
       !sale && input.sellerTaxCode
         ? await ctx.trx
-            .selectFrom('crove_kernel.party')
+            .selectFrom('ludy_kernel.party')
             .select('id')
             .where('org_id', '=', ctx.orgId)
             .where('tax_code', '=', input.sellerTaxCode)
@@ -242,7 +242,7 @@ export const purchaseLookup = defineQuery({
     const document = await inForce(input.series, input.number);
     const original = input.related ? await inForce(input.related.series, input.related.number) : undefined;
     const duplicates = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'status', sql<string | null>`payload ->> 'extractionMethod'`.as('method')])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
@@ -254,10 +254,10 @@ export const purchaseLookup = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_kernel.extraction as xr')
+            selectFrom('ludy_kernel.extraction as xr')
               .select('xr.id')
-              .whereRef('xr.org_id', '=', 'crove_kernel.proposal.org_id')
-              .whereRef('xr.id', '=', 'crove_kernel.proposal.extraction_id')
+              .whereRef('xr.org_id', '=', 'ludy_kernel.proposal.org_id')
+              .whereRef('xr.id', '=', 'ludy_kernel.proposal.extraction_id')
               .where('xr.file_id', '=', input.fileId),
           ),
         ),
@@ -269,8 +269,8 @@ export const purchaseLookup = defineQuery({
             selectFrom('crove_finance.purchase_document as d')
               .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
               .select('d.id')
-              .whereRef('d.org_id', '=', 'crove_kernel.proposal.org_id')
-              .whereRef('d.proposal_id', '=', 'crove_kernel.proposal.id'),
+              .whereRef('d.org_id', '=', 'ludy_kernel.proposal.org_id')
+              .whereRef('d.proposal_id', '=', 'ludy_kernel.proposal.id'),
           ),
         ),
       )
@@ -290,7 +290,7 @@ export const purchaseLookup = defineQuery({
       party ??
       (!sale && !input.sellerTaxCode && input.sellerName.trim()
         ? await ctx.trx
-            .selectFrom('crove_kernel.party')
+            .selectFrom('ludy_kernel.party')
             .select('id')
             .where('org_id', '=', ctx.orgId)
             .where('tax_code', 'is', null)

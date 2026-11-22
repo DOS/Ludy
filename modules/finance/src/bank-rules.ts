@@ -90,7 +90,7 @@ export const bankPartyRulesList = defineQuery({
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_party_rule as r')
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
       .innerJoin('crove_finance.cash_voucher as v', (join) => join.onRef('v.org_id', '=', 'r.org_id').onRef('v.id', '=', 'r.source_voucher_id'))
       .select(['r.id', 'r.kind', 'r.party_id', 'p.name as party_name', 'r.confirmed_by', 'r.confirmed_at', 'r.source_voucher_id', 'v.voucher_type', 'v.number'])
       .where('r.org_id', '=', ctx.orgId)
@@ -99,12 +99,12 @@ export const bankPartyRulesList = defineQuery({
       .orderBy('r.id', 'desc')
       .limit(BANK_RULE_LIST_LIMIT)
       .execute();
-    // Who confirmed a rule, by name while they are a member (crove_kernel.member_profiles answers only members).
+    // Who confirmed a rule, by name while they are a member (ludy_kernel.member_profiles answers only members).
     const users = [...new Set(rows.map((r) => r.confirmed_by).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (users.length > 0) {
       const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     return rows.map((r) => ({

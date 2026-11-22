@@ -91,7 +91,7 @@ export const transcriptStart = defineCommand({
     // The recording is in use from here on: a late complete upload no longer replaces a joined recording (#3187).
     await markAudioUsed(ctx, input.meetingId);
     const agent = await ctx.trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')

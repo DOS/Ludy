@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Stream hints of the CRM (issue #3293, crm.md section 5), on PostgreSQL 17: a deal or a contact's details that change
-// send `<org> crm_deal <id>` or `<org> crm_party <id>` on crove_stream, the id only (never a title, an amount or a
+// send `<org> crm_deal <id>` or `<org> crm_party <id>` on ludy_stream, the id only (never a title, an amount or a
 // name), to the streams of that org alone. A bulk delete of deals sends one hint per org. Set CROVE_TEST_ADMIN_URL to
 // a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
@@ -43,7 +43,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
   }
 
   async function party(orgId: string, name = 'Nguyễn Văn Bí Mật'): Promise<string> {
-    return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email, phone) VALUES ($1, 'person', $2, 'bimat@khach.test', '0912345678') RETURNING id`, [orgId, name])).rows[0]!.id);
+    return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name, email, phone) VALUES ($1, 'person', $2, 'bimat@khach.test', '0912345678') RETURNING id`, [orgId, name])).rows[0]!.id);
   }
 
   async function stage(orgId: string): Promise<string> {
@@ -62,7 +62,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
     );
   }
 
-  // The crove_stream payloads the statements send, in the order they come, up to a marker sent after them.
+  // The ludy_stream payloads the statements send, in the order they come, up to a marker sent after them.
   async function hintsOf(statements: (c: pg.Client) => Promise<unknown>): Promise<string[]> {
     const listener = new pg.Client({ connectionString: adminUrl });
     await listener.connect();
@@ -72,14 +72,14 @@ suite('stream hints of deals and contacts (#3293)', () => {
       done = resolve;
     });
     listener.on('notification', (m) => {
-      if (m.channel !== 'crove_stream' || !m.payload) return;
+      if (m.channel !== 'ludy_stream' || !m.payload) return;
       if (m.payload === DONE) done();
       else payloads.push(m.payload);
     });
-    await listener.query('LISTEN crove_stream');
+    await listener.query('LISTEN ludy_stream');
     try {
       await admin(statements);
-      await admin((c) => c.query(`SELECT pg_catalog.pg_notify('crove_stream', $1)`, [DONE]));
+      await admin((c) => c.query(`SELECT pg_catalog.pg_notify('ludy_stream', $1)`, [DONE]));
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([finished, new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`timed out; ${payloads.length} payloads`)), 10_000)))]).finally(() => clearTimeout(timer));
       return payloads;
@@ -97,9 +97,9 @@ suite('stream hints of deals and contacts (#3293)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     app = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
@@ -160,20 +160,20 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(created[0]).not.toMatch(/bí mật|bimat|0912345678/i);
 
     const changed = await hintsOf(async (c) => {
-      await c.query(`UPDATE crove_kernel.party SET name = 'Tên mới' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
-      await c.query(`UPDATE crove_kernel.party SET email = 'moi@khach.test' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
-      await c.query(`UPDATE crove_kernel.party SET phone = NULL WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE ludy_kernel.party SET name = 'Tên mới' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE ludy_kernel.party SET email = 'moi@khach.test' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE ludy_kernel.party SET phone = NULL WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
     });
     expect(changed).toEqual(Array(3).fill(`${orgId} crm_party ${partyId}`));
 
     // A new version is one (a screen sends it back with an edit).
-    const bumped = await hintsOf((c) => c.query(`UPDATE crove_kernel.party SET version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, partyId]));
+    const bumped = await hintsOf((c) => c.query(`UPDATE ludy_kernel.party SET version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, partyId]));
     expect(bumped).toEqual([`${orgId} crm_party ${partyId}`]);
 
     // A rewrite of the same values and a verification are not what a contact screen shows.
     const quiet = await hintsOf(async (c) => {
-      await c.query(`UPDATE crove_kernel.party SET name = 'Tên mới', email = 'moi@khach.test' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
-      await c.query(`UPDATE crove_kernel.party SET verified_at = now() WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE ludy_kernel.party SET name = 'Tên mới', email = 'moi@khach.test' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE ludy_kernel.party SET verified_at = now() WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
     });
     expect(quiet).toEqual([]);
   });
@@ -183,15 +183,15 @@ suite('stream hints of deals and contacts (#3293)', () => {
     const [partyId, stageId] = [await party(mine), await stage(mine)];
     const heard = { mine: [] as StreamHint[], other: [] as StreamHint[] };
     const subscriber = (orgId: string, into: StreamHint[]): HubSubscriber => ({ orgId, hint: (hint) => void into.push(hint), close: () => undefined });
-    // A hub fed by a source that forwards what crove_stream carries, as the kernel's does.
+    // A hub fed by a source that forwards what ludy_stream carries, as the kernel's does.
     const listener = new pg.Client({ connectionString: adminUrl });
     await listener.connect();
     const source: NotificationSource = {
       start: (handlers) => {
         listener.on('notification', (m) => {
-          if (m.channel === 'crove_stream' && m.payload) handlers.notify(m.payload);
+          if (m.channel === 'ludy_stream' && m.payload) handlers.notify(m.payload);
         });
-        void listener.query('LISTEN crove_stream').then(() => handlers.ready());
+        void listener.query('LISTEN ludy_stream').then(() => handlers.ready());
       },
       stop: async () => {
         await listener.end();
@@ -204,7 +204,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
     hub.subscribe(subscriber(mine, heard.mine));
     hub.subscribe(subscriber(other, heard.other));
     const dealId = (await deal(mine, partyId, stageId))[0]!;
-    await admin((c) => c.query(`UPDATE crove_kernel.party SET name = 'Tên khác' WHERE org_id = $1 AND id = $2`, [mine, partyId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.party SET name = 'Tên khác' WHERE org_id = $1 AND id = $2`, [mine, partyId]));
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(heard.mine).toEqual([
       { type: 'crm_deal', id: dealId },

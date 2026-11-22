@@ -5,7 +5,7 @@
 //   LEGAL_ENTITY_REQUIRED (422) when the caller sees several and none of them is the default;
 // - named, or nothing at all visible: LEGAL_ENTITY_NOT_ALLOWED (403) for an entity the caller may not see or that is
 //   not the org's (one answer for both, so nothing says whether another entity exists).
-// "May see" is the legal-entity scope of the sealed context, applied by crove_kernel.legal_entity's own policy.
+// "May see" is the legal-entity scope of the sealed context, applied by ludy_kernel.legal_entity's own policy.
 import { z } from 'zod';
 import type { BookEntity } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
@@ -21,7 +21,7 @@ export const legalEntityRequired = () => new DomainError('LEGAL_ENTITY_REQUIRED'
 // The org's default entity as the caller sees it (null for a caller whose scope leaves it out).
 export async function defaultLegalEntityId(ctx: Ctx): Promise<string | null> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('is_default', '=', true)
@@ -33,7 +33,7 @@ export async function defaultLegalEntityId(ctx: Ctx): Promise<string | null> {
 export async function resolveLegalEntity(ctx: Ctx, requested: string | null | undefined): Promise<string> {
   if (requested) {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', requested)
@@ -42,7 +42,7 @@ export async function resolveLegalEntity(ctx: Ctx, requested: string | null | un
     return row.id;
   }
   const visible = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'is_default'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('is_default', 'desc')
@@ -72,7 +72,7 @@ export const bookEntitiesList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<BookEntity[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select(['id', 'name', 'kind', 'tax_code', 'is_default'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('is_default', 'desc')

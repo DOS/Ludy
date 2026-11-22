@@ -72,14 +72,14 @@ const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8
 
 async function startCall(ctx: CommandContext, key: string): Promise<'new' | 'again' | 'closed'> {
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.external_call')
+    .insertInto('ludy_kernel.external_call')
     .values({ org_id: ctx.orgId, key, module: 'finance', target: 'misa_amis', step: 'save', retry_safety: 'reconcile_only', started_at: ctx.now })
     .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
     .returning('id')
     .executeTakeFirst();
   if (inserted) return 'new';
   const again = await ctx.trx
-    .updateTable('crove_kernel.external_call')
+    .updateTable('ludy_kernel.external_call')
     .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -99,7 +99,7 @@ async function endCall(ctx: CommandContext, key: string, end: PushCallEnd): Prom
       : end.state === 'failed'
         ? { state: 'failed' as const, error_kind: end.kind, error_code: end.code, finished_at: ctx.now, updated_at: ctx.now }
         : { state: 'ambiguous' as const, error_kind: end.kind, error_code: end.code, updated_at: ctx.now };
-  await ctx.trx.updateTable('crove_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
+  await ctx.trx.updateTable('ludy_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -131,7 +131,7 @@ export const misaAmisPush = defineCommand({
   handler: async (ctx, input): Promise<MisaAmisPushResult> => {
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
@@ -240,7 +240,7 @@ export const misaAmisPushTarget = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisPushTarget> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
@@ -282,7 +282,7 @@ export const misaAmisPushBegin = defineCommand({
   handler: async (ctx, input): Promise<MisaAmisPushBegin> => {
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)

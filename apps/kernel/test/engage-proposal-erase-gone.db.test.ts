@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What erasing a thread does to the proposals an AI coworker made about it (#4160 L3, L5 and the review note on the definer; #4168 item 1 for the taint keys of an org purge):
-// - crove_kernel.engage_proposal_erase_gone() runs after the delete and takes no ids: it blanks only a proposal whose thread or message is gone, so a live thread's proposals are out of its reach;
+// - ludy_kernel.engage_proposal_erase_gone() runs after the delete and takes no ids: it blanks only a proposal whose thread or message is gone, so a live thread's proposals are out of its reach;
 // - one audit row per proposal blanked, with ids and the state before and nothing of the text, and the note a person typed when rejecting is replaced;
 // - only an owner, an admin or the system may call it;
 // - the taint keys of deleted quote lines are recorded for a person's save and not at all in the system context (the org purge).
@@ -27,7 +27,7 @@ const eraseGone = defineCommand({
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx) => {
     const { sql } = await import('kysely');
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
     return { n: rows[0]?.n ?? 0 };
   },
 });
@@ -40,14 +40,14 @@ const eraseOld = defineCommand({
   access: ['owner', 'admin'],
   handler: async (ctx) => {
     const { sql } = await import('kysely');
-    await sql`SELECT crove_kernel.engage_proposal_erase(ARRAY[]::uuid[], ARRAY[]::uuid[])`.execute(ctx.trx);
+    await sql`SELECT ludy_kernel.engage_proposal_erase(ARRAY[]::uuid[], ARRAY[]::uuid[])`.execute(ctx.trx);
     return {};
   },
 });
 const dropLines = async (ctx: { trx: never; orgId: string }, quoteId: string) => {
   const { sql } = await import('kysely');
   await sql`DELETE FROM crove_crm.quote_line WHERE org_id = ${ctx.orgId}::uuid AND quote_id = ${quoteId}::uuid`.execute(ctx.trx);
-  const { rows } = await sql<{ k: string }>`SELECT COALESCE(pg_catalog.current_setting('crove.tainted_line_keys', true), '') AS k`.execute(ctx.trx);
+  const { rows } = await sql<{ k: string }>`SELECT COALESCE(pg_catalog.current_setting('ludy.tainted_line_keys', true), '') AS k`.execute(ctx.trx);
   return { keys: rows[0]?.k ?? '' };
 };
 const input = z.strictObject({ quoteId: z.string().uuid() });
@@ -70,7 +70,7 @@ suite('the erasure of an AI coworker\'s proposals, and the taint keys of the org
     app = make(h.db);
     worker = make(h.workerDb);
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${connectionId.slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${connectionId.slice(0, 8)}`, h.owner]);
   }, 300_000);
   afterAll(async () => {
     await h?.stop();
@@ -81,10 +81,10 @@ suite('the erasure of an AI coworker\'s proposals, and the taint keys of the org
     const threadId = `thread-${randomUUID().slice(0, 8)}`;
     const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${threadId}`, direction: 'in', contact: { id: `u-${tick}-${threadId}`, name: 'Trần Thị Khách' }, text, at: new Date(Date.UTC(2026, 10, 1, 10, tick)).toISOString() };
     await h.system<ConversationIngested>('conversations', 'kernel.conversation.ingest', { connectionId, events: [event] });
-    return (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
+    return (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
   }
   const erase = (conversationId: string) => h.runtime.execute('kernel.conversation.erase_contact', { conversationId, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
-  const audits = async () => (await h.q<{ target_id: string; detail: Record<string, unknown>; outcome: string }>(`SELECT target_id, detail, outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.engage.proposal_erased'`, [h.orgId])).rows;
+  const audits = async () => (await h.q<{ target_id: string; detail: Record<string, unknown>; outcome: string }>(`SELECT target_id, detail, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.engage.proposal_erased'`, [h.orgId])).rows;
 
   it('writes one audit row per proposal it blanks, with ids and the state before and none of the text, and replaces the note a person typed', async () => {
     const waitingThread = await comment('Số của mình là 0912345678');
@@ -94,7 +94,7 @@ suite('the erasure of an AI coworker\'s proposals, and the taint keys of the org
     const decided = await h.propose(actor, 'kernel.conversation.reply_approved', { conversationId: decidedThread, body: 'Giao tới 12 Lê Lợi ạ', lastSeenSeq: 1 });
     await h.reject(decided.proposalId);
     // The note a person typed when rejecting may quote the text.
-    await h.q("UPDATE crove_kernel.proposal SET decision_note = 'đừng gửi 12 Lê Lợi' WHERE org_id = $1 AND id = $2", [h.orgId, decided.proposalId]);
+    await h.q("UPDATE ludy_kernel.proposal SET decision_note = 'đừng gửi 12 Lê Lợi' WHERE org_id = $1 AND id = $2", [h.orgId, decided.proposalId]);
     const before = (await audits()).length;
     await erase(waitingThread);
     await erase(decidedThread);
@@ -104,7 +104,7 @@ suite('the erasure of an AI coworker\'s proposals, and the taint keys of the org
     expect(rows.find((r) => r.target_id === waiting.proposalId)?.detail).toEqual({ proposalId: waiting.proposalId, was: 'pending' });
     expect(rows.find((r) => r.target_id === decided.proposalId)?.detail).toEqual({ proposalId: decided.proposalId, was: 'rejected' });
     expect(JSON.stringify(rows)).not.toMatch(/0912345678|Lê Lợi/);
-    const note = async (id: string) => (await h.q<{ decision_note: string | null }>('SELECT decision_note FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, id])).rows[0]?.decision_note;
+    const note = async (id: string) => (await h.q<{ decision_note: string | null }>('SELECT decision_note FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, id])).rows[0]?.decision_note;
     expect(await note(decided.proposalId)).toBe('erased');
     expect(await note(waiting.proposalId)).toBe('conversation erased');
     // Run again: nothing is left to blank, so nothing more is written.
@@ -131,7 +131,7 @@ suite('the erasure of an AI coworker\'s proposals, and the taint keys of the org
   it('is for an owner, an admin or the system: a member and a viewer are refused', async () => {
     for (const role of ['member', 'viewer'] as const) {
       const user = await upsertIdentity(h.db, { issuer: 'engage-erase-gone', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-erase-gone.test`, name: role });
-      await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, user, role]);
+      await h.q('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, user, role]);
       // The command lets every role reach it; the 403 is the definer's own refusal (42501), mapped by the runtime.
       await expect(app.execute('kernel.erase_gone_test.run', {}, { actor: h.person(user), orgId: h.orgId }), role).rejects.toMatchObject({ status: 403 });
     }

@@ -65,9 +65,9 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     return meetingId;
   }
   const mail = (meetingId: string) =>
-    sqlAdmin<{ payload: unknown; status: string; to_address: string | null; subject: string | null }>("SELECT payload, status, to_address, subject FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]).then((r) => r.rows);
+    sqlAdmin<{ payload: unknown; status: string; to_address: string | null; subject: string | null }>("SELECT payload, status, to_address, subject FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]).then((r) => r.rows);
   const audit = (command: string, meetingId: string) =>
-    sqlAdmin<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3', [orgId, command, meetingId]).then((r) => r.rows);
+    sqlAdmin<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3', [orgId, command, meetingId]).then((r) => r.rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -78,15 +78,15 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -95,7 +95,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'erase', subject: key, email: `${key}@erase.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Xóa')).orgId;
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [orgId, users.recorder, users.attendee]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [orgId, users.recorder, users.attendee]);
   }, 300_000);
 
   afterAll(async () => {
@@ -165,11 +165,11 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   it('leaves a mail of another source with the same id untouched', async () => {
     const m = await seedSent();
     const other = (await sqlAdmin<{ id: string }>(
-      "INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), 's', '{\"keep\":true}', '<x@y.test>', 'queued') RETURNING id",
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), 's', '{\"keep\":true}', '<x@y.test>', 'queued') RETURNING id",
       [orgId, m],
     )).rows[0]!.id;
     await exec('recorder', 'meetings.meeting.delete', { meetingId: m });
-    const kept = await sqlAdmin<{ payload: unknown }>('SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other]);
+    const kept = await sqlAdmin<{ payload: unknown }>('SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other]);
     expect(kept.rows[0]?.payload).toEqual({ keep: true });
   });
 
@@ -180,14 +180,14 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     const OTHER = 'nguoi.khac@erase.test';
     const erase = (value = MENTION) => runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
     const lastAudit = () =>
-      sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1", [orgId]).then((r) => r.rows[0]?.detail);
+      sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1", [orgId]).then((r) => r.rows[0]?.detail);
 
     it('drops the payload and the subject of the follow-up mails of a meeting whose rows it changed, and only those', async () => {
       // The owner records these meetings, so the erasure may redact them at once.
       const touched = await seedSent({ recorder: 'owner', summary: `Gửi báo giá cho ${MENTION} trước thứ sáu.`, subject: "Tóm tắt họp với anh Khách" });
       const untouched = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
       const other = (await sqlAdmin<{ id: string }>(
-        "INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('b', 64), 's', '{\"keep\":true}', '<erase-other@y.test>', 'queued') RETURNING id",
+        "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('b', 64), 's', '{\"keep\":true}', '<erase-other@y.test>', 'queued') RETURNING id",
         [orgId, touched],
       )).rows[0]!.id;
       const before = (await mail(touched))[0];
@@ -204,7 +204,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       const left = await mail(untouched);
       expect(left[0]?.payload).not.toBeNull();
       expect(left[0]?.subject).toBe('Tóm tắt');
-      expect((await sqlAdmin<{ payload: unknown }>('SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other])).rows[0]?.payload).toEqual({ keep: true });
+      expect((await sqlAdmin<{ payload: unknown }>('SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other])).rows[0]?.payload).toEqual({ keep: true });
       // The audit row holds a count, never the text.
       const detail = await lastAudit();
       expect(detail).toMatchObject({ follow_up_mails: 1 });
@@ -252,12 +252,12 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         admin(async (c) => {
           await c.query('BEGIN');
           await c.query('SET LOCAL session_replication_role = replica');
-          await c.query("UPDATE crove_kernel.mail_message SET subject = $3 WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId, subject]);
+          await c.query("UPDATE ludy_kernel.mail_message SET subject = $3 WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId, subject]);
           await c.query('COMMIT');
         });
       const deliver = async (meetingId: string) => {
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sent', sent_at = now() WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'sent', sent_at = now() WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]);
       };
 
       it('drops the mail when the recorder edited the value out of the meeting after the send, so the meeting has no hit', async () => {
@@ -282,7 +282,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = ANY ($2::uuid[])", [orgId, [quoted, phoned]]);
         expect(JSON.stringify((await mail(quoted))[0]?.payload)).toContain(value);
         // The text form the database matches really holds the escapes.
-        const escaped = await sqlAdmin<{ q: boolean; b: boolean }>("SELECT position(E'\\\\\"' in payload::text) > 0 AS q, position(E'\\\\\\\\' in payload::text) > 0 AS b FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, quoted]);
+        const escaped = await sqlAdmin<{ q: boolean; b: boolean }>("SELECT position(E'\\\\\"' in payload::text) > 0 AS q, position(E'\\\\\\\\' in payload::text) > 0 AS b FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, quoted]);
         expect(escaped.rows[0]).toEqual({ q: true, b: true });
         await erase(value);
         expect((await mail(quoted))[0]).toMatchObject({ payload: null, subject: null });
@@ -307,12 +307,12 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await setSubject(same, `Gửi ${value}`);
         // A second mail of the same meeting, with text that does not mention the value.
         await sqlAdmin(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
-           SELECT org_id, stream, source, source_id, template_key, 'khac@erase.test', repeat('c', 64), 'Không có giá trị', '{"summary":"Chốt"}'::jsonb, '<' || gen_random_uuid()::text || '@erase.test>', 'queued' FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 LIMIT 1`,
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
+           SELECT org_id, stream, source, source_id, template_key, 'khac@erase.test', repeat('c', 64), 'Không có giá trị', '{"summary":"Chốt"}'::jsonb, '<' || gen_random_uuid()::text || '@erase.test>', 'queued' FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 LIMIT 1`,
           [orgId, same],
         );
         const foreign = (await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('d', 64), $3, '{"keep":true}'::jsonb, '<' || gen_random_uuid()::text || '@erase.test>', 'queued') RETURNING id`,
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('d', 64), $3, '{"keep":true}'::jsonb, '<' || gen_random_uuid()::text || '@erase.test>', 'queued') RETURNING id`,
           [orgId, same, `Gửi ${value}`],
         )).rows[0]!.id;
         await erase(value);
@@ -320,7 +320,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const rows = await mail(same);
         expect(rows.filter((r) => r.payload === null && r.subject === null)).toHaveLength(1);
         expect(rows.filter((r) => r.subject === 'Không có giá trị')).toHaveLength(1);
-        expect((await sqlAdmin<{ subject: string | null; payload: unknown }>('SELECT subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, foreign])).rows[0]).toEqual({ subject: `Gửi ${value}`, payload: { keep: true } });
+        expect((await sqlAdmin<{ subject: string | null; payload: unknown }>('SELECT subject, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, foreign])).rows[0]).toEqual({ subject: `Gửi ${value}`, payload: { keep: true } });
       });
 
       it('keeps the mail of a meeting the owner cannot read, counts it with the reason, and a delete then clears payload and subject', async () => {
@@ -348,13 +348,13 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const value = 'cu.va.moi@erase.test';
         const purged = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(purged, `Gửi ${value}`);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, purged]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, purged]);
         const noSubject = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
         await sqlAdmin('UPDATE crove_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2', [orgId, noSubject, 'Đã sửa.']);
         await admin(async (c) => {
           await c.query('BEGIN');
           await c.query('SET LOCAL session_replication_role = replica');
-          await c.query("UPDATE crove_kernel.mail_message SET subject = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, noSubject]);
+          await c.query("UPDATE ludy_kernel.mail_message SET subject = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, noSubject]);
           await c.query('COMMIT');
         });
         expect((await mail(noSubject))[0]).toMatchObject({ subject: null });
@@ -371,17 +371,17 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await deliver(sent);
         const unsure = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(unsure, `Gửi ${value}`);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'ambiguous' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'ambiguous' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
         const failed = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(failed, `Gửi ${value}`);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
-        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'failed' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
+        await sqlAdmin("UPDATE ludy_kernel.mail_message SET status = 'failed' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
         const queued = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(queued, `Gửi ${LEFT}`);
         const out = await erase(value);
         expect((await mail(sent))[0]).toMatchObject({ payload: null, subject: null, status: 'sent' });
-        const note = out.kept.find((k) => k.column === 'crove_kernel.mail_message.payload');
+        const note = out.kept.find((k) => k.column === 'ludy_kernel.mail_message.payload');
         // The sent one and the one whose outcome is unknown (ambiguous) count; the one that failed never reached a recipient.
         expect(note).toMatchObject({ rows: 2 });
         expect((await mail(failed))[0]).toMatchObject({ payload: null, subject: null, status: 'failed' });
@@ -390,7 +390,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         // A queued mail is dropped (and fails to render), with no such line.
         const second = await erase(LEFT);
         expect((await mail(queued))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
-        expect(second.kept.find((k) => k.column === 'crove_kernel.mail_message.payload')).toBeUndefined();
+        expect(second.kept.find((k) => k.column === 'ludy_kernel.mail_message.payload')).toBeUndefined();
         expect(JSON.stringify(await lastAudit())).not.toContain('cannot be recalled');
       });
 
@@ -421,7 +421,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       });
 
       // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to bite
-      // deterministically, not by data volume (#3073): for the test only, the database's matcher (crove_kernel.text_mentions) is wrapped so that it sleeps for 30 s on one marker text, and
+      // deterministically, not by data volume (#3073): for the test only, the database's matcher (ludy_kernel.text_mentions) is wrapped so that it sleeps for 30 s on one marker text, and
       // one follow-up mail carries that marker as its subject. The scan must evaluate the matcher on that mail, so it can never finish inside the 2 s timeout below, however fast the runner.
       // The wrapper changes nothing for any other text, and the real matcher is put back when the test ends (each run has its own database).
       it('skips the by-text pass and says so when the scan hits the statement timeout, and still erases the rest', async () => {
@@ -433,18 +433,18 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const SLOW_MARKER = 'slow-scan-marker-3073';
         await admin(async (c) => {
           await c.query('BEGIN');
-          await c.query('ALTER FUNCTION crove_kernel.text_mentions(text, text, text) RENAME TO text_mentions_real');
+          await c.query('ALTER FUNCTION ludy_kernel.text_mentions(text, text, text) RENAME TO text_mentions_real');
           await c.query(
-            `CREATE FUNCTION crove_kernel.text_mentions(p_text text, p_kind text, p_value text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $f$
+            `CREATE FUNCTION ludy_kernel.text_mentions(p_text text, p_kind text, p_value text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $f$
              BEGIN
                IF p_text = '${SLOW_MARKER}' THEN PERFORM pg_catalog.pg_sleep(30); END IF;
-               RETURN crove_kernel.text_mentions_real(p_text, p_kind, p_value);
+               RETURN ludy_kernel.text_mentions_real(p_text, p_kind, p_value);
              END $f$`,
           );
-          await c.query('GRANT EXECUTE ON FUNCTION crove_kernel.text_mentions(text, text, text) TO crove_tenant');
+          await c.query('GRANT EXECUTE ON FUNCTION ludy_kernel.text_mentions(text, text, text) TO ludy_tenant');
           await c.query('SET LOCAL session_replication_role = replica');
           await c.query(
-            `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
+            `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
              VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'cham@erase.test', repeat('e', 64), $3, jsonb_build_object('t', 'khong co gi o day'), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
             [orgId, slow, SLOW_MARKER],
           );
@@ -452,7 +452,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         });
         try {
           const url = new URL(adminUrl);
-          url.username = 'crove_app';
+          url.username = 'ludy_app';
           url.password = 'test-app-pw';
           // 2 s: far above what the other statements of the erasure need, far below the 30 s the marker mail makes the scan wait.
           const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 2000 });
@@ -468,9 +468,9 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
           await admin(async (c) => {
             await c.query('BEGIN');
             await c.query('SET LOCAL session_replication_role = replica');
-            await c.query('DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [orgId, slow]);
-            await c.query('DROP FUNCTION crove_kernel.text_mentions(text, text, text)');
-            await c.query('ALTER FUNCTION crove_kernel.text_mentions_real(text, text, text) RENAME TO text_mentions');
+            await c.query('DELETE FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [orgId, slow]);
+            await c.query('DROP FUNCTION ludy_kernel.text_mentions(text, text, text)');
+            await c.query('ALTER FUNCTION ludy_kernel.text_mentions_real(text, text, text) RENAME TO text_mentions');
             await c.query('COMMIT');
           });
         }

@@ -75,7 +75,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
   });
   const check = (who: string, meetingId: string, typed: string[] = [], over: Partial<MeetingBriefDeps> = {}) => runMeetingAdherence(deps(over), orgId, asUser(who), { meetingId, typed });
   const agendaOf = (who: string, meetingId: string) => runtime.query<AdherenceAgenda>('meetings.adherence.agenda', { meetingId }, { actor: asUser(who), orgId });
-  const resultRows = async () => (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.adherence' ORDER BY created_at`, [orgId])).rows;
+  const resultRows = async () => (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.adherence' ORDER BY created_at`, [orgId])).rows;
 
   async function meeting(title: string, startMinutes: number, series: string | null, readers: string[] = []): Promise<string> {
     const id = randomUUID();
@@ -93,7 +93,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     let taskId: string | null = null;
     if (task !== undefined) {
       taskId = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, task]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, task]);
     }
     await sqlAdmin(
       `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
@@ -125,9 +125,9 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
@@ -136,7 +136,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'rec', 'lan', 'stranger']) users[key] = await upsertIdentity(db, { issuer: 'adherence-ai', subject: key, email: `${key}@adherence-ai.test`, name: key === 'rec' ? 'Trần Văn Nam' : key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Kiểm Tra')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {

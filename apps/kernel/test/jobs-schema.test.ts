@@ -15,7 +15,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
   });
 
   it('drops the transaction wrapper and pins search_path on every function', () => {
-    const body = adaptPlans(getConstructionPlans('crove_jobs'));
+    const body = adaptPlans(getConstructionPlans('ludy_jobs'));
     expect(body).not.toMatch(/^\s*(BEGIN|COMMIT);/m);
     expect(body).not.toContain('pg_advisory_xact_lock');
     const functions = body.match(/CREATE (?:OR REPLACE )?FUNCTION /g)?.length ?? 0;
@@ -66,7 +66,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
     expect(created.flatMap((c) => c.names).sort()).toEqual(Object.values(QUEUES).sort());
   });
 
-  // crove_kernel.health() takes a queue's module from its name up to the first '-' (#1877).
+  // ludy_kernel.health() takes a queue's module from its name up to the first '-' (#1877).
   it('names every queue after the module that works it', () => {
     for (const queue of [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES]) {
       expect(AVAILABLE_MODULES as readonly string[], queue).toContain(queue.split('-')[0]);

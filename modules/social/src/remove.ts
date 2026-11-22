@@ -38,7 +38,7 @@ export async function removeCallsOf(trx: Trx, orgId: string, variants: readonly 
   if (variants.length === 0) return out;
   const prefixes = variants.map(removePrefix);
   const { rows } = await sql<CommentCall>`
-    SELECT key, state, external_ref, error_code, started_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid
       AND (key = ANY(${prefixes}::text[]) OR key LIKE ANY(${prefixes.map((p) => `${p}\\_%`)}::text[]))
     ORDER BY started_at, key`.execute(trx);
@@ -136,7 +136,7 @@ export const removeBegin = defineCommand({
     const callKey = publishCallKey(v.id, callRevision(v), v.attempt, stepName);
     // Idempotent: the platform answers a post already gone like a removal.
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: stepName, retry_safety: 'idempotent', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, provider: v.provider, connectionId: v.channel_connection_id, callKey, externalId: v.external_post_id, settings: settingsOf(v) };
@@ -173,7 +173,7 @@ export const removeRecord = defineCommand({
     const errorCode = r.kind === 'removed' ? null : r.kind === 'unknown' ? (r.code ?? 'OUTCOME_UNKNOWN') : (r.code ?? null);
     const errorKind = r.kind === 'removed' ? null : r.kind === 'unknown' ? 'unknown' : r.kind === 'blocked' ? (r.code === 'CHANNEL_NOT_ACTIVE' ? 'token_expired' : 'permission') : r.error;
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ state, error_kind: errorKind, error_code: errorCode, ...(state === 'ambiguous' ? {} : { finished_at: ctx.now }), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)
@@ -270,11 +270,11 @@ export const removeWatch = defineCommand({
       const callKey = publishCallKey(v.id, callRevision(v), v.attempt, stepName);
       code = 'REMOVE_NOT_RUN';
       await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: stepName, retry_safety: 'idempotent', request_hash: v.content_hash, started_at: ctx.now })
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'failed', error_kind: 'transient', error_code: code, finished_at: ctx.now, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', callKey)
@@ -283,7 +283,7 @@ export const removeWatch = defineCommand({
       if (now - call.started_at.getTime() <= REMOVE_STALE_MS) return { told: false, reason: 'not_stale' };
       code = 'OUTCOME_UNKNOWN';
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'ambiguous', error_kind: 'unknown', error_code: code, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', call.key)

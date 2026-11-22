@@ -78,10 +78,10 @@ test('import opening balances from the Excel template', async ({ page }) => {
   await test.step('one opening entry in the database, posted with the second factor', async () => {
     const rows = sql<{ lines: number; debit: string; command_aal: string }>(
       `SELECT count(l.*)::int AS lines, sum(l.debit)::text AS debit,
-              (SELECT a.detail->>'aal' FROM crove_kernel.audit_event a
+              (SELECT a.detail->>'aal' FROM ludy_kernel.audit_event a
                 WHERE a.org_id = e.org_id AND a.command = 'finance.opening_balance.post' AND a.outcome = 'ok') AS command_aal
          FROM crove_finance.journal_entry e
-         JOIN crove_kernel.tenant t ON t.org_id = e.org_id
+         JOIN ludy_kernel.tenant t ON t.org_id = e.org_id
          JOIN crove_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
         WHERE t.slug = :'slug' AND e.source_type = 'finance.opening_balance'
         GROUP BY e.org_id, e.id`,

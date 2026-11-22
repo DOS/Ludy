@@ -93,9 +93,9 @@ suite('AI agents through the API (ADR-0029, #258)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db = createDb(pool);
@@ -244,7 +244,7 @@ suite('AI agents through the API (ADR-0029, #258)', () => {
     // The model calls the meter would have recorded (#2382): this month in two modules, and one last month that no budget counts.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.org_usage (org_id, metric, amount, feature, module, agent_id, created_at) VALUES
+        `INSERT INTO ludy_kernel.org_usage (org_id, metric, amount, feature, module, agent_id, created_at) VALUES
            ($1, 'ai_cost', 10.25, 'finance.invoice_extract', 'finance', $2, now()),
            ($1, 'ai_cost', 1.5, 'crm.booking_schedule', 'crm', $2, now()),
            ($1, 'ai_cost', 99, 'finance.invoice_extract', 'finance', $2, now() - interval '40 days')`,

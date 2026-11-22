@@ -72,7 +72,7 @@ type EventTypeRow = NonNullable<Awaited<ReturnType<typeof eventTypeRow>>>;
 // one), as bookingView() computes them; with the lead host's zone. None for an archived type.
 async function typeSlots(ctx: Reader, type: EventTypeRow, from: number, to: number, now: number): Promise<{ timeZone: string; slots: Interval[] }> {
   const ids = type.assignment === 'single' ? [type.host_user_id] : [type.host_user_id, ...type.co_host_user_ids];
-  const members = await ctx.trx.selectFrom('crove_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
+  const members = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
   const able = new Set(members.filter((m) => HOST_ROLES.has(m.role)).map((m) => m.user_id));
   const hosts = type.active ? ids.filter((id) => able.has(id)) : [];
   const booked = await ctx.trx

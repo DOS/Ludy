@@ -319,7 +319,7 @@ export const orgStampCreate = defineCommand({
 
     if (input.fileId) {
       const fileRow = await ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select(['id', 'content_type', 'size_bytes', 'sha256', 'source'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.fileId)

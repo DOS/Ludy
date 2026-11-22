@@ -40,9 +40,9 @@ export async function previousMeetingOf(trx: Trx, orgId: string, seriesId: strin
 export async function openItemsOf(trx: Trx, orgId: string, meetingId: string): Promise<SeriesOpenItem[]> {
   const rows = await trx
     .selectFrom('crove_meetings.action_item as i')
-    .leftJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'i.org_id').onRef('t.id', '=', 'i.task_id'))
+    .leftJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'i.org_id').onRef('t.id', '=', 'i.task_id'))
     // The seat the task is with NOW (it may have been given to someone else since the item was accepted) and who holds it.
-    .leftJoin('crove_kernel.position as p', (join) => join.onRef('p.org_id', '=', 't.org_id').onRef('p.id', '=', 't.assignee_position_id').on('p.status', '=', 'active'))
+    .leftJoin('ludy_kernel.position as p', (join) => join.onRef('p.org_id', '=', 't.org_id').onRef('p.id', '=', 't.assignee_position_id').on('p.status', '=', 'active'))
     .select([
       'i.id',
       'i.title',

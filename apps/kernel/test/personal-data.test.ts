@@ -12,12 +12,12 @@ const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
 
 describe('personal-data registry: legal entities (#1312)', () => {
   it('registers the name and the tax code of a legal entity, kept by law', () => {
-    expect(entries['crove_kernel.legal_entity.name']).toMatchObject({ kind: 'name', handling: 'keep_legal' });
-    expect(entries['crove_kernel.legal_entity.tax_code']).toMatchObject({ kind: 'tax_code', handling: 'keep_legal' });
+    expect(entries['ludy_kernel.legal_entity.name']).toMatchObject({ kind: 'name', handling: 'keep_legal' });
+    expect(entries['ludy_kernel.legal_entity.tax_code']).toMatchObject({ kind: 'tax_code', handling: 'keep_legal' });
   });
 
   it("keeps a non-default entity by law and the default one as the org's own", () => {
-    for (const key of ['crove_kernel.legal_entity.name', 'crove_kernel.legal_entity.tax_code']) {
+    for (const key of ['ludy_kernel.legal_entity.name', 'ludy_kernel.legal_entity.tax_code']) {
       const entry = entries[key] as PersonalDataColumn;
       expect(rowHandling(entry, { kind: 'household', is_default: false }), key).toEqual({ handling: 'keep_legal', reason: entry.reason });
       expect(rowHandling(entry, { kind: 'household', is_default: true }).handling, key).toBe('keep_org');
@@ -28,9 +28,9 @@ describe('personal-data registry: legal entities (#1312)', () => {
   });
 
   it('leaves columns without an override as they are', () => {
-    const tenantCode = entries['crove_kernel.tenant.tax_code'] as PersonalDataColumn;
+    const tenantCode = entries['ludy_kernel.tenant.tax_code'] as PersonalDataColumn;
     expect(rowHandling(tenantCode, { is_default: true })).toEqual({ handling: 'keep_org', reason: tenantCode.reason });
-    const partyEmail = entries['crove_kernel.party.email'] as PersonalDataColumn;
+    const partyEmail = entries['ludy_kernel.party.email'] as PersonalDataColumn;
     expect(rowHandling(partyEmail, { is_default: true }).handling).toBe('erase');
   });
 

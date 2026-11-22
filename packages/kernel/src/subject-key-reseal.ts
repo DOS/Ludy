@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The system command of the reseal pass for subject keys (#2643, ADR-0017 section 7): the worker has wrapped some of an org's subject keys again under the current credential key
-// (SubjectVault.rewrap, in the worker's memory), and this writes them, in the org's sealed system context, through the worker-only definer crove_kernel.subject_key_reseal. A write is
+// (SubjectVault.rewrap, in the worker's memory), and this writes them, in the org's sealed system context, through the worker-only definer ludy_kernel.subject_key_reseal. A write is
 // a compare and swap on the key id and the bytes the worker read, so a subject shredded or already resealed in between changes nothing. Only wrapped data keys are in the input:
 // no sealed value and no data key. The audit fact carries counts and key ids.
 import { sql } from 'kysely';
@@ -25,13 +25,13 @@ export const subjectKeyReseal = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['key_id', 'wrapped_key'])],
+  writes: [tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['key_id', 'wrapped_key'])],
   handler: async (ctx, input): Promise<{ resealed: number; skipped: number }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     let resealed = 0;
     for (const item of input.items) {
       const { rows } = await sql<{ done: boolean }>`
-        SELECT crove_kernel.subject_key_reseal(${item.id}::uuid, ${item.fromKeyId}, decode(${item.fromWrapped}, 'base64'), ${item.keyId}, decode(${item.wrapped}, 'base64')) AS done`.execute(ctx.trx);
+        SELECT ludy_kernel.subject_key_reseal(${item.id}::uuid, ${item.fromKeyId}, decode(${item.fromWrapped}, 'base64'), ${item.keyId}, decode(${item.wrapped}, 'base64')) AS done`.execute(ctx.trx);
       if (rows[0]?.done === true) resealed += 1;
     }
     // Key ids and counts only: they name a key without revealing it.

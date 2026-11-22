@@ -49,9 +49,9 @@ suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
   async function footprint(userId: string) {
     return withAdmin(async (admin) => {
       const { rows } = await admin.query<{ tenants: number; audits: number; keys: number }>(
-        `SELECT (SELECT count(*)::int FROM crove_kernel.tenant WHERE created_by = $1) AS tenants,
-                (SELECT count(*)::int FROM crove_kernel.audit_event WHERE command = 'kernel.org.create' AND actor_id = $1) AS audits,
-                (SELECT count(*)::int FROM crove_kernel.idempotency_key WHERE command = 'kernel.org.create' AND actor_key = 'user:' || $1) AS keys`,
+        `SELECT (SELECT count(*)::int FROM ludy_kernel.tenant WHERE created_by = $1) AS tenants,
+                (SELECT count(*)::int FROM ludy_kernel.audit_event WHERE command = 'kernel.org.create' AND actor_id = $1) AS audits,
+                (SELECT count(*)::int FROM ludy_kernel.idempotency_key WHERE command = 'kernel.org.create' AND actor_key = 'user:' || $1) AS keys`,
         [userId],
       );
       return rows[0];
@@ -61,7 +61,7 @@ suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
   // Moves every org the user created back by the given hours, so it leaves the rolling 24-hour window.
   async function age(userId: string, hours: number) {
     await withAdmin((admin) =>
-      admin.query(`UPDATE crove_kernel.tenant SET created_at = created_at - make_interval(hours => $2) WHERE created_by = $1`, [userId, hours]),
+      admin.query(`UPDATE ludy_kernel.tenant SET created_at = created_at - make_interval(hours => $2) WHERE created_by = $1`, [userId, hours]),
     );
   }
 
@@ -74,9 +74,9 @@ suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     db = createDb(pool);
@@ -148,7 +148,7 @@ suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
     const third = await createOrg(tight, asUser(user), 'Ba');
     await age(user, 25);
     // A closed org still counts.
-    await withAdmin((admin) => admin.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [third.orgId]));
+    await withAdmin((admin) => admin.query(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [third.orgId]));
     await expect(createOrg(tight, asUser(user), 'Bốn')).rejects.toMatchObject({
       code: 'RATE_LIMITED',
       status: 429,
@@ -209,8 +209,8 @@ suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
     for (const value of ['0', '-1', 'abc', '1e3', '9999999']) {
       await expect(
         db.transaction().execute(async (trx) => {
-          await sql`SELECT set_config('crove.org_create_limit_per_day', ${value}, true)`.execute(trx);
-          await sql`SELECT crove_kernel.create_or_replay_org(${user}::uuid, 'malformed-org', 'Malformed', NULL)`.execute(trx);
+          await sql`SELECT set_config('ludy.org_create_limit_per_day', ${value}, true)`.execute(trx);
+          await sql`SELECT ludy_kernel.create_or_replay_org(${user}::uuid, 'malformed-org', 'Malformed', NULL)`.execute(trx);
         }),
       ).rejects.toThrow(/ORG_CREATE_LIMIT_INVALID/);
     }

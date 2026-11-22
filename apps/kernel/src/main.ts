@@ -7,7 +7,7 @@
 //   worker   outbox relay + jobs
 //   all      api + worker in one process (default for self-host)
 //   prober   health check and alert (plan §4.13): once, or `--every <seconds>`; `--test-alert` sends a test alert
-//   usage-report  the weekly usage counts of the MVP goal, as crove_reporter (issue #311); prints and exits
+//   usage-report  the weekly usage counts of the MVP goal, as ludy_reporter (issue #311); prints and exits
 //   pilot-check   the pilot readiness preflight (issue #308): checks the settings, and with --url the running
 //                 instance; prints and exits
 //   exports-rebind <org id>...  after a restore into a new bucket, re-records each org's export with the restored
@@ -57,6 +57,10 @@ async function runMigrate(config: Config) {
   });
   const shared = config.LUDY_SHARED_DATABASE === 'true';
   await setRolePasswords(adminUrl, {
+    ludy_app: config.LUDY_APP_DB_PASSWORD,
+    ludy_worker: config.LUDY_WORKER_DB_PASSWORD,
+    ludy_prober: config.LUDY_PROBER_DB_PASSWORD,
+    ludy_reporter: config.LUDY_REPORTER_DB_PASSWORD,
     crove_app: config.LUDY_APP_DB_PASSWORD,
     crove_worker: config.LUDY_WORKER_DB_PASSWORD,
     crove_prober: config.LUDY_PROBER_DB_PASSWORD,

@@ -1,5 +1,5 @@
 // Detective security alerts (issue #996, plan §7.8 "Detective controls (with alerts)"). Every few minutes the worker
-// asks crove_kernel.security_signals (worker only) for the signals worth an alert now, logs each as an ALERT line and,
+// asks ludy_kernel.security_signals (worker only) for the signals worth an alert now, logs each as an ALERT line and,
 // when ALERT_WEBHOOK_URL is set, posts it to the same chat as the prober's alerts:
 //   actor_many_orgs   one user acting in more orgs than SECURITY_ALERT_ORG_THRESHOLD within the window;
 //   refusal_spike     more refusals across the deployment than SECURITY_ALERT_REFUSAL_THRESHOLD within the window;
@@ -66,7 +66,7 @@ export async function sweepSecuritySignals(deps: SecurityAlertDeps): Promise<num
   const log = deps.log ?? ((line: string) => console.warn(line));
   const { rows } = await sql<{ signal: SecuritySignal['signal']; subject: string; value: string; org_id: string | null; detail: string | null }>`
     SELECT signal, subject, value::text AS value, org_id, detail
-    FROM crove_kernel.security_signals(${thresholds.windowSeconds}::int, ${thresholds.orgThreshold}::int, ${thresholds.refusalThreshold}::int, ${thresholds.repeatSeconds}::int)`.execute(
+    FROM ludy_kernel.security_signals(${thresholds.windowSeconds}::int, ${thresholds.orgThreshold}::int, ${thresholds.refusalThreshold}::int, ${thresholds.repeatSeconds}::int)`.execute(
     deps.workerDb,
   );
   for (const row of rows) {

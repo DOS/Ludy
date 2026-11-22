@@ -127,21 +127,21 @@ suite('MISA AMIS callback (#3903)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 6 });
     api = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
-    const config = (cfg = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }));
+    const config = (cfg = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }));
     app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { keys: [{ product: 'amis', clientId: CLIENT }, { product: 'asp', clientId: ASP_CLIENT }] } });
     const token = async (email: string) =>
       new SignJWT({ role: 'authenticated', email, session_id: randomUUID(), aal: 'aal1', is_anonymous: false })
@@ -168,9 +168,9 @@ suite('MISA AMIS callback (#3903)', () => {
     B.org = String((await rpc('org/create', tokens.outsider, { name: 'Công ty khác', idempotencyKey: randomUUID() })).body?.orgId);
     C.org = String((await rpc('org/create', tokens.owner, { name: 'Công ty dùng ASP', idempotencyKey: randomUUID() })).body?.orgId);
     for (const [who, owner, product] of [[A, users.owner, 'amis'], [B, users.outsider, 'amis'], [C, users.owner, 'asp']] as const) {
-      who.entity = String((await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [who.org]))[0]?.id);
+      who.entity = String((await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [who.org]))[0]?.id);
       const channel = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $5, $3, 'MISA thử', $4)", [who.org, channel, who.entity, owner, `accounting_misa_${product}`]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $5, $3, 'MISA thử', $4)", [who.org, channel, who.entity, owner, `accounting_misa_${product}`]);
       who.connection = randomUUID();
       who.code = String(
         (
@@ -208,9 +208,9 @@ suite('MISA AMIS callback (#3903)', () => {
         expect(got?.acl ?? '', fn).not.toMatch(/(^|[{,])=X\//);
       }
       const allowed: Record<string, Record<string, boolean>> = {
-        [FNS[0]]: { crove_app: true, crove_worker: false, crove_tenant: false, crove_definer_tenant: false },
-        [FNS[1]]: { crove_app: false, crove_worker: true, crove_tenant: false, crove_definer_tenant: false },
-        [FNS[2]]: { crove_app: false, crove_worker: true, crove_tenant: false, crove_definer_tenant: false },
+        [FNS[0]]: { ludy_app: true, ludy_worker: false, ludy_tenant: false, ludy_definer_tenant: false },
+        [FNS[1]]: { ludy_app: false, ludy_worker: true, ludy_tenant: false, ludy_definer_tenant: false },
+        [FNS[2]]: { ludy_app: false, ludy_worker: true, ludy_tenant: false, ludy_definer_tenant: false },
       };
       for (const [fn, roles] of Object.entries(allowed)) {
         for (const [role, ok] of Object.entries(roles)) {
@@ -218,7 +218,7 @@ suite('MISA AMIS callback (#3903)', () => {
           expect(got?.ok, `${fn} ${role}`).toBe(ok);
         }
       }
-      for (const role of ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) {
+      for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) {
         for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
           const got = (await rows<{ ok: boolean }>("SELECT has_table_privilege($1, 'crove_finance.misa_amis_callback_pending', $2) AS ok", [role, privilege]))[0];
           expect(got?.ok, `${role} ${privilege}`).toBe(false);
@@ -236,7 +236,7 @@ suite('MISA AMIS callback (#3903)', () => {
       // The revoke from PUBLIC is written out (an ACL exists), not left to a default.
       expect(priv?.acl).not.toBeNull();
       expect(priv?.acl ?? '').not.toMatch(/(^|[{,])=X\//);
-      for (const role of ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) {
+      for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) {
         expect((await rows<{ ok: boolean }>("SELECT has_function_privilege($1, $2::regprocedure, 'EXECUTE') AS ok", [role, inner]))[0]?.ok, `${inner} ${role}`).toBe(false);
       }
       // A login that tries it directly is refused.
@@ -249,7 +249,7 @@ suite('MISA AMIS callback (#3903)', () => {
       expect(wrapper?.secdef).toBe(true);
       expect(wrapper?.config).toEqual(['search_path=pg_catalog, pg_temp']);
       expect(wrapper?.acl ?? '').not.toMatch(/(^|[{,])=X\//);
-      const allowed: Record<string, boolean> = { crove_app: true, crove_worker: false, crove_tenant: false, crove_definer_tenant: false };
+      const allowed: Record<string, boolean> = { ludy_app: true, ludy_worker: false, ludy_tenant: false, ludy_definer_tenant: false };
       for (const [role, ok] of Object.entries(allowed)) {
         expect((await rows<{ ok: boolean }>("SELECT has_function_privilege($1, $2::regprocedure, 'EXECUTE') AS ok", [role, asp]))[0]?.ok, `${asp} ${role}`).toBe(ok);
       }
@@ -478,7 +478,7 @@ suite('MISA AMIS callback (#3903)', () => {
         const hits = await rows<{ n: number }>(
           `SELECT (SELECT count(*) FROM crove_finance.misa_amis_callback_pending p WHERE p::text LIKE '%' || $1 || '%')::int
                 + (SELECT count(*) FROM crove_finance.misa_amis_push p WHERE p::text LIKE '%' || $1 || '%')::int
-                + (SELECT count(*) FROM crove_kernel.audit_event a WHERE a::text LIKE '%' || $1 || '%')::int AS n`,
+                + (SELECT count(*) FROM ludy_kernel.audit_event a WHERE a::text LIKE '%' || $1 || '%')::int AS n`,
           [needle],
         );
         expect(Number(hits[0]?.n), needle).toBe(0);

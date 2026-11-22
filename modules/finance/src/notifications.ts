@@ -119,7 +119,7 @@ export const periodClosingRemind = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     // Read again here: the sweep's page is only a hint.
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['vat_filing_period', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['vat_filing_period', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return { sent: 0 };
     // Each legal entity locks its own months (#1280): the period is still open while any entity's books are, so the
     // earliest lock counts (none at all while an entity has never locked).

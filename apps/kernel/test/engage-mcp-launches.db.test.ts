@@ -61,13 +61,13 @@ suite('the read of started ad launches and the proposals made with its ids (#414
   async function rig(state: 'queued' | 'live' | 'stopped', accountName = 'Thử'): Promise<{ launch: string; account: string; draft: string; proposal: string; connection: string; write: string }> {
     const connection = randomUUID();
     const account = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
     await h.q(
       `INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, $6, '2025-10-01', 'VND', $5)`,
       [h.orgId, account, connection, `ext-${account.slice(0, 8)}`, 'Asia/Ho_Chi_Minh', accountName],
     );
     const write = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [h.orgId, write, `acct-${connection.slice(0, 8)}`, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [h.orgId, write, `acct-${connection.slice(0, 8)}`, h.owner]);
     await withoutGuard('crove_ads.ad_account', ['switch_guard', 'write_connection_guard'], async (c) => {
       await c.query('UPDATE crove_ads.ad_account SET write_enabled = true, write_connection_id = $3 WHERE org_id = $1 AND id = $2', [h.orgId, account, write]);
     });

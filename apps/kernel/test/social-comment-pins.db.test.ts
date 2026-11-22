@@ -1,7 +1,7 @@
 // Pinned internal comments on PostgreSQL 17 (issue #1180): a comment on a spot of an image or a moment of a video of
 // the post. The table's CHECKs and its foreign key to the org's own files, the command's refusals (a file outside the
 // post or the channel, the wrong kind of pin, a viewer, a channel the member may not use), the pin in the timeline
-// and on an earlier image, no UPDATE of the pin columns for crove_tenant, and the events of a comment left as they were.
+// and on an earlier image, no UPDATE of the pin columns for ludy_tenant, and the events of a comment left as they were.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +47,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'member' | 'viewer', string> = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -55,7 +55,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -73,7 +73,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 120000, 'social', $8)`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, contentType, contentType.startsWith('video/') ? 30000 : null],
       ),
@@ -96,9 +96,9 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -202,7 +202,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     const { commentId } = await comment(o, o.member, { postId, body: `Hỏi ${mentionToken(o.owner)} chỗ này`, pin: { fileId: photo, x: 0.5, y: 0.5 } });
     const events = await admin((c) =>
       c.query<{ type: string; payload: Record<string, unknown> }>(
-        "SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type IN ('social.post.commented', 'social.post.mentioned') ORDER BY created_at, type",
+        "SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type IN ('social.post.commented', 'social.post.mentioned') ORDER BY created_at, type",
         [o.orgId],
       ),
     );
@@ -259,18 +259,18 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     // A file a pin names is not deleted from under it.
     const loose = await file(o, 'loose.jpg');
     await insert({ file_id: loose, pin_x: 0.1, pin_y: 0.1 });
-    await expect(admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, loose]))).rejects.toEqual(
+    await expect(admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, loose]))).rejects.toEqual(
       expect.objectContaining({ code: '23503', constraint: 'post_comment_file_fk' }),
     );
 
-    // crove_tenant inserts a pin but never changes one; its text and resolve grants stay, and a suggestion's state
+    // ludy_tenant inserts a pin but never changes one; its text and resolve grants stay, and a suggestion's state
     // (#1236).
     for (const column of ['file_id', 'pin_x', 'pin_y', 'pin_seconds']) {
       await expect(
         admin(async (c) => {
           await c.query('BEGIN');
           try {
-            await c.query('SET LOCAL ROLE crove_tenant');
+            await c.query('SET LOCAL ROLE ludy_tenant');
             await c.query(`UPDATE crove_social.post_comment SET ${column} = NULL WHERE false`);
           } finally {
             await c.query('ROLLBACK');
@@ -280,7 +280,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     }
     const grants = await admin((c) =>
       c.query<{ column_name: string }>(
-        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'crove_social' AND table_name = 'post_comment' AND grantee = 'crove_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
+        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'crove_social' AND table_name = 'post_comment' AND grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
       ),
     );
     expect(grants.rows.map((r) => r.column_name)).toEqual(['body', 'edited_at', 'resolved_at', 'resolved_by', 'suggest_state']);

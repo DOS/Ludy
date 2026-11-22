@@ -182,7 +182,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'ca-e2e-app-pw', crove_worker: 'ca-e2e-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'ca-e2e-app-pw', ludy_worker: 'ca-e2e-worker-pw' });
 
     const login = (username: string, password: string) => {
       const u = new URL(adminUrl);
@@ -191,9 +191,9 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       return u.toString();
     };
 
-    pool = createPool({ connectionString: login('crove_app', 'ca-e2e-app-pw'), max: 6 });
+    pool = createPool({ connectionString: login('ludy_app', 'ca-e2e-app-pw'), max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'ca-e2e-worker-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'ca-e2e-worker-pw'), max: 4 });
     workerDb = createDb(workerPool);
 
     const kernelCmds = buildKernelCommands({ shippedModules: AVAILABLE_MODULES });
@@ -214,7 +214,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       .register({ commands: [...signCommands, ...signAiCommands], queries: [...signQueries, ...signAiQueries] });
 
     const config = loadConfig({
-      DATABASE_URL: login('crove_app', 'ca-e2e-app-pw'),
+      DATABASE_URL: login('ludy_app', 'ca-e2e-app-pw'),
       AUTH_JWT_SECRET: SECRET,
       AUTH_ISSUER: ISSUER,
       AUTH_SESSION_CHECK: 'off',
@@ -253,7 +253,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     await adminClient.connect();
     try {
       await adminClient.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1::uuid, $2::uuid, 'admin'),
                 ($1::uuid, $3::uuid, 'admin'),
                 ($1::uuid, $4::uuid, 'member'),
@@ -804,7 +804,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       await adminClient.connect();
       try {
         await adminClient.query(
-          `UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1::uuid AND user_id = $2::uuid`,
+          `UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1::uuid AND user_id = $2::uuid`,
           [org.orgId, demotedCreator.userId],
         );
       } finally {
@@ -867,7 +867,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
           aal: 'aal1',
           mfaAt: null,
         });
-        await appClient.query(`SELECT crove_kernel.enter_user_context($1::uuid, $2::text)`, [org.orgId, ctxToken]);
+        await appClient.query(`SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)`, [org.orgId, ctxToken]);
 
         const rlsCount = await appClient.query<{ cnt: string }>(
           `SELECT count(*)::text AS cnt FROM crove_sign.ca_signing_request WHERE org_id = $1::uuid AND envelope_id = ANY($2::uuid[])`,

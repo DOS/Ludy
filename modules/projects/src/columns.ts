@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Custom board columns per project mapped to canonical crove_kernel.task.status (#2605, docs/plan/projects-v2.md section 4.2, ADR-0056).
+// Custom board columns per project mapped to canonical ludy_kernel.task.status (#2605, docs/plan/projects-v2.md section 4.2, ADR-0056).
 import { sql } from 'kysely';
 import {
   PROJECT_COLUMNS_MAX,
@@ -112,7 +112,7 @@ export async function loadProjectColumns(
 }
 
 // Deterministic mapping for board reads and weekly status: keeps an explicit valid column_id when its
-// mapped canonical status matches crove_kernel.task.status, otherwise falls back to the first ordered column
+// mapped canonical status matches ludy_kernel.task.status, otherwise falls back to the first ordered column
 // whose taskStatus matches task.status (handles agent/direct status changes without touching column_id).
 export function resolveTaskColumnId(
   columns: ReadonlyArray<Pick<ProjectColumn, 'id' | 'taskStatus'>>,
@@ -314,10 +314,10 @@ export const projectColumnInitDefaults = defineCommand({
     const columnIds = columns.map((c) => c.id);
 
     // Map visible non-cancelled project tasks to the newly created default columns atomically.
-    // Joining crove_kernel.task respects le_scope RLS; any hidden task keeps column_id = NULL and resolves cleanly on read.
+    // Joining ludy_kernel.task respects le_scope RLS; any hidden task keeps column_id = NULL and resolves cleanly on read.
     await sql`UPDATE crove_projects.project_task AS pt
       SET column_id = m.column_id
-      FROM crove_kernel.task AS t
+      FROM ludy_kernel.task AS t
       JOIN unnest(${statuses}::text[], ${columnIds}::uuid[]) AS m(task_status, column_id)
         ON m.task_status = t.status
       WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -532,7 +532,7 @@ export const projectColumnDelete = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   // May call kernel.task.set_status via ctx.run when the fallback column maps to a different canonical status;
-  // omit writes so nested crove_kernel.task / outbox updates are not rejected against crove_projects-only writes.
+  // omit writes so nested ludy_kernel.task / outbox updates are not rejected against crove_projects-only writes.
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectColumnDeleteResult> => {
     const userId = userOf(ctx.actor);
@@ -560,7 +560,7 @@ export const projectColumnDelete = defineCommand({
       lock_expires_at: Date | string | null;
     }>`SELECT t.id, t.status, t.checkout_run_id, t.lock_expires_at
       FROM crove_projects.project_task pt
-      INNER JOIN crove_kernel.task t
+      INNER JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${project.id}::uuid
@@ -590,7 +590,7 @@ export const projectColumnDelete = defineCommand({
           AND pt.column_id = ${target.id}::uuid
           AND NOT EXISTS (
             SELECT 1
-              FROM crove_kernel.task t
+              FROM ludy_kernel.task t
              WHERE t.org_id = pt.org_id
                AND t.id = pt.task_id
                AND t.status <> ${target.taskStatus}
@@ -662,7 +662,7 @@ export const projectTaskMoveColumn = defineCommand({
       lock_expires_at: Date | string | null;
     }>`SELECT t.id, t.status, t.checkout_run_id, t.lock_expires_at
       FROM crove_projects.project_task pt
-      INNER JOIN crove_kernel.task t
+      INNER JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${project.id}::uuid
@@ -682,7 +682,7 @@ export const projectTaskMoveColumn = defineCommand({
     if (input.place !== undefined && input.anchorId !== undefined) {
       const anchorVisible = await ctx.trx
         .selectFrom('crove_projects.project_task as pt')
-        .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+        .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
         .select('t.id')
         .where('pt.org_id', '=', ctx.orgId)
         .where('pt.project_id', '=', project.id)
@@ -693,7 +693,7 @@ export const projectTaskMoveColumn = defineCommand({
       const { rows: allRows } = await sql<ProjectOrderRow>`
         SELECT pt.task_id, pt.sort_key
           FROM crove_projects.project_task pt
-          LEFT JOIN crove_kernel.task t
+          LEFT JOIN ludy_kernel.task t
             ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid

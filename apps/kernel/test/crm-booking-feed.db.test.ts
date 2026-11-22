@@ -84,8 +84,8 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(app, asUser(owner), `Văn phòng ${randomUUID().slice(0, 6)}`);
     const [a, b, viewer] = [await person('a'), await person('b'), await person('viewer')];
-    await admin((cl) => cl.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, a, b, viewer]));
-    const slug = (await admin((cl) => cl.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
+    await admin((cl) => cl.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, a, b, viewer]));
+    const slug = (await admin((cl) => cl.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
     for (const user of [a, b]) {
       await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(user), orgId });
     }
@@ -114,19 +114,19 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
     const config = loadConfig({
-      DATABASE_URL: login('crove_app', 'test-app-pw'),
+      DATABASE_URL: login('ludy_app', 'test-app-pw'),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-booking-feed-0123',
       AUTH_ISSUER: 'crove-auth',
       AUTH_SESSION_CHECK: 'off',
@@ -165,7 +165,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     // A booking past the window (moved there directly: the type's horizon would refuse it). At 17:00, a time no other
     // booking here takes, since bookableDay(4) is the same date as bookableDay(3) when day 3 is a holiday.
     const tooFar = await o.book('tu-van', at(bookableDay(4), 1020));
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET starts_at = starts_at + interval '120 days', ends_at = ends_at + interval '120 days' WHERE id = (SELECT calendar_event_id FROM crove_crm.booking WHERE id = $1)", [tooFar]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET starts_at = starts_at + interval '120 days', ends_at = ends_at + interval '120 days' WHERE id = (SELECT calendar_event_id FROM crove_crm.booking WHERE id = $1)", [tooFar]));
 
     const { token } = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -228,7 +228,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     expect(await o.get(o.owner)).toBeNull();
     const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a])).rows[0]?.token_sha256);
     expect(stored).toMatch(/^[0-9a-f]{64}$/);
-    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.booking_feed.%'", [o.orgId])).rows));
+    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.booking_feed.%'", [o.orgId])).rows));
     expect(audit).toContain('crm.booking_feed.create');
     for (const t of [first.token, second.token, theirs.token]) expect(audit).not.toContain(t);
 
@@ -247,13 +247,13 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const b = await o.exec<{ token: string }>(o.b, 'crm.booking_feed.create');
     const a = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     // b becomes a viewer, and a leaves: their addresses stop working.
-    await admin((c) => c.query("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.b]));
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.b]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.a]));
     expect(await bookingFeed(app, b.token)).toBeNull();
     expect(await bookingFeed(app, a.token)).toBeNull();
     expect(await bookingFeed(app, owner.token)).toMatchObject({ slug: o.slug });
     // A closed org's feeds open nothing either.
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
     expect(await bookingFeed(app, owner.token)).toBeNull();
   });
 
@@ -264,7 +264,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const owner = await o.exec<{ token: string }>(o.owner, 'crm.booking_feed.create');
     // What the worker does with each member event: the relay queues it, the job runs the command as the system.
     const revokeFromEvents = async () => {
-      const events = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type IN ('kernel.member.removed', 'kernel.member.role_changed') ORDER BY id", [o.orgId])).rows);
+      const events = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type IN ('kernel.member.removed', 'kernel.member.role_changed') ORDER BY id", [o.orgId])).rows);
       let revoked = 0;
       for (const e of events) revoked += (await worker.execute<{ revoked: number }>('crm.booking_feed.revoke_for_member', { eventId: e.id }, { actor: SYSTEM, orgId: o.orgId })).revoked;
       return revoked;
@@ -273,7 +273,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     await app.execute('kernel.member.change_role', { userId: o.b, role: 'viewer' }, { actor: asMfa(o.owner), orgId: o.orgId });
     expect(await revokeFromEvents()).toBe(2);
     // Added back, and made a member again: the old addresses stay dead.
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
     await app.execute('kernel.member.change_role', { userId: o.b, role: 'member' }, { actor: asMfa(o.owner), orgId: o.orgId });
     // The promotion back revokes nothing more (they host again), and a replayed event changes nothing.
     expect(await revokeFromEvents()).toBe(0);
@@ -293,9 +293,9 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const o = await org();
     const old = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     await app.execute('kernel.member.remove', { userId: o.a }, { actor: asMfa(o.owner), orgId: o.orgId });
-    const removed = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed'", [o.orgId])).rows[0]?.id as string);
+    const removed = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed'", [o.orgId])).rows[0]?.id as string);
     // Back in the org, with a new address, before the worker reached the removal.
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
     const fresh = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     expect(await worker.execute('crm.booking_feed.revoke_for_member', { eventId: removed }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ revoked: 0 });
     // The new address made the old one revoked already; one made before the event and still live is revoked by it.
@@ -307,7 +307,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const b = await o.exec<{ token: string }>(o.b, 'crm.booking_feed.create');
     await app.execute('kernel.member.change_role', { userId: o.b, role: 'viewer' }, { actor: asMfa(o.owner), orgId: o.orgId });
     await app.execute('kernel.member.change_role', { userId: o.b, role: 'member' }, { actor: asMfa(o.owner), orgId: o.orgId });
-    const changes = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY id", [o.orgId])).rows);
+    const changes = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY id", [o.orgId])).rows);
     const results = [];
     for (const e of changes) results.push(await worker.execute<{ revoked: number }>('crm.booking_feed.revoke_for_member', { eventId: e.id }, { actor: SYSTEM, orgId: o.orgId }));
     expect(results).toEqual([{ revoked: 1 }, { revoked: 0 }]);
@@ -327,7 +327,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
       }
     };
     const revokeFrom = async (type: string, userId: string) => {
-      const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>'userId' = $3 ORDER BY id DESC LIMIT 1", [o.orgId, type, userId])).rows[0]?.id as string);
+      const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>'userId' = $3 ORDER BY id DESC LIMIT 1", [o.orgId, type, userId])).rows[0]?.id as string);
       return worker.execute<{ revoked: number }>('crm.booking_feed.revoke_for_member', { eventId: event }, { actor: SYSTEM, orgId: o.orgId });
     };
     // The API's clock an hour ahead: a feed made before the removal is still older than it, so the removal revokes it.
@@ -338,7 +338,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     expect(await revokeFrom('kernel.member.removed', o.a)).toEqual({ revoked: 1 });
     expect(await bookingFeed(app, early.token)).toBeNull();
     // The API's clock an hour behind: a feed made after the member came back is still newer than the removal.
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, o.a]));
     const late = await createSkewed(o.a, -3_600_000);
     expect(await revokeFrom('kernel.member.removed', o.a)).toEqual({ revoked: 0 });
     expect(await bookingFeed(app, late.token)).toMatchObject({ slug: o.slug });
@@ -348,7 +348,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const o = await org();
     const { token } = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     expect(await bookingFeed(app, token)).toMatchObject({ slug: o.slug });
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.a]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.a]));
     expect(await bookingFeed(app, token)).toBeNull();
     expect((await http().request(`/cal/${token}.ics`)).status).toBe(404);
   });
@@ -371,11 +371,11 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
         )
       ).rows.map((r) => r.grantee),
     );
-    expect(grants).toEqual(['crove_app']);
+    expect(grants).toEqual(['ludy_app']);
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_crm' AND table_name = 'booking_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_crm' AND table_name = 'booking_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );

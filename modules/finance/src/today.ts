@@ -61,7 +61,7 @@ export const financeToday = defineQuery({
     if (ctx.actor.type !== 'user' || ctx.role === null) return [];
     const userId = ctx.actor.userId;
     const today = await databaseToday(ctx.trx);
-    const entities = (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).orderBy('id').execute()).map((e) => e.id);
+    const entities = (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).orderBy('id').execute()).map((e) => e.id);
     const several = entities.length > 1;
     const to: Link = (path, entity) => {
       if (!several || !entity) return path;
@@ -120,7 +120,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
              CASE WHEN p.kind <> 'finance.purchase' OR (p.payload #> '{invoice,foreign}') IS NOT NULL THEN 'VND'
                   ELSE coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') END AS currency,
              CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total
-      FROM crove_kernel.proposal p
+      FROM ludy_kernel.proposal p
       WHERE ${waitingForCaller(ctx, userId)}
     )
     SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
@@ -164,7 +164,7 @@ async function flaggedProposals(ctx: QueryContext, userId: string, to: Link): Pr
     SELECT p.legal_entity_id::text AS entity,
            pg_catalog.count(*) FILTER (WHERE ${check('fail')})::text AS failed,
            pg_catalog.count(*) FILTER (WHERE NOT ${check('fail')} AND ${check('warn')})::text AS warned
-    FROM crove_kernel.proposal p
+    FROM ludy_kernel.proposal p
     WHERE ${waitingForCaller(ctx, userId)}
     GROUP BY 1
     ORDER BY 1`.execute(ctx.trx);
@@ -210,7 +210,7 @@ async function originalItems(ctx: QueryContext): Promise<TodayItem[]> {
   // from kernel.notification.list, which stops at its newest 30.
   const { rows } = await sql<{ n: string; subject: string | null }>`
     SELECT pg_catalog.count(*)::text AS n, pg_catalog.min(subject_id::text) AS subject
-    FROM crove_kernel.notification
+    FROM ludy_kernel.notification
     WHERE org_id = ${ctx.orgId} AND kind = ${ORIGINAL_FLAGGED} AND read_at IS NULL`.execute(ctx.trx);
   const flagged = Number(rows[0]?.n ?? 0);
   if (flagged > 0) {
@@ -277,7 +277,7 @@ const DUE_TIME = 'T23:59:59+07:00';
 // leaves out what every entity marked done (and an entity the caller does not see); the close from the rule of the
 // closing reminder (#671), so the two never disagree.
 async function deadlines(ctx: QueryContext, today: string, to: Link, entities: readonly string[]): Promise<TodayItem[]> {
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const kind = (org?.vat_filing_period as VatFilingPeriod | null | undefined) ?? null;
   if (kind === null) return [];
   const items: TodayItem[] = [];

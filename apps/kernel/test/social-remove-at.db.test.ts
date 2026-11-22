@@ -99,7 +99,7 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
   }
 
   const requested = (o: Org, id: string) =>
-    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_requested' AND payload->>'variant_id' = $2", [o.orgId, id])).rows.map((r) => r.payload));
+    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_requested' AND payload->>'variant_id' = $2", [o.orgId, id])).rows.map((r) => r.payload));
   const due = (providers: string[]) => admin(async (c) => (await c.query<{ variant_id: string }>('SELECT variant_id FROM crove_social.remove_due(1000, $1, $2)', [providers, providers.map((p) => Math.floor(removeWindowMs(p) / 1000))])).rows.map((r) => r.variant_id));
   const sweep = (providers: string[] = ['sandbox']) => sweepRemovals({ runtime: worker, workerDb }, new Set(providers));
 
@@ -112,15 +112,15 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -151,7 +151,7 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     const asked = await requested(o, id);
     expect(asked).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', after: null, scheduled: true }]);
     expect(await variant(o, postId)).toMatchObject({ status: 'published', removal: { state: 'pending', code: null } });
-    const audit = await admin(async (c) => (await c.query<{ actor_type: string; detail: Record<string, unknown> }>("SELECT actor_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.remove.schedule' AND outcome = 'ok'", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ actor_type: string; detail: Record<string, unknown> }>("SELECT actor_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.remove.schedule' AND outcome = 'ok'", [o.orgId])).rows);
     expect(audit).toEqual([{ actor_type: 'system', detail: expect.objectContaining({ post_id: postId, variant_id: id, provider: 'sandbox', scheduled: true, remove_at: new Date(Date.parse(removeAt)).toISOString() }) }]);
     // Asked already: a later sweep, before the job ran, asks nothing more.
     await sweep();
@@ -184,14 +184,14 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     expect(await runRemoveWatch({ runtime: worker }, o.orgId, lost.id, null)).toEqual({ told: true, code: 'REMOVE_NOT_RUN' });
     // The notice of the failure reaches the owners and admins while the app is off (#3456): the ordinary dispatch is refused, the narrow one tells them, once, and only for this event.
     const system = { type: 'system' as const, component: 'social-remove-at-test' };
-    const failure = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' AND payload->>'variant_id' = $2", [o.orgId, lost.id])).rows[0]);
+    const failure = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' AND payload->>'variant_id' = $2", [o.orgId, lost.id])).rows[0]);
     expect(failure).toBeDefined();
     const eventId = (failure as { id: string }).id;
     await expect(worker.execute('social.notification.dispatch', { eventId }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'MODULE_OFF' });
     const told = await worker.execute<{ sent: number; mailed: number }>('social.notification.dispatch_removal', { eventId }, { actor: system, orgId: o.orgId });
     expect(told.sent).toBe(1);
     expect(await worker.execute('social.notification.dispatch_removal', { eventId }, { actor: system, orgId: o.orgId })).toEqual({ sent: 0, mailed: 0 });
-    const asked = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_requested' LIMIT 1", [o.orgId])).rows[0]);
+    const asked = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_requested' LIMIT 1", [o.orgId])).rows[0]);
     expect(await worker.execute('social.notification.dispatch_removal', { eventId: (asked as { id: string }).id }, { actor: system, orgId: o.orgId })).toEqual({ sent: 0, mailed: 0 });
     // Back on, the post screen shows both outcomes (a person's read is refused while the app is off).
     await api.execute('kernel.org.set_app', { module: 'social', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -343,12 +343,12 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
   it('tells the owners and admins when a planned takedown fails, and leaves the failed ask of a person as it was', async () => {
     const o = await org();
     const adminId = await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `admin-${randomUUID().slice(0, 8)}@remove-at.test`, name: null });
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, adminId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, adminId]));
     const sandbox = new SandboxPublisher();
     const refusing: Publisher = { provider: 'sandbox', publishSafety: sandbox.publishSafety, publish: (i) => sandbox.publish(i), remove: async () => ({ kind: 'rejected', error: 'permission', code: 'NO_RIGHTS' }) };
     const deps = { runtime: worker, broker: vault, publishers: { sandbox: refusing }, callTimeoutMs: 2_000 };
     const failures = () =>
-      admin(async (c) => (await c.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' ORDER BY created_at", [o.orgId])).rows);
+      admin(async (c) => (await c.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' ORDER BY created_at", [o.orgId])).rows);
     const dispatch = (eventId: string) => worker.execute<{ sent: number; mailed: number }>('social.notification.dispatch', { eventId }, { actor: { type: 'system', component: 'social.notify' }, orgId: o.orgId });
     const notices = (postId: string) =>
       admin(async (c) => (await c.query<{ user_id: string; kind: string; detail: Record<string, string> }>('SELECT user_id, kind, detail FROM crove_social.notification WHERE org_id = $1 AND post_id = $2 ORDER BY user_id', [o.orgId, postId])).rows);
@@ -384,8 +384,8 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     const sandbox = new SandboxPublisher();
     const counting: Publisher = { provider: 'sandbox', publishSafety: sandbox.publishSafety, publish: (i) => sandbox.publish(i), remove: async () => (removals++, { kind: 'removed' }) };
     const deps = { runtime: worker, broker: vault, publishers: { sandbox: counting }, callTimeoutMs: 2_000 };
-    const failures = () => admin(async (c) => (await c.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' ORDER BY created_at", [o.orgId])).rows);
-    const calls = (id: string) => admin(async (c) => (await c.query<{ key: string; state: string; error_kind: string | null; error_code: string | null; finished: boolean }>("SELECT key, state, error_kind, error_code, finished_at IS NOT NULL AS finished FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
+    const failures = () => admin(async (c) => (await c.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' ORDER BY created_at", [o.orgId])).rows);
+    const calls = (id: string) => admin(async (c) => (await c.query<{ key: string; state: string; error_kind: string | null; error_code: string | null; finished: boolean }>("SELECT key, state, error_kind, error_code, finished_at IS NOT NULL AS finished FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
     const age = (id: string) => admin((c) => c.query("UPDATE crove_social.post_variant SET remove_requested_at = now() - interval '11 minutes' WHERE id = $1", [id]));
 
     // The job never ran. Watched before the ask went stale: nothing yet (the worker runs the watch again later).
@@ -416,10 +416,10 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     await sweep();
     await age(cut.id);
     const key = `social.publish:${cut.id}:1:1:remove`;
-    await admin((c) => c.query("INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'remove', 'idempotent', NULL, now() - interval '5 minutes')", [o.orgId, key]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'remove', 'idempotent', NULL, now() - interval '5 minutes')", [o.orgId, key]));
     expect(await runRemoveWatch({ runtime: worker }, o.orgId, cut.id, null)).toEqual({ told: false, reason: 'not_stale' });
-    await admin((c) => c.query('DELETE FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, key]));
-    await admin((c) => c.query("INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'remove', 'idempotent', NULL, now() - interval '11 minutes')", [o.orgId, key]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, key]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'remove', 'idempotent', NULL, now() - interval '11 minutes')", [o.orgId, key]));
     expect(await runRemoveWatch({ runtime: worker }, o.orgId, cut.id, null)).toEqual({ told: true, code: 'OUTCOME_UNKNOWN' });
     expect(await calls(cut.id)).toEqual([{ key, state: 'ambiguous', error_kind: 'unknown', error_code: 'OUTCOME_UNKNOWN', finished: false }]);
     expect((await failures()).at(-1)?.payload).toEqual({ post_id: cut.postId, variant_id: cut.id, provider: 'sandbox', code: 'OUTCOME_UNKNOWN', scheduled: true });
@@ -462,12 +462,12 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
   it('lets only the worker run the scan', async () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
          WHERE has_function_privilege(r, 'crove_social.remove_due(int, text[], int[])', 'EXECUTE') ORDER BY 1`,
       ),
     );
-    expect(rows.map((r) => r.role)).toEqual(['crove_worker']);
-    const helper = await admin(async (c) => (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.remove_at_of(jsonb)', 'EXECUTE')`)).rows);
+    expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
+    const helper = await admin(async (c) => (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.remove_at_of(jsonb)', 'EXECUTE')`)).rows);
     expect(helper).toEqual([]);
     const client = await appPool.connect();
     try {

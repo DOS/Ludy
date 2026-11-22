@@ -7,7 +7,7 @@
 // Delivery (`POST /api/channels/whatsapp/webhook`): the route checks `X-Hub-Signature-256` over the raw request bytes (the same check as Messenger's,
 // `metaSignatureOk`, with the secret of the WhatsApp product's own Meta app) before anything else. A missing, malformed or wrong signature is refused with
 // 401 and nothing is read, stored or logged from the body. A verified notice that carries a customer's message, or a status `failed` of one of ours, is parked
-// in crove_kernel.conversation_inbound_pending (`whatsapp`) for the worker, which finds the org from the stored connection by the phone number id; the notice
+// in ludy_kernel.conversation_inbound_pending (`whatsapp`) for the worker, which finds the org from the stored connection by the phone number id; the notice
 // names no org, and neither does the path or any answer (ADR-0039). A body holds a customer's phone number and words, so the route logs nothing of it and the
 // table deletes it the moment it is stored. A verified notice with nothing to store (a `sent`, `delivered` or `read` status, a reaction) is answered 200 and
 // not parked, so Meta stops sending it and the queue holds messages only.
@@ -88,7 +88,7 @@ export async function acceptWhatsAppWebhook(
   if (freshKeys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
-      await sql`SELECT crove_kernel.conversation_inbound_enqueue('whatsapp', ${Buffer.from(request.body)}::bytea)`.execute(db);
+      await sql`SELECT ludy_kernel.conversation_inbound_enqueue('whatsapp', ${Buffer.from(request.body)}::bytea)`.execute(db);
     });
   } catch (error) {
     // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED: Meta retries, so a 503 is recovered.

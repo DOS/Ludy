@@ -23,7 +23,7 @@ export const recordFileHold = defineCommand({
   handler: async (ctx, input) => {
     if ('heldUntil' in input) {
       const { rows } = await sql<{ held_until: Date }>`
-        UPDATE crove_kernel.file
+        UPDATE ludy_kernel.file
            SET held_until = GREATEST(coalesce(held_until, ${input.heldUntil}::timestamptz), ${input.heldUntil}::timestamptz),
                hold_attempted_at = ${ctx.now}, hold_attempts = 0, hold_error = NULL
          WHERE org_id = ${ctx.orgId} AND id = ${input.fileId}
@@ -32,7 +32,7 @@ export const recordFileHold = defineCommand({
       return { recorded: row !== undefined, heldUntil: row ? new Date(row.held_until).toISOString() : null };
     }
     const { rows } = await sql<{ id: string }>`
-      UPDATE crove_kernel.file
+      UPDATE ludy_kernel.file
          SET hold_attempted_at = ${ctx.now}, hold_attempts = LEAST(hold_attempts + 1, 1000), hold_error = ${input.error}
        WHERE org_id = ${ctx.orgId} AND id = ${input.fileId}
        RETURNING id`.execute(ctx.trx);

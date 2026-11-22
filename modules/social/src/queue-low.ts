@@ -43,7 +43,7 @@ export const queueCheckLow = defineCommand({
   handler: async (ctx, input): Promise<{ state: QueueLowState; postingDays: number; filledDays: number }> => {
     const none = { postingDays: 0, filledDays: 0 };
     // Closed or offboarding since the scan (#1095): nobody is told.
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return { state: 'skipped', ...none };
     // Held since the scan: nothing goes out, so nothing is missing yet.
     if (await publishingHeld(ctx)) return { state: 'skipped', ...none };
@@ -55,7 +55,7 @@ export const queueCheckLow = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!queue || queue.low_days === null || queue.paused) return { state: 'skipped', ...none };
-    const channel = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', queue.channel_connection_id).executeTakeFirst();
+    const channel = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', queue.channel_connection_id).executeTakeFirst();
     if (channel?.status !== 'active') return { state: 'skipped', ...none };
     const slots = await ctx.trx.selectFrom('crove_social.queue_slot').select(['weekday', 'minute', 'label_id']).where('org_id', '=', ctx.orgId).where('queue_id', '=', queue.id).where('active', '=', true).execute();
     const spec: QueueSpec = { timeZone: queue.time_zone, slots: slots.map((s) => ({ weekday: s.weekday, minute: s.minute, labelId: s.label_id })) };

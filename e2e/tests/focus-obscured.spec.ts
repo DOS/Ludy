@@ -73,9 +73,9 @@ test('a focused control is never hidden behind a sticky bar, at 360px in light a
   await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   // A long list: vendors enough for the table to scroll inside its card.
   exec(
-    `INSERT INTO crove_kernel.party (org_id, name, kind)
+    `INSERT INTO ludy_kernel.party (org_id, name, kind)
      SELECT t.org_id, 'Nhà cung cấp ' || chr(64 + (n / 26) + 1) || chr(65 + n % 26), 'organization'
-     FROM crove_kernel.tenant t, generate_series(0, ${VENDORS - 1}) n WHERE t.slug = :'slug'`,
+     FROM ludy_kernel.tenant t, generate_series(0, ${VENDORS - 1}) n WHERE t.slug = :'slug'`,
     { slug },
   );
   // A pending proposal: its approval bar is fixed to the foot of the screen.

@@ -52,7 +52,7 @@ export interface CalendarWriteBackJob {
 
 export type CalendarSyncOutcome = { outcome: 'synced'; added: number; removed: number } | { outcome: 'skipped' | 'expired' | 'retry'; reason: string };
 
-// A page of the active calendar connections of active orgs after a key (crove_kernel.calendar_sync_due, the worker
+// A page of the active calendar connections of active orgs after a key (ludy_kernel.calendar_sync_due, the worker
 // login's alone), for the 15 minute sweep.
 export const CALENDAR_SYNC_PAGE = 1000;
 export async function calendarSyncDue(
@@ -60,7 +60,7 @@ export async function calendarSyncDue(
   after: { orgId: string; connectionId: string } | null,
 ): Promise<Array<{ orgId: string; connectionId: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_kernel.calendar_sync_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${CALENDAR_SYNC_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_kernel.calendar_sync_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${CALENDAR_SYNC_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 

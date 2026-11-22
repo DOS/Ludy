@@ -96,7 +96,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -113,14 +113,14 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     const desk = await person('desk');
     const lan = await person('lan');
     const viewer = await person('viewer');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm.id, desk.id, lan.id, viewer.id]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm.id, desk.id, lan.id, viewer.id]);
     const connection = async () => {
       const id = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Kênh thử', $5)", [orgId, id, provider, `acct-${randomUUID().slice(0, 8)}`, owner.id]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Kênh thử', $5)", [orgId, id, provider, `acct-${randomUUID().slice(0, 8)}`, owner.id]);
       return id;
     };
-    const [slug] = await rows<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]);
-    const ownerEmail = ((await rows<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [owner.id]))[0] as { email: string }).email;
+    const [slug] = await rows<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]);
+    const ownerEmail = ((await rows<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [owner.id]))[0] as { email: string }).email;
     return { orgId, slug: (slug as { slug: string }).slug, owner: owner.id, ownerSubject: owner.subject, ownerEmail, admin: adm.id, desk: desk.id, lan: lan.id, viewer: viewer.id, connectionId: await connection(), otherConnectionId: await connection() };
   }
 
@@ -143,9 +143,9 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       await c.query("SET session_replication_role = 'replica'");
       return (await c.query(text, params)).rows;
     });
-  const attachments = (o: Org) => rows<{ id: string; state: string; source_url: string | null; storage_key: string; message_id: string }>('SELECT id, state, source_url, storage_key, message_id FROM crove_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
-  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
-  const doomed = () => rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.conversation_blob_doomed ORDER BY storage_key');
+  const attachments = (o: Org) => rows<{ id: string; state: string; source_url: string | null; storage_key: string; message_id: string }>('SELECT id, state, source_url, storage_key, message_id FROM ludy_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
+  const doomed = () => rows<{ storage_key: string }>('SELECT storage_key FROM ludy_kernel.conversation_blob_doomed ORDER BY storage_key');
   const blobsOf = (o: Org) => [...store.blobs.keys()].filter((k) => k.startsWith(`conversation/${o.orgId}/`));
   const url = (path: string) => `${mediaBase}${path}`;
   // The fetch the worker makes, against the local server, from its host only.
@@ -159,7 +159,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     await ingest(o, [imageEvent(threadId, ['https://cdn.zdn.vn/x.png'])]);
     const [row] = (await attachments(o)).filter((a) => a.state === 'pending').slice(-1);
     const a = row as { id: string; storage_key: string };
-    await rows('UPDATE crove_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(path), o.orgId, a.id]);
+    await rows('UPDATE ludy_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(path), o.orgId, a.id]);
     expect(await fetchOne(o, a.id)).toBe('stored');
     return { attachmentId: a.id, key: a.storage_key };
   }
@@ -172,7 +172,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const emailOf = async (userId: string) => ((await rows<{ email: string; subject: string }>('SELECT email, subject FROM crove_kernel.user_account WHERE id = $1', [userId]))[0] as { email: string; subject: string });
+  const emailOf = async (userId: string) => ((await rows<{ email: string; subject: string }>('SELECT email, subject FROM ludy_kernel.user_account WHERE id = $1', [userId]))[0] as { email: string; subject: string });
   async function bytesRoute(o: Org, user: string | null, attachmentId: string) {
     const who = user ? await emailOf(user) : null;
     const response = await app.request(`/api/conversations/attachments/${attachmentId}`, { headers: who ? { authorization: `Bearer ${await token(o, who)}`, 'x-crove-org': o.slug } : {} });
@@ -199,17 +199,17 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
@@ -242,7 +242,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       expect(new Set(rowsNow.map((r) => r.storage_key)).size).toBe(2);
       expect(rowsNow.every((r) => new RegExp(`^conversation/${o.orgId}/[0-9a-f]{64}$`).test(r.storage_key))).toBe(true);
       // No kernel file row is made.
-      expect(Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1', [o.orgId]))[0]?.n)).toBe(0);
+      expect(Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1', [o.orgId]))[0]?.n)).toBe(0);
       // Six images, a plain http address and an image on an outbound echo are not taken.
       await expect(ingest(o, [imageEvent('t2', Array.from({ length: 6 }, (_, i) => `https://cdn.zdn.vn/${i}.png`))])).rejects.toBeTruthy();
       await expect(ingest(o, [imageEvent('t3', ['http://cdn.zdn.vn/a.png'])])).rejects.toBeTruthy();
@@ -267,7 +267,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       const bytes = png();
       const { attachmentId, key } = await stored(o, 'ok', bytes);
       expect(Buffer.compare(Buffer.from(store.blobs.get(key) as Uint8Array), bytes)).toBe(0);
-      const [row] = await rows<Record<string, unknown>>('SELECT state, source_url, sha256, content_type, size_bytes, width, height, generation, stored_at FROM crove_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId]);
+      const [row] = await rows<Record<string, unknown>>('SELECT state, source_url, sha256, content_type, size_bytes, width, height, generation, stored_at FROM ludy_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId]);
       expect(row).toMatchObject({ state: 'stored', source_url: null, sha256: sha256Hex(bytes), content_type: 'image/png', size_bytes: bytes.byteLength, width: 2, height: 3 });
       expect(row?.stored_at).toBeTruthy();
       // The message lists it, as the detail read shows it.
@@ -275,7 +275,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       expect(detail.messages[0]?.attachments).toEqual([{ id: attachmentId, contentType: 'image/png', width: 2, height: 3 }]);
       expect(detail.messages[0]?.body).toBe('[Khách gửi ảnh]');
       // A stored image never changes.
-      await expect(rows('UPDATE crove_kernel.conversation_attachment SET width = 9 WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId])).rejects.toMatchObject({ code: '42501' });
+      await expect(rows('UPDATE ludy_kernel.conversation_attachment SET width = 9 WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId])).rejects.toMatchObject({ code: '42501' });
       // A second job for the same image finds nothing to do.
       expect(await fetchOne(o, attachmentId)).toBe('none');
     });
@@ -293,12 +293,12 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
         answers.set(`/${name}`, answer);
         await ingest(o, [imageEvent(name, ['https://cdn.zdn.vn/x.png'])]);
         const [pending] = (await attachments(o)).filter((a) => a.state === 'pending').slice(-1);
-        await rows('UPDATE crove_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(`/${name}`), o.orgId, (pending as { id: string }).id]);
+        await rows('UPDATE ludy_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(`/${name}`), o.orgId, (pending as { id: string }).id]);
         expect(await fetchOne(o, (pending as { id: string }).id, hosts), name).toBe(expected);
       }
       expect(await attachments(o)).toEqual([]);
       expect(blobsOf(o)).toEqual([]);
-      const bodies = await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]);
+      const bodies = await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId]);
       expect(bodies.map((b) => b.body)).toEqual(Array(cases.length).fill('[Khách gửi ảnh]'));
     });
 
@@ -310,7 +310,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       for (const [name, expected] of [['redirect', 'dropped'], ['flaky', 'retry']] as const) {
         await ingest(o, [imageEvent(name, ['https://cdn.zdn.vn/x.png'])]);
         const [pending] = (await attachments(o)).filter((a) => a.state === 'pending').slice(-1);
-        await rows('UPDATE crove_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(`/${name}`), o.orgId, (pending as { id: string }).id]);
+        await rows('UPDATE ludy_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url(`/${name}`), o.orgId, (pending as { id: string }).id]);
         expect(await fetchOne(o, (pending as { id: string }).id), name).toBe(expected);
       }
       // The redirect's image was never fetched, and the flaky one stays pending for the relay to hand out again.
@@ -324,8 +324,8 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       await ingest(o, [imageEvent('old', ['https://cdn.zdn.vn/old.png'])]);
       await ingest(o, [imageEvent('tried', ['https://cdn.zdn.vn/tried.png'])]);
       const [relay, old, tried] = await attachments(o);
-      await asOwnerSql("UPDATE crove_kernel.conversation_attachment SET created_at = now() - interval '7 days' WHERE org_id = $1 AND id = $2", [o.orgId, (old as { id: string }).id]);
-      await rows("UPDATE crove_kernel.conversation_attachment SET fetch_attempts = 5, requested_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, (tried as { id: string }).id]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_attachment SET created_at = now() - interval '7 days' WHERE org_id = $1 AND id = $2", [o.orgId, (old as { id: string }).id]);
+      await rows("UPDATE ludy_kernel.conversation_attachment SET fetch_attempts = 5, requested_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, (tried as { id: string }).id]);
       const due = (await dueConversationAttachments(workerDb)).filter((d) => d.orgId === o.orgId);
       expect(due.map((d) => d.attachmentId)).toEqual([(relay as { id: string }).id]);
       // The old image and the one tried five times are gone, their addresses with them; the message keeps its text.
@@ -333,13 +333,13 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       expect(await requestConversationAttachments(worker, due)).toBe(1);
       // Handed out once: not due again until the retry time.
       expect((await dueConversationAttachments(workerDb)).filter((d) => d.orgId === o.orgId)).toEqual([]);
-      const events = await rows<{ payload: unknown }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.attachment_queued'", [o.orgId]);
+      const events = await rows<{ payload: unknown }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.attachment_queued'", [o.orgId]);
       expect(events).toHaveLength(1);
       expect(events[0]?.payload).toEqual({ attachmentId: (relay as { id: string }).id, connectionId: o.connectionId });
       // No address anywhere an audit or an event is kept.
       const leaks = await rows<{ n: string }>(
-        `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%cdn.zdn.vn%')
-              + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%cdn.zdn.vn%') AS n`,
+        `SELECT (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%cdn.zdn.vn%')
+              + (SELECT count(*) FROM ludy_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%cdn.zdn.vn%') AS n`,
         [o.orgId],
       );
       expect(Number(leaks[0]?.n)).toBe(0);
@@ -348,7 +348,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     it('records the audit of a fetch with ids, the type and the size only', async () => {
       const o = await org();
       const { attachmentId } = await stored(o, 'audit');
-      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.attachment_record' AND outcome = 'ok'", [o.orgId]);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.attachment_record' AND outcome = 'ok'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ attachment_id: attachmentId, outcome: 'stored', size_bytes: expect.any(Number), content_type: 'image/png' });
       expect(Object.keys(audit?.detail ?? {}).sort()).toEqual(['attachment_id', 'component', 'content_type', 'outcome', 'size_bytes', 'workerInstance']);
       expect(JSON.stringify(audit?.detail)).not.toContain('127.0.0.1');
@@ -359,7 +359,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     it('is read by owners and admins and by holders of the direct-message permission, and by nobody else, through the table, the command and the bytes route', async () => {
       const o = await org();
       const { attachmentId } = await stored(o, 'secret');
-      const countFor = (user: string) => asMember(o.orgId, user, async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.conversation_attachment')).rows[0].n as number);
+      const countFor = (user: string) => asMember(o.orgId, user, async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.conversation_attachment')).rows[0].n as number);
       const get = (user: string) => rt.query('kernel.conversation.attachment_get', { attachmentId }, { actor: asUser(user), orgId: o.orgId });
       expect(await countFor(o.owner)).toBe(1);
       expect(await countFor(o.admin)).toBe(1);
@@ -386,29 +386,29 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       expect((await bytesRoute(o, null, attachmentId)).status).toBe(401);
       expect((await bytesRoute(o, o.owner, randomUUID())).status).toBe(404);
       // The permission, as the Service inbox will seed it (a fixture here): its holder reads the image; taking it away takes the image away.
-      await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [o.orgId, o.desk, o.owner]);
-      await rows("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', $1) ON CONFLICT DO NOTHING", [DIRECT_READ]);
+      await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [o.orgId, o.desk, o.owner]);
+      await rows("INSERT INTO ludy_kernel.role_permission (role_key, permission) VALUES ('desk.agent', $1) ON CONFLICT DO NOTHING", [DIRECT_READ]);
       try {
         expect(await countFor(o.desk)).toBe(1);
         expect((await bytesRoute(o, o.desk, attachmentId)).status).toBe(200);
         // Limited to another channel, the holder reads none of this channel's images.
-        await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, o.otherConnectionId, o.owner]);
+        await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, o.otherConnectionId, o.owner]);
         expect(await countFor(o.desk)).toBe(0);
         expect((await bytesRoute(o, o.desk, attachmentId)).status).toBe(404);
       } finally {
-        await rows("DELETE FROM crove_kernel.role_permission WHERE role_key = 'desk.agent' AND permission = $1", [DIRECT_READ]);
+        await rows("DELETE FROM ludy_kernel.role_permission WHERE role_key = 'desk.agent' AND permission = $1", [DIRECT_READ]);
       }
       // No kernel file exists for it, so the file list and the file route have nothing of it.
-      expect(await asMember(o.orgId, o.owner, async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.file')).rows[0].n)).toBe(0);
+      expect(await asMember(o.orgId, o.owner, async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.file')).rows[0].n)).toBe(0);
     });
 
     it('lets a member write none of it: no insert, update or delete in any member’s context', async () => {
       const o = await org();
       const { attachmentId } = await stored(o, 'write');
-      const [message] = await rows<{ id: string }>('SELECT message_id AS id FROM crove_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId]);
+      const [message] = await rows<{ id: string }>('SELECT message_id AS id FROM ludy_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [o.orgId, attachmentId]);
       await expect(
         asMember(o.orgId, o.owner, (c) =>
-          c.query("INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, source_url, storage_key) VALUES ($1, $2, $3, 'direct', 'https://x.test/a.png', $4)", [
+          c.query("INSERT INTO ludy_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, source_url, storage_key) VALUES ($1, $2, $3, 'direct', 'https://x.test/a.png', $4)", [
             o.orgId,
             message?.id,
             o.connectionId,
@@ -417,8 +417,8 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
         ),
       ).rejects.toMatchObject({ code: '42501' });
       // The stored image never changes (the guard), and a pending one is no member's to change (the row policy): refused either way.
-      await expect(asMember(o.orgId, o.owner, (c) => c.query('UPDATE crove_kernel.conversation_attachment SET fetch_attempts = 1'))).rejects.toMatchObject({ code: '42501' });
-      await expect(asMember(o.orgId, o.owner, (c) => c.query('DELETE FROM crove_kernel.conversation_attachment'))).resolves.toMatchObject({ rowCount: 0 });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query('UPDATE ludy_kernel.conversation_attachment SET fetch_attempts = 1'))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query('DELETE FROM ludy_kernel.conversation_attachment'))).resolves.toMatchObject({ rowCount: 0 });
       expect(await attachments(o)).toHaveLength(1);
     });
 
@@ -430,7 +430,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       await ingest(o, [imageEvent('bad', ['https://cdn.zdn.vn/x.png'])]);
       const [pending] = (await attachments(o)).slice(-1);
       await rows(
-        `UPDATE crove_kernel.conversation_attachment SET state = 'stored', source_url = NULL, storage_key = storage_key, generation = $3, sha256 = $4, content_type = 'image/png', size_bytes = $5, stored_at = now() WHERE org_id = $1 AND id = $2`,
+        `UPDATE ludy_kernel.conversation_attachment SET state = 'stored', source_url = NULL, storage_key = storage_key, generation = $3, sha256 = $4, content_type = 'image/png', size_bytes = $5, stored_at = now() WHERE org_id = $1 AND id = $2`,
         [o.orgId, (pending as { id: string }).id, `content:${sha256Hex(html)}`, sha256Hex(html), html.byteLength],
       );
       // The row's own key is the reserved one, so the blob is put under it for the route to read.
@@ -441,17 +441,17 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     });
 
     it('keeps the doomed keys and the worker’s functions out of the API login’s reach', async () => {
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_blob_doomed')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_blob_claim(10)')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_attachment_due(10, 300)')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT crove_kernel.conversation_blob_done($1::text[])', [[]])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_blob_doomed')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_blob_claim(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_attachment_due(10, 300)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT ludy_kernel.conversation_blob_done($1::text[])', [[]])).rejects.toMatchObject({ code: '42501' });
     });
   });
 
   describe('the image goes with its message, blob and all', () => {
     const settle = async (o: Org) => {
       // A pending row's blob waits an hour for a fetch in flight: let it pass, then sweep.
-      await rows("UPDATE crove_kernel.conversation_blob_doomed SET not_before = now() - interval '1 minute'");
+      await rows("UPDATE ludy_kernel.conversation_blob_doomed SET not_before = now() - interval '1 minute'");
       await sweepConversationBlobs({ workerDb, store, force: true });
       expect(blobsOf(o)).toEqual([]);
       expect(await doomed()).toEqual([]);
@@ -471,7 +471,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       expect(store.blobs.has(one.key)).toBe(false);
       expect(store.blobs.has(keep.key)).toBe(true);
       // The pending image's key (no blob was ever written) is dropped once its hour has passed, and nothing is left waiting.
-      await rows("UPDATE crove_kernel.conversation_blob_doomed SET not_before = now() - interval '1 minute'");
+      await rows("UPDATE ludy_kernel.conversation_blob_doomed SET not_before = now() - interval '1 minute'");
       await sweepConversationBlobs({ workerDb, store, force: true });
       expect(await doomed()).toEqual([]);
       expect(blobsOf(o)).toEqual([keep.key]);
@@ -480,7 +480,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
     it('purge_expired deletes the images of the threads past the retention, with their blobs', async () => {
       const o = await org();
       const old = await stored(o, 'old-thread');
-      await rows("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '30 months', opened_at = now() - interval '30 months' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation SET last_message_at = now() - interval '30 months', opened_at = now() - interval '30 months' WHERE org_id = $1", [o.orgId]);
       expect(await purgeExpiredConversations({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
       expect(await attachments(o)).toEqual([]);
       expect((await doomed()).map((d) => d.storage_key)).toContain(old.key);
@@ -504,14 +504,14 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       answers.set('/removal.png', { type: 'image/png', body: png() });
       await ingest(o, [e]);
       const [row] = await attachments(o);
-      await rows('UPDATE crove_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url('/removal.png'), o.orgId, (row as { id: string }).id]);
+      await rows('UPDATE ludy_kernel.conversation_attachment SET source_url = $1 WHERE org_id = $2 AND id = $3', [url('/removal.png'), o.orgId, (row as { id: string }).id]);
       expect(await fetchOne(o, (row as { id: string }).id)).toBe('stored');
       expect(blobsOf(o)).toHaveLength(1);
       await ingest(o, [{ ...e, removed: true, attachments: undefined, text: '' }]);
       expect(await attachments(o)).toEqual([]);
       await sweepConversationBlobs({ workerDb, store, force: true });
       expect(blobsOf(o)).toEqual([]);
-      const [message] = await rows<{ body: string; platform_removed_at: Date | null; attachments: string[] }>('SELECT body, platform_removed_at, attachments FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]);
+      const [message] = await rows<{ body: string; platform_removed_at: Date | null; attachments: string[] }>('SELECT body, platform_removed_at, attachments FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId]);
       expect(message).toMatchObject({ body: '', attachments: [] });
       expect(message?.platform_removed_at).toBeTruthy();
     });
@@ -532,7 +532,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       await settle(o);
       // A delete that fails keeps the key for the next claim after its lease.
       store.blobs.set(reserved, png());
-      await rows('INSERT INTO crove_kernel.conversation_blob_doomed (storage_key, not_before) VALUES ($1, now() - interval \'1 minute\')', [reserved]);
+      await rows('INSERT INTO ludy_kernel.conversation_blob_doomed (storage_key, not_before) VALUES ($1, now() - interval \'1 minute\')', [reserved]);
       const failing: BlobStore = { ...store, put: store.put.bind(store), get: store.get.bind(store), delete: async () => { throw new Error('store down'); } };
       const logged: string[] = [];
       const original = console.error;
@@ -544,7 +544,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       }
       expect(logged.join('\n')).not.toContain(reserved);
       expect((await doomed()).map((d) => d.storage_key)).toEqual([reserved]);
-      await rows("UPDATE crove_kernel.conversation_blob_doomed SET claimed_until = now() - interval '1 minute'");
+      await rows("UPDATE ludy_kernel.conversation_blob_doomed SET claimed_until = now() - interval '1 minute'");
       await settle(o);
     });
   });

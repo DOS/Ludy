@@ -101,7 +101,7 @@ export const OPEN_REVERSAL_STATUSES = ['pending', 'approved'] as const;
 async function refuseOpenReversal(ctx: CommandContext, entryId: string): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`${REVERSAL_KIND}:${entryId}`}, 0))`.execute(ctx.trx);
   const open = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', REVERSAL_KIND)

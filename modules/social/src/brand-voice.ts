@@ -48,7 +48,7 @@ export const brandVoiceSave = defineCommand({
     const userId = requireUser(ctx);
     const connectionId = input.connectionId ?? null;
     if (connectionId) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).where('status', '<>', 'revoked').executeTakeFirst();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).where('status', '<>', 'revoked').executeTakeFirst();
       if (!found) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     }
     const values = {

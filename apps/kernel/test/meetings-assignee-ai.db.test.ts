@@ -74,7 +74,7 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
     ...over,
   });
   const ask = (who: string, itemId: string, over: Partial<MeetingBriefDeps> = {}) => runMeetingAssignee(deps(over), orgId, asUser(who), { itemId });
-  const resultRows = async () => (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.assignee' ORDER BY created_at`, [orgId])).rows;
+  const resultRows = async () => (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.assignee' ORDER BY created_at`, [orgId])).rows;
   async function item(who: string, over: { status?: string; whoParsed?: string | null; stage?: string; meeting?: string } = {}): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
@@ -94,9 +94,9 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
@@ -106,7 +106,7 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
     const names: Record<string, string> = { owner: 'Chủ Tiệm', rec: 'Trần Văn Nam', lan: 'Lê Thị Lan', thuy: 'Lê Thị Thuỷ', hung: 'Phạm Hoàng Hùng', nam2: 'Lê Văn Nam', stranger: 'Người Lạ' };
     for (const [key, name] of Object.entries(names)) users[key] = await upsertIdentity(db, { issuer: 'assignee-ai', subject: key, email: `${key}@assignee-ai.test`, name });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Gợi Ý')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`, [orgId, users.rec, users.lan, users.thuy, users.hung, users.stranger, users.nam2]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`, [orgId, users.rec, users.lan, users.thuy, users.hung, users.stranger, users.nam2]);
     meetingId = randomUUID();
     await sqlAdmin(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
@@ -121,7 +121,7 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
       [orgId, twinsId, users.rec],
     );
     await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), twinsId, users.nam2]);
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, 'Kho', 'kernel', 'member', $3)`, [orgId, randomUUID(), users.thuy]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, 'Kho', 'kernel', 'member', $3)`, [orgId, randomUUID(), users.thuy]);
   }, 300_000);
 
   afterAll(async () => {

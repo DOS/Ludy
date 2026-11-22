@@ -47,7 +47,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -56,7 +56,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -74,9 +74,9 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -97,7 +97,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const id = randomUUID();
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', $6, 1000, 'social', $7)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, owner]),
+      c.query("INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', $6, 1000, 'social', $7)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, owner]),
     );
     return id;
   }

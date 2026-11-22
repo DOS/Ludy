@@ -220,7 +220,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     detected AS MATERIALIZED (
       SELECT req.idx, d.start_pos, d.kind
       FROM req
-      CROSS JOIN LATERAL crove_kernel.text_detect(req.text) AS d
+      CROSS JOIN LATERAL ludy_kernel.text_detect(req.text) AS d
     ),
     checked AS (
       SELECT
@@ -246,7 +246,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
       has_mismatch,
       CASE
         WHEN has_mismatch THEN NULL::text
-        ELSE pg_catalog.left(crove_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
+        ELSE pg_catalog.left(ludy_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
       END AS redacted
     FROM checked
     ORDER BY idx`.execute(trx);
@@ -324,7 +324,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(m.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version,
           NULL::double precision AS start_seconds
         FROM crove_meetings.meeting m
-        CROSS JOIN LATERAL crove_kernel.text_detect(m.title) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(m.title) d
         WHERE ${titleEditable}::boolean AND m.org_id = ${ctx.orgId}::uuid AND m.id = ${input.meetingId}::uuid
 
         UNION ALL
@@ -336,7 +336,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           s.start_seconds::double precision
         FROM crove_meetings.transcript_segment s
-        CROSS JOIN LATERAL crove_kernel.text_detect(s.text) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(s.text) d
         WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND s.stage = 'draft'
 
         UNION ALL
@@ -348,7 +348,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           s.start_seconds::double precision
         FROM crove_meetings.transcript_segment s
-        CROSS JOIN LATERAL crove_kernel.text_detect(s.speaker_label) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(s.speaker_label) d
         WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND s.stage = 'draft'
 
         UNION ALL
@@ -360,7 +360,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           NULL::double precision
         FROM crove_meetings.meeting_result r
-        CROSS JOIN LATERAL crove_kernel.text_detect(r.summary) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(r.summary) d
         WHERE r.org_id = ${ctx.orgId}::uuid AND r.meeting_id = ${input.meetingId}::uuid AND r.stage = 'draft'
 
         UNION ALL
@@ -373,7 +373,7 @@ export const transcriptRedactCandidates = defineQuery({
           NULL::double precision
         FROM crove_meetings.meeting_result r
         CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(r.decisions) WITH ORDINALITY AS dec(v, ord)
-        CROSS JOIN LATERAL crove_kernel.text_detect(dec.v #>> '{}') d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(dec.v #>> '{}') d
         WHERE r.org_id = ${ctx.orgId}::uuid AND r.meeting_id = ${input.meetingId}::uuid AND r.stage = 'draft'
           AND pg_catalog.jsonb_typeof(dec.v) = 'string'
 
@@ -386,7 +386,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
         FROM crove_meetings.action_item i
-        CROSS JOIN LATERAL crove_kernel.text_detect(i.title) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(i.title) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
         UNION ALL
@@ -398,7 +398,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
         FROM crove_meetings.action_item i
-        CROSS JOIN LATERAL crove_kernel.text_detect(i.who_drafted) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(i.who_drafted) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
         UNION ALL
@@ -410,7 +410,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
         FROM crove_meetings.action_item i
-        CROSS JOIN LATERAL crove_kernel.text_detect(i.when_drafted) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(i.when_drafted) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
         UNION ALL
@@ -422,7 +422,7 @@ export const transcriptRedactCandidates = defineQuery({
           pg_catalog.to_char(c.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           c.start_seconds::double precision
         FROM crove_meetings.meeting_chapter c
-        CROSS JOIN LATERAL crove_kernel.text_detect(c.title) d
+        CROSS JOIN LATERAL ludy_kernel.text_detect(c.title) d
         WHERE c.org_id = ${ctx.orgId}::uuid AND c.meeting_id = ${input.meetingId}::uuid AND c.stage = 'draft'
       )
       SELECT surface, target_id, decision_index, kind, start_pos, end_pos, match_text, version, start_seconds

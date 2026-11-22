@@ -137,7 +137,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     const id = randomUUID();
     counter += 1;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', $3, $6, $7)`,
       [org, id, userId, `client-${counter}-${id}`, `oauth-${id}`, kind, kind === 'member' ? userId : null],
     );
@@ -162,7 +162,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
 
   async function channel(orgId: string, owner: string, name: string, provider = 'sandbox', external = `acct-${randomUUID().slice(0, 8)}`) {
     const id = randomUUID();
-    await sqlAdmin('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, external, name, owner]);
+    await sqlAdmin('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, external, name, owner]);
     return id;
   }
 
@@ -217,9 +217,9 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 6 });
     pools.push(pool);
@@ -233,9 +233,9 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     orgs.b = (await createOrg(runtime, asUser('foreign'), 'Org B')).orgId;
     orgs.c = (await createOrg(runtime, asUser('owner'), 'Org C (many posts)')).orgId;
     orgs.d = (await createOrg(runtime, asUser('owner'), 'Org D (archived)')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgs.a, users.admin, users.member, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgs.a, users.admin, users.member, users.viewer]);
     // The org's member grants are on, so a member or a viewer may connect their own AI app (the access test needs those grants to exist).
-    await sqlAdmin('UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgs.a]);
+    await sqlAdmin('UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgs.a]);
 
     // ---- Social, org A: channels and published posts.
     conn.a1 = await channel(orgs.a, users.owner as string, 'Trang A một');
@@ -625,7 +625,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       // A Page whose own name starts like an ad account's fallback name keeps all of it (only an ad account's made-up name loses its platform id).
       const lookalike = await channel(orgs.a, owner, 'Meta ad account East', 'facebook_page', 'fb-page-555');
       const revoked = await channel(orgs.a, owner, 'Trang đã thu hồi', 'facebook_page', 'fb-page-333');
-      await sqlAdmin(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgs.a, revoked]);
+      await sqlAdmin(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgs.a, revoked]);
       const notAPage = await channel(orgs.a, owner, 'Kênh khác', 'sandbox');
       const foreign = await channel(orgs.b, users.foreign as string, 'Trang của tổ chức khác', 'facebook_page', 'fb-page-444');
       const got = await pages();
@@ -658,7 +658,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     const seats = async (who = 'owner', org = orgs.a, input: unknown = {}) => runtime.query<SeatsView>('kernel.mcp.seats', input, await as(who, 'company', org));
     const seat = async (orgId: string, title: string, status = 'active', role = 'finance.chief_accountant') => {
       const id = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, status, job_description) VALUES ($1, $2, $3, 'finance', $4, $5, '{"secret":"never leaves"}'::jsonb)`, [orgId, id, title, role, status]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, status, job_description) VALUES ($1, $2, $3, 'finance', $4, $5, '{"secret":"never leaves"}'::jsonb)`, [orgId, id, title, role, status]);
       return id;
     };
 

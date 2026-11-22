@@ -119,7 +119,7 @@ async function customerOf(ctx: { trx: Trx; orgId: string; query: QueryContext['q
       }
     }
     if (partyId === null) continue;
-    const party = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
+    const party = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
     // A party the caller may not read is no customer for them.
     if (!party) continue;
     const deals = await openDealsOf(ctx, party.id, stageNames);

@@ -27,7 +27,7 @@ const workerDown = { ...healthy, worker_heartbeat_age_seconds: 900 };
 const workerAndRelayDown = { ...workerDown, outbox_pending: 3, outbox_oldest_age_seconds: 1200 };
 
 const config = (overrides: Partial<ProberConfig> = {}): ProberConfig => ({
-  databaseUrl: 'postgres://crove_prober:pw@db:5432/postgres',
+  databaseUrl: 'postgres://ludy_prober:pw@db:5432/postgres',
   webhookUrl: HOOK,
   webhookFormat: 'generic',
   telegramChatId: undefined,
@@ -180,9 +180,9 @@ describe('probes notify on news only', () => {
     expect(await h.probe(minutes(0), down)).toBe(EXIT.probeFailed);
     expect(await h.probe(minutes(5), down)).toBe(EXIT.probeFailed);
     expect(await h.probe(minutes(30), down)).toBe(EXIT.probeFailed);
-    expect(h.texts).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.\n- the prober could not read crove_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432']);
+    expect(h.texts).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.\n- the prober could not read ludy_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432']);
     expect(await h.probe(minutes(40), healthy)).toBe(EXIT.ok);
-    expect(h.texts[1]).toBe('[Ludy] RESOLVED on office: the prober reads crove_kernel.health() again after 40 min.');
+    expect(h.texts[1]).toBe('[Ludy] RESOLVED on office: the prober reads ludy_kernel.health() again after 40 min.');
     expect(h.texts).toHaveLength(2);
   });
 
@@ -197,7 +197,7 @@ describe('probes notify on news only', () => {
   it('alerts without de-duplication when the shared state cannot be read', async () => {
     const broken: AlertGate = {
       decide: async () => {
-        throw new Error('function crove_kernel.prober_alert_gate(text, integer) does not exist');
+        throw new Error('function ludy_kernel.prober_alert_gate(text, integer) does not exist');
       },
       settle: async () => {},
     };
@@ -206,7 +206,7 @@ describe('probes notify on news only', () => {
     const deps = { fetch, gate: broken, log: () => {}, error: (l: string) => err.push(l) };
     expect(await probeOnce(config(), { ...deps, readHealth: async () => workerDown })).toBe(EXIT.unhealthy);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(err).toContain('[prober] alert state unavailable, notifying without de-duplication: function crove_kernel.prober_alert_gate(text, integer) does not exist');
+    expect(err).toContain('[prober] alert state unavailable, notifying without de-duplication: function ludy_kernel.prober_alert_gate(text, integer) does not exist');
     // Healthy: nothing to say, even without the state.
     expect(await probeOnce(config(), { ...deps, readHealth: async () => healthy })).toBe(EXIT.ok);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -251,7 +251,7 @@ describe('probes notify on news only', () => {
       return new Response('ok');
     }) as unknown as typeof globalThis.fetch;
     await probeOnce(config(), { fetch, log: () => {}, error: () => {}, readHealth: async () => Promise.reject(new Error('FATAL: no\n# heading\n> quote')) });
-    expect(texts[0]?.split('\n')).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.', '- the prober could not read crove_kernel.health(): FATAL: no # heading > quote']);
+    expect(texts[0]?.split('\n')).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.', '- the prober could not read ludy_kernel.health(): FATAL: no # heading > quote']);
   });
 
   it('reads ALERT_REPEAT_MINUTES (default 60, 0 for never) and refuses other values', async () => {

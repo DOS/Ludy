@@ -40,7 +40,7 @@ export const watermarkSave = defineCommand({
     const userId = requireUser(ctx);
     // An image of the org's Social library, as a post's images are.
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select('content_type')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -104,7 +104,7 @@ export const watermarkGet = defineQuery({
   handler: async (ctx): Promise<Watermark | null> => {
     const row = await ctx.trx
       .selectFrom('crove_social.watermark as w')
-      .innerJoin('crove_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'w.org_id').onRef('f.id', '=', 'w.file_id'))
+      .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'w.org_id').onRef('f.id', '=', 'w.file_id'))
       .select(['w.file_id', 'f.content_type', 'w.corner', 'w.scale_percent', 'w.opacity_percent', 'w.updated_at'])
       .where('w.org_id', '=', ctx.orgId)
       .orderBy('w.created_at')

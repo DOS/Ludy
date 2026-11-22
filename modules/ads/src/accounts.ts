@@ -30,12 +30,12 @@ const legalEntityNotAllowed = () => new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 
 // the caller sees just one). Reads through the caller's own policies, so an entity outside their scope is "not allowed".
 async function resolveEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, requested: string | undefined): Promise<string> {
   if (requested) {
-    const row = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', requested).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', requested).executeTakeFirst();
     if (!row) throw legalEntityNotAllowed();
     return row.id;
   }
   const visible = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'is_default'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('is_default', 'desc')
@@ -58,7 +58,7 @@ export const adsAccountLink = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ adAccountId: string | null; linked: boolean; refused?: 'spend_scopes' }> => {
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'external_account_id', 'display_name', 'status', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -171,7 +171,7 @@ export const adsSyncRequest = defineCommand({
   handler: async (ctx, input): Promise<{ adAccountId: string }> => {
     const row = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'a.last_requested_at', 'a.next_run_at', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
@@ -233,7 +233,7 @@ export const adsAccountDeleteHistory = defineCommand({
   handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
     const row = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
@@ -299,9 +299,9 @@ export const adsAccountList = defineQuery({
   handler: async (ctx): Promise<Array<Omit<AdAccountView, 'resultKinds'>>> => {
     const rows = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       // The write connection, when the account has one (W0b): "can run ads" is a live one, anything else is read only.
-      .leftJoin('crove_kernel.channel_connection as w', (j) => j.onRef('w.org_id', '=', 'a.org_id').onRef('w.id', '=', 'a.write_connection_id'))
+      .leftJoin('ludy_kernel.channel_connection as w', (j) => j.onRef('w.org_id', '=', 'a.org_id').onRef('w.id', '=', 'a.write_connection_id'))
       .select([
         'w.status as write_status', 'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.expires_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
         'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at', 'a.write_enabled',

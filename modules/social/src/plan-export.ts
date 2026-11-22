@@ -56,10 +56,10 @@ async function planMedia(trx: Trx, orgId: string, rows: readonly MediaRow[]): Pr
   const refs = new Map<string, string>();
   if (fileIds.length > 0) {
     const key = sql<string>`lower(normalize(filename, NFC))`;
-    const files = await trx.selectFrom('crove_kernel.file').select(['id', 'filename', key.as('name_key')]).where('org_id', '=', orgId).where('id', 'in', fileIds).execute();
+    const files = await trx.selectFrom('ludy_kernel.file').select(['id', 'filename', key.as('name_key')]).where('org_id', '=', orgId).where('id', 'in', fileIds).execute();
     const names = [...new Set(files.map((f) => f.name_key))];
     const counts = await trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select([key.as('name_key'), (eb) => eb.fn.countAll<string>().as('n')])
       .where('org_id', '=', orgId)
       .where('source', '=', 'social')
@@ -135,19 +135,19 @@ export const planExport = defineCommand({
       SELECT v.id AS variant_id, v.post_id, v.channel_connection_id, v.provider, v.status, c.display_name, v.body, v.settings, v.title,
              v.link_url, v.at, v.assignee_user_id, v.media, v.content_frozen
       FROM v
-      LEFT JOIN crove_kernel.channel_connection c ON c.org_id = ${ctx.orgId}::uuid AND c.id = v.channel_connection_id
+      LEFT JOIN ludy_kernel.channel_connection c ON c.org_id = ${ctx.orgId}::uuid AND c.id = v.channel_connection_id
       WHERE v.at >= ${from} AND v.at < ${to}
       ORDER BY v.at, v.post_id, v.position, v.id
       LIMIT ${PLAN_EXPORT_MAX_ROWS + 1}`.execute(ctx.trx);
     const truncated = rows.length > PLAN_EXPORT_MAX_ROWS;
     if (truncated) rows.length = PLAN_EXPORT_MAX_ROWS;
     const labelsOf = await labelsOfPosts(ctx.trx, ctx.orgId, [...new Set(rows.map((r) => r.post_id))]);
-    // Names while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names while they are members (ludy_kernel.member_profiles answers only members of the org).
     const people = [...new Set(rows.map((r) => r.assignee_user_id).filter((id): id is string => id !== null))];
     const names = new Map<string, string>();
     if (people.length > 0) {
       const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
       for (const p of profiles) names.set(p.user_id, p.display_name ?? p.email);
     }
     const mediaOfRow = await planMedia(ctx.trx, ctx.orgId, rows);

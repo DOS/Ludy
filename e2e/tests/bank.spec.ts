@@ -93,7 +93,7 @@ test('import a bank statement, then an overlapping one, and find each line once'
 
   await test.step('each line once in the database', async () => {
     const rows = sql<{ ref: string; amount: string }>(
-      `SELECT l.bank_ref AS ref, l.amount::text AS amount FROM crove_finance.bank_line l JOIN crove_kernel.tenant t ON t.org_id = l.org_id
+      `SELECT l.bank_ref AS ref, l.amount::text AS amount FROM crove_finance.bank_line l JOIN ludy_kernel.tenant t ON t.org_id = l.org_id
        WHERE t.slug = :'slug' ORDER BY l.value_date`,
       { slug },
     );

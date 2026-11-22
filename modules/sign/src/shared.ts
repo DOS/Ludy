@@ -85,7 +85,7 @@ export const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign',
 
 export const SIGNING_OTP_INVALIDATE_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']);
 
-export const MAIL_MESSAGE_WRITE = tableWrite(kernelManifest.tables, 'crove_kernel', 'mail_message', [
+export const MAIL_MESSAGE_WRITE = tableWrite(kernelManifest.tables, 'ludy_kernel', 'mail_message', [
   'org_id',
   'stream',
   'source',
@@ -179,7 +179,7 @@ export interface SignSourceFileRow {
 
 export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: string): Promise<SignSourceFileRow> {
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'source', 'content_type', 'storage_key', 'generation', 'sha256'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', sourceFileId)
@@ -506,7 +506,7 @@ export async function sendDraftEnvelope(
     if (signer.delivery_mode === 'email' && signer.email) {
       if (orgName === null) {
         const tenant = await ctx.trx
-          .selectFrom('crove_kernel.tenant')
+          .selectFrom('ludy_kernel.tenant')
           .select('name')
           .where('org_id', '=', ctx.orgId)
           .executeTakeFirstOrThrow();

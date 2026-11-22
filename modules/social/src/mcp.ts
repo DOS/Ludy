@@ -125,7 +125,7 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
     .execute();
   const variants = await ctx.trx
     .selectFrom('crove_social.post_variant as v')
-    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select([
       'v.id',
       'v.post_id',

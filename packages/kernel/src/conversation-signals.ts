@@ -34,13 +34,13 @@ export const conversationUnansweredSignals = defineQuery({
     if (ctx.actor.type !== 'user' || ctx.actor.mcp !== undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ party_id: string; conversation_id: string; since: Date }>`
       SELECT DISTINCT ON (c.party_id) c.party_id, c.id AS conversation_id, w.since
-      FROM crove_kernel.conversation c
+      FROM ludy_kernel.conversation c
       CROSS JOIN LATERAL (
         SELECT pg_catalog.min(m.received_at) AS since
-        FROM crove_kernel.conversation_message m
+        FROM ludy_kernel.conversation_message m
         WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in'
           AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
-          AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o
+          AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM ludy_kernel.conversation_message o
                                 WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
       ) w
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND w.since IS NOT NULL

@@ -48,7 +48,7 @@ suite('period balance reconciliation (#1284)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const lines = [
         { line_no: 1, account_code: '6422', debit, credit: '0' },
         { line_no: 2, account_code: '331', debit: '0', credit: debit },
@@ -100,13 +100,13 @@ suite('period balance reconciliation (#1284)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 1 });
     workerDb = createDb(workerPool);
@@ -130,7 +130,7 @@ suite('period balance reconciliation (#1284)', () => {
   it('has the queue the worker schedules nightly', async () => {
     expect(QUEUES.periodBalanceVerify).toBe('finance-period-balance-verify');
     expect(PERIOD_BALANCE_VERIFY_CRON).toBe('40 3 * * *');
-    const queues = await withAdmin(async (a) => (await a.query<{ name: string }>(`SELECT name FROM crove_jobs.queue WHERE name = $1`, [QUEUES.periodBalanceVerify])).rows);
+    const queues = await withAdmin(async (a) => (await a.query<{ name: string }>(`SELECT name FROM ludy_jobs.queue WHERE name = $1`, [QUEUES.periodBalanceVerify])).rows);
     expect(queues).toEqual([{ name: QUEUES.periodBalanceVerify }]);
   });
 

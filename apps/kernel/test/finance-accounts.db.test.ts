@@ -86,13 +86,13 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     }
   }
 
-  // One statement as crove_app in the given user's context of an org, rolled back.
+  // One statement as ludy_app in the given user's context of an org, rolled back.
   async function asApp<T>(userId: string, orgId: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -106,7 +106,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const out = await fn(client);
       await client.query('COMMIT');
       return out;
@@ -187,17 +187,17 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -363,7 +363,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(await rpc('parties/setDefaultAccount', owner, { partyId, accountCode: '6422.MKT' })).toEqual({ status: 200, body: { partyId, accountCode: '6422.MKT' } });
     const audit = await admin(async (c) =>
       (await c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
         [org.orgId],
       )).rows,
     );
@@ -379,7 +379,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     const audits = async () =>
       admin(async (c) =>
         (await c.query<{ detail: { previous: string | null; accountCode: string | null } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
           [org.orgId],
         )).rows.map((r) => r.detail),
       );
@@ -506,7 +506,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
 
     const audit = await admin(async (c) =>
       (await c.query<{ command: string; n: number }>(
-        `SELECT command, count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.account.%' AND outcome = 'ok' GROUP BY 1 ORDER BY 1`,
+        `SELECT command, count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.account.%' AND outcome = 'ok' GROUP BY 1 ORDER BY 1`,
         [org.orgId],
       )).rows,
     );

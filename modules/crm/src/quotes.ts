@@ -144,7 +144,7 @@ export const quoteLogoSet = defineCommand({
   handler: async (ctx, input): Promise<QuoteSetting> => {
     const userId = userOf(ctx.actor);
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['content_type', 'size_bytes', 'source', 'image_width', 'image_height'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -182,7 +182,7 @@ export interface QuoteLogoFile {
 export async function logoFileOf(ctx: Pick<Reader, 'trx' | 'orgId'>, fileId: string | null): Promise<QuoteLogoFile | null> {
   if (fileId === null) return null;
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'source'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
@@ -280,7 +280,7 @@ function base(ctx: Reader) {
   return ctx.trx
     .selectFrom('crove_crm.quote as q')
     .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'q.org_id').onRef('d.id', '=', 'q.deal_id'))
-    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'q.org_id').onRef('p.id', '=', 'q.party_id'))
+    .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'q.org_id').onRef('p.id', '=', 'q.party_id'))
     // A revision shows the number of the quote it revises until it has its own.
     .leftJoin('crove_crm.quote as r', (j) => j.onRef('r.org_id', '=', 'q.org_id').onRef('r.id', '=', 'q.revises_id'))
     .select([
@@ -749,15 +749,15 @@ export const quoteSend = defineCommand({
     if (Number(items.n) === 0 || money(quote.total).lessThanOrEqualTo(0)) throw new DomainError('QUOTE_NOT_SENDABLE', 422, NOT_SENDABLE);
     const today = vietnamToday(ctx.now);
     if (day(quote.valid_until) < today) throw new DomainError('QUOTE_VALIDITY_PAST', 422, 'Ngày hiệu lực đã qua; hãy chọn ngày hiệu lực mới rồi gửi');
-    const party = await ctx.trx.selectFrom('crove_kernel.party').select(['name', 'tax_code', 'address', 'email']).where('org_id', '=', ctx.orgId).where('id', '=', quote.party_id).executeTakeFirst();
+    const party = await ctx.trx.selectFrom('ludy_kernel.party').select(['name', 'tax_code', 'address', 'email']).where('org_id', '=', ctx.orgId).where('id', '=', quote.party_id).executeTakeFirst();
     if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
     const recipient = (input.to ?? party.email ?? '').trim();
     if (input.via === 'email' && !PLAIN_ADDRESS.test(recipient)) {
       throw new DomainError('QUOTE_EMAIL_REQUIRED', 422, 'Khách hàng này chưa có email hợp lệ; hãy nhập email người nhận hoặc cập nhật hồ sơ khách hàng');
     }
     let issuer =
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst()) ??
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst());
+      (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst()) ??
+      (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst());
     if (!issuer) throw new DomainError('QUOTE_ISSUER_MISSING', 422, 'Tổ chức chưa có pháp nhân để phát hành báo giá');
     let number: string;
     if (quote.revises_id) {
@@ -767,7 +767,7 @@ export const quoteSend = defineCommand({
       // The revision keeps the number, so it keeps the entity whose series gave it: with the default entity changed in between, the number would otherwise sit in another
       // entity's key and collide with a quote of that entity's own series.
       if (source.issuer_entity_id && source.issuer_entity_id !== issuer.id) {
-        const sourceIssuer = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', source.issuer_entity_id).executeTakeFirst();
+        const sourceIssuer = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', source.issuer_entity_id).executeTakeFirst();
         if (sourceIssuer) issuer = sourceIssuer;
       }
     } else {
@@ -777,7 +777,7 @@ export const quoteSend = defineCommand({
       number = `BG-${year}-${String(allocated.number).padStart(4, '0')}`;
     }
     // The seller as the document will show it, frozen with the quote (#2826): a change to the letterhead later does not change a quote that was sent.
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note', 'logo_file_id']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     const text = (value: string | null | undefined, max: number): string | null => {
       const trimmed = value?.trim() ?? '';

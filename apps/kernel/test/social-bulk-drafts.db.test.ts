@@ -50,8 +50,8 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
     });
     return { orgId, owner, member, viewer };
   }
@@ -59,7 +59,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
   async function connection(o: Org, provider: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         provider,
@@ -77,7 +77,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 200000, $8, $9)`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, options.contentType ?? 'image/jpeg', options.source ?? 'social', options.durationMs ?? null],
       ),
@@ -90,7 +90,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
   const get = (o: Org, postId: string) => rt.query<PostView>('social.post.get', { postId }, { actor: asUser(o.viewer), orgId: o.orgId });
   const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const audits = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> | null }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> | null }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
   const daily = (minute: number) => [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, minute }));
 
   beforeAll(async () => {
@@ -102,9 +102,9 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -254,7 +254,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
       await expect(fromMedia(o, o.member, { fileIds: [photo], channelSetId: setId, queue: true })).rejects.toMatchObject({ code: 'CHANNEL_SET_TOO_LARGE', status: 422, details: { limit: 20, actual: 21 } });
       expect(await postCount(o)).toBe(0);
       // One of them disconnected: the 20 left fit one post.
-      await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [channels[0]]));
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [channels[0]]));
       const result = await fromMedia<Created>(o, o.member, { fileIds: [photo], channelSetId: setId });
       expect(result.posts[0]?.variants).toHaveLength(20);
     } finally {

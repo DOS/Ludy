@@ -83,13 +83,13 @@ async function conversationAbout(trx: Transaction<Database>, orgId: string, p: R
   const { rows } = await sql<{ channel: string | null; provider: string | null; contact: string | null; said: string | null }>`
     SELECT cc.display_name AS channel, cc.provider AS provider, i.display_name AS contact,
            CASE WHEN ${messageId}::uuid IS NOT NULL THEN m.body ELSE (
-             SELECT lm.body FROM crove_kernel.conversation_message lm
+             SELECT lm.body FROM ludy_kernel.conversation_message lm
              WHERE lm.org_id = c.org_id AND lm.conversation_id = c.id AND lm.direction = 'in' AND lm.platform_removed_at IS NULL
              ORDER BY lm.seq DESC LIMIT 1) END AS said
-    FROM crove_kernel.conversation c
-    LEFT JOIN crove_kernel.conversation_message m ON m.org_id = c.org_id AND m.id = ${messageId}::uuid
-    LEFT JOIN crove_kernel.channel_connection cc ON cc.org_id = c.org_id AND cc.id = c.channel_connection_id
-    LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+    FROM ludy_kernel.conversation c
+    LEFT JOIN ludy_kernel.conversation_message m ON m.org_id = c.org_id AND m.id = ${messageId}::uuid
+    LEFT JOIN ludy_kernel.channel_connection cc ON cc.org_id = c.org_id AND cc.id = c.channel_connection_id
+    LEFT JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
     WHERE c.org_id = ${orgId}::uuid AND c.id = COALESCE(${conversationId}::uuid, m.conversation_id)
     LIMIT 1`.execute(trx);
   const row = rows[0];
@@ -107,7 +107,7 @@ async function followUpAbout(trx: Transaction<Database>, orgId: string, p: Recor
   const positionId = idOf(p.assigneePositionId);
   if (!positionId) return out;
   const { rows } = await sql<{ title: string | null; status: string | null }>`
-    SELECT po.title AS title, po.status AS status FROM crove_kernel.position po WHERE po.org_id = ${orgId}::uuid AND po.id = ${positionId}::uuid LIMIT 1`.execute(trx);
+    SELECT po.title AS title, po.status AS status FROM ludy_kernel.position po WHERE po.org_id = ${orgId}::uuid AND po.id = ${positionId}::uuid LIMIT 1`.execute(trx);
   push(out, 'assignee', rows[0]?.title);
   // A seat that is not active is said on the card (approving would fail closed with POSITION_ARCHIVED for an archived one, #4370): the state is one of the seat's own enum words, never a person's text.
   if (rows[0]?.status === 'archived' || rows[0]?.status === 'paused') push(out, 'assigneeState', rows[0].status);
@@ -141,7 +141,7 @@ async function quoteAbout(trx: Transaction<Database>, orgId: string, p: Record<s
   const { rows } = await sql<{ number: string | null; status: string | null; total: string | null; party: string | null; email: string | null }>`
     SELECT q.number AS number, q.status AS status, q.total::text AS total, pa.name AS party, pa.email AS email
     FROM crove_crm.quote q
-    LEFT JOIN crove_kernel.party pa ON pa.org_id = q.org_id AND pa.id = q.party_id
+    LEFT JOIN ludy_kernel.party pa ON pa.org_id = q.org_id AND pa.id = q.party_id
     WHERE q.org_id = ${orgId}::uuid AND q.id = ${quoteId}::uuid
     LIMIT 1`.execute(trx);
   const row = rows[0];
@@ -171,7 +171,7 @@ async function postAbout(trx: Transaction<Database>, orgId: string, p: Record<st
   const { rows: channels } = await sql<{ name: string | null }>`
     SELECT COALESCE(cc.display_name, v.provider) AS name
     FROM crove_social.post_variant v
-    LEFT JOIN crove_kernel.channel_connection cc ON cc.org_id = v.org_id AND cc.id = v.channel_connection_id
+    LEFT JOIN ludy_kernel.channel_connection cc ON cc.org_id = v.org_id AND cc.id = v.channel_connection_id
     WHERE v.org_id = ${orgId}::uuid AND v.post_id = ${postId}::uuid AND (${variantIds}::uuid[] IS NULL OR v.id = ANY(${variantIds}::uuid[]))
     ORDER BY v.position, v.id
     LIMIT ${CHANNELS_MAX}`.execute(trx);

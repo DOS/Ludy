@@ -447,9 +447,9 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
           access: ['owner'],
           handler: async (ctx, input) => {
             if (input.role) {
-              await ctx.trx.updateTable('crove_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
+              await ctx.trx.updateTable('ludy_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
             } else {
-              await ctx.trx.deleteFrom('crove_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
+              await ctx.trx.deleteFrom('ludy_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
             }
             return { ok: true };
           },

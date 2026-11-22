@@ -128,7 +128,7 @@ export const householdS1a = defineQuery({
   handler: async (ctx, input): Promise<HouseholdS1a> => {
     const w = await householdBookWindow(ctx, input.legalEntityId, input.period, 'S1a');
     const rows = householdSalesRows(w.ledger.lines, w.from);
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
+    const entityRow = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
     return {
       period: { period: w.ledger.period.period, from: w.from, to: w.to },
       household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Deterministic facts query for Vy's weekly status of one project (projects P6, #2597): reads only
-// crove_projects.project, crove_projects.project_task, crove_kernel.task (under caller le_scope RLS), and
-// crove_kernel.task_comment. Never reads crove_notes and never writes or persists anything.
+// crove_projects.project, crove_projects.project_task, ludy_kernel.task (under caller le_scope RLS), and
+// ludy_kernel.task_comment. Never reads crove_notes and never writes or persists anything.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole, TaskStatus } from '@ludy/db';
@@ -135,7 +135,7 @@ async function queryWeeklyCounts(
           ELSE (e.detail ->> 'task')::uuid
         END AS task_id,
         pg_catalog.max(e.occurred_at) AS done_at
-      FROM crove_kernel.audit_event e
+      FROM ludy_kernel.audit_event e
       WHERE e.org_id = ${orgId}::uuid
         AND e.occurred_at >= ${fromStartIso}::timestamptz
         AND e.occurred_at <= pg_catalog.now()
@@ -171,7 +171,7 @@ async function queryWeeklyCounts(
           AND t.due < ${nextEndExclusiveIso}::timestamptz
       )::text AS due_next_week
     FROM crove_projects.project_task pt
-    JOIN crove_kernel.task t
+    JOIN ludy_kernel.task t
       ON t.org_id = pt.org_id AND t.id = pt.task_id
     LEFT JOIN done_events de
       ON de.task_id = t.id
@@ -230,15 +230,15 @@ export const projectWeeklyStatusSource = defineQuery({
       SELECT
         pg_catalog.to_char((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today_vn,
         (
-          crove_kernel.global_kill_switch_on('ai')
+          ludy_kernel.global_kill_switch_on('ai')
           OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
+            SELECT 1 FROM ludy_kernel.kill_switch k
              WHERE k.org_id = ${ctx.orgId}::uuid
                AND k.released_at IS NULL
                AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = 'projects'))
           )
         ) AS ai_stopped,
-        crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(ctx.trx);
+        ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(ctx.trx);
 
     const meta = metaRows[0];
     const { from, to, nextFrom, nextTo, fromStartIso, nextStartIso, nextEndExclusiveIso } = buildWeeklyWindow(
@@ -249,21 +249,21 @@ export const projectWeeklyStatusSource = defineQuery({
     const aiStopped = meta?.ai_stopped === true;
     const aiBudgetSpent = meta?.budget_spent === true;
 
-    // Count tasks hidden from this caller by crove_kernel.task le_scope RESTRICTIVE RLS without reading them.
+    // Count tasks hidden from this caller by ludy_kernel.task le_scope RESTRICTIVE RLS without reading them.
     const { rows: hiddenRows } = await sql<{ count: string }>`
       SELECT pg_catalog.count(*)::text AS count
         FROM crove_projects.project_task pt
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND pt.project_id = ${project.id}::uuid
          AND NOT EXISTS (
-           SELECT 1 FROM crove_kernel.task t
+           SELECT 1 FROM ludy_kernel.task t
             WHERE t.org_id = pt.org_id AND t.id = pt.task_id
          )`.execute(ctx.trx);
     const hiddenByEntityCount = Number(hiddenRows[0]?.count ?? 0);
 
-    // Exact, uncapped deterministic counts over visible crove_kernel.task rows in this project.
+    // Exact, uncapped deterministic counts over visible ludy_kernel.task rows in this project.
     // `doneThisWeek` counts tasks currently in status = 'done' whose latest transition to 'done' in
-    // crove_kernel.audit_event occurred within the 7-day window (using audit_event_time_idx), so editing
+    // ludy_kernel.audit_event occurred within the 7-day window (using audit_event_time_idx), so editing
     // title/due/assignee on a task finished last month via kernel.task.update does not pull it into this week.
     const counts = await queryWeeklyCounts(ctx.trx, ctx.orgId, project.id, fromStartIso, nextStartIso, nextEndExclusiveIso);
     const rawColumns = await loadProjectColumns(ctx.trx, ctx.orgId, project.id, false);
@@ -272,7 +272,7 @@ export const projectWeeklyStatusSource = defineQuery({
       const { rows: columnTaskRows } = await sql<{ status: TaskStatus; column_id: string | null }>`
         SELECT t.status, pt.column_id
           FROM crove_projects.project_task pt
-          INNER JOIN crove_kernel.task t
+          INNER JOIN ludy_kernel.task t
             ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
@@ -302,7 +302,7 @@ export const projectWeeklyStatusSource = defineQuery({
                   ELSE (e.detail ->> 'task')::uuid
                 END AS task_id,
                 pg_catalog.max(e.occurred_at) AS done_at
-              FROM crove_kernel.audit_event e
+              FROM ludy_kernel.audit_event e
               WHERE e.org_id = ${ctx.orgId}::uuid
                 AND e.occurred_at >= ${fromStartIso}::timestamptz
                 AND e.occurred_at <= pg_catalog.now()
@@ -319,7 +319,7 @@ export const projectWeeklyStatusSource = defineQuery({
             )
             SELECT t.id, t.title, t.tainted, t.status, t.due
               FROM crove_projects.project_task pt
-              JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+              JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
               JOIN done_events de ON de.task_id = t.id
              WHERE pt.org_id = ${ctx.orgId}::uuid
                AND pt.project_id = ${project.id}::uuid
@@ -330,7 +330,7 @@ export const projectWeeklyStatusSource = defineQuery({
       sql<RawBucketTaskRow>`
         SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+          JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND t.status NOT IN ('done', 'cancelled')
@@ -341,7 +341,7 @@ export const projectWeeklyStatusSource = defineQuery({
       sql<RawBucketTaskRow>`
         SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+          JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND t.status = 'waiting'
@@ -350,7 +350,7 @@ export const projectWeeklyStatusSource = defineQuery({
       sql<RawBucketTaskRow>`
         SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+          JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND t.status NOT IN ('done', 'cancelled')
@@ -376,13 +376,13 @@ export const projectWeeklyStatusSource = defineQuery({
       const [{ rows: countCommentRows }, { rows: snippetRows }] = await Promise.all([
         sql<{ task_id: string; n: string }>`
           SELECT task_id, pg_catalog.count(*)::text AS n
-            FROM crove_kernel.task_comment
+            FROM ludy_kernel.task_comment
            WHERE org_id = ${ctx.orgId}::uuid
              AND task_id = ANY(${visibleIds}::uuid[])
            GROUP BY task_id`.execute(ctx.trx),
         sql<{ task_id: string; body: string }>`
           SELECT DISTINCT ON (task_id) task_id, body
-            FROM crove_kernel.task_comment
+            FROM ludy_kernel.task_comment
            WHERE org_id = ${ctx.orgId}::uuid
              AND task_id = ANY(${visibleIds}::uuid[])
              AND NOT tainted
@@ -416,9 +416,9 @@ export const projectWeeklyStatusSource = defineQuery({
         bt.due,
         pg_catalog.count(*)::int AS blocked_count
       FROM crove_projects.task_dependency d
-      JOIN crove_kernel.task bt
+      JOIN ludy_kernel.task bt
         ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-      JOIN crove_kernel.task dt
+      JOIN ludy_kernel.task dt
         ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
       WHERE d.org_id = ${ctx.orgId}::uuid
         AND d.project_id = ${project.id}::uuid
@@ -521,7 +521,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
     const { rows: metaRows } = await sql<{ today_vn: string }>`
       SELECT pg_catalog.to_char((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today_vn
     `.execute(ctx.trx);
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     // Filter out entity-restricted recipients who cannot read every legal entity represented in this project's visible tasks (#2609).
     // Under role_assignment_scope RLS, an entity-scoped caller cannot read another member's assignments in other entities, so
     // branch 3 conservatively requires '*' = ANY(ctx_le_scope()) when the recipient has zero visible assignments (matching agents.ts:1045).
@@ -534,16 +534,16 @@ export const projectWeeklyStatusSendMail = defineCommand({
             m.role IN ('owner', 'admin')
             OR EXISTS (
               SELECT 1
-              FROM crove_kernel.role_assignment ra
+              FROM ludy_kernel.role_assignment ra
               WHERE ra.org_id = pm.org_id
                 AND ra.user_id = pm.user_id
                 AND ra.legal_entity_id IS NULL
             )
             OR (
-              '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+              '*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
               AND NOT EXISTS (
                 SELECT 1
-                FROM crove_kernel.role_assignment ra
+                FROM ludy_kernel.role_assignment ra
                 WHERE ra.org_id = pm.org_id
                   AND ra.user_id = pm.user_id
               )
@@ -551,7 +551,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
             OR NOT EXISTS (
               SELECT 1
               FROM crove_projects.project_task pt
-              JOIN crove_kernel.task t
+              JOIN ludy_kernel.task t
                 ON t.org_id = pt.org_id
                AND t.id = pt.task_id
               WHERE pt.org_id = pm.org_id
@@ -559,7 +559,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
                 AND t.legal_entity_id IS NOT NULL
                 AND NOT EXISTS (
                   SELECT 1
-                  FROM crove_kernel.role_assignment ra
+                  FROM ludy_kernel.role_assignment ra
                   WHERE ra.org_id = pm.org_id
                     AND ra.user_id = pm.user_id
                     AND ra.legal_entity_id = t.legal_entity_id
@@ -569,7 +569,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
           false
         ) AS eligible
       FROM crove_projects.project_member pm
-      LEFT JOIN crove_kernel.tenant_member m
+      LEFT JOIN ludy_kernel.tenant_member m
         ON m.org_id = pm.org_id
        AND m.user_id = pm.user_id
       WHERE pm.org_id = ${ctx.orgId}::uuid

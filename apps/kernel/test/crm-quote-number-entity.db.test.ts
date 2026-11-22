@@ -47,9 +47,9 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -71,13 +71,13 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const exec = <T>(command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(owner), orgId });
     const partyId = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, 'Công ty ABC', 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, 'Công ty ABC', 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId])
         .then((r) => r.rows[0]!.id),
     );
     // A second entity of the org (the first is the default one the org was made with).
     const entityB = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id", [orgId, owner])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id", [orgId, owner])
         .then((r) => r.rows[0]!.id),
     );
     await exec<PipelineStage[]>('crm.pipeline.setup', {});
@@ -106,7 +106,7 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     // Its revision keeps C (the entity whose series gave the number), so it cannot collide with a quote of A's own series.
     const entityC = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id", [orgId, owner])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id", [orgId, owner])
         .then((r) => r.rows[0]!.id),
     );
     const deal2 = await exec<Deal>('crm.deal.create', { partyId, title: 'Gói kế toán năm 2', amount: '15000000', expectedClose: '2026-12-31' });

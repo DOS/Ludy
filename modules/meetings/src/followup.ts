@@ -112,7 +112,7 @@ export async function publishedFacts(trx: Trx, orgId: string, meetingId: string)
 
 async function memberProfiles(trx: Trx, userIds: readonly string[]): Promise<Array<{ userId: string; email: string; name: string }>> {
   if (userIds.length === 0) return [];
-  const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${userIds}::uuid[])`.execute(trx);
+  const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${userIds}::uuid[])`.execute(trx);
   return rows.map((p) => ({ userId: p.user_id, email: p.email, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 }
 
@@ -130,7 +130,7 @@ async function candidates(trx: Trx, orgId: string, meetingId: string, recorder: 
   const people = await memberProfiles(trx, readers.map((r) => r.user_id).filter((id) => id !== recorder));
   const links = await trx.selectFrom('crove_meetings.meeting_link').select('party_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('party_id', 'is not', null).orderBy('created_at').orderBy('id').execute();
   const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
-  const parties = partyIds.length === 0 ? [] : await trx.selectFrom('crove_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', orgId).where('id', 'in', partyIds).execute();
+  const parties = partyIds.length === 0 ? [] : await trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', orgId).where('id', 'in', partyIds).execute();
   const out: Candidate[] = [];
   const seen = new Set<string>();
   const add = (candidate: Candidate) => {
@@ -151,7 +151,7 @@ async function alreadySentTo(ctx: { trx: Trx; orgId: string }, meetingId: string
   const byHash = new Map<string, string>();
   for (const address of addresses) byHash.set(await mailAddressHash({ trx: ctx.trx }, address), address);
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.mail_message')
+    .selectFrom('ludy_kernel.mail_message')
     .select('to_hash')
     .where('org_id', '=', ctx.orgId)
     .where('source', '=', FOLLOWUP_MAIL_SOURCE)
@@ -169,7 +169,7 @@ async function alreadySentTo(ctx: { trx: Trx; orgId: string }, meetingId: string
 // The sends (batches) of this meeting in the last 24 hours, each counted once whatever its recipients.
 async function sendsToday(ctx: { trx: Trx; orgId: string }, meetingId: string): Promise<number> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.mail_message')
+    .selectFrom('ludy_kernel.mail_message')
     .select(sql<string | null>`payload ->> 'batch'`.as('batch'))
     .where('org_id', '=', ctx.orgId)
     .where('source', '=', FOLLOWUP_MAIL_SOURCE)
@@ -185,7 +185,7 @@ export async function meetingFacts(trx: Trx, orgId: string, meetingId: string): 
 }
 
 async function orgName(trx: Trx, orgId: string): Promise<string> {
-  const row = await trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', orgId).executeTakeFirstOrThrow();
+  const row = await trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', orgId).executeTakeFirstOrThrow();
   return followupClean(row.name, true).slice(0, 200);
 }
 

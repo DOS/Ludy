@@ -37,7 +37,7 @@ export const mcpSeats = defineQuery({
   handler: async (ctx): Promise<{ seats: McpSeat[]; truncated: boolean }> => {
     requireGrant(ctx);
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.position')
+      .selectFrom('ludy_kernel.position')
       .select(['id', 'title'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')

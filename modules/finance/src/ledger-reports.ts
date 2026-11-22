@@ -95,7 +95,7 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   const opening = ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+    .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
     .select('l.account_code')
     .select(kept.as('party_id'))
     .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
@@ -112,7 +112,7 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
     .leftJoin('crove_finance.purchase_document as d', (join) =>
       join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document'),
     )
-    .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+    .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select([
       'j.id',
@@ -139,7 +139,7 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
 
   // The parties the opening balance and the lines name.
   const parties = ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(['id', 'name', 'tax_code'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', sql<string>`(SELECT party_id FROM opening WHERE party_id IS NOT NULL UNION SELECT party_id FROM lines WHERE party_id IS NOT NULL)`);
@@ -205,7 +205,7 @@ export async function yearTrialBalance(ctx: QueryContext, year: number, legalEnt
     let q = ctx.trx
       .selectFrom('crove_finance.journal_line as l')
       .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-      .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+      .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
       .select('l.account_code')
       .select(kept.as('party_id'))
       .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])

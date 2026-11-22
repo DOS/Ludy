@@ -98,7 +98,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     return withAdmin(async (c) => {
       const { rows } = await c.query<{ n: string }>(
         `SELECT count(*)::text AS n
-           FROM crove_kernel.audit_event
+           FROM ludy_kernel.audit_event
           WHERE org_id = $1
             AND detail ->> 'read' = 'sensitive'
             AND detail ->> 'stage' = 'before_read'`,
@@ -174,13 +174,13 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     const { orgId, slug } = await createOrg(rt, asUser(owner), `Coworker Co ${tag}`);
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
         [orgId, admin, member, viewer],
       ),
     );
     const defaultEntityId = await withAdmin(
       async (c) =>
-        (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]!
+        (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]!
           .id,
     );
     const exec = <O>(userId: string, name: string, input: unknown = {}) =>
@@ -205,8 +205,8 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -393,7 +393,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     // Insert a second legal entity with 125 newer runs (2027-01 .. 2037-05) so an unfiltered `limit: 120` query drops 2026-02 and 2026-03.
     const branchId = await withAdmin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
          VALUES ($1, 'Chi nhánh phía Nam', 'branch', $2)
          RETURNING id`,
         [o.orgId, o.owner],
@@ -453,7 +453,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     const o = await setupOrg();
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by)
          VALUES ($1, $2, 'finance.chief_accountant', $3)`,
         [o.orgId, o.member, o.owner],
       );

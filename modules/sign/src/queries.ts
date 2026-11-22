@@ -104,7 +104,7 @@ export const envelopeList = defineQuery({
     let actorEmail: string | null = null;
     if (actorUserId !== null) {
       const { rows: profileRows } = await sql<{ email: string | null }>`
-        SELECT email FROM crove_kernel.member_profiles(${[actorUserId]}::uuid[])
+        SELECT email FROM ludy_kernel.member_profiles(${[actorUserId]}::uuid[])
       `.execute(ctx.trx);
       actorEmail = profileRows[0]?.email?.trim().toLowerCase() ?? null;
     }
@@ -388,7 +388,7 @@ export const envelopeGet = defineQuery({
     const preExpiryMailStatusBySigner = new Map<string, string>();
     if (remindedSignerIds.length > 0) {
       const mailRows = await ctx.trx
-        .selectFrom('crove_kernel.mail_message')
+        .selectFrom('ludy_kernel.mail_message')
         .select(['source_id', 'status'])
         .where('org_id', '=', ctx.orgId)
         .where('source', '=', SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE)
@@ -657,7 +657,7 @@ export const envelopeVerify = defineQuery({
       ...attachmentFields.map((f) => f.attachment_file_id),
     ].filter((id): id is string => id !== null);
     const fileRows = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'source', 'content_type', 'size_bytes', 'storage_key', 'generation', 'sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', fileIds)
@@ -908,7 +908,7 @@ export interface SignDiffSourceResult {
 
 async function verifySignReadablePdfFile(ctx: QueryContext, fileId: string): Promise<void> {
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'source', 'content_type'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)

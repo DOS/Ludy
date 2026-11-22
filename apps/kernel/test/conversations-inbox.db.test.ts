@@ -51,7 +51,7 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
     return withClient(appUrl, async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
         return await fn(c);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -66,10 +66,10 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [admin, lan, desk, viewer] = [await person('admin'), await person('lan'), await person('desk'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, admin, lan, desk, viewer]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [orgId, desk, owner]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, admin, lan, desk, viewer]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [orgId, desk, owner]);
     const connectionId = randomUUID();
-    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner]);
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner]);
     return { orgId, owner, admin, lan, desk, viewer, connectionId };
   }
   let tick = 0;
@@ -87,13 +87,13 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
   // A message the platform dates after now: a customer who writes again once the thread was resolved (an older one does not reopen it).
   const later = (e: ConversationEvent): ConversationEvent => ({ ...e, at: new Date(Date.now() + 60_000).toISOString() });
   const ingest = (o: Org, events: ConversationEvent[], connectionId = o.connectionId) => worker.execute('kernel.conversation.ingest', { connectionId, events }, { actor: SYSTEM, orgId: o.orgId });
-  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
+  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
   const exec = <T>(o: Org, user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId: o.orgId });
   const query = <T>(o: Org, user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId: o.orgId });
   const list = (o: Org, user: string, input: Record<string, unknown> = {}) => query<ConversationListed>(o, user, 'kernel.conversation.list', input);
   // Who was told, for the thread: the members with a notification of the kind about it, by the key of the message that opened it.
   const told = async (o: Org, conversationId: string) =>
-    (await rows<{ user_id: string }>("SELECT DISTINCT user_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.conversation_new' AND subject_id = $2 ORDER BY user_id", [o.orgId, conversationId])).map((r) => r.user_id);
+    (await rows<{ user_id: string }>("SELECT DISTINCT user_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.conversation_new' AND subject_id = $2 ORDER BY user_id", [o.orgId, conversationId])).map((r) => r.user_id);
   const sorted = (...ids: string[]) => [...ids].sort();
 
   beforeAll(async () => {
@@ -102,9 +102,9 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appUrl = urlFor('crove_app', 'test-app-pw');
-    workerUrl = urlFor('crove_worker', 'test-worker-pw');
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appUrl = urlFor('ludy_app', 'test-app-pw');
+    workerUrl = urlFor('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     db = createDb(pool);
@@ -128,13 +128,13 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect(await told(o, d1)).toEqual(sorted(o.owner, o.admin, o.desk));
       // A second message while it is still New tells nobody again.
       await ingest(o, [event('direct', 'd1', 'Còn nữa')]);
-      expect((await rows('SELECT 1 FROM crove_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1])).length).toBe(3);
+      expect((await rows('SELECT 1 FROM ludy_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1])).length).toBe(3);
       // Resolved, then the customer writes again: it is New again, and they are told again.
       await exec(o, o.desk, 'kernel.conversation.resolve', { conversationId: d1 });
       await ingest(o, [later(event('direct', 'd1', 'Em hỏi thêm'))]);
-      expect((await rows('SELECT 1 FROM crove_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1])).length).toBe(6);
+      expect((await rows('SELECT 1 FROM ludy_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1])).length).toBe(6);
       // The notice names the thread and nothing else: no text of the customer, no name.
-      const stored = JSON.stringify(await rows('SELECT kind, subject_type, detail FROM crove_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1]));
+      const stored = JSON.stringify(await rows('SELECT kind, subject_type, detail FROM ludy_kernel.notification WHERE org_id = $1 AND subject_id = $2', [o.orgId, d1]));
       expect(stored).not.toContain('Nhắn riêng');
       expect(stored).not.toContain('Khách');
     });
@@ -142,9 +142,9 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
     it('tells every member who reads a comment thread, the channel limit applied, and never a viewer', async () => {
       const o = await org();
       const other = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, other, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, other, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
       // The desk member is limited to the other channel: this channel's threads are not theirs.
-      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, other, o.owner]);
+      await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, other, o.owner]);
       await ingest(o, [event('comment_thread', 'c1', 'Giá bao nhiêu')]);
       expect(await told(o, await threadOf(o, 'c1'))).toEqual(sorted(o.owner, o.admin, o.lan));
       await ingest(o, [event('comment_thread', 'c2', 'Còn hàng không')], other);
@@ -170,7 +170,7 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await away(o.desk);
       await exec(o, o.desk, 'kernel.conversation.resolve', { conversationId: a2 });
       await ingest(o, [later(event('direct', 'a2', 'Em hỏi lại'))]);
-      expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.notification WHERE org_id = $1 AND subject_id = $2 AND user_id = $3", [o.orgId, a2, o.desk]))[0]?.n).toBe('2');
+      expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.notification WHERE org_id = $1 AND subject_id = $2 AND user_id = $3", [o.orgId, a2, o.desk]))[0]?.n).toBe('2');
       expect(await told(o, a2)).toEqual([o.desk]);
     });
 
@@ -178,11 +178,11 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       const o = await org();
       // Away until a time that has passed (a restore's statement ages the row): available again, so told, as the availability read says.
       await exec(o, o.desk, 'kernel.conversation.set_availability', { status: 'away', until: new Date(Date.now() + 3_600_000).toISOString() });
-      await rows("UPDATE crove_kernel.member_availability SET until = now() - interval '1 minute' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.desk]);
+      await rows("UPDATE ludy_kernel.member_availability SET until = now() - interval '1 minute' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.desk]);
       await ingest(o, [event('direct', 'e1', 'Hỏi sau giờ vắng')]);
       expect(await told(o, await threadOf(o, 'e1'))).toEqual(sorted(o.owner, o.admin, o.desk));
       // The desk member turned the kind off: the others who are available are told, the desk member is not.
-      await rows("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new')", [o.orgId, o.desk]);
+      await rows("INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new')", [o.orgId, o.desk]);
       await ingest(o, [event('direct', 'e2', 'Hỏi khi nhân viên tắt thông báo')]);
       expect(await told(o, await threadOf(o, 'e2'))).toEqual(sorted(o.owner, o.admin));
       // Owner and admin are away and the desk member muted it: the fallback is owners and admins, who did not mute it.
@@ -191,12 +191,12 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await ingest(o, [event('direct', 'e3', 'Hỏi khi chỉ còn chủ vắng')]);
       expect(await told(o, await threadOf(o, 'e3'))).toEqual(sorted(o.owner, o.admin));
       // Everyone who could be told muted it: nobody is.
-      await rows("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new'), ($1, $3, 'kernel.conversation_new')", [o.orgId, o.owner, o.admin]);
+      await rows("INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new'), ($1, $3, 'kernel.conversation_new')", [o.orgId, o.owner, o.admin]);
       await ingest(o, [event('direct', 'e4', 'Hỏi khi tất cả tắt')]);
       expect(await told(o, await threadOf(o, 'e4'))).toEqual([]);
       // A viewer given the role (a database owner's statement: the grant itself refuses it) is no reader of a private message and is not told of one.
       const p = await org();
-      await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [p.orgId, p.viewer, p.owner]);
+      await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [p.orgId, p.viewer, p.owner]);
       await ingest(p, [event('direct', 'v1', 'Nhắn riêng')]);
       expect(await told(p, await threadOf(p, 'v1'))).toEqual(sorted(p.owner, p.admin, p.desk));
       expect((await list(p, p.viewer)).conversations).toEqual([]);
@@ -210,15 +210,15 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       const o = await org();
       await ingest(o, [event('direct', 'r1', 'Nhắn riêng')]);
       const r1 = await threadOf(o, 'r1');
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_readers($1::uuid)', [r1])).rejects.toMatchObject({ code: '42501' });
-      await expect(asMember(o.orgId, o.owner, (c) => c.query('SELECT * FROM crove_kernel.conversation_readers($1::uuid)', [r1]))).rejects.toMatchObject({ code: '42501' });
-      await expect(workerPool.query('SELECT * FROM crove_kernel.conversation_readers($1::uuid)', [r1])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_readers($1::uuid)', [r1])).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query('SELECT * FROM ludy_kernel.conversation_readers($1::uuid)', [r1]))).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query('SELECT * FROM ludy_kernel.conversation_readers($1::uuid)', [r1])).rejects.toMatchObject({ code: '42501' });
     });
 
     it('names as readers exactly the staff members the database lets read the thread, whatever their role or channel limit (conversation_readers agrees with conversation_access)', async () => {
       const o = await org();
       const second = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, second, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, second, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
       await ingest(o, [event('direct', 'ag1', 'Nhắn riêng'), event('comment_thread', 'ag2', 'Bình luận')]);
       const threads = [await threadOf(o, 'ag1'), await threadOf(o, 'ag2')];
       const staff = [o.owner, o.admin, o.lan, o.desk];
@@ -226,15 +226,15 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
         withClient(workerUrl, async (c) => {
           await c.query('BEGIN');
           try {
-            await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
-            return (await c.query<{ user_id: string }>('SELECT user_id FROM crove_kernel.conversation_readers($1::uuid)', [id])).rows.map((r) => r.user_id).sort();
+            await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
+            return (await c.query<{ user_id: string }>('SELECT user_id FROM ludy_kernel.conversation_readers($1::uuid)', [id])).rows.map((r) => r.user_id).sort();
           } finally {
             await c.query('ROLLBACK').catch(() => {});
           }
         });
       const canRead = async (id: string) => {
         const ok: string[] = [];
-        for (const user of staff) if ((await asMember(o.orgId, user, (c) => c.query('SELECT 1 FROM crove_kernel.conversation WHERE id = $1', [id]))).rowCount === 1) ok.push(user);
+        for (const user of staff) if ((await asMember(o.orgId, user, (c) => c.query('SELECT 1 FROM ludy_kernel.conversation WHERE id = $1', [id]))).rowCount === 1) ok.push(user);
         return ok.sort();
       };
       const agree = async () => {
@@ -245,12 +245,12 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect(await readersOf(threads[0] as string)).toEqual(sorted(o.owner, o.admin, o.desk));
       expect(await readersOf(threads[1] as string)).toEqual(sorted(o.owner, o.admin, o.lan, o.desk));
       // A member limited to another channel reads neither thread, and neither side says otherwise.
-      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, second, o.owner]);
-      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, second, o.owner]);
+      await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, second, o.owner]);
+      await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, second, o.owner]);
       await agree();
       expect(await readersOf(threads[1] as string)).toEqual(sorted(o.owner, o.admin));
       // Limited to the thread's own channel, they read it again.
-      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, o.connectionId, o.owner]);
+      await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, o.connectionId, o.owner]);
       await agree();
       expect(await readersOf(threads[0] as string)).toEqual(sorted(o.owner, o.admin, o.desk));
     });
@@ -269,9 +269,9 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect(await seenBy(o.desk)).toEqual([]);
       expect((await query<ConversationDetail>(o, o.admin, 'kernel.conversation.get', { conversationId: m1 })).conversation.composing).toEqual([o.desk]);
       // The marker lives 60 seconds: written now, it expires within a minute and the readers ignore it after.
-      const lasts = await rows<{ left: number }>('SELECT extract(epoch FROM expires_at - updated_at)::int AS left FROM crove_kernel.conversation_composing WHERE org_id = $1 AND conversation_id = $2', [o.orgId, m1]);
+      const lasts = await rows<{ left: number }>('SELECT extract(epoch FROM expires_at - updated_at)::int AS left FROM ludy_kernel.conversation_composing WHERE org_id = $1 AND conversation_id = $2', [o.orgId, m1]);
       expect(lasts[0]?.left).toBe(60);
-      await rows("UPDATE crove_kernel.conversation_composing SET expires_at = now() - interval '1 second', updated_at = now() - interval '30 seconds' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation_composing SET expires_at = now() - interval '1 second', updated_at = now() - interval '30 seconds' WHERE org_id = $1", [o.orgId]);
       expect(await seenBy(o.owner)).toEqual([]);
       // After the 20 seconds a new mark is written again.
       expect(await exec(o, o.desk, 'kernel.conversation.composing', { conversationId: m1 })).toEqual({ marked: true });
@@ -280,12 +280,12 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await expect(exec(o, o.viewer, 'kernel.conversation.composing', { conversationId: m1 })).rejects.toMatchObject({ status: 403 });
       // In the table: nobody writes a marker in another's name, and a member who may not read the thread sees none.
       await expect(
-        asMember(o.orgId, o.desk, (c) => c.query('INSERT INTO crove_kernel.conversation_composing (org_id, conversation_id, channel_connection_id, kind, user_id, expires_at) SELECT org_id, id, channel_connection_id, kind, $2, now() + interval \'1 minute\' FROM crove_kernel.conversation WHERE id = $1', [m1, o.owner])),
+        asMember(o.orgId, o.desk, (c) => c.query('INSERT INTO ludy_kernel.conversation_composing (org_id, conversation_id, channel_connection_id, kind, user_id, expires_at) SELECT org_id, id, channel_connection_id, kind, $2, now() + interval \'1 minute\' FROM ludy_kernel.conversation WHERE id = $1', [m1, o.owner])),
       ).rejects.toMatchObject({ code: '42501' });
-      expect(await asMember(o.orgId, o.lan, async (c) => (await c.query('SELECT 1 FROM crove_kernel.conversation_composing')).rowCount)).toBe(0);
-      expect(await asMember(o.orgId, o.desk, async (c) => (await c.query('SELECT 1 FROM crove_kernel.conversation_composing')).rowCount)).toBe(1);
+      expect(await asMember(o.orgId, o.lan, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.conversation_composing')).rowCount)).toBe(0);
+      expect(await asMember(o.orgId, o.desk, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.conversation_composing')).rowCount)).toBe(1);
       // The audit row of a mark has the thread's id and no text.
-      const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.composing'", [o.orgId]));
+      const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.composing'", [o.orgId]));
       expect(audit).toContain(m1);
       expect(audit).not.toContain('Nhắn riêng');
     });
@@ -295,12 +295,12 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await ingest(o, [event('direct', 's1', 'Nhắn riêng')]);
       const s1 = await threadOf(o, 's1');
       await exec(o, o.desk, 'kernel.conversation.composing', { conversationId: s1 });
-      await rows("UPDATE crove_kernel.conversation_composing SET expires_at = now() - interval '2 minutes' WHERE org_id = $1", [o.orgId]);
-      expect((await workerPool.query('SELECT crove_kernel.conversation_composing_sweep() AS n')).rows[0].n).toBe(0);
-      await rows("UPDATE crove_kernel.conversation_composing SET expires_at = now() - interval '10 minutes' WHERE org_id = $1", [o.orgId]);
-      expect(((await workerPool.query('SELECT crove_kernel.conversation_composing_sweep() AS n')).rows[0].n as number) >= 1).toBe(true);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_composing WHERE org_id = $1', [o.orgId])).toEqual([]);
-      await expect(pool.query('SELECT crove_kernel.conversation_composing_sweep()')).rejects.toMatchObject({ code: '42501' });
+      await rows("UPDATE ludy_kernel.conversation_composing SET expires_at = now() - interval '2 minutes' WHERE org_id = $1", [o.orgId]);
+      expect((await workerPool.query('SELECT ludy_kernel.conversation_composing_sweep() AS n')).rows[0].n).toBe(0);
+      await rows("UPDATE ludy_kernel.conversation_composing SET expires_at = now() - interval '10 minutes' WHERE org_id = $1", [o.orgId]);
+      expect(((await workerPool.query('SELECT ludy_kernel.conversation_composing_sweep() AS n')).rows[0].n as number) >= 1).toBe(true);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_composing WHERE org_id = $1', [o.orgId])).toEqual([]);
+      await expect(pool.query('SELECT ludy_kernel.conversation_composing_sweep()')).rejects.toMatchObject({ code: '42501' });
     });
 
     it('keeps a member’s availability to themselves, shows the team’s to the staff, and reads an away time that passed as available again', async () => {
@@ -316,14 +316,14 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       // Setting it again is an update of the one row; an away time in the past is refused; available clears the time.
       await expect(exec(o, o.lan, 'kernel.conversation.set_availability', { status: 'away', until: new Date(Date.now() - 60_000).toISOString() })).rejects.toMatchObject({ code: 'AVAILABILITY_PAST' });
       expect(await exec(o, o.lan, 'kernel.conversation.set_availability', { status: 'available' })).toMatchObject({ status: 'available', until: null });
-      expect(await rows('SELECT 1 FROM crove_kernel.member_availability WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_kernel.member_availability WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan])).toHaveLength(1);
       // A viewer sets none; nobody writes another member's row (the table says it).
       await expect(exec(o, o.viewer, 'kernel.conversation.set_availability', { status: 'away' })).rejects.toMatchObject({ status: 403 });
-      expect(await asMember(o.orgId, o.desk, async (c) => (await c.query("UPDATE crove_kernel.member_availability SET status = 'away' WHERE user_id = $1", [o.lan])).rowCount)).toBe(0);
-      await expect(asMember(o.orgId, o.desk, (c) => c.query("INSERT INTO crove_kernel.member_availability (org_id, user_id, status) VALUES ($1, $2, 'away')", [o.orgId, o.admin]))).rejects.toMatchObject({ code: '42501' });
+      expect(await asMember(o.orgId, o.desk, async (c) => (await c.query("UPDATE ludy_kernel.member_availability SET status = 'away' WHERE user_id = $1", [o.lan])).rowCount)).toBe(0);
+      await expect(asMember(o.orgId, o.desk, (c) => c.query("INSERT INTO ludy_kernel.member_availability (org_id, user_id, status) VALUES ($1, $2, 'away')", [o.orgId, o.admin]))).rejects.toMatchObject({ code: '42501' });
       // An away time that has passed reads as available again (a restore's statement ages it).
       await exec(o, o.lan, 'kernel.conversation.set_availability', { status: 'away', until: later });
-      await rows("UPDATE crove_kernel.member_availability SET until = now() - interval '1 minute' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.member_availability SET until = now() - interval '1 minute' WHERE org_id = $1", [o.orgId]);
       expect((await query<Availability>(o, o.lan, 'kernel.conversation.availability', {})).me).toMatchObject({ status: 'available', until: null });
     });
   });
@@ -380,11 +380,11 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect((await today(o.admin))[0]).toMatchObject({ count: 2 });
       // A member limited to another channel gets nothing.
       const other = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, other, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
-      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, other, o.owner]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, other, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
+      await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, other, o.owner]);
       expect(await today(o.lan)).toEqual([]);
       // Answered (pending), the thread waits for the customer, not for a member: nothing for anyone.
-      await rows("UPDATE crove_kernel.conversation SET status = 'pending' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation SET status = 'pending' WHERE org_id = $1", [o.orgId]);
       expect(await today(o.owner)).toEqual([]);
       expect(await today(o.admin)).toEqual([]);
     });

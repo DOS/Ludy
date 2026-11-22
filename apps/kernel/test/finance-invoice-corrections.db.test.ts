@@ -121,15 +121,15 @@ suite('replacement and adjustment invoices (#916)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     runtime = register(createDb(pool));
@@ -322,7 +322,7 @@ suite('replacement and adjustment invoices (#916)', () => {
       await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
       await admin((c) =>
         c.query(
-          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default",
+          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default",
           [orgId],
         ),
       );
@@ -353,7 +353,7 @@ suite('replacement and adjustment invoices (#916)', () => {
       await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
       await admin((c) =>
         c.query(
-          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, r.regime, '2026.1', r.since::date FROM crove_kernel.legal_entity, (VALUES ('tt133', '2025-01-01'), ('tt99', '2026-01-01')) AS r(regime, since) WHERE org_id = $1 AND is_default",
+          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, r.regime, '2026.1', r.since::date FROM ludy_kernel.legal_entity, (VALUES ('tt133', '2025-01-01'), ('tt99', '2026-01-01')) AS r(regime, since) WHERE org_id = $1 AND is_default",
           [orgId],
         ),
       );

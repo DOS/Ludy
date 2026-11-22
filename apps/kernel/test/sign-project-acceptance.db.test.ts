@@ -171,10 +171,10 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrlObj = new URL(adminUrl);
-    appUrlObj.username = 'crove_app';
+    appUrlObj.username = 'ludy_app';
     appUrlObj.password = 'test-app-pw';
     const appUrl = appUrlObj.toString();
 
@@ -387,22 +387,22 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
     const branchBTaskTitle = 'Hạng mục riêng chi nhánh Đà Nẵng';
     const branchBTaskId = await admin(async (c) => {
       const defRow = await c.query<{ id: string }>(
-        `SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default = true`,
+        `SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default = true`,
         [org.orgId],
       );
       const defaultEntityId = defRow.rows[0]?.id as string;
       const insertedB = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', false, $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', false, $2) RETURNING id`,
         [org.orgId, owner.userId],
       );
       const branchBId = insertedB.rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, limitedMember.userId, defaultEntityId, owner.userId],
       );
       const insertedTask = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
+        `INSERT INTO ludy_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
          VALUES ($1, $2, 'done', 'human', 'user', $3) RETURNING id`,
         [org.orgId, branchBTaskTitle, branchBId],
       );
@@ -479,7 +479,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
       (
         await c.query<{ feature: string; module: string; input_tokens: number; output_tokens: number }>(
           `SELECT feature, module, input_tokens, output_tokens
-             FROM crove_kernel.org_usage
+             FROM ludy_kernel.org_usage
             WHERE org_id = $1 AND metric = 'ai_cost'`,
           [org.orgId],
         )

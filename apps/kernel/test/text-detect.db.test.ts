@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Database tests for crove_kernel.text_detect and crove_kernel.text_redact_spans (#4001, Slice 1):
+// Database tests for ludy_kernel.text_detect and ludy_kernel.text_redact_spans (#4001, Slice 1):
 // - Verifies real values (email, phone, national_id, tax_code, bank_account) and near-misses (prices, years, counts,
 //   dates, percentages, timestamps, meeting numbers, URLs, UUIDs, IPv4).
 // - Verifies exact 1-based Unicode character offsets (including emojis / surrogate pairs) and non-overlapping spans.
@@ -31,16 +31,16 @@ const MARK_BY_KIND: Record<RedactionKind, string> = {
   bank_account: '[đã ẩn: số tài khoản]',
 };
 
-suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
+suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
   const dbName = `crove_test_text_detect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let client: pg.Client;
 
   const detect = async (text: string | null): Promise<DetectRow[]> =>
-    (await client.query<DetectRow>('SELECT kind, start_pos, end_pos, match_text FROM crove_kernel.text_detect($1)', [text])).rows;
+    (await client.query<DetectRow>('SELECT kind, start_pos, end_pos, match_text FROM ludy_kernel.text_detect($1)', [text])).rows;
 
   const redactSpans = async (text: string | null, starts: Array<number | null> | null, kinds: Array<string | null> | null, marks: Array<string | null> | null): Promise<string | null> =>
-    (await client.query<{ out: string | null }>('SELECT crove_kernel.text_redact_spans($1, $2, $3, $4) AS out', [text, starts, kinds, marks])).rows[0]?.out ?? null;
+    (await client.query<{ out: string | null }>('SELECT ludy_kernel.text_redact_spans($1, $2, $3, $4) AS out', [text, starts, kinds, marks])).rows[0]?.out ?? null;
 
   beforeAll(async () => {
     if (!ADMIN) return;
@@ -56,10 +56,10 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, {
-      crove_app: 'test-app-pw',
-      crove_worker: 'test-worker-pw',
-      crove_prober: 'test-prober-pw',
-      crove_reporter: 'test-reporter-pw',
+      ludy_app: 'test-app-pw',
+      ludy_worker: 'test-worker-pw',
+      ludy_prober: 'test-prober-pw',
+      ludy_reporter: 'test-reporter-pw',
     });
     client = new pg.Client({ connectionString: adminUrl });
     await client.connect();
@@ -112,14 +112,14 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     ]);
   });
 
-  it('agrees with crove_kernel.text_mentions on detected emails and non-international digit values', async () => {
+  it('agrees with ludy_kernel.text_mentions on detected emails and non-international digit values', async () => {
     const line = 'Mail đặng@x.example, gọi 0912 345 678, MST 0101234567-001, CCCD 079091001234, STK 19034567890123.';
     const rows = await detect(line);
     expect(rows).toHaveLength(5);
     for (const row of rows) {
       const probeKind = row.kind === 'email' ? 'email' : 'digits';
       const probeVal = row.kind === 'email' ? row.match_text.toLowerCase() : row.match_text.replace(/\D/g, '');
-      const { rows: mentioned } = await client.query<{ ok: boolean }>('SELECT crove_kernel.text_mentions($1, $2, $3) AS ok', [line, probeKind, probeVal]);
+      const { rows: mentioned } = await client.query<{ ok: boolean }>('SELECT ludy_kernel.text_mentions($1, $2, $3) AS ok', [line, probeKind, probeVal]);
       expect(mentioned[0]?.ok, `${row.kind} ${row.match_text}`).toBe(true);
     }
   });
@@ -162,10 +162,10 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     await expect(redactSpans('abc', [1], ['phone'], ['x'.repeat(201)])).rejects.toMatchObject({ code: '22023' });
     await expect(redactSpans('abc', [null as unknown as number], ['phone'], ['[đã ẩn]'])).rejects.toMatchObject({ code: '22023' });
     await expect(
-      client.query("SELECT crove_kernel.text_redact_spans('abc', ARRAY[[1]], ARRAY[['phone']], ARRAY[['[đã ẩn]']])"),
+      client.query("SELECT ludy_kernel.text_redact_spans('abc', ARRAY[[1]], ARRAY[['phone']], ARRAY[['[đã ẩn]']])"),
     ).rejects.toMatchObject({ code: '22023' });
     await expect(
-      client.query("SELECT crove_kernel.text_redact_spans('abc', '[0:0]={1}'::integer[], ARRAY['phone'], ARRAY['[đã ẩn]'])"),
+      client.query("SELECT ludy_kernel.text_redact_spans('abc', '[0:0]={1}'::integer[], ARRAY['phone'], ARRAY['[đã ẩn]'])"),
     ).rejects.toMatchObject({ code: '22023' });
   });
 
@@ -307,7 +307,7 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
       await cClient.connect();
 
       const { rows } = await cClient.query<DetectRow>(
-        'SELECT kind, start_pos, end_pos, match_text FROM crove_kernel.text_detect($1)',
+        'SELECT kind, start_pos, end_pos, match_text FROM ludy_kernel.text_detect($1)',
         ['SĐT 84.912.345.678, Sđt 84.912.345.678, 15000000 ĐỒNG, SĐT 0912 345 678 ĐỒNG Ý CHƯA, VNĐ 123456789, STK VNĐ 12345678, ĐIỆN THOẠI +84 912 345 678.'],
       );
       expect(rows.map((r) => ({ kind: r.kind, matchText: r.match_text }))).toEqual([
@@ -329,10 +329,10 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     }
   }, 120_000);
 
-  it('is immutable, parallel-safe SECURITY INVOKER with pinned search_path, narrow crove_tenant grant, and zero hardening violations', async () => {
+  it('is immutable, parallel-safe SECURITY INVOKER with pinned search_path, narrow ludy_tenant grant, and zero hardening violations', async () => {
     const sigs = [
-      'crove_kernel.text_detect(text)',
-      'crove_kernel.text_redact_spans(text, integer[], text[], text[])',
+      'ludy_kernel.text_detect(text)',
+      'ludy_kernel.text_redact_spans(text, integer[], text[], text[])',
     ];
     for (const sig of sigs) {
       const meta = (
@@ -353,35 +353,35 @@ suite('crove_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
       expect(
         acl.filter((entry) => !/^(?:postgres|crove_migrator|crove_owner)=/.test(entry)).map((entry) => entry.split('=')[0]),
         sig,
-      ).toEqual(['crove_tenant']);
+      ).toEqual(['ludy_tenant']);
 
       expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(false);
-      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('crove_app', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(true);
-      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('crove_worker', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(true);
-      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('crove_prober', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(false);
-      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('crove_reporter', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(false);
+      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('ludy_app', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(true);
+      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('ludy_worker', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(true);
+      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('ludy_prober', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(false);
+      expect((await client.query<{ ok: boolean }>(`SELECT has_function_privilege('ludy_reporter', $1, 'EXECUTE') AS ok`, [sig])).rows[0]?.ok, sig).toBe(false);
     }
 
-    // Verify crove_app can execute both functions directly, while crove_prober is refused.
+    // Verify ludy_app can execute both functions directly, while ludy_prober is refused.
     const roleUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = pw;
       return u.toString();
     };
-    const appClient = new pg.Client({ connectionString: roleUrl('crove_app', 'test-app-pw') });
+    const appClient = new pg.Client({ connectionString: roleUrl('ludy_app', 'test-app-pw') });
     await appClient.connect();
     try {
-      const { rows } = await appClient.query<DetectRow>("SELECT * FROM crove_kernel.text_detect('Gọi 0912 345 678')");
+      const { rows } = await appClient.query<DetectRow>("SELECT * FROM ludy_kernel.text_detect('Gọi 0912 345 678')");
       expect(rows).toEqual([{ kind: 'phone', start_pos: 5, end_pos: 17, match_text: '0912 345 678' }]);
     } finally {
       await appClient.end();
     }
 
-    const proberClient = new pg.Client({ connectionString: roleUrl('crove_prober', 'test-prober-pw') });
+    const proberClient = new pg.Client({ connectionString: roleUrl('ludy_prober', 'test-prober-pw') });
     await proberClient.connect();
     try {
-      await expect(proberClient.query("SELECT * FROM crove_kernel.text_detect('Gọi 0912 345 678')")).rejects.toMatchObject({ code: '42501' });
+      await expect(proberClient.query("SELECT * FROM ludy_kernel.text_detect('Gọi 0912 345 678')")).rejects.toMatchObject({ code: '42501' });
     } finally {
       await proberClient.end();
     }

@@ -47,9 +47,9 @@ suite('customer payment reminders (#2488)', () => {
     const member = await identity('member');
     const viewer = await identity('viewer');
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
     });
-    const entity = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
+    const entity = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
     return { orgId, owner, member, viewer, entity };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -101,7 +101,7 @@ suite('customer payment reminders (#2488)', () => {
   const draft = (o: Org, partyId: string, user = o.owner) => query<PaymentReminderDraft>(o, 'finance.payment_reminder.draft', { partyId }, user);
   const mails = (o: Org, partyId: string) =>
     admin(async (c) => (await c.query<{ id: string; source: string; to_address: string; subject: string; status: string; payload: unknown }>(
-      `SELECT id, source, to_address, subject, status, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 ORDER BY created_at`,
+      `SELECT id, source, to_address, subject, status, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 ORDER BY created_at`,
       [o.orgId, partyId],
     )).rows);
   const sendInput = (d: PaymentReminderDraft, extra: Record<string, unknown> = {}) => ({
@@ -126,9 +126,9 @@ suite('customer payment reminders (#2488)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -254,7 +254,7 @@ suite('customer payment reminders (#2488)', () => {
     ]);
     expect(payload).toMatchObject({ count: 2, total: '4234567', currency: 'VND', lang: 'vi', payTo: { number: '9988776655' } });
     expect(payload.lead).toBe('Quý khách còn nợ 1 đồng, hạn ngày 1/1.');
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.payment_reminder.send' AND outcome = 'ok'`, [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.payment_reminder.send' AND outcome = 'ok'`, [o.orgId])).rows);
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toMatchObject({ party_id: p, level: 2, invoices: 2, owed: '4234567', message_id: sent.messageId, status: 'queued', repeated: false });
     expect(JSON.stringify(audit[0]?.detail)).not.toContain('khangthinh');
@@ -278,7 +278,7 @@ suite('customer payment reminders (#2488)', () => {
     // (A mail row is immutable, so the superuser steps around the trigger for this one statement.)
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.mail_message SET created_at = now() - interval '4 days' WHERE org_id = $1 AND source_id = $2`, [o.orgId, p]);
+      await c.query(`UPDATE ludy_kernel.mail_message SET created_at = now() - interval '4 days' WHERE org_id = $1 AND source_id = $2`, [o.orgId, p]);
     });
     const third = await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(d));
     expect(third.status).toBe('queued');
@@ -321,7 +321,7 @@ suite('customer payment reminders (#2488)', () => {
     const o = await org();
     // The party command refuses such an address; a row written around it (an import, a superuser) is still never mailed.
     const two = await customer(o, 'Công ty Rạng Đông', 'a@rangdong.test');
-    await admin((c) => c.query(`UPDATE crove_kernel.party SET email = 'a@rangdong.test, b@other.test' WHERE org_id = $1 AND id = $2`, [o.orgId, two]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.party SET email = 'a@rangdong.test, b@other.test' WHERE org_id = $1 AND id = $2`, [o.orgId, two]));
     await sale(o, two, '81', dated(5), '700000');
     await expect(execute(o, 'finance.payment_reminder.send', sendInput(await draft(o, two)))).rejects.toMatchObject({ code: 'CUSTOMER_EMAIL_REQUIRED' });
     expect(await mails(o, two)).toHaveLength(0);
@@ -449,7 +449,7 @@ suite('customer payment reminders (#2488)', () => {
     expect(await query(o, 'finance.customer_collection.get', { partyId: p })).toMatchObject({ termsDays: 25, pausedUntil: null });
     // Pause again, then merge the party into another: its row stays on it, and the kept party still has none; the pause holds for the group.
     await execute(o, 'finance.customer_collection.set', { partyId: p, pausedUntil: until });
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, p, kept]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, p, kept]));
     const after = await list(o);
     expect(after.customers).toEqual([]);
     expect(after.paused.map((x) => [x.partyId, x.pausedUntil])).toEqual([[kept, until]]);
@@ -458,7 +458,7 @@ suite('customer payment reminders (#2488)', () => {
 
   it('keeps a reminder sent for one legal entity from counting for another, in the history, the repeat rule and the weekly item', async () => {
     const o = await org();
-    const branch = (await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Chi nhánh Nhắc nợ', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id as string;
+    const branch = (await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Chi nhánh Nhắc nợ', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id as string;
     const p = await customer(o, 'Công ty Hai Pháp Nhân', 'hpn@haiphapnhan.test');
     await sale(o, p, '1', dated(5), '500000');
     await sale(o, p, '2', dated(6), '700000', undefined, branch);

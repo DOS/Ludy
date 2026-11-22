@@ -20,7 +20,7 @@ type Posting = PayrollSettlement['posting'];
 // The open proposals of a command that name this run, newest first: the run id is a field of the request input, compared in lower case as it was typed.
 async function openProposals(ctx: QueryContext, command: string, runId: string): Promise<{ id: string; kind: string | null }[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id'])
     .select(sql<string | null>`request_input ->> 'kind'`.as('kind'))
     .where('org_id', '=', ctx.orgId)

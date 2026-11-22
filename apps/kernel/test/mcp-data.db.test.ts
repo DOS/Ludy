@@ -51,7 +51,7 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, id, userId, `oauth-${id}`, `client-${id}`],
       ),
@@ -81,9 +81,9 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 6 });
     pools.push(pool);
@@ -94,14 +94,14 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     }
     orgA = (await createOrg(runtime, { type: 'user', userId: users.ownerA, aal: 'aal1' }, 'Org A')).orgId;
     orgB = (await createOrg(runtime, { type: 'user', userId: users.ownerB, aal: 'aal1' }, 'Org B')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.memberA]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.memberA]));
     await admin(async (c) => {
       // One transaction: a document must be posted as a balanced journal entry in the same one.
       await c.query('BEGIN');
       const party = async (org: string, kind: string, name: string, extra: { taxCode?: string; address?: string; email?: string; phone?: string; company?: string; duplicateOf?: string; trust?: string } = {}) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.party (org_id, kind, name, tax_code, address, email, phone, company_id, duplicate_of, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+            `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, address, email, phone, company_id, duplicate_of, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
             [org, kind, name, extra.taxCode ?? null, extra.address ?? null, extra.email ?? null, extra.phone ?? null, extra.company ?? null, extra.duplicateOf ?? null, extra.trust ?? 'user'],
           )
         ).rows[0]!.id;
@@ -119,7 +119,7 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
       // A person linked to a company that is merged into another afterwards (the link cannot be made to a merged one).
       ids.beta = await party(orgA, 'organization', 'Beta Co');
       ids.mai = await party(orgA, 'person', 'Mai Tran', { company: ids.beta as string });
-      await c.query(`UPDATE crove_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3`, [orgA, ids.acme, ids.beta]);
+      await c.query(`UPDATE ludy_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3`, [orgA, ids.acme, ids.beta]);
       ids.other = await party(orgB, 'organization', 'Other Org Customer');
       const entry = async (org: string, date: string, sourceType: string, sourceId: string, total: number, flip = false, reverses: string | null = null) => {
         const id = randomUUID();

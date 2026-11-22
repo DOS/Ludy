@@ -45,8 +45,8 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
               (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 7,
               '{"locations":[{"country":"VN"}],"ageMin":22,"ageMax":45,"gender":"all","interests":[]}'::jsonb, 'https://example.com/quan-ly',
               '[{"headline":"Quản lý","primaryText":"Mời bạn ghé thử.","callToAction":"learn_more"}]'::jsonb, 1000000, gen_random_uuid(), now(),
-              (SELECT m.user_id FROM crove_kernel.tenant_member m WHERE m.org_id = a.org_id LIMIT 1)
-       FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug';
+              (SELECT m.user_id FROM ludy_kernel.tenant_member m WHERE m.org_id = a.org_id LIMIT 1)
+       FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug';
        ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`,
       vars,
     );

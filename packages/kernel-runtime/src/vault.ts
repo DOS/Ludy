@@ -1,4 +1,4 @@
-// Seals third-party credentials (channel tokens) for crove_kernel.credential (ADR-0025 decision 2, plan §7.4).
+// Seals third-party credentials (channel tokens) for ludy_kernel.credential (ADR-0025 decision 2, plan §7.4).
 // Envelope encryption: every secret gets its own random AES-256-GCM data key, and the data key is wrapped with the
 // deployment's credential key, which never reaches the database. Both layers authenticate the binding (org,
 // provider, account), so an envelope copied to another org's or another account's row does not open.

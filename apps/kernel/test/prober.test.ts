@@ -56,7 +56,7 @@ const limits = { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds:
 
 function config(overrides: Partial<ProberConfig> = {}): ProberConfig {
   return {
-    databaseUrl: 'postgres://crove_prober:pw@db:5432/postgres',
+    databaseUrl: 'postgres://ludy_prober:pw@db:5432/postgres',
     webhookUrl: SECRET_HOOK,
     webhookFormat: 'generic',
     telegramChatId: undefined,
@@ -522,14 +522,14 @@ describe('prober exit codes', () => {
     });
     expect(code).toBe(EXIT.probeFailed);
     expect(hook.body().crove.findings).toEqual([
-      { check: 'probe', value: null, threshold: null, message: 'the prober could not read crove_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432' },
+      { check: 'probe', value: null, threshold: null, message: 'the prober could not read ludy_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432' },
     ]);
   });
 
   it('exits 2 without a database URL or with bad arguments', async () => {
     const io = capture();
     expect(await probeOnce(config({ databaseUrl: undefined }), io)).toBe(EXIT.probeFailed);
-    expect(io.err).toEqual(['[prober] PROBER_DATABASE_URL is not set; connect it as crove_prober']);
+    expect(io.err).toEqual(['[prober] PROBER_DATABASE_URL is not set; connect it as ludy_prober']);
     expect(await runProber(['--bogus'], {}, io)).toBe(EXIT.probeFailed);
     expect(await runProber([], { ALERT_WEBHOOK_URL: 'ftp://x' }, io)).toBe(EXIT.probeFailed);
   });
@@ -941,7 +941,7 @@ describe('WORM verification marker (#2082)', () => {
   it('runs the other probes with the check disabled, and the finding names the settings, never their values (#2094)', async () => {
     const io = capture();
     const hook = webhook();
-    const env = { PROBER_DATABASE_URL: 'postgres://crove_prober:pw@db:5432/postgres', ALERT_WEBHOOK_URL: SECRET_HOOK, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ENDPOINT: 'ftp://internal.example.test' };
+    const env = { PROBER_DATABASE_URL: 'postgres://ludy_prober:pw@db:5432/postgres', ALERT_WEBHOOK_URL: SECRET_HOOK, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ENDPOINT: 'ftp://internal.example.test' };
     const sick = { ...healthy, worker_heartbeat_age_seconds: 900 };
     expect(await runProber([], env, { ...io, fetch: hook.fetch, readHealth: async () => sick, now: () => now })).toBe(EXIT.unhealthy);
     expect(hook.calls).toHaveLength(2);
@@ -967,7 +967,7 @@ describe('WORM verification marker (#2082)', () => {
         io.out.push(line);
         throw stop;
       };
-      await expect(runProber(['--every', '10'], { PROBER_DATABASE_URL: 'postgres://crove_prober:pw@db:5432/postgres', ...env }, { ...io, log })).rejects.toBe(stop);
+      await expect(runProber(['--every', '10'], { PROBER_DATABASE_URL: 'postgres://ludy_prober:pw@db:5432/postgres', ...env }, { ...io, log })).rejects.toBe(stop);
       return { line: io.out[0] ?? '', err: io.err };
     };
     expect(await start({})).toMatchObject({ line: expect.stringMatching(/, verification marker check off$/), err: [] });

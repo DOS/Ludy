@@ -126,7 +126,7 @@ export const mediaFor = (post: PostContent, v: { media?: unknown; content_frozen
 export async function loadPostMedia(trx: Trx, orgId: string, postId: string): Promise<PostMedia[]> {
   const rows = await trx
     .selectFrom('crove_social.post_media as m')
-    .innerJoin('crove_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
+    .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
     .select(['m.file_id', 'm.alt_text', 'f.generation', 'f.content_type', 'f.size_bytes', 'f.duration_ms', 'f.image_width', 'f.image_height'])
     .where('m.org_id', '=', orgId)
     .where('m.post_id', '=', postId)

@@ -133,7 +133,7 @@ export const policySet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -222,7 +222,7 @@ export const remindersSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -253,7 +253,7 @@ export const fourEyesSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -283,7 +283,7 @@ export const shortLinksSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -313,7 +313,7 @@ export const signatureSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -339,7 +339,7 @@ export const policyList = defineQuery({
     // A revoked connection's policy row stays (it can get no new posts) but is not shown (#408).
     const rows = await ctx.trx
       .selectFrom('crove_social.channel_policy as p')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'p.org_id').onRef('c.id', '=', 'p.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'p.org_id').onRef('c.id', '=', 'p.channel_connection_id'))
       .select(['p.channel_connection_id', 'p.approvals_required', 'p.review_reminders', 'p.short_links', 'p.four_eyes', 'p.client_approval', 'p.signature', 'p.updated_by', 'p.updated_at'])
       .where('p.org_id', '=', ctx.orgId)
       .where('c.status', '<>', 'revoked')
@@ -387,7 +387,7 @@ export const clientApprovalSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)

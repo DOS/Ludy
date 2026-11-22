@@ -205,7 +205,7 @@ async function resolveInterviewerUserId(
 ): Promise<string> {
   if (requestedUserId === undefined) return userOf(ctx.actor);
   const member = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', requestedUserId)
@@ -228,10 +228,10 @@ async function loadInterviewerNames(
   const unique = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
   const names = new Map<string, string>();
   if (unique.length === 0) return names;
-  // Member names/emails come from the control plane solely through crove_kernel.member_profiles(uuid[]).
+  // Member names/emails come from the control plane solely through ludy_kernel.member_profiles(uuid[]).
   const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
     SELECT user_id, email, display_name
-      FROM crove_kernel.member_profiles(${unique}::uuid[])`.execute(ctx.trx);
+      FROM ludy_kernel.member_profiles(${unique}::uuid[])`.execute(ctx.trx);
   for (const r of rows) {
     const label = r.display_name?.trim() || r.email?.trim() || r.user_id;
     names.set(r.user_id, label);
@@ -242,7 +242,7 @@ async function loadInterviewerNames(
 async function hasActiveInterview(ctx: Pick<CommandContext, 'trx' | 'orgId'>, interviewEventId: string | null): Promise<boolean> {
   if (!interviewEventId) return false;
   const row = await ctx.trx
-    .selectFrom('crove_kernel.calendar_event')
+    .selectFrom('ludy_kernel.calendar_event')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', interviewEventId)
@@ -271,7 +271,7 @@ type LockedInterviewEvent = {
 async function lockLinkedInterviewEvent(ctx: CommandContext, interviewEventId: string | null): Promise<LockedInterviewEvent | undefined> {
   if (!interviewEventId) return undefined;
   return ctx.trx
-    .selectFrom('crove_kernel.calendar_event')
+    .selectFrom('ludy_kernel.calendar_event')
     .select(['id', 'user_id', 'kind', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', interviewEventId)
@@ -286,7 +286,7 @@ async function cancelLockedInterviewEvent(
 ): Promise<string | null> {
   if (!event || event.kind !== 'manual' || event.status !== 'active') return null;
   await ctx.trx
-    .updateTable('crove_kernel.calendar_event')
+    .updateTable('ludy_kernel.calendar_event')
     .set({ status: 'cancelled', cancelled_by: cancelledByUserId, cancelled_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', event.id)
@@ -521,7 +521,7 @@ export const candidateList = defineQuery({
     let q = ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
-      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+      .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
       .select([
@@ -579,7 +579,7 @@ export const candidateGet = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
-      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+      .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
       .select([
@@ -626,7 +626,7 @@ export const interviewersList = defineQuery({
   access: MANAGERS,
   handler: async (ctx): Promise<HrInterviewerOption[]> => {
     const memberRows = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select(['user_id', 'role'])
       .where('org_id', '=', ctx.orgId)
       .where('role', 'in', [...INTERVIEWER_ROLES])
@@ -701,7 +701,7 @@ export const recruitingBriefRead = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
-      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+      .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
       .select([
@@ -1092,7 +1092,7 @@ export const candidateMoveStage = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
       'stage',
       'agreed_wage',
@@ -1156,7 +1156,7 @@ export const candidateScheduleInterview = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', CALENDAR_EVENT_COLUMNS),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', CALENDAR_EVENT_COLUMNS),
     tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['interview_event_id', 'interview_starts_at', 'interview_ends_at', 'stage', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrCandidateInterviewScheduled> => {
@@ -1216,7 +1216,7 @@ export const candidateScheduleInterview = defineCommand({
     let eventId: string;
     try {
       const created = await ctx.trx
-        .insertInto('crove_kernel.calendar_event')
+        .insertInto('ludy_kernel.calendar_event')
         .values({
           org_id: ctx.orgId,
           user_id: interviewerUserId,
@@ -1282,7 +1282,7 @@ export const candidateCancelInterview = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
       'interview_event_id',
       'interview_starts_at',
@@ -1488,7 +1488,7 @@ export const candidateErase = defineCommand({
   access: OWNERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
       'display_name',
       'email',

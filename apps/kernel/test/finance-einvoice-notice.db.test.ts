@@ -87,14 +87,14 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hóa Đơn ${randomUUID().slice(0, 6)}`);
     const adminUser = await identity('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
     // The org's tax code is its default entity's (kernel.org.set_tax_code keeps the two the same).
     await execute({ orgId, owner }, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id ?? '';
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id ?? '';
     if (options.connection) {
       const channel = randomUUID();
       await admin(async (c) => {
-        await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
+        await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
         await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
@@ -134,16 +134,16 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -224,10 +224,10 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     expect(await refusal(execute(o, 'finance.einvoice.notice_step', { noticeId: randomUUID(), step: 'tax_form' }))).toBe('EINVOICE_NOTICE_NOT_FOUND');
     const original = await issued(o, sandbox());
     const viewer = await identity('viewer');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]);
     expect(await refusal(open(o, original.draftId, 'buyer_name', 'Tên khác', viewer))).toBe('FORBIDDEN');
     const notice = await open(o, original.draftId, 'buyer_name', 'Tên Riêng Rất Đặc Biệt');
-    const audit = JSON.stringify(await rows("SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice.notice%'", [o.orgId]));
+    const audit = JSON.stringify(await rows("SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice.notice%'", [o.orgId]));
     expect(audit).toContain(notice.id);
     expect(audit).not.toContain('Tên Riêng Rất Đặc Biệt');
   });
@@ -246,9 +246,9 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     const o = await org();
     const original = await issued(o, sandbox());
     const author = await identity('author');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, author]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, author]);
     const notice = await open(o, original.draftId, 'buyer_name', 'Tên Mới', author);
-    await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, author]);
+    await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, author]);
     const [row] = await rows<{ created_by: string | null; correct_text: string }>('SELECT created_by, correct_text FROM crove_finance.einvoice_notice WHERE org_id = $1 AND id = $2', [o.orgId, notice.id]);
     expect(row).toEqual({ created_by: null, correct_text: 'Tên Mới' });
   });

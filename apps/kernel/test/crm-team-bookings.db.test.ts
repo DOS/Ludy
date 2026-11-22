@@ -79,7 +79,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
     const { orgId } = await createOrg(app, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const [a, b, c, viewer] = [await person('a'), await person('b'), await person('c'), await person('viewer')];
     await admin((cl) =>
-      cl.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
+      cl.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
         orgId,
         a,
         b,
@@ -87,7 +87,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
         viewer,
       ]),
     );
-    const slug = (await admin((cl) => cl.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
+    const slug = (await admin((cl) => cl.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
     for (const user of [a, b, c]) {
       await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(user), orgId });
     }
@@ -108,7 +108,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
         await admin((cl) =>
           cl.query<{ user_id: string; status: string; starts_at: Date }>(
             `SELECT ev.user_id, ev.status, ev.starts_at FROM crove_crm.booking b
-             JOIN crove_kernel.calendar_event ev ON ev.org_id = b.org_id AND ev.id = ANY (ARRAY[b.calendar_event_id] || b.hold_event_ids)
+             JOIN ludy_kernel.calendar_event ev ON ev.org_id = b.org_id AND ev.id = ANY (ARRAY[b.calendar_event_id] || b.hold_event_ids)
              WHERE b.org_id = $1 AND b.id = $2 ORDER BY array_position(ARRAY[b.calendar_event_id] || b.hold_event_ids, ev.id)`,
             [orgId, bookingId],
           ),
@@ -127,15 +127,15 @@ suite('team event types on PostgreSQL (#1373)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 10 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 10 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
   });
@@ -214,7 +214,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
     expect((await o.held(first)).map((h) => h.status)).toEqual(['cancelled']);
 
     // A host who leaves the org is skipped: their free time is no longer offered.
-    await admin((cl) => cl.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.b]));
+    await admin((cl) => cl.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.b]));
     const other = bookableDay(4);
     await o.busy(o.a, other, 600);
     expect(await o.slots('nhom', other)).not.toContain(at(other, 600));
@@ -236,7 +236,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
     expect(await o.confirm(id)).toMatchObject({ status: 'confirmed' });
     expect(await o.held(id)).toEqual([o.a, o.b, o.c].map((user_id) => ({ user_id, status: 'active', starts_at: new Date(at(day, 540)) })));
     // Every host mailed, with the visitor.
-    const mails = await admin((cl) => cl.query<{ recipient: string }>("SELECT payload ->> 'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2", [o.orgId, id]));
+    const mails = await admin((cl) => cl.query<{ recipient: string }>("SELECT payload ->> 'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2", [o.orgId, id]));
     expect(mails.rows.map((m) => m.recipient).sort()).toEqual(['host', 'host', 'host', 'visitor']);
     const listed = await app.query<BookingItem[]>('crm.booking.list', { scope: 'mine', period: 'upcoming' }, { actor: asUser(o.c), orgId: o.orgId });
     expect(listed.find((x) => x.id === id)).toMatchObject({ hostUserId: o.a, hostUserIds: [o.a, o.b, o.c] });

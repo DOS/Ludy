@@ -87,7 +87,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
   async function connection(o: Org, platform: 'shopee' | 'lazada' | 'tiktok_shop'): Promise<string> {
     const provider = `marketplace_${platform}`;
     const channelId = randomUUID();
-    await rows('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, channelId, provider, `purge-${randomUUID()}`, 'purge test', o.owner]);
+    await rows('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, channelId, provider, `purge-${randomUUID()}`, 'purge test', o.owner]);
     const id = randomUUID();
     await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform, poll_cursor) VALUES ($1, $2, $3, $4, $5, 'cursor-after-page-3')", [o.orgId, id, channelId, provider, platform]);
     return id;
@@ -104,7 +104,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
       { actor: asUser(o.owner), orgId: o.orgId },
     );
     for (const state of states) {
-      await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', $3::jsonb, '[]')", [
+      await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', $3::jsonb, '[]')", [
         o.orgId,
         fileId,
         JSON.stringify({ kind: options.kind ?? 'marketplace_orders', summary: { state, platform: 'shopee', orders: 3 }, ...(state === 'staged' ? { lines: [] } : {}) }),
@@ -119,11 +119,11 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
   // The channel of a connection that is still there, as `status` since `days` ago.
   const channel = (o: Org, connectionId: string, status: 'active' | 'expired' | 'revoked', days: number) =>
     rows(
-      'UPDATE crove_kernel.channel_connection SET status = $3, updated_at = now() - make_interval(days => $4) WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)',
+      'UPDATE ludy_kernel.channel_connection SET status = $3, updated_at = now() - make_interval(days => $4) WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)',
       [o.orgId, connectionId, status, days],
     );
-  const fileRow = async (fileId: string) => (await rows<{ original_deleted_at: string | null; storage_key: string; sha256: string }>('SELECT original_deleted_at::text, storage_key, sha256 FROM crove_kernel.file WHERE id = $1', [fileId]))[0];
-  const versions = (fileId: string) => rows<{ version: number; state: string | null }>("SELECT version, result -> 'summary' ->> 'state' AS state FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
+  const fileRow = async (fileId: string) => (await rows<{ original_deleted_at: string | null; storage_key: string; sha256: string }>('SELECT original_deleted_at::text, storage_key, sha256 FROM ludy_kernel.file WHERE id = $1', [fileId]))[0];
+  const versions = (fileId: string) => rows<{ version: number; state: string | null }>("SELECT version, result -> 'summary' ->> 'state' AS state FROM ludy_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
   const link = (fileId: string) => rows<{ marketplace_connection_id: string | null; disconnected_at: string | null }>('SELECT marketplace_connection_id, disconnected_at::text FROM crove_finance.marketplace_connection_file WHERE file_id = $1', [fileId]);
   const cursor = async (connectionId: string) => {
     const found = await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM crove_finance.marketplace_connection WHERE id = $1', [connectionId]);
@@ -141,16 +141,16 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const register = (target: Db) => new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     rt = register(db);
@@ -247,7 +247,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     // A rerun finds nothing more.
     expect(await run()).toMatchObject({ failed: 0, deleted: 0 });
     // The audit facts of the commands carry the file id, two counts and that it was the purge; nothing of the file.
-    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_retention.apply' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_retention.apply' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
     expect(audit).toHaveLength(3);
     for (const a of audit) expect(Object.keys(a.detail).sort()).toEqual(['applied', 'component', 'disconnected', 'fileId', 'versions', 'workerInstance']);
     expect(JSON.stringify(audit)).not.toContain('don-hang');
@@ -285,7 +285,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const otherKind = await polled(o, id, ['staged'], { kind: 'bank_statement' });
     const notCsv = await polled(o, id, ['staged'], { contentType: 'application/pdf' });
     const stillThere = await polled(o, live, ['staged']);
-    await asReplica("UPDATE crove_kernel.file SET held_until = now() + interval '30 days' WHERE org_id = $1 AND id = $2", [o.orgId, held]);
+    await asReplica("UPDATE ludy_kernel.file SET held_until = now() + interval '30 days' WHERE org_id = $1 AND id = $2", [o.orgId, held]);
     await asReplica(
       `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
       [o.orgId, randomUUID(), invoiced],
@@ -415,7 +415,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const o = await org();
     const id = await connection(o, 'shopee');
     const file = await polled(o, id, []);
-    await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', '{}'::jsonb, '[]')", [o.orgId, file]);
+    await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', '{}'::jsonb, '[]')", [o.orgId, file]);
     await disconnect(o, id);
     await age(o, file, 400);
     expect(await run()).toMatchObject({ failed: 0, deleted: 0 });
@@ -427,7 +427,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const id = await connection(o, 'shopee');
     const used = await polled(o, id, ['staged']);
     const free = await polled(o, id, ['staged']);
-    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES crove_kernel.file (org_id, id))');
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES ludy_kernel.file (org_id, id))');
     await rows('INSERT INTO public.purge_probe (org_id, file_id) VALUES ($1, $2)', [o.orgId, used]);
     await disconnect(o, id);
     // The referenced file is the oldest, so a batch of one lists it first.
@@ -447,8 +447,8 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const usedReversed = await polled(o, id, ['staged']);
     const free = await polled(o, id, ['staged']);
     // Tables that restrict the deletion of the file they name (a signing envelope or a post's media does the same); the second lists the key columns the other way round.
-    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES crove_kernel.file (org_id, id))');
-    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe_reversed (file_id uuid NOT NULL, org_id uuid NOT NULL, FOREIGN KEY (file_id, org_id) REFERENCES crove_kernel.file (id, org_id))');
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe (org_id uuid NOT NULL, file_id uuid NOT NULL, FOREIGN KEY (org_id, file_id) REFERENCES ludy_kernel.file (org_id, id))');
+    await rows('CREATE TABLE IF NOT EXISTS public.purge_probe_reversed (file_id uuid NOT NULL, org_id uuid NOT NULL, FOREIGN KEY (file_id, org_id) REFERENCES ludy_kernel.file (id, org_id))');
     await rows('INSERT INTO public.purge_probe (org_id, file_id) VALUES ($1, $2)', [o.orgId, used]);
     await rows('INSERT INTO public.purge_probe_reversed (file_id, org_id) VALUES ($1, $2)', [usedReversed, o.orgId]);
     await disconnect(o, id);

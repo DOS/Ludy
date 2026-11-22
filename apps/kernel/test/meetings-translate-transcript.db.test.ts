@@ -68,7 +68,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
-  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
+  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
 
   // What the model was given, and everything a handler wrote to the console.
   let modelCalls = 0;
@@ -85,9 +85,9 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     prompts = [];
     setSummaryEnabled(true);
     setTranslationTargets([]);
-    await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
     // A test that stopped half way leaves no live run to block the next one.
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND status = 'running'`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND status = 'running'`, [orgId]);
   });
 
   // A model that translates by prefixing "English: " (digits and names untouched), or by a function of each line; null leaves a line out. It goes through the meter as the real call does,
@@ -173,21 +173,21 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     pools.push(appPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries, rowsQuery] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     setSummaryEnabled(true);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider', 'viewer', 'leaver']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'translate-transcript', subject: key, email: `${key}@translate-transcript.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Dịch Bản Ghi')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer'), ($1, $7, 'member')`, [
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer'), ($1, $7, 'member')`, [
       orgId,
       users.admin,
       users.recorder,
@@ -274,7 +274,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(total).toBeGreaterThanOrEqual(4);
     // A hard stop that holds about one and a half chunks (each costs the tokens it is expected to use, at one unit a token), on top of what the org spent this month already.
     const oneChunk = Math.ceil(((first.estimate?.inputTokens ?? 0) + (first.estimate?.outputTokens ?? 0)) / total);
-    await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', crove_kernel.ai_budget_spent($1::uuid, 'module', 'meetings') + $2::numeric, true, $3)`, [orgId, Math.floor(oneChunk * 1.5), users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'meetings') + $2::numeric, true, $3)`, [orgId, Math.floor(oneChunk * 1.5), users.owner]);
     const one = await batch('attendee', meetingId);
     expect(one).toMatchObject({ state: 'ready', errorCode: null });
     expect(modelCalls).toBe(1);
@@ -289,7 +289,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(await rawStatus('attendee', meetingId)).toMatchObject({ translated: afterFirst.translated, state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED' });
     expect((await parts('attendee', meetingId)).parts).toHaveLength(afterFirst.translated);
     // The budget comes back: the requests go on from the parts kept, never asking for a line already translated.
-    await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
     seen = [];
     for (let i = 0; i < 40 && (await rawStatus('attendee', meetingId)).remaining > 0; i += 1) await batch('attendee', meetingId);
     expect((await rawStatus('attendee', meetingId)).remaining).toBe(0);
@@ -435,7 +435,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(await sqlAdmin("SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, meetingId]).then((r) => r.rowCount)).toBe(2);
     // Every member's own context, the recorder's included: the update policy is for the recorder's drafts, so a published line is not theirs to change (0 rows, not an error).
     const adminUrl2 = new URL(adminUrl);
-    adminUrl2.username = 'crove_app';
+    adminUrl2.username = 'ludy_app';
     adminUrl2.password = 'test-app-pw';
     for (const who of ['recorder', 'owner', 'admin', 'attendee', 'viewer']) {
       const c = new pg.Client({ connectionString: adminUrl2.toString() });
@@ -507,14 +507,14 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     const leaving: ModelPort = {
       generate: async (who, prompt) => {
         const answered = await translating().generate(who, prompt);
-        await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.leaver]);
+        await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.leaver]);
         return answered;
       },
     };
     expect(await batch('leaver', meetingId, leaving)).toMatchObject({ state: 'failed', translated: 0 });
     const kept = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
     expect(kept.rows[0]?.n).toBe('0');
-    const row = await sqlAdmin<{ status: string; body: string | null }>(`SELECT v.status, v.body FROM crove_kernel.member_vy_result v WHERE v.org_id = $1 AND v.subject_id = $2 AND v.member_user_id = $3`, [orgId, meetingId, users.leaver]);
+    const row = await sqlAdmin<{ status: string; body: string | null }>(`SELECT v.status, v.body FROM ludy_kernel.member_vy_result v WHERE v.org_id = $1 AND v.subject_id = $2 AND v.member_user_id = $3`, [orgId, meetingId, users.leaver]);
     expect(row.rows[0]?.status).not.toBe('ready');
     expect(row.rows[0]?.body ?? null).toBeNull();
     expect(await refuses(batch('leaver', meetingId))).toBe('NOT_A_MEMBER');

@@ -939,7 +939,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(exec).toBeGreaterThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 db'));
       expect(exec).toBeLessThan(indexOf(c, 'compose run --rm --no-TTY --no-deps migrate'));
       expect(c.filter((l) => l.startsWith('compose exec '))).toEqual([
-        "compose exec -T -e PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000 db psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres -c SELECT count(*) FROM crove_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')",
+        "compose exec -T -e PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000 db psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres -c SELECT count(*) FROM ludy_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')",
       ]);
       expect(deploy('v1.1.0', 'b').out).toContain('[deploy] plain idempotency rows: 0\n');
       // No temporary file of the count stays.
@@ -947,7 +947,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it.each([
-      ['psql fails', { STUB_PSQL_FAIL: 'psql: error: relation "crove_kernel.idempotency_key" does not exist' }, 'does not exist'],
+      ['psql fails', { STUB_PSQL_FAIL: 'psql: error: relation "ludy_kernel.idempotency_key" does not exist' }, 'does not exist'],
       ['it answers something else than a number', { STUB_PLAIN_ROWS: 'many' }, 'no answer'],
       ['it answers nothing', { STUB_PLAIN_ROWS: '' }, 'no answer'],
     ])('never fails the deploy when the count did not run: %s', (_name, env, text) => {

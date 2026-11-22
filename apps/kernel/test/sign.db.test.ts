@@ -212,7 +212,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -220,8 +220,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -317,12 +317,12 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(uploadedFileId).toBeTruthy();
 
     const fileRow = await admin(async (c) =>
-      (await c.query('SELECT source, content_type FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [org.orgId, uploadedFileId])).rows[0],
+      (await c.query('SELECT source, content_type FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [org.orgId, uploadedFileId])).rows[0],
     );
     expect(fileRow).toEqual({ source: 'sign_document', content_type: 'application/pdf' });
 
     const outboxCount = await admin(async (c) =>
-      Number((await c.query("SELECT count(*) AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'", [org.orgId])).rows[0].n),
+      Number((await c.query("SELECT count(*) AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'", [org.orgId])).rows[0].n),
     );
     expect(outboxCount).toBe(0);
 
@@ -410,7 +410,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     ).rejects.toMatchObject({ code: 'SIGN_INVALID_EXPIRY', status: 422 });
 
     const inspectOutbox = await admin(async (c) =>
-      (await c.query("SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.envelope.inspect_queued'", [org.orgId])).rows,
+      (await c.query("SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.envelope.inspect_queued'", [org.orgId])).rows,
     );
     expect(inspectOutbox.some((r) => r.payload?.envelopeId === envelopeId)).toBe(true);
 
@@ -574,7 +574,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       runtime.execute('sign.envelope.send', { envelopeId }, { actor: asUser(member), orgId: org.orgId, idempotencyKey: 'send-key-1' }),
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
     const sendIdemRows = await admin(async (c) =>
-      (await c.query("SELECT key FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.envelope.send'", [org.orgId])).rows,
+      (await c.query("SELECT key FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.envelope.send'", [org.orgId])).rows,
     );
     expect(sendIdemRows).toEqual([]);
 
@@ -599,7 +599,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(tokenRows[0].revoked_at).toBeNull();
 
     const auditDump = await admin(async (c) =>
-      JSON.stringify((await c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'sign.%'", [org.orgId])).rows),
+      JSON.stringify((await c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'sign.%'", [org.orgId])).rows),
     );
     expect(auditDump).not.toContain(firstLink.token);
     const eventDump = await admin(async (c) =>
@@ -611,7 +611,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const appClient = await pool.connect();
     try {
       await appClient.query('BEGIN');
-      await appClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
+      await appClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
       await expect(appClient.query('SELECT id FROM crove_sign.signing_token')).rejects.toThrow();
       await expect(appClient.query('SELECT id FROM crove_sign.signing_otp')).rejects.toThrow();
     } finally {
@@ -628,7 +628,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const guardClient = await pool.connect();
     try {
       await guardClient.query('BEGIN');
-      await guardClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
+      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
       const expectGuardFailure = async (sqlText: string, params: unknown[], pattern: RegExp) => {
         await guardClient.query('SAVEPOINT sign_guard');
         await expect(guardClient.query(sqlText, params)).rejects.toThrow(pattern);
@@ -717,7 +717,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       runtime.execute('sign.signer.create_link', { envelopeId, signerId: s1.signerId }, { actor: asUser(member), orgId: org.orgId, idempotencyKey: 'link-key-1' }),
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
     const linkIdemRows = await admin(async (c) =>
-      (await c.query("SELECT key FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.signer.create_link'", [org.orgId])).rows,
+      (await c.query("SELECT key FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.signer.create_link'", [org.orgId])).rows,
     );
     expect(linkIdemRows).toEqual([]);
     const rotatedAfterRefusal = await admin(async (c) =>
@@ -840,7 +840,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const appendClient = await pool.connect();
     try {
       await appendClient.query('BEGIN');
-      await appendClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
+      await appendClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
       await expect(
         appendClient.query("UPDATE crove_sign.signing_event SET payload_json = '{\"tampered\":true}'::jsonb WHERE org_id = $1 AND envelope_id = $2", [org.orgId, envelopeId]),
       ).rejects.toThrow();
@@ -1069,7 +1069,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const adminClient = await pool.connect();
     try {
       await adminClient.query('BEGIN');
-      await adminClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [adminUser.userId, org.orgId]);
+      await adminClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [adminUser.userId, org.orgId]);
       await adminClient.query('SAVEPOINT sp_erase_otp');
       await expect(adminClient.query("SELECT crove_sign.personal_erase_otp('signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
       await adminClient.query('ROLLBACK TO SAVEPOINT sp_erase_otp');
@@ -1151,9 +1151,9 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       );
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [org.orgId]);
+      await c.query("UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [org.orgId]);
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'::jsonb),
                 ($1, $6, 'system', NULL, 'kernel.org.export.record', $7, 'ok', $5, '{"format":"crove.org-export.v2","file_count":1}'::jsonb)`,
         [org.orgId, new Date(Date.now() - 40 * DAY_MS), owner.userId, randomUUID(), '0'.repeat(64), new Date(Date.now() - 31 * DAY_MS), randomUUID()],
@@ -1334,7 +1334,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, regOrgId]);
+        await c.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, regOrgId]);
         await expect(c.query(sqlText, params)).rejects.toThrow(pattern);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -1530,11 +1530,11 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(inbound.duplicate).toBe(false);
     expect(inbound.fileIds).toHaveLength(2);
     const collidingRow = await admin(async (c) =>
-      (await c.query<{ source: string }>('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, sourceFileId])).rows[0],
+      (await c.query<{ source: string }>('SELECT source FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, sourceFileId])).rows[0],
     );
     expect(collidingRow?.source).toBe('sign_document');
     const newInvoiceRow = await admin(async (c) =>
-      (await c.query<{ source: string }>('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, inbound.fileIds[1]])).rows[0],
+      (await c.query<{ source: string }>('SELECT source FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, inbound.fileIds[1]])).rows[0],
     );
     expect(newInvoiceRow?.source).toBe('email');
 
@@ -1809,7 +1809,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
             subject: string;
             payload: Readonly<Record<string, unknown>>;
           }>(
-            'SELECT id, subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND template_key = $2 AND source_id = $3 ORDER BY created_at DESC LIMIT 1',
+            'SELECT id, subject, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = $2 AND source_id = $3 ORDER BY created_at DESC LIMIT 1',
             [e2eOrgId, templateKey, sourceId],
           )
         ).rows[0],

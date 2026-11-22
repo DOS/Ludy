@@ -27,13 +27,13 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
   const pass = () => sweepMcpProposalNotices({ runtime: h.worker, workerDb: h.workerDb });
   const rows = async (proposalId?: string) =>
     (await h.q<{ user_id: string; kind: string; subject_id: string; detail: Record<string, unknown>; org_id: string }>(
-      `SELECT user_id, kind, subject_id, detail, org_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.approval_waiting' AND ($2::uuid IS NULL OR subject_id = $2) ORDER BY user_id`,
+      `SELECT user_id, kind, subject_id, detail, org_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.approval_waiting' AND ($2::uuid IS NULL OR subject_id = $2) ORDER BY user_id`,
       [h.orgId, proposalId ?? null],
     )).rows;
-  const told = async (proposalId: string) => (await h.q<{ at: Date | null }>('SELECT approvers_told_at AS at FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, proposalId])).rows[0]?.at ?? null;
+  const told = async (proposalId: string) => (await h.q<{ at: Date | null }>('SELECT approvers_told_at AS at FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, proposalId])).rows[0]?.at ?? null;
   const person = async (role: 'admin' | 'member' | 'viewer') => {
     const id = await upsertIdentity(h.db, { issuer: 'engage-notice', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-notice.test`, name: role });
-    await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
+    await h.q('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
     return id;
   };
   const listFor = (userId: string) => h.runtime.query<{ items: NotificationItem[]; unread: number }>('kernel.notification.list', {}, { actor: h.person(userId), orgId: h.orgId });
@@ -70,7 +70,7 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     expect((await rows(second.proposalId)).map((r) => r.user_id).sort()).toEqual([owner2, admin].sort());
     expect(await rows(first.proposalId)).toHaveLength(2);
     // Only members of this org, whatever else exists.
-    const members = new Set((await h.q<{ user_id: string }>('SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1', [h.orgId])).rows.map((r) => r.user_id));
+    const members = new Set((await h.q<{ user_id: string }>('SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1', [h.orgId])).rows.map((r) => r.user_id));
     for (const r of await rows()) {
       expect(r.org_id).toBe(h.orgId);
       expect(members.has(r.user_id)).toBe(true);
@@ -90,7 +90,7 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     const { actor } = await h.grant();
     const made = await h.propose(actor, REPLY, reply());
     await pass();
-    const all = await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.notification WHERE org_id = $1 AND (detail::text LIKE '%99k%' OR detail::text LIKE '%Lan%')`, [h.orgId]);
+    const all = await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.notification WHERE org_id = $1 AND (detail::text LIKE '%99k%' OR detail::text LIKE '%Lan%')`, [h.orgId]);
     expect(all.rows[0]?.n).toBe(0);
     for (const r of await rows(made.proposalId)) expect(r.detail).toEqual({});
   });
@@ -120,9 +120,9 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     const c = new pg.Client({ connectionString: h.adminUrl });
     await c.connect();
     try {
-      await c.query('CREATE TEMP TABLE one AS SELECT * FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, made.proposalId]);
+      await c.query('CREATE TEMP TABLE one AS SELECT * FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, made.proposalId]);
       await c.query('UPDATE one SET id = $1, approvers_told_at = now()', [copy]);
-      await c.query('INSERT INTO crove_kernel.proposal SELECT * FROM one');
+      await c.query('INSERT INTO ludy_kernel.proposal SELECT * FROM one');
     } finally {
       await c.end();
     }
@@ -142,12 +142,12 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     const made: string[] = [];
     for (let i = 0; i < 20; i++) made.push((await h.propose(actor, REPLY, reply(`Dạ ${i}`))).proposalId);
     await expect(h.propose(actor, REPLY, reply('thứ 21'))).rejects.toMatchObject({ code: 'MCP_PROPOSAL_CAP' });
-    const pending = (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE org_id = $1 AND requested_by_grant = $2 AND status = 'pending'", [h.orgId, grantId])).rows[0]?.n;
+    const pending = (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND requested_by_grant = $2 AND status = 'pending'", [h.orgId, grantId])).rows[0]?.n;
     expect(pending).toBe(20);
     expect(await pass()).toBe(20);
     expect((await rows()).filter((r) => r.user_id === quiet)).toEqual([]);
     // Everyone who may approve and is not the grantor (held back) and did not turn the kind off: the same people for each of the 20.
-    const told = (await h.q<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role IN ('owner', 'admin') AND user_id NOT IN ($2, $3)", [h.orgId, h.owner, quiet])).rows.map((r) => r.user_id);
+    const told = (await h.q<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role IN ('owner', 'admin') AND user_id NOT IN ($2, $3)", [h.orgId, h.owner, quiet])).rows.map((r) => r.user_id);
     expect(told).toContain(owner2);
     for (const id of made) expect((await rows(id)).map((r) => r.user_id).sort(), id).toEqual([...told].sort());
     expect((await rows()).filter((r) => made.includes(r.subject_id))).toHaveLength(20 * told.length);

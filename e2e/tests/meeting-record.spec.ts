@@ -47,7 +47,7 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
     await expect(start).toBeDisabled();
     await page.getByRole('checkbox', { name: /Tôi xác nhận đã thông báo/ }).click();
     await expect(start).toBeEnabled();
-    expect(sql(`SELECT 1 FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })).toHaveLength(0);
+    expect(sql(`SELECT 1 FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })).toHaveLength(0);
   });
 
   await test.step('record about 15 seconds of real microphone output', async () => {
@@ -55,7 +55,7 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
     await expect(page.getByRole('status').filter({ hasText: 'Đang ghi' })).toBeVisible();
     // One chunk is stored every 5 seconds: three chunks are about 15 seconds.
     await expect.poll(async () => (await deviceCopy(page)).chunkCount, { timeout: 40_000 }).toBeGreaterThanOrEqual(3);
-    const meetings = sql<{ consent_method: string }>(`SELECT m.consent_method FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug });
+    const meetings = sql<{ consent_method: string }>(`SELECT m.consent_method FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug });
     expect(meetings).toEqual([{ consent_method: 'told_at_start' }]);
   });
 
@@ -96,7 +96,7 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
   });
 
   await test.step('the meeting has its audio, stored, and the device copy is gone', async () => {
-    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM crove_meetings.audio_segment s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM crove_meetings.audio_segment s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.length_seconds).toBeGreaterThanOrEqual(10);
     await expect(page.locator('audio')).toBeVisible({ timeout: 30_000 });

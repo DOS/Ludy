@@ -10,11 +10,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
+import { createDb } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -30,13 +31,14 @@ suite('widening the invisible-character class of the minutes templates and the c
   const dbName = `crove_test_invisible_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool | undefined;
   let orgId = '';
   let userId = '';
   let meetingId = '';
   const ids: Record<string, string> = {};
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await c.connect();
     try {
       return await fn(c);
@@ -69,7 +71,7 @@ suite('widening the invisible-character class of the minutes templates and the c
     const app = new URL(adminUrl);
     app.username = 'crove_app';
     app.password = 'test-app-pw';
-    pool = createPool({ connectionString: app.toString(), max: 2 });
+    pool = createPreCutoverPool({ connectionString: app.toString(), max: 2 });
     const db = createDb(pool);
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@invisible.test', name: null });
@@ -96,6 +98,8 @@ suite('widening the invisible-character class of the minutes templates and the c
     ids.k2 = await chapterRow(2, `${ch(0x180c)}${ch(0x180d)}`);
     ids.k3 = await chapterRow(3, 'Kết luận');
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
   }, 300_000);
 
   afterAll(async () => {

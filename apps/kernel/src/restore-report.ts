@@ -79,7 +79,7 @@ export function numberReseedCommand(): CommandDef<z.infer<typeof zReseed>, Numbe
     handler: async (ctx, input) => {
       const { rows } = await sql<{ series_id: string; previous_next: string | null; next_number: string }>`
         SELECT series_id, previous_next::text AS previous_next, next_number::text AS next_number
-        FROM crove_kernel.number_series_reseed(${input.seriesId}::uuid, ${input.legalEntityId}::uuid, ${input.docType}, ${input.periodKey},
+        FROM ludy_kernel.number_series_reseed(${input.seriesId}::uuid, ${input.legalEntityId}::uuid, ${input.docType}, ${input.periodKey},
           ${input.next}::bigint)`
         .execute(ctx.trx)
         .catch((error: { message?: string }) => {

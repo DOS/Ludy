@@ -19,7 +19,7 @@ x-crove-env: &crove-env
   AUTH_SESSION_CHECK: db
   AUTH_STEP_UP: 'off'
   AUTH_UPSTREAM_URL: http://auth:9999
-  DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+  DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
   LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
   # JSON logs and the pool sizes (#2175), as in docker-compose.yml.
   LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -144,7 +144,7 @@ services:
       disable: true
     environment:
       <<: *crove-env
-      WORKER_DATABASE_URL: postgres://crove_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
+      WORKER_DATABASE_URL: postgres://ludy_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
       EXTRACT_URL: http://ludy-extract:8090
       # The sandbox's slots (docker-compose.yml gives the same value to crove-extract), which the worker never exceeds.
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}

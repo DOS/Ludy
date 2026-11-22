@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The events of an app that is off wait, and flow when it is back on (ADR-0053 section 4, slice c C3b). The relay claims an event and queues its jobs in one
 // transaction; for an org whose app is off those jobs would be refused and ended quietly, and the event lost. So the relay parks such an event
-// (crove_kernel.outbox_hold) instead of queueing anything, and the held sweep puts the parked events back on the outbox, oldest first, once the app is on again
+// (ludy_kernel.outbox_hold) instead of queueing anything, and the held sweep puts the parked events back on the outbox, oldest first, once the app is on again
 // (the choice and the entitlement, asked here in TypeScript). A parked event lives no longer than the outbox retention window: the day's purge deletes it with its day, and the
-// retention job logs how many per app (crove_kernel.outbox_held_expire); the app recovers that work through its own sweeps on switch-on (ADR-0053 section 4).
+// retention job logs how many per app (ludy_kernel.outbox_held_expire); the app recovers that work through its own sweeps on switch-on (ADR-0053 section 4).
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { Database } from '@ludy/db';
 
@@ -32,7 +32,7 @@ export const NEVER_HELD_EVENTS: ReadonlySet<string> = new Set([
 const TIME_BOUND_EVENTS: ReadonlySet<string> = new Set(['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']);
 
 // The events of an app that finds its own pending work again when it is switched on: Sign's inspection and sealing are queued by its own sweep on `kernel.org.apps_changed`
-// (the worker's relay step for that event), and Projects recurring task wake-ups live in `crove_kernel.agent_wakeup` which the agent sweep recovers automatically.
+// (the worker's relay step for that event), and Projects recurring task wake-ups live in `ludy_kernel.agent_wakeup` which the agent sweep recovers automatically.
 export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'projects.recurring.advanced',
   'sign.envelope.inspect_queued',
@@ -105,7 +105,7 @@ export async function holdEvents(trx: Db, held: ReadonlyArray<{ row: HeldRow; ap
   for (let i = 0; i < held.length; i += 1000) {
     const batch = held.slice(i, i + 1000);
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_kernel.outbox_hold(${batch.map((h) => h.row.org_id)}::uuid[], ${batch.map((h) => h.row.event_id)}::uuid[], ${batch.map((h) => h.app)}::text[]) AS n`.execute(trx);
+      SELECT ludy_kernel.outbox_hold(${batch.map((h) => h.row.org_id)}::uuid[], ${batch.map((h) => h.row.event_id)}::uuid[], ${batch.map((h) => h.app)}::text[]) AS n`.execute(trx);
     parked += rows[0]?.n ?? 0;
   }
   return parked;
@@ -129,7 +129,7 @@ async function releasePair(db: Db, appOn: AppOn, pair: { org_id: string; module:
   if (!on) return { released: 0, waiting: Number(pair.waiting) };
   let released = 0;
   for (let batch = 0; batch < maxBatches; batch++) {
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db);
     const n = rows[0]?.n ?? 0;
     released += n;
     if (n < RELEASE_BATCH) return { released, waiting: 0 };
@@ -157,7 +157,7 @@ export async function releaseHeld(
   for (let page = 0; page < maxPages; page++) {
     const after = cursor.after;
     const { rows: pairs } = await sql<{ org_id: string; module: string; waiting: string }>`
-      SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${pageSize}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db);
+      SELECT org_id, module, waiting FROM ludy_kernel.outbox_hold_pairs(${pageSize}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db);
     for (const pair of pairs) {
       seen += 1;
       // A pair that fails (a database error) is left for the next sweep and does not hold back the pairs after it.
@@ -183,7 +183,7 @@ export async function releaseHeldOfOrg(db: Db, appOn: AppOn, orgId: string): Pro
   let released = 0;
   // The first page of pairs after this org with an empty module name (no app has one): this org's pairs come first, an org has fewer apps than a page.
   const { rows: pairs } = await sql<{ org_id: string; module: string; waiting: string }>`
-    SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${orgId}::uuid, ${''}::text)`.execute(db);
+    SELECT org_id, module, waiting FROM ludy_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${orgId}::uuid, ${''}::text)`.execute(db);
   for (const pair of pairs) {
     if (pair.org_id !== orgId) break;
     // One batch per app: the relay step is a transaction that sits idle meanwhile, so the rest of a long backlog is the held sweep's.

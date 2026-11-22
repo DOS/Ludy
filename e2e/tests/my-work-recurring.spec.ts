@@ -87,7 +87,7 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
 
     const rows = sql<{ status: string; due_on: string | null }>(
       `SELECT td.status, td.due_on::text FROM crove_notes.todo td
-       JOIN crove_kernel.tenant t ON t.org_id = td.org_id
+       JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
        WHERE t.slug = :'slug' ORDER BY td.created_at ASC`,
       { slug },
     );

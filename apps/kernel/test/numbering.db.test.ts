@@ -16,6 +16,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type NumberSe
 import { Runtime, type InputHashMode } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -31,6 +32,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
   let adminUrl = '';
   let appUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
@@ -42,7 +44,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await c.connect();
     try {
       return await fn(c);
@@ -52,9 +54,9 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
   }
 
   // The database starts before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
-  // crove_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
-  function connect(inputHash: InputHashMode = 'keyed') {
-    pool = createPool({ connectionString: appUrl, max: 4 });
+  // ludy_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
+  function connect(inputHash: InputHashMode = 'keyed', preCutover = false) {
+    pool = preCutover ? createPreCutoverPool({ connectionString: appUrl, max: 4 }) : createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     // No context token key: the database starts at a version before enter_user_context (#1822).
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -63,9 +65,9 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
   // The voucher's number columns, also before the migration added number_period and number_allocation_id.
   const RETURNED = `v.id, v.number, to_jsonb(v) ->> 'number_period' AS number_period, to_jsonb(v) ->> 'number_allocation_id' AS number_allocation_id`;
 
-  // As crove_app in the user's context: a voucher and its entry, committed.
+  // As ludy_app in the user's context: a voucher and its entry, committed.
   async function post(user: string, org: string, kind: 'journal' | 'cash_receipt', date: string): Promise<{ id: string; number: number; period: string; allocation: string }> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = upgraded ? new pg.Client({ connectionString: appUrl }) : createPreCutoverClient({ connectionString: appUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -124,7 +126,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     app.username = 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
-    connect('sha256');
+    connect('sha256', true);
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@numbering.test', name: null });
     adminUser = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'admin@numbering.test', name: null });
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@numbering.test', name: null });
@@ -134,13 +136,17 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     for (let i = 0; i < 2; i += 1) await post(owner, legacyOrg, 'journal', `2026-0${i + 4}-15`);
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    app.username = 'ludy_app';
+    appUrl = app.toString();
     // Connections opened before the migration may hold plans of the tables as they were.
     await pool.end();
     connect();
 
     ({ orgId } = await createOrg(rt, asUser(owner), 'Sổ mới'));
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, adminUser, member]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, adminUser, member]),
     );
   }, 300_000);
 
@@ -161,9 +167,9 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
           await c.query<{ doc_type: string; reset: string; period_key: string; next_number: string; numbers: number[]; allocated: string[] }>(
             `SELECT s.doc_type, p.reset, s.period_key, s.next_number::text AS next_number,
                     array_agg(v.number ORDER BY v.number) AS numbers, array_agg(a.number::text ORDER BY v.number) AS allocated
-             FROM crove_kernel.number_series s
-             JOIN crove_kernel.number_series_policy p ON p.org_id = s.org_id AND p.legal_entity_id = s.legal_entity_id AND p.doc_type = s.doc_type
-             JOIN crove_kernel.number_allocation a ON a.org_id = s.org_id AND a.series_id = s.id
+             FROM ludy_kernel.number_series s
+             JOIN ludy_kernel.number_series_policy p ON p.org_id = s.org_id AND p.legal_entity_id = s.legal_entity_id AND p.doc_type = s.doc_type
+             JOIN ludy_kernel.number_allocation a ON a.org_id = s.org_id AND a.series_id = s.id
              JOIN (SELECT org_id, id, number, number_period, number_allocation_id FROM crove_finance.cash_voucher
                    UNION ALL SELECT org_id, id, number, number_period, number_allocation_id FROM crove_finance.journal_voucher) v
                ON v.org_id = a.org_id AND v.number_allocation_id = a.id AND v.id = a.target_id AND v.number_period = s.period_key
@@ -180,7 +186,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     expect(await post(owner, legacyOrg, 'cash_receipt', '2027-01-02')).toMatchObject({ number: 4, period: '-' });
     expect(await post(owner, legacyOrg, 'journal', '2027-01-02')).toMatchObject({ number: 3, period: '-' });
     // A cash payment had no voucher before: its series is yearly, as for any new org.
-    const policies = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.number_series_policy WHERE org_id = $1', [legacyOrg])).rows[0]);
+    const policies = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.number_series_policy WHERE org_id = $1', [legacyOrg])).rows[0]);
     expect(policies).toEqual({ n: 2 });
   });
 
@@ -202,7 +208,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     try {
       await c.query('BEGIN');
       await enterUser(c, member, orgId);
-      await expect(c.query(`SELECT crove_kernel.number_series_policy_set(NULL, 'finance.cash_voucher.cash_payment', 'monthly')`)).rejects.toMatchObject({
+      await expect(c.query(`SELECT ludy_kernel.number_series_policy_set(NULL, 'finance.cash_voucher.cash_payment', 'monthly')`)).rejects.toMatchObject({
         code: '42501',
         message: 'NUMBER_FORBIDDEN',
       });
@@ -223,7 +229,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
 
     // A new org, no voucher yet: its admins choose the reset before the first number.
     const { orgId: fresh } = await createOrg(rt, asUser(owner), 'Sổ theo tháng');
-    await admin((c2) => c2.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [fresh, adminUser]));
+    await admin((c2) => c2.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [fresh, adminUser]));
     expect(await set(adminUser, { docType: 'finance.journal_voucher', reset: 'monthly' }, fresh)).toMatchObject({ previous: 'yearly', reset: 'monthly' });
     expect(await set(owner, { docType: 'finance.journal_voucher', reset: 'monthly' }, fresh)).toMatchObject({ previous: 'monthly', reset: 'monthly' });
     expect(await post(owner, fresh, 'journal', '2027-03-31')).toMatchObject({ number: 1, period: '2027-03' });
@@ -232,7 +238,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     await expect(set(owner, { docType: 'finance.journal_voucher', reset: 'yearly' }, fresh)).rejects.toMatchObject({ code: 'CONFLICT', status: 409 });
     const audit = await admin(
       async (c2) =>
-        (await c2.query(`SELECT detail ->> 'reset' AS reset, detail ->> 'previous' AS previous FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.policy.set' AND outcome = 'ok' ORDER BY occurred_at`, [fresh]))
+        (await c2.query(`SELECT detail ->> 'reset' AS reset, detail ->> 'previous' AS previous FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.policy.set' AND outcome = 'ok' ORDER BY occurred_at`, [fresh]))
           .rows,
     );
     expect(audit).toEqual([
@@ -250,7 +256,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
         await c.query('BEGIN');
         await enterUser(c, owner, orgId);
         const { rows } = await c.query<{ number: string; allocation_id: string }>(
-          `SELECT number::text AS number, allocation_id FROM crove_kernel.allocate_number(NULL, 'test.doc', '2027-04-02', 'test.record', $1::uuid)`,
+          `SELECT number::text AS number, allocation_id FROM ludy_kernel.allocate_number(NULL, 'test.doc', '2027-04-02', 'test.record', $1::uuid)`,
           [randomUUID()],
         );
         await c.query('COMMIT');
@@ -275,7 +281,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     try {
       await c.query('BEGIN');
       await enterUser(c, owner, orgId);
-      await expect(c.query(`SELECT crove_kernel.void_number($1, 'hủy phiếu')`, [voucher.allocation])).rejects.toMatchObject({
+      await expect(c.query(`SELECT ludy_kernel.void_number($1, 'hủy phiếu')`, [voucher.allocation])).rejects.toMatchObject({
         code: '42501',
         message: 'NUMBER_SERIES_RESERVED',
       });
@@ -314,13 +320,13 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
       change = await open(owner);
       // The first number of a new document type, under the default yearly reset, not committed yet.
       const { rows } = await first.query<{ period_key: string; number: string }>(
-        `SELECT period_key, number::text AS number FROM crove_kernel.allocate_number(NULL, 'test.race', '2026-06-01', 'test.record', $1::uuid)`,
+        `SELECT period_key, number::text AS number FROM ludy_kernel.allocate_number(NULL, 'test.race', '2026-06-01', 'test.record', $1::uuid)`,
         [randomUUID()],
       );
       expect(rows[0]).toEqual({ period_key: '2026', number: '1' });
       // The switch to 'never' waits for it, instead of committing beside it and numbering PT 1 again in 2026.
       let settled = false;
-      const switched = change.query(`SELECT crove_kernel.number_series_policy_set(NULL, 'test.race', 'never')`).finally(() => {
+      const switched = change.query(`SELECT ludy_kernel.number_series_policy_set(NULL, 'test.race', 'never')`).finally(() => {
         settled = true;
       });
       switched.catch(() => {});
@@ -344,7 +350,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     // A year after today and after every voucher the tests above dated.
     const year = Math.max(new Date().getFullYear() + 1, 2028);
     const from = (y: number) => `${y}-01-01`;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [legacyOrg, member]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [legacyOrg, member]));
 
     await expect(schedule(member, { docType: doc, reset: 'yearly', from: from(year) })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
     // A boundary that is not 1 January, or one already past.
@@ -359,7 +365,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     expect(await schedule(owner, { docType: doc, reset: 'yearly', from: from(year + 1) })).toMatchObject({ previous: 'monthly', reset: 'yearly' });
     const policy = await admin(
       async (c) =>
-        (await c.query<{ reset: string; schedule: unknown }>('SELECT reset, schedule FROM crove_kernel.number_series_policy WHERE org_id = $1 AND doc_type = $2', [legacyOrg, doc])).rows,
+        (await c.query<{ reset: string; schedule: unknown }>('SELECT reset, schedule FROM ludy_kernel.number_series_policy WHERE org_id = $1 AND doc_type = $2', [legacyOrg, doc])).rows,
     );
     expect(policy).toEqual([{ reset: 'never', schedule: [{ from: from(year + 1), reset: 'yearly' }] }]);
 
@@ -376,19 +382,19 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     const checked = await admin(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SET SESSION AUTHORIZATION crove_worker');
-        const misfits = (await c.query<{ ref: string }>('SELECT ref FROM crove_kernel.archive_series_misfits()')).rows.map((r) => r.ref);
+        await c.query('SET SESSION AUTHORIZATION ludy_worker');
+        const misfits = (await c.query<{ ref: string }>('SELECT ref FROM ludy_kernel.archive_series_misfits()')).rows.map((r) => r.ref);
         await c.query('RESET SESSION AUTHORIZATION');
         const series = (
           await c.query<{ period_key: string; reset: string; last_doc_date: string | null }>(
-            `SELECT s.period_key, crove_kernel.number_series_reset(s.org_id, s.legal_entity_id, s.doc_type, s.period_key) AS reset, s.last_doc_date::text AS last_doc_date
-             FROM crove_kernel.number_series s WHERE s.org_id = $1 AND s.doc_type = $2 ORDER BY s.period_key`,
+            `SELECT s.period_key, ludy_kernel.number_series_reset(s.org_id, s.legal_entity_id, s.doc_type, s.period_key) AS reset, s.last_doc_date::text AS last_doc_date
+             FROM ludy_kernel.number_series s WHERE s.org_id = $1 AND s.doc_type = $2 ORDER BY s.period_key`,
             [legacyOrg, doc],
           )
         ).rows;
         const audits = (
           await c.query<{ detail: unknown }>(
-            `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.policy.schedule' AND outcome = 'ok' ORDER BY occurred_at`,
+            `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.policy.schedule' AND outcome = 'ok' ORDER BY occurred_at`,
             [legacyOrg],
           )
         ).rows.map((r) => r.detail);
@@ -407,20 +413,20 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     const tampered = await admin(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query(`UPDATE crove_kernel.number_series_policy SET schedule = $3::jsonb WHERE org_id = $1 AND doc_type = $2`, [
+        await c.query(`UPDATE ludy_kernel.number_series_policy SET schedule = $3::jsonb WHERE org_id = $1 AND doc_type = $2`, [
           legacyOrg,
           doc,
           JSON.stringify([{ from: from(year), reset: 'yearly' }]),
         ]);
-        await c.query(`UPDATE crove_kernel.number_series SET last_doc_date = NULL WHERE org_id = $1 AND doc_type = $2`, [legacyOrg, doc]);
-        await c.query('SET SESSION AUTHORIZATION crove_worker');
-        return (await c.query<{ ref: string }>('SELECT ref FROM crove_kernel.archive_series_misfits()')).rows.map((r) => r.ref).filter((ref) => ref.includes(legacyOrg));
+        await c.query(`UPDATE ludy_kernel.number_series SET last_doc_date = NULL WHERE org_id = $1 AND doc_type = $2`, [legacyOrg, doc]);
+        await c.query('SET SESSION AUTHORIZATION ludy_worker');
+        return (await c.query<{ ref: string }>('SELECT ref FROM ludy_kernel.archive_series_misfits()')).rows.map((r) => r.ref).filter((ref) => ref.includes(legacyOrg));
       } finally {
         await c.query('ROLLBACK');
       }
     });
     const dash = await admin(
-      async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.number_series WHERE org_id = $1 AND doc_type = $2 AND period_key = '-'`, [legacyOrg, doc])).rows[0]?.id,
+      async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.number_series WHERE org_id = $1 AND doc_type = $2 AND period_key = '-'`, [legacyOrg, doc])).rows[0]?.id,
     );
     expect(tampered).toEqual([`number_series:${legacyOrg}:${dash}`]);
     expect(checked.audits).toEqual([

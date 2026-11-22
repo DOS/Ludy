@@ -26,7 +26,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -52,7 +52,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), muted: await person('muted'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', muted: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles, dispatched: new Set() };
   }
@@ -60,7 +60,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -102,7 +102,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org): Promise<number> {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     let sent = 0;
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -113,7 +113,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
   }
   const sweep = () => sweepQueueLow({ runtime: worker, workerDb: createDb(workerPool) });
   const lowEvents = (o: Org) =>
-    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.queue.low'", [o.orgId])).rows[0]?.n ?? 0);
+    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.queue.low'", [o.orgId])).rows[0]?.n ?? 0);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -124,16 +124,16 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 3 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -180,7 +180,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     // The mail of the kind, to those who got the notice, with a link to a new post for the channel.
     const mails = await admin(
       async (c) =>
-        (await c.query<{ subject: string; path: string }>("SELECT subject, payload->>'path' AS path FROM crove_kernel.mail_message WHERE org_id = $1 AND payload->>'kind' = 'queue_low'", [o.orgId])).rows,
+        (await c.query<{ subject: string; path: string }>("SELECT subject, payload->>'path' AS path FROM ludy_kernel.mail_message WHERE org_id = $1 AND payload->>'kind' = 'queue_low'", [o.orgId])).rows,
     );
     expect(mails).toHaveLength(3);
     expect(mails.every((m) => m.subject === 'Hàng đợi của kênh Trang thử sắp hết bài' && m.path.endsWith(`/social/new?channel=${conn}`))).toBe(true);
@@ -271,7 +271,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
       await c.query('COMMIT');
     });
     expect(await worker.execute('social.queue.check_low', { queueId: q.queueId }, { actor: system, orgId: o.orgId })).toMatchObject({ state: 'skipped' });
@@ -315,10 +315,10 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     const { queueId } = await setQueue(o, o.owner, conn, { lowDays: 2 });
     const { rows } = await admin((c) =>
       c.query<{ role: string; ok: boolean }>(
-        "SELECT r AS role, has_function_privilege(r, 'crove_social.queue_low_due(uuid, uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['crove_worker', 'crove_app', 'crove_tenant', 'crove_definer_tenant']) r",
+        "SELECT r AS role, has_function_privilege(r, 'crove_social.queue_low_due(uuid, uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
       ),
     );
-    expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ crove_worker: true, crove_app: false, crove_tenant: false, crove_definer_tenant: false });
+    expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ ludy_worker: true, ludy_app: false, ludy_tenant: false, ludy_definer_tenant: false });
     await expect(exec(o, o.owner, 'social.queue.check_low', { queueId })).rejects.toThrow();
     // A member cannot write the dip marker through the queue's own command either: the input has no such field.
     await expect(setQueue(o, o.owner, conn, { lowAlertedAt: null })).rejects.toBeDefined();

@@ -61,8 +61,8 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     const limitedBranch = await person('limited-branch');
     const viewer = await person('viewer');
     return admin(async (c) => {
-      const defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
-      const branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]
+      const defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      const branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]
         ?.id as string;
       for (const [user, role] of [
         [member, 'member'],
@@ -70,13 +70,13 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
         [limitedBranch, 'member'],
         [viewer, 'viewer'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
       }
       for (const [user, entity] of [
         [limitedDefault, defaultEntity],
         [limitedBranch, branch],
       ] as const) {
-        await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, user, entity, owner]);
+        await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, user, entity, owner]);
       }
       return { orgId, owner, member, limitedDefault, limitedBranch, viewer, defaultEntity, branch };
     });
@@ -86,13 +86,13 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     const id = randomUUID();
     await admin(async (c) => {
       if (kind === 'org_chart') {
-        await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, created_by) VALUES ($1, $2, $3, $4, $5)`, [o.orgId, id, TEMPLATE, name, o.owner]);
+        await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, created_by) VALUES ($1, $2, $3, $4, $5)`, [o.orgId, id, TEMPLATE, name, o.owner]);
         return;
       }
       // A member's own Vy is made only in that member's own context (a trigger); the seed is the owner of the database, and
       // plain triggers stay silent in replica mode.
       await c.query('SET session_replication_role = replica');
-      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', $3, 'member_vy', $4, $4)`, [o.orgId, id, name, o.member]);
+      await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', $3, 'member_vy', $4, $4)`, [o.orgId, id, name, o.member]);
     });
     return id;
   }
@@ -102,7 +102,7 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     await admin(async (c) => {
       for (let i = 0; i < n; i += 1) {
         await c.query(
-          `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, agent_id, occurred_at, legal_entity_id) VALUES ($1, 'test.prepared', $2, 'prepared', $3, $4, $5, $6)`,
+          `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, agent_id, occurred_at, legal_entity_id) VALUES ($1, 'test.prepared', $2, 'prepared', $3, $4, $5, $6)`,
           [o.orgId, randomUUID(), 'Soạn thư cho khách Nguyễn Văn Bí Mật', agentId, hoursAgo(hours), entity],
         );
       }
@@ -121,9 +121,9 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -204,7 +204,7 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     const id = await agent(o, 'Ly');
     await rows(o, id, 2);
     expect(counts(await since(o, o.owner))).toEqual({ Ly: 2 });
-    await admin((c) => c.query('UPDATE crove_kernel.agent SET display_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, id, 'Lan']));
+    await admin((c) => c.query('UPDATE ludy_kernel.agent SET display_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, id, 'Lan']));
     expect(counts(await since(o, o.owner))).toEqual({ Lan: 2 });
   });
 
@@ -236,10 +236,10 @@ suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
     const o = await org();
     const ly = await agent(o, 'Ly');
     await rows(o, ly, 1);
-    const before = await admin(async (c) => Number((await c.query('SELECT count(*) AS n FROM crove_kernel.activity WHERE org_id = $1', [o.orgId])).rows[0].n));
+    const before = await admin(async (c) => Number((await c.query('SELECT count(*) AS n FROM ludy_kernel.activity WHERE org_id = $1', [o.orgId])).rows[0].n));
     await since(o, o.owner);
     await since(o, o.viewer);
-    const after = await admin(async (c) => Number((await c.query('SELECT count(*) AS n FROM crove_kernel.activity WHERE org_id = $1', [o.orgId])).rows[0].n));
+    const after = await admin(async (c) => Number((await c.query('SELECT count(*) AS n FROM ludy_kernel.activity WHERE org_id = $1', [o.orgId])).rows[0].n));
     expect(after).toBe(before);
   });
 });

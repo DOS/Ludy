@@ -126,7 +126,7 @@ interface CallRow {
 
 async function callRow(ctx: CommandContext, key: string): Promise<CallRow | undefined> {
   return ctx.trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select(['state', 'calls', 'started_at'])
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -138,7 +138,7 @@ async function callRow(ctx: CommandContext, key: string): Promise<CallRow | unde
 // a later answer for the same key (a reconcile after a pending submission went through) leaves it as it is.
 async function setCall(ctx: CommandContext, key: string, values: Record<string, unknown>): Promise<void> {
   await ctx.trx
-    .updateTable('crove_kernel.external_call')
+    .updateTable('ludy_kernel.external_call')
     .set({ ...values, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -153,7 +153,7 @@ async function startCall(ctx: CommandContext, v: VariantRow, key: string, safety
     return existing.started_at;
   }
   await ctx.trx
-    .insertInto('crove_kernel.external_call')
+    .insertInto('ludy_kernel.external_call')
     .values({ org_id: ctx.orgId, key, module: 'social', target: v.provider, step: PUBLISH_STEP, retry_safety: safety, request_hash: v.content_hash, started_at: ctx.now })
     .execute();
   return ctx.now;
@@ -247,7 +247,7 @@ interface ConnectionState {
 // lock 'update' where the same transaction may go on to update the connection (mark_expired): a share lock upgraded
 // later would deadlock two jobs of one channel.
 async function connectionOf(ctx: CommandContext, connectionId: string, lock: 'share' | 'update' = 'share'): Promise<ConnectionState | null> {
-  const q = ctx.trx.selectFrom('crove_kernel.channel_connection').select(['status', 'updated_at', 'scopes']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId);
+  const q = ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['status', 'updated_at', 'scopes']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId);
   const row = await (lock === 'update' ? q.forUpdate() : q.forShare()).executeTakeFirst();
   return row ? { status: row.status, updatedAt: row.updated_at, scopes: row.scopes } : null;
 }
@@ -258,7 +258,7 @@ async function pauseOnChannel(ctx: CommandContext, v: VariantRow, values: Record
   await move(ctx, v, { type: 'pause' }, values);
   await sql`
     UPDATE crove_social.post_variant SET paused_connection_version = (
-      SELECT c.updated_at FROM crove_kernel.channel_connection c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${v.channel_connection_id}::uuid)
+      SELECT c.updated_at FROM ludy_kernel.channel_connection c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${v.channel_connection_id}::uuid)
     WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
 }
 
@@ -295,11 +295,11 @@ async function limitedUntil(ctx: CommandContext, v: VariantRow): Promise<Date | 
     shared.length === 0
       ? sql`pv.channel_connection_id = ${v.channel_connection_id}::uuid`
       : sql`pv.channel_connection_id IN (
-          SELECT cc.id FROM crove_kernel.channel_connection cc
-          JOIN crove_kernel.channel_connection mine ON mine.org_id = cc.org_id AND mine.id = ${v.channel_connection_id}::uuid
+          SELECT cc.id FROM ludy_kernel.channel_connection cc
+          JOIN ludy_kernel.channel_connection mine ON mine.org_id = cc.org_id AND mine.id = ${v.channel_connection_id}::uuid
           WHERE cc.org_id = ${ctx.orgId}::uuid AND (cc.id = mine.id OR (cc.provider = ANY(${[...shared]}::text[]) AND cc.connected_by = mine.connected_by)))`;
   const { rows } = await sql<{ started_at: Date }>`
-    SELECT c.started_at FROM crove_kernel.external_call c
+    SELECT c.started_at FROM ludy_kernel.external_call c
     JOIN crove_social.post_variant pv ON pv.org_id = c.org_id AND pv.id::text = split_part(c.key, ':', 2)
     WHERE c.org_id = ${ctx.orgId}::uuid AND c.module = 'social' AND c.step = ${PUBLISH_STEP} AND c.started_at > ${since}
       AND c.state <> 'failed' AND ${channels} AND pv.id <> ${v.id}::uuid

@@ -86,7 +86,7 @@ async function sharedGrant(deps: AdsRevokeDeps, row: { orgId: string; id: string
 async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; leaseToken: string }): Promise<{ keyId: string; envelope: Buffer; provider: string; externalAccountId: string } | null> {
   try {
     const { rows } = await sql<{ key_id: string; envelope: Buffer; provider: string; external_account_id: string }>`
-      WITH entered AS (SELECT crove_kernel.enter_system_context(${row.orgId}::uuid))
+      WITH entered AS (SELECT ludy_kernel.enter_system_context(${row.orgId}::uuid))
       SELECT s.key_id, s.envelope, s.provider, s.external_account_id
       FROM crove_ads.token_seal_get((SELECT ${row.orgId}::uuid FROM entered), ${row.id}::uuid, ${row.leaseToken}::uuid) s`.execute(deps.workerDb);
     const sealed = rows[0];

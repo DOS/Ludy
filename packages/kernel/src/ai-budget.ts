@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The AI budget meter's side of the database (#2382, ADR-0029 section 7). One ledger and one set of limits, both older
-// than the meter: crove_kernel.org_usage (metric 'ai_cost', one row per model call with its feature, module, agent and
-// tokens: ids and counts only, never a prompt, a document's text or an answer) and crove_kernel.budget_policy (the
+// than the meter: ludy_kernel.org_usage (metric 'ai_cost', one row per model call with its feature, module, agent and
+// tokens: ids and counts only, never a prompt, a document's text or an answer) and ludy_kernel.budget_policy (the
 // monthly limit of the org, a module or an agent; set by kernel.agent.budget.set, R3, owner only, with a fresh second
-// factor). What a budget has spent is crove_kernel.ai_budget_spent, the one function the agent run gates and this meter
+// factor). What a budget has spent is ludy_kernel.ai_budget_spent, the one function the agent run gates and this meter
 // read, so the numbers cannot disagree. The month is the calendar month in Asia/Ho_Chi_Minh.
 //
 // The worker (as the system) and the API (as the member who asked) ask the check before a model call and record what it
@@ -58,12 +58,12 @@ const checkQuery = (name: string, access: readonly MemberRole[] | "system") =>
         retry_at: Date;
       }>`
       SELECT
-        (SELECT b.scope FROM crove_kernel.budget_policy b
+        (SELECT b.scope FROM ludy_kernel.budget_policy b
          WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
            AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${input.module}) OR (b.scope = 'agent' AND b.target = ${input.agentId}::text))
-           AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
+           AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
          ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
-        EXISTS (SELECT 1 FROM crove_kernel.budget_policy o WHERE o.org_id = ${ctx.orgId}::uuid AND o.scope = 'org') AS has_org,
+        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy o WHERE o.org_id = ${ctx.orgId}::uuid AND o.scope = 'org') AS has_org,
         ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(
         ctx.trx,
       );
@@ -99,7 +99,7 @@ export const aiBudgetEnsureDefault = defineCommand({
   access: "system",
   handler: async (ctx, input) => {
     const created = await ctx.trx
-      .insertInto("crove_kernel.budget_policy")
+      .insertInto("ludy_kernel.budget_policy")
       .values({
         org_id: ctx.orgId,
         scope: "org",
@@ -142,8 +142,8 @@ async function coveringBudgets(
            s.spent::text AS spent,
            CASE WHEN b.monthly_limit = 0 THEN 100 ELSE LEAST(pg_catalog.floor(s.spent * 100 / b.monthly_limit), 100000)::int END AS percent,
            pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS month
-    FROM crove_kernel.budget_policy b
-    CROSS JOIN LATERAL (SELECT crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) AS spent) s
+    FROM ludy_kernel.budget_policy b
+    CROSS JOIN LATERAL (SELECT ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) AS spent) s
     WHERE b.org_id = ${ctx.orgId}::uuid
       AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
     ORDER BY b.scope, b.target`.execute(ctx.trx);
@@ -173,7 +173,7 @@ const recordCommand = (
     access,
     handler: async (ctx, input) => {
       await ctx.trx
-        .insertInto("crove_kernel.org_usage")
+        .insertInto("ludy_kernel.org_usage")
         .values({
           org_id: ctx.orgId,
           metric: "ai_cost",
@@ -221,8 +221,8 @@ export const aiBudgetNotify = defineCommand({
              s.spent::text AS spent,
              CASE WHEN b.monthly_limit = 0 THEN 100 ELSE LEAST(pg_catalog.floor(s.spent * 100 / b.monthly_limit), 100000)::int END AS percent,
              pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS month
-      FROM crove_kernel.budget_policy b
-      CROSS JOIN LATERAL (SELECT crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) AS spent) s
+      FROM ludy_kernel.budget_policy b
+      CROSS JOIN LATERAL (SELECT ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) AS spent) s
       WHERE b.org_id = ${ctx.orgId}::uuid AND b.scope = ${input.scope} AND b.target = ${input.target}`.execute(
       ctx.trx,
     );
@@ -258,7 +258,7 @@ export const aiBudgetNotify = defineCommand({
   },
 });
 
-const MONTH_START = sql`crove_kernel.ai_month_start()`;
+const MONTH_START = sql`ludy_kernel.ai_month_start()`;
 
 export interface AiMeterStatus {
   // 'none': no budget covers it (use is still counted); 'stop': a hard-stop budget is spent.
@@ -339,8 +339,8 @@ export const aiUsageReport = defineQuery({
     }>`
       SELECT pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS month,
              ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS reset_at,
-             crove_kernel.ai_budget_spent(${ctx.orgId}::uuid, 'org', '*')::text AS spent,
-             (SELECT pg_catalog.count(*)::int FROM crove_kernel.org_usage u WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.created_at >= ${MONTH_START}) AS calls`.execute(
+             ludy_kernel.ai_budget_spent(${ctx.orgId}::uuid, 'org', '*')::text AS spent,
+             (SELECT pg_catalog.count(*)::int FROM ludy_kernel.org_usage u WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.created_at >= ${MONTH_START}) AS calls`.execute(
       ctx.trx,
     );
     const byFeature = await sql<{
@@ -354,7 +354,7 @@ export const aiUsageReport = defineQuery({
       SELECT coalesce(u.feature, 'kernel.unattributed') AS feature, coalesce(u.module, '') AS module, pg_catalog.count(*)::int AS calls,
              coalesce(pg_catalog.sum(u.input_tokens), 0)::text AS input_tokens, coalesce(pg_catalog.sum(u.output_tokens), 0)::text AS output_tokens,
              pg_catalog.sum(u.amount)::text AS cost
-      FROM crove_kernel.org_usage u
+      FROM ludy_kernel.org_usage u
       WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.created_at >= ${MONTH_START}
       GROUP BY coalesce(u.feature, 'kernel.unattributed'), coalesce(u.module, '') ORDER BY pg_catalog.sum(u.amount) DESC, 1`.execute(
       ctx.trx,
@@ -366,7 +366,7 @@ export const aiUsageReport = defineQuery({
       cost: string;
     }>`
       SELECT u.agent_id, a.display_name AS name, pg_catalog.count(*)::int AS calls, pg_catalog.sum(u.amount)::text AS cost
-      FROM crove_kernel.org_usage u LEFT JOIN crove_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id
+      FROM ludy_kernel.org_usage u LEFT JOIN ludy_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id
       WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.agent_id IS NOT NULL AND u.created_at >= ${MONTH_START}
       GROUP BY u.agent_id, a.display_name ORDER BY pg_catalog.sum(u.amount) DESC, u.agent_id`.execute(
       ctx.trx,
@@ -405,11 +405,11 @@ export const AI_BUDGET_RELEASE_LIMIT = 200;
 // waits again and adds nothing. Returns how many were sent.
 export async function releaseWaitingFiles(ctx: CommandContext): Promise<number> {
   const { rows } = await sql<{ id: string }>`
-    SELECT f.id FROM crove_kernel.usage_deferral d
-    JOIN crove_kernel.file f ON f.org_id = d.org_id AND f.id::text = d.subject_id
+    SELECT f.id FROM ludy_kernel.usage_deferral d
+    JOIN ludy_kernel.file f ON f.org_id = d.org_id AND f.id::text = d.subject_id
     WHERE d.org_id = ${ctx.orgId}::uuid AND d.metric = 'ai_budget' AND d.subject_type = 'file' AND d.retry_at > pg_catalog.now()
-      AND NOT EXISTS (SELECT 1 FROM crove_kernel.extraction x WHERE x.org_id = d.org_id AND x.file_id = f.id)
-      AND NOT crove_kernel.ai_budget_exhausted(d.org_id, 'finance', NULL)
+      AND NOT EXISTS (SELECT 1 FROM ludy_kernel.extraction x WHERE x.org_id = d.org_id AND x.file_id = f.id)
+      AND NOT ludy_kernel.ai_budget_exhausted(d.org_id, 'finance', NULL)
     GROUP BY f.id ORDER BY pg_catalog.min(d.created_at), f.id LIMIT ${AI_BUDGET_RELEASE_LIMIT}::int`.execute(ctx.trx);
   for (const row of rows) await ctx.emit('kernel.file.ingested', { fileId: row.id });
   return rows.length;

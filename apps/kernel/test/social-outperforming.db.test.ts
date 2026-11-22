@@ -29,7 +29,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -53,7 +53,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         'sandbox',
@@ -70,7 +70,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     const roles = { admin: await person('admin'), author: await person('author'), assignee: await person('assignee') };
     const role = { admin: 'admin', author: 'member', assignee: 'member' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles, a: await connection(orgId, owner, 'Trang thử'), b: await connection(orgId, owner, 'Kênh khác'), dispatched: new Set() };
   }
@@ -121,7 +121,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org): Promise<number> {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     let sent = 0;
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -133,13 +133,13 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   type List = { items: NotificationItem[] };
   const notices = async (o: Org, user: string) => (await rt.query<List>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((i) => i.kind === 'post_outperforming');
   const events = (o: Org) =>
-    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.outperforming'", [o.orgId])).rows[0]?.n ?? 0);
+    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.outperforming'", [o.orgId])).rows[0]?.n ?? 0);
   const mails = (o: Org) =>
     admin(
       async (c) =>
         (
           await c.query<{ user_id: string; subject: string }>(
-            `SELECT n.user_id, m.subject FROM crove_kernel.mail_message m
+            `SELECT n.user_id, m.subject FROM ludy_kernel.mail_message m
              JOIN crove_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
              WHERE m.org_id = $1 AND m.source = 'social.notification.dispatch' AND n.kind = 'post_outperforming'`,
             [o.orgId],
@@ -158,16 +158,16 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 6 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -334,7 +334,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     const audits = () =>
       admin(
         async (c) =>
-          (await c.query<{ target_id: string }>("SELECT target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.check_outperforming'", [o.orgId])).rows.map(
+          (await c.query<{ target_id: string }>("SELECT target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.check_outperforming'", [o.orgId])).rows.map(
             (r) => r.target_id,
           ),
       );

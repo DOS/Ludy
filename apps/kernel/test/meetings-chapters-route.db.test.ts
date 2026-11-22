@@ -84,7 +84,7 @@ suite('the recorder\'s Vy chapters route (#3844, step 3)', () => {
     }
     return meetingId;
   }
-  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
+  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -95,9 +95,9 @@ suite('the recorder\'s Vy chapters route (#3844, step 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -109,7 +109,7 @@ suite('the recorder\'s Vy chapters route (#3844, step 3)', () => {
     for (const key of ['owner', 'recorder', 'attendee', 'viewer', 'foreign', 'nouse']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'chapters-route', subject: key, email: `${key}@chapters-route.test`, name: key === 'recorder' ? 'Hà' : null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Mục lục chạy')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('foreign'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
   }, 300_000);
 
   afterAll(async () => {
@@ -209,7 +209,7 @@ suite('the recorder\'s Vy chapters route (#3844, step 3)', () => {
     const before = modelCalls;
     expect((await runMeetingChapters(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
     expect(modelCalls).toBe(before + 1);
-    const state = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
+    const state = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
     expect(state.rows[0]).toEqual({ status: 'running', error: null });
   });
 
@@ -219,7 +219,7 @@ suite('the recorder\'s Vy chapters route (#3844, step 3)', () => {
     const before = modelCalls;
     expect(await refuses(runMeetingChapters(deps(), orgId, asUser('recorder'), meetingId))).toBe('TRANSCRIBE_RUNNING');
     expect(modelCalls).toBe(before);
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, live.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, live.runId]);
     expect((await runMeetingChapters(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
   });
 });

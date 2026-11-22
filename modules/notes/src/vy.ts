@@ -122,13 +122,13 @@ export const notesVyStatus = defineQuery({
       return { available: false, reason: 'off', resetOn: null };
     }
 
-    const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+    const allowed = await sql<{ ok: boolean }>`SELECT ludy_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
     if (allowed.rows[0]?.ok !== true) {
       return { available: false, reason: 'forbidden', resetOn: null };
     }
 
     const agentRow = await ctx.trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select(['id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')
@@ -140,8 +140,8 @@ export const notesVyStatus = defineQuery({
     const agentId = agentRow?.id ?? null;
 
     const stopped = await sql<{ stopped: boolean }>`
-      SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-        SELECT 1 FROM crove_kernel.kill_switch k
+      SELECT ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
+        SELECT 1 FROM ludy_kernel.kill_switch k
          WHERE k.org_id = ${ctx.orgId}::uuid
            AND k.released_at IS NULL
            AND (
@@ -155,7 +155,7 @@ export const notesVyStatus = defineQuery({
     }
 
     const budget = await sql<{ spent: boolean; reset_on: string }>`
-      SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
+      SELECT ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
              pg_catalog.to_char(
                (pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE ${DEFAULT_TIME_ZONE}) + pg_catalog.make_interval(months => 1))::date,
                'YYYY-MM-DD'

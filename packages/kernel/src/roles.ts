@@ -1,5 +1,5 @@
 // Role assignments (issue #1279, plan §4.6): the built-in roles a member can hold on top of their base role
-// (crove_kernel.role, role_permission, role_assignment, 20261101060000_crove_kernel_roles.sql).
+// (ludy_kernel.role, role_permission, role_assignment, 20261101060000_crove_kernel_roles.sql).
 // - kernel.member.roles.list: owners and admins read the roles the deployment offers and who holds which.
 // - kernel.member.role.assign / kernel.member.role.revoke: owners only, R3 (fresh MFA, P11), like every membership
 //   change. The runtime audits each one; the detail names the member, the role, the legal entity and whether anything
@@ -36,8 +36,8 @@ const isBuiltin = (key: string): key is BuiltinRoleKey => (BUILTIN_ROLE_KEYS as 
 // The roles of the catalog whose module the deployment runs ('kernel' always), with their permissions.
 async function offeredRoles(ctx: QueryContext) {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.role as r')
-    .leftJoin('crove_kernel.role_permission as p', 'p.role_key', 'r.key')
+    .selectFrom('ludy_kernel.role as r')
+    .leftJoin('ludy_kernel.role_permission as p', 'p.role_key', 'r.key')
     .select(['r.key', 'r.module', 'r.scope', 'p.permission'])
     .orderBy('r.key')
     .orderBy('p.permission')
@@ -59,7 +59,7 @@ export const memberRolesQuery = defineQuery({
   access: ADMINS,
   handler: async (ctx): Promise<MemberRoles> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.role_assignment')
+      .selectFrom('ludy_kernel.role_assignment')
       .select(['id', 'user_id', 'role_key', 'legal_entity_id', 'granted_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('granted_at')
@@ -75,15 +75,15 @@ export const memberRolesQuery = defineQuery({
 });
 
 // The sorted permissions the signed-in user holds in the org in context (org.get): every permission a role grants or the catalog
-// names, asked of the one resolution (crove_kernel.member_has_permission), so a default, a grant and a deny count as they do for
+// names, asked of the one resolution (ludy_kernel.member_has_permission), so a default, a grant and a deny count as they do for
 // ctx_has_permission.
 export async function myPermissions(ctx: QueryContext): Promise<string[]> {
   if (ctx.actor.type !== 'user') return [];
   const { rows } = await sql<{ permission: string }>`
     SELECT k.permission FROM (
-      SELECT permission FROM crove_kernel.role_permission
-      UNION SELECT permission FROM crove_kernel.permission_catalog) k
-    WHERE crove_kernel.member_has_permission(${ctx.orgId}::uuid, ${ctx.actor.userId}::uuid, k.permission)
+      SELECT permission FROM ludy_kernel.role_permission
+      UNION SELECT permission FROM ludy_kernel.permission_catalog) k
+    WHERE ludy_kernel.member_has_permission(${ctx.orgId}::uuid, ${ctx.actor.userId}::uuid, k.permission)
     ORDER BY k.permission`.execute(ctx.trx);
   return rows.map((r) => r.permission);
 }
@@ -97,7 +97,7 @@ async function lockForRoleChange(ctx: CommandContext, targetId: string): Promise
   // Before the members' locks: both callers re-route (#1858).
   await lockChartChanges(ctx);
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', 'in', [actorId, targetId])
@@ -172,7 +172,7 @@ export const assignRole = defineCommand({
     await lockForRoleChange(ctx, input.userId);
     ctx.audit({ target_user: input.userId, role_key: input.roleKey, legal_entity_id: input.legalEntityId });
     // Only roles of a module the deployment runs: a role of a missing module would grant nothing anyone can use.
-    const role = await ctx.trx.selectFrom('crove_kernel.role').select('module').where('key', '=', input.roleKey).executeTakeFirst();
+    const role = await ctx.trx.selectFrom('ludy_kernel.role').select('module').where('key', '=', input.roleKey).executeTakeFirst();
     if (!role) throw new DomainError('ROLE_NOT_FOUND', 422, 'Không có vai trò này');
     if (role.module !== 'kernel' && !ctx.installed(role.module)) {
       throw new DomainError('ROLE_MODULE_NOT_INSTALLED', 422, 'Hệ thống này chưa cài phân hệ của vai trò này');
@@ -180,7 +180,7 @@ export const assignRole = defineCommand({
     let granted: { assignment_id: string; created: boolean } | undefined;
     try {
       const { rows } = await sql<{ assignment_id: string; created: boolean }>`
-        SELECT assignment_id, created FROM crove_kernel.role_assignment_grant(${input.userId}::uuid, ${input.roleKey}::text, ${input.legalEntityId}::uuid)`.execute(ctx.trx);
+        SELECT assignment_id, created FROM ludy_kernel.role_assignment_grant(${input.userId}::uuid, ${input.roleKey}::text, ${input.legalEntityId}::uuid)`.execute(ctx.trx);
       granted = rows[0];
     } catch (error) {
       roleRefusal(error);
@@ -211,7 +211,7 @@ export const revokeRole = defineCommand({
   target: (input) => ({ type: 'kernel.role_assignment', id: input.assignmentId }),
   handler: async (ctx, input): Promise<{ assignmentId: string }> => {
     const found = await ctx.trx
-      .selectFrom('crove_kernel.role_assignment')
+      .selectFrom('ludy_kernel.role_assignment')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.assignmentId)
@@ -221,7 +221,7 @@ export const revokeRole = defineCommand({
     let revoked: { user_id: string; role_key: string; legal_entity_id: string | null } | undefined;
     try {
       const { rows } = await sql<{ user_id: string; role_key: string; legal_entity_id: string | null }>`
-        SELECT user_id, role_key, legal_entity_id FROM crove_kernel.role_assignment_revoke(${input.assignmentId}::uuid)`.execute(ctx.trx);
+        SELECT user_id, role_key, legal_entity_id FROM ludy_kernel.role_assignment_revoke(${input.assignmentId}::uuid)`.execute(ctx.trx);
       revoked = rows[0];
     } catch (error) {
       roleRefusal(error);
@@ -259,7 +259,7 @@ export const setMemberPermission = defineCommand({
     let changed = false;
     try {
       const { rows } = await sql<{ changed: boolean }>`
-        SELECT crove_kernel.member_permission_set(${input.userId}::uuid, ${input.permission}::text, ${input.allowed}::boolean) AS changed`.execute(ctx.trx);
+        SELECT ludy_kernel.member_permission_set(${input.userId}::uuid, ${input.permission}::text, ${input.allowed}::boolean) AS changed`.execute(ctx.trx);
       changed = rows[0]?.changed === true;
     } catch (error) {
       const pg = error as { code?: string; message?: string };

@@ -39,7 +39,7 @@ const begin = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    await sql`SELECT crove_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch(asDomain);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch(asDomain);
     return { ok: true };
   },
 });
@@ -50,7 +50,7 @@ const imported = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx).catch(asDomain);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx).catch(asDomain);
     return { ok: true };
   },
 });
@@ -62,7 +62,7 @@ const rawReplace = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input) => {
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS n`.execute(ctx.trx).catch(asDomain);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS n`.execute(ctx.trx).catch(asDomain);
     return { count: rows[0]?.n };
   },
 });
@@ -70,7 +70,7 @@ const recordingRows = defineQuery({
   name: 'test.mp.recording_rows',
   input: z.strictObject({}),
   access: 'system',
-  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('crove_kernel.meeting_platform_recording').select('id').where('org_id', '=', ctx.orgId).execute()).length,
+  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('ludy_kernel.meeting_platform_recording').select('id').where('org_id', '=', ctx.orgId).execute()).length,
 });
 
 suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1, #3173)', () => {
@@ -107,7 +107,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const lan = await person('lan');
     const nam = await person('nam');
     const viewer = await person('viewer');
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, nam, viewer]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, nam, viewer]);
     const exec = <T = unknown>(user: string, command: string, input: unknown = {}) => api.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T = unknown>(user: string, name: string, input: unknown = {}) => api.query<T>(name, input, { actor: asUser(user), orgId });
     const sys = <T = unknown>(command: string, input: unknown = {}) => worker.execute<T>(command, input, { actor: SYSTEM, orgId });
@@ -131,7 +131,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
   const mine = (o: Org, user: string) => o.query<MeetingPlatformRecordingView[]>(user, 'kernel.meeting_platform.recordings');
   const rowOf = async (externalId: string, connectionId: string) =>
     (await sqlAdmin<{ id: string; status: string; title: string; staging_key: string | null; error_code: string | null; meeting_id: string | null; size_bytes: string | null }>(
-      'SELECT id, status, title, staging_key, error_code, meeting_id, size_bytes FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2',
+      'SELECT id, status, title, staging_key, error_code, meeting_id, size_bytes FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2',
       [connectionId, externalId],
     )).rows[0];
   const idOf = async (externalId: string, connectionId: string) => (await rowOf(externalId, connectionId))?.id as string;
@@ -159,15 +159,15 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     workerDbHandle = createDb(workerPool);
@@ -247,15 +247,15 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const offConnection = await connectSealed(off, off.lan);
     const onConnection = await connectSealed(on, on.lan);
     // The org switched Meetings off (the choice, ADR-0053): a staff write stands in for its owner's command here.
-    await sqlAdmin("UPDATE crove_kernel.tenant SET apps_off = '{meetings}', apps_version = 2 WHERE org_id = $1", [off.orgId]);
-    const listed = (connectionId: string) => sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.tenant SET apps_off = '{meetings}', apps_version = 2 WHERE org_id = $1", [off.orgId]);
+    const listed = (connectionId: string) => sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId]);
     const run = sweepDeps(on);
     const done = await runMeetingsImportSweep(run.deps);
     expect(done.failures).toBe(0);
     expect(await listed(offConnection)).toMatchObject({ rows: [{ n: '0' }] });
     expect(await listed(onConnection)).toMatchObject({ rows: [{ n: '2' }] });
     // Nothing was recorded as a failure for the org that is off: its connection waits, untouched, for the app to come back.
-    const status = await sqlAdmin<{ status: string; last_synced_at: Date | null }>('SELECT status, last_synced_at FROM crove_kernel.meeting_platform_connection WHERE id = $1', [offConnection]);
+    const status = await sqlAdmin<{ status: string; last_synced_at: Date | null }>('SELECT status, last_synced_at FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [offConnection]);
     expect(status.rows[0]).toMatchObject({ status: 'active', last_synced_at: null });
   });
 
@@ -268,11 +268,11 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     expect(rows.map((r) => r.status)).toEqual(['suggested', 'suggested']);
     // Listed just now: the next pass leaves it alone ...
     const second = await runMeetingsImportSweep(sweepDeps(o).deps);
-    expect(await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).toMatchObject({ rows: [{ n: '2' }] });
+    expect(await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).toMatchObject({ rows: [{ n: '2' }] });
     expect(second.failures).toBe(0);
     // ... until the member asks to refresh, which only clears the time of the last listing.
     await o.exec(o.lan, 'kernel.meeting_platform.refresh', {});
-    const due = await sqlAdmin<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.meeting_platform_sync_due(NULL, NULL, 1000)');
+    const due = await sqlAdmin<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.meeting_platform_sync_due(NULL, NULL, 1000)');
     expect(due.rows.map((r) => r.connection_id)).toContain(connectionId);
     // Nothing was downloaded: no job, no bytes.
     expect(first.sent).toEqual([]);
@@ -283,7 +283,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const o = await org();
     const connectionId = await connectSealed(o, o.lan);
     await runMeetingsImportSweep(sweepDeps(o).deps);
-    const audio = await sqlAdmin<{ id: string }>("SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
+    const audio = await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
     const recordingId = audio.rows[0]?.id as string;
     const key = stagingKey();
     await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: key });
@@ -302,7 +302,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const o = await org();
     const connectionId = await connectSealed(o, o.lan);
     const r = await staged(o, o.lan, connectionId, 'late');
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [r.recordingId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [r.recordingId]);
     const run = sweepDeps(o);
     await runMeetingsImportSweep(run.deps);
     expect(run.blobs.deleted).toContain(r.key);
@@ -315,7 +315,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const failing = (code: 'platform_unavailable' | 'connection_expired'): MeetingPlatformAdapter => ({ provider: 'sandbox', hosts: [], prepareDownload: async () => Promise.reject(new Error('x')), list: async () => Promise.reject(new MeetingPlatformError(code, 'platform words that must not be kept')) });
     const first = await runMeetingsImportSweep(sweepDeps(o, { adapters: { sandbox: failing('platform_unavailable') } }).deps);
     expect(first.failures).toBeGreaterThanOrEqual(1);
-    const noted = await sqlAdmin<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM crove_kernel.meeting_platform_connection WHERE id = $1', [down]);
+    const noted = await sqlAdmin<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [down]);
     expect(noted.rows[0]).toEqual({ status: 'active', status_reason: 'platform_unavailable' });
     // Not due again for ten minutes: another pass does not even call the adapter.
     let calls = 0;
@@ -325,26 +325,26 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     // A refused token expires the connection.
     const refused = await connectSealed(o, o.nam);
     await runMeetingsImportSweep(sweepDeps(o, { adapters: { sandbox: failing('connection_expired') } }).deps);
-    expect((await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.meeting_platform_connection WHERE id = $1', [refused])).rows[0]?.status).toBe('expired');
-    expect(JSON.stringify((await sqlAdmin('SELECT status_reason FROM crove_kernel.meeting_platform_connection')).rows)).not.toContain('platform words');
+    expect((await sqlAdmin<{ status: string }>('SELECT status FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [refused])).rows[0]?.status).toBe('expired');
+    expect(JSON.stringify((await sqlAdmin('SELECT status_reason FROM ludy_kernel.meeting_platform_connection')).rows)).not.toContain('platform words');
   });
 
   it('expires the connection of a member who left the org, since no token can be opened for them any more', async () => {
     const o = await org();
     const connectionId = await connectSealed(o, o.nam);
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.nam]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.nam]);
     const run = sweepDeps(o);
     await runMeetingsImportSweep(run.deps);
     // A member who left is not due at all (the sweep's page skips them): nothing is listed or opened for them.
-    expect((await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0]?.status).toBe('active');
-    expect(await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).toMatchObject({ rows: [{ n: '0' }] });
+    expect((await sqlAdmin<{ status: string }>('SELECT status FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0]?.status).toBe('active');
+    expect(await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).toMatchObject({ rows: [{ n: '0' }] });
   });
 
   it('a duplicate job and a stale job after a re-click do nothing: the row is staged once and the bytes are never deleted by the wrong job', async () => {
     const o = await org();
     const connectionId = await connectSealed(o, o.lan);
     await runMeetingsImportSweep(sweepDeps(o).deps);
-    const audio = await sqlAdmin<{ id: string }>("SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
+    const audio = await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
     const recordingId = audio.rows[0]?.id as string;
     const key = stagingKey();
     await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: key });
@@ -358,7 +358,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     expect(blobs.stored.has(key)).toBe(true);
     expect((await rowOf('sandbox-rec-audio', connectionId))?.status).toBe('staged');
     // The row fails (the member did not claim in time), is begun again with a NEW key, and the old job comes back: it does nothing to the new attempt.
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [recordingId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [recordingId]);
     await runMeetingsImportSweep(sweepDeps(o).deps);
     const fresh = stagingKey();
     await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: fresh });

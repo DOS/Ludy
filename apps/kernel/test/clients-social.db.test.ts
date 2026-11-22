@@ -53,7 +53,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
   async function connection(orgId: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -105,9 +105,9 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 6 });
     db = createDb(pool);
@@ -117,11 +117,11 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     freelancer = await person('freelancer');
     ({ orgId: anBinh } = await createOrg(rt, asUser(owner), 'Công ty An Bình'));
     ({ orgId: binhMinh } = await createOrg(rt, asUser(owner), 'Công ty Bình Minh'));
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [anBinh, freelancer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [anBinh, freelancer]));
     for (const key of Object.keys(ch) as (keyof typeof ch)[]) ch[key] = await connection(anBinh, `Kênh ${key.toUpperCase()}`);
     // C waits for the client's approval on a review link (#770); D's sign-in expired and E's broke.
     await exec(owner, 'social.channel.set_client_approval', { connectionId: ch.c, clientApproval: true });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = CASE WHEN id = $1 THEN 'expired' ELSE 'error' END WHERE id IN ($1, $2)", [ch.d, ch.e]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = CASE WHEN id = $1 THEN 'expired' ELSE 'error' END WHERE id IN ($1, $2)", [ch.d, ch.e]));
     await exec(owner, 'social.channel_access.set', { userId: freelancer, channelConnectionIds: [ch.a, ch.d] });
 
     // In review: the freelancer's post on A, the owner's on B, and one on C the team approved that waits for the client.

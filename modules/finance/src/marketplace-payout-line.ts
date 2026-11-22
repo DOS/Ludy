@@ -17,7 +17,7 @@ export async function payoutOfBankLine(ctx: QueryContext, bankLineId: string, op
   const posted = await query.executeTakeFirst();
   if (posted) return { state: 'posted', voucherId: posted.id };
   const proposed = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', MARKETPLACE_PAYOUT_COMMAND)

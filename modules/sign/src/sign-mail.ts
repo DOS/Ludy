@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // ADR-0034 outbound mail merge schemas, payload renderers, and queueing helpers for eSign Slice 1b (#3324).
-// Raw signing tokens and 6-digit OTP codes NEVER persist in crove_kernel.mail_message.payload:
+// Raw signing tokens and 6-digit OTP codes NEVER persist in ludy_kernel.mail_message.payload:
 // tokens and OTP codes are generated/minted in memory at send time via system mail_data commands.
 import { z } from 'zod';
 import { createMailMessage } from '@ludy/kernel';

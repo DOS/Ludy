@@ -86,7 +86,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const adminUser = await person('admin');
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
     return { orgId, owner, admin: adminUser, member };
   }
 
@@ -95,7 +95,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, eligible_approvers, authors, created_at)
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, eligible_approvers, authors, created_at)
          VALUES ($1, $2, 'purchase', $3, $4, $5, '{}', $6, $7, now() - make_interval(days => $8))`,
         [o.orgId, id, extra.command ?? 'finance.purchase.record', extra.status ?? 'pending', `Hóa đơn ${id.slice(0, 6)}`, [o.owner, o.admin], JSON.stringify(extra.authors ?? []), days],
       ),
@@ -107,25 +107,25 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
   const sweep = () => sweepProposalNudges({ runtime: worker, workerDb });
   // Waited `days`, and its owners were told as long ago: past every window.
   const age = (id: string, days: number) =>
-    admin((c) => c.query('UPDATE crove_kernel.proposal SET created_at = now() - make_interval(days => $2), escalated_at = now() - make_interval(days => $2) WHERE id = $1', [id, days]));
+    admin((c) => c.query('UPDATE ludy_kernel.proposal SET created_at = now() - make_interval(days => $2), escalated_at = now() - make_interval(days => $2) WHERE id = $1', [id, days]));
   const view = (o: Org, user: string, id: string) => rt.query<Detail>('kernel.inbox.get', { id }, { actor: asUser(user), orgId: o.orgId });
   const resubmit = (o: Org, user: string, id: string) =>
     rt.execute<{ proposalId: string }>('kernel.proposal.resubmit', { id }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const approve = async (o: Org, user: string, id: string) =>
     rt.execute<{ journalEntryId: string }>('kernel.proposal.approve', { id, revision: (await view(o, user, id)).revision, acceptUnverifiedSignature: true }, { actor: asMfa(user), orgId: o.orgId });
   const row = (id: string) =>
-    admin(async (c) => (await c.query<Record<string, unknown>>('SELECT * FROM crove_kernel.proposal WHERE id = $1', [id])).rows[0] as Record<string, unknown>);
+    admin(async (c) => (await c.query<Record<string, unknown>>('SELECT * FROM ludy_kernel.proposal WHERE id = $1', [id])).rows[0] as Record<string, unknown>);
 
   type Counts = { mail: number; events: number; proposals: number; activity: number; audit: number };
   // What the org holds that the expiry must not touch, and what it must write.
   async function counts(orgId: string) {
     return admin(async (c) => {
       const { rows } = await c.query<Counts>(
-        `SELECT (SELECT count(*)::int FROM crove_kernel.mail_message WHERE org_id = $1) AS mail,
-                (SELECT count(*)::int FROM crove_kernel.outbox_event WHERE org_id = $1) AS events,
-                (SELECT count(*)::int FROM crove_kernel.proposal WHERE org_id = $1) AS proposals,
-                (SELECT count(*)::int FROM crove_kernel.activity WHERE org_id = $1) AS activity,
-                (SELECT count(*)::int FROM crove_kernel.audit_event WHERE org_id = $1) AS audit`,
+        `SELECT (SELECT count(*)::int FROM ludy_kernel.mail_message WHERE org_id = $1) AS mail,
+                (SELECT count(*)::int FROM ludy_kernel.outbox_event WHERE org_id = $1) AS events,
+                (SELECT count(*)::int FROM ludy_kernel.proposal WHERE org_id = $1) AS proposals,
+                (SELECT count(*)::int FROM ludy_kernel.activity WHERE org_id = $1) AS activity,
+                (SELECT count(*)::int FROM ludy_kernel.audit_event WHERE org_id = $1) AS audit`,
         [orgId],
       );
       return rows[0] as Counts;
@@ -135,7 +135,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
   async function expiryAudit(proposalId: string) {
     return admin(async (c) => {
       const { rows } = await c.query<{ actor_type: string; outcome: string; detail: Record<string, unknown> }>(
-        "SELECT actor_type, outcome, detail FROM crove_kernel.audit_event WHERE command = 'kernel.proposal.expire' AND target_id = $1 ORDER BY occurred_at, id",
+        "SELECT actor_type, outcome, detail FROM ludy_kernel.audit_event WHERE command = 'kernel.proposal.expire' AND target_id = $1 ORDER BY occurred_at, id",
         [proposalId],
       );
       return rows;
@@ -168,18 +168,18 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
   });
@@ -209,7 +209,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     expect(await save(o, o.admin, { remindAfterDays: 2, escalateAfterDays: 7, expireAfterDays: 14 })).toEqual({ remindAfterDays: 2, escalateAfterDays: 7, expireAfterDays: 14 });
     const audit = await admin(async (c) =>
       (await c.query<{ detail: { previous: ProposalPolicy; policy: ProposalPolicy } }>(
-        "SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal_policy.save' AND outcome = 'ok'",
+        "SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal_policy.save' AND outcome = 'ok'",
         [o.orgId],
       )).rows,
     );
@@ -222,7 +222,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
       [7, 91],
     ] as const) {
       await expect(
-        admin((c) => c.query('UPDATE crove_kernel.proposal_policy SET escalate_after_days = $2, expire_after_days = $3 WHERE org_id = $1', [o.orgId, escalate, expire])),
+        admin((c) => c.query('UPDATE ludy_kernel.proposal_policy SET escalate_after_days = $2, expire_after_days = $3 WHERE org_id = $1', [o.orgId, escalate, expire])),
         `${escalate} ${expire}`,
       ).rejects.toMatchObject({ code: '23514' });
     }
@@ -233,7 +233,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     await save(o, o.owner, { remindAfterDays: 1, escalateAfterDays: 2, expireAfterDays: 3 });
     // Reminded and escalated earlier, as the policy says: its approvers and owners were mailed already.
     const id = await rawProposal(o, 4);
-    await admin((c) => c.query("UPDATE crove_kernel.proposal SET reminded_at = now() - interval '3 days', escalated_at = now() - interval '2 days' WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_kernel.proposal SET reminded_at = now() - interval '3 days', escalated_at = now() - interval '2 days' WHERE id = $1", [id]));
     const before = await row(id);
     const counted = await counts(o.orgId);
 
@@ -248,7 +248,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     // One audit row by the system, one activity entry, no mail and no event.
     expect(await counts(o.orgId)).toEqual({ ...counted, activity: counted.activity + 1, audit: counted.audit + 1 });
     expect(await expiryAudit(id)).toEqual([{ actor_type: 'system', outcome: 'ok', detail: expect.objectContaining({ days: 4, expire_after_days: 3, revision: 1 }) }]);
-    const activity = await admin(async (c) => (await c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'proposal.expired'", [o.orgId, id])).rows);
+    const activity = await admin(async (c) => (await c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'proposal.expired'", [o.orgId, id])).rows);
     expect(activity).toEqual([{ kind: 'proposal.expired', summary: 'Hết hạn sau 4 ngày chờ duyệt' }]);
 
     // Later passes write nothing more, and nobody is mailed again.
@@ -274,7 +274,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     // The org turns expiry on while proposals of 30 days wait, never escalated.
     await save(o, o.owner, { remindAfterDays: 1, escalateAfterDays: 2, expireAfterDays: 5 });
     const mails = (id: string, stage: string) =>
-      admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.mail_message WHERE source_id = $1 AND payload->>'stage' = $2", [id, stage])).rows[0]?.n);
+      admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.mail_message WHERE source_id = $1 AND payload->>'stage' = $2", [id, stage])).rows[0]?.n);
     await sweep();
     // Nothing expires: the owners are told first.
     expect((await row(late)).status).toBe('pending');
@@ -285,10 +285,10 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     expect((await row(decided)).status).toBe('rejected');
     expect((await row(unset)).status).toBe('pending');
     // Two days after the owners' mail it still waits: they have the three days between escalation and expiry.
-    await admin((c) => c.query("UPDATE crove_kernel.proposal SET escalated_at = now() - interval '2 days' WHERE id = $1", [late]));
+    await admin((c) => c.query("UPDATE ludy_kernel.proposal SET escalated_at = now() - interval '2 days' WHERE id = $1", [late]));
     await sweep();
     expect((await row(late)).status).toBe('pending');
-    await admin((c) => c.query("UPDATE crove_kernel.proposal SET escalated_at = now() - interval '3 days' WHERE id = $1", [late]));
+    await admin((c) => c.query("UPDATE ludy_kernel.proposal SET escalated_at = now() - interval '3 days' WHERE id = $1", [late]));
     await sweep();
     expect((await row(late)).status).toBe('expired');
     expect(await mails(late, 'escalate')).toBe(1);
@@ -324,15 +324,15 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
 
   it('lets only the worker run the scan and the command', async () => {
     for (const [role, allowed] of [
-      ['crove_worker', true],
-      ['crove_app', false],
-      ['crove_tenant', false],
-      ['crove_definer_tenant', false],
+      ['ludy_worker', true],
+      ['ludy_app', false],
+      ['ludy_tenant', false],
+      ['ludy_definer_tenant', false],
     ] as const) {
-      const can = await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'crove_kernel.proposal_expiries_due(int)', 'EXECUTE') AS ok", [role])).rows[0]?.ok);
+      const can = await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'ludy_kernel.proposal_expiries_due(int)', 'EXECUTE') AS ok", [role])).rows[0]?.ok);
       expect(can, role).toBe(allowed);
     }
-    await expect(pool.query('SELECT * FROM crove_kernel.proposal_expiries_due(10)')).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT * FROM ludy_kernel.proposal_expiries_due(10)')).rejects.toMatchObject({ code: '42501' });
     const o = await org();
     await save(o, o.owner, { remindAfterDays: null, escalateAfterDays: 2, expireAfterDays: 3 });
     const id = await rawProposal(o, 10);
@@ -381,7 +381,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     expect(await view(o, o.member, id)).toMatchObject({ canResubmit: false, resubmittedAs: again });
     expect(await view(o, o.member, again)).toMatchObject({ status: 'pending', resubmittedFrom: id });
     await expect(resubmit(o, o.member, id)).rejects.toMatchObject({ code: 'PROPOSAL_RESUBMITTED', status: 409, details: { proposalId: again } });
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.proposal.resubmit' AND outcome = 'ok' AND target_id = $1", [id])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.proposal.resubmit' AND outcome = 'ok' AND target_id = $1", [id])).rows);
     expect(audit).toEqual([{ detail: expect.objectContaining({ proposal_id: again, resubmitted_from: id, source: 'request' }) }]);
 
     // The new proposal is approved like any other: four-eyes keeps the member from it, the owner posts it.
@@ -415,8 +415,8 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     await sweep();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, source_file_id, eligible_approvers, authors)
-         SELECT org_id, kind, command, title, payload, source_file_id, eligible_approvers, authors FROM crove_kernel.proposal WHERE id = $1`,
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, source_file_id, eligible_approvers, authors)
+         SELECT org_id, kind, command, title, payload, source_file_id, eligible_approvers, authors FROM ludy_kernel.proposal WHERE id = $1`,
         [second.proposalId],
       ),
     );
@@ -431,7 +431,7 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     expect(await view(o, o.member, id)).toMatchObject({ canResubmit: false });
     // Authors that cannot be read fail closed (four-eyes needs them): nobody may ask again, the original author neither.
     const unreadable = await rawProposal(o, 10, { status: 'expired', command: 'finance.journal_voucher.record', authors: [{ type: 'robot', id: o.member }] });
-    await admin((c) => c.query(`UPDATE crove_kernel.proposal SET request_input = '{}' WHERE id = $1`, [unreadable]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET request_input = '{}' WHERE id = $1`, [unreadable]));
     for (const user of [o.member, o.admin, o.owner]) {
       await expect(resubmit(o, user, unreadable)).rejects.toMatchObject({ code: 'NOT_RESUBMITTABLE', status: 422 });
       expect(await view(o, user, unreadable)).toMatchObject({ canResubmit: false });
@@ -452,20 +452,20 @@ suite('proposal expiry on PostgreSQL (#876)', () => {
     const other = await org();
     await expect(resubmit(other, other.owner, id)).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]));
     await expect(resubmit(o, viewer, id)).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
     // While the file is being read again, it waits for the reading.
     await rt.execute('kernel.file.reextract', { fileId }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(resubmit(o, o.owner, id)).rejects.toMatchObject({ code: 'EXTRACTION_PENDING', status: 409 });
     expect(await view(o, o.owner, id)).toMatchObject({ canResubmit: false });
-    await admin((c) => c.query("UPDATE crove_kernel.extraction SET status = 'failed', completed_at = now() WHERE file_id = $1 AND status = 'pending'", [fileId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.extraction SET status = 'failed', completed_at = now() WHERE file_id = $1 AND status = 'pending'", [fileId]));
 
     // Three requests at once: one proposal, the others refused.
     const results = await Promise.allSettled([resubmit(o, o.owner, id), resubmit(o, o.owner, id), resubmit(o, o.owner, id)]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     for (const r of results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')) expect(r.reason).toMatchObject({ code: 'PROPOSAL_RESUBMITTED' });
-    const made = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE resubmitted_from = $1', [id])).rows[0]?.n);
+    const made = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.proposal WHERE resubmitted_from = $1', [id])).rows[0]?.n);
     expect(made).toBe(1);
   });
 });

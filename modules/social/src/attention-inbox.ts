@@ -39,7 +39,7 @@ export const attentionInbox = defineQuery({
   handler: async (ctx): Promise<{ channels: AttentionChannel[]; posts: AttentionPost[]; total: number }> => {
     if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { channels: [], posts: [], total: 0 };
     const channels = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'display_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('status', 'in', ATTENTION_CHANNEL_STATUSES)
@@ -52,7 +52,7 @@ export const attentionInbox = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_social.post_variant as v')
       .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
       .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.status', 'v.error_code', 'v.updated_at', 'v.body as variant_body', 'p.body', 'c.display_name'])
       .where('v.org_id', '=', ctx.orgId)
       // Not an archived post's (#1299): a failed channel of it waits for its restore.

@@ -47,7 +47,7 @@ const selfApprovalBlocked = () =>
 async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
   return trx
     .selectFrom('crove_hr.payroll_employee as e')
-    .leftJoin('crove_kernel.legal_entity as le', (j) => j.onRef('le.org_id', '=', 'e.org_id').onRef('le.id', '=', 'e.legal_entity_id'))
+    .leftJoin('ludy_kernel.legal_entity as le', (j) => j.onRef('le.org_id', '=', 'e.org_id').onRef('le.id', '=', 'e.legal_entity_id'))
     .leftJoin('crove_hr.department as d', (j) => j.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
     .select([
       'e.id',
@@ -442,7 +442,7 @@ export const selfLeaveRequestSubmit = defineCommand({
         dept.manager_user_id !== callerUserId
       ) {
         const managerMember = await ctx.trx
-          .selectFrom('crove_kernel.tenant_member')
+          .selectFrom('ludy_kernel.tenant_member')
           .select('role')
           .where('org_id', '=', ctx.orgId)
           .where('user_id', '=', dept.manager_user_id)
@@ -706,7 +706,7 @@ async function assertNotSelfApprover(
     throw selfApprovalBlocked();
   }
   const otherApprover = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select('user_id')
     .where('org_id', '=', orgId)
     .where('user_id', '!=', callerUserId)
@@ -726,7 +726,7 @@ async function assertL1Authority(
   req: { employee_id: string; department_id: string | null },
 ): Promise<'owner' | 'admin' | 'member'> {
   const member = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select('role')
     .where('org_id', '=', orgId)
     .where('user_id', '=', callerUserId)
@@ -920,7 +920,7 @@ export const leaveRequestApproveFinal = defineCommand({
   handler: async (ctx, input): Promise<HrLeaveRequestActionResult> => {
     const callerUserId = userOf(ctx.actor);
     const member = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select('role')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', callerUserId)
@@ -1073,7 +1073,7 @@ export const leaveRequestReject = defineCommand({
     if (!existing) throw requestNotFound();
 
     const member = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select('role')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', callerUserId)

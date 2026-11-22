@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects v2 Wave 1 (#2605, docs/plan/projects-v2.md section 4.2, ADR-0056): custom board columns per project
-// mapped to canonical crove_kernel.task.status on a real PostgreSQL 17 instance:
+// mapped to canonical ludy_kernel.task.status on a real PostgreSQL 17 instance:
 // 1) Zero-setup behavior matches v1 when 0 project_column rows exist.
 // 2) Opt-in init_defaults creates 5 editable columns, maps existing tasks, and is idempotent.
 // 3) Create, update, reorder, delete (with required fallbackColumnId + todo/done retention + max 12 guard), and soft WIP counts.
@@ -116,12 +116,12 @@ suite('projects custom board columns (#2605)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -526,7 +526,7 @@ suite('projects custom board columns (#2605)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
             SET occurred_at = $1
           WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), org.orgId],
@@ -543,7 +543,7 @@ suite('projects custom board columns (#2605)', () => {
         'crove_projects.project_task',
         'crove_projects.project_member',
         'crove_projects.project',
-        'crove_kernel.task',
+        'ludy_kernel.task',
       ]) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
         expect(rows[0]?.n, tbl).toBe('0');

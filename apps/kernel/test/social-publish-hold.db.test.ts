@@ -58,7 +58,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -117,13 +117,13 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
   }
 
   async function deliver(o: Org, type: string) {
-    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type]));
+    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type]));
     for (const e of rows) await worker.execute('social.notification.dispatch', { eventId: e.id }, { actor: system, orgId: o.orgId });
     return rows.length;
   }
   // What a command audited, for the runs that wrote a hold or a release.
   const auditOf = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: { reason: string; held_too_long?: number } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ? 'hold_id' ORDER BY occurred_at, id", [o.orgId, command])).rows.map((r) => r.detail));
+    admin(async (c) => (await c.query<{ detail: { reason: string; held_too_long?: number } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ? 'hold_id' ORDER BY occurred_at, id", [o.orgId, command])).rows.map((r) => r.detail));
   const notices = async (o: Org, user: string) =>
     (await api.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((n) => n.kind === 'publishing_hold').map((n) => n.detail);
 
@@ -136,15 +136,15 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -219,7 +219,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
       expect(await status(o, v.postId)).toEqual({ status: 'scheduled', code: null });
     }
     expect(platform.sent).toHaveLength(0);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.external_call WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.external_call WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
 
     // Another org's post goes out.
     await sweep(platform, [o, other]);
@@ -240,11 +240,11 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     for (const v of [stale, staleQueued]) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
     // Only the recent one reached the platform.
     expect(platform.sent).toHaveLength(1);
-    const failedEvents = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n);
+    const failedEvents = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n);
     expect(failedEvents).toBe('2');
     // Run again: they are failed, so nothing more happens and no second notice.
     expect(await run(o, stale.id, platform)).toMatchObject({ action: 'none' });
-    expect(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n)).toBe('2');
+    expect(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n)).toBe('2');
   });
 
   it('keeps a post going whose original time is old but whose retry time is recent: lateness is measured from the retry', async () => {
@@ -319,7 +319,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const late = [await duePost(o, { ago: '2 hours' }), await duePost(o, { ago: '3 hours' }), await duePost(o, { queue: true, ago: '90 minutes' })];
     const recent = await duePost(o, { ago: '5 minutes' });
     const failLate = (org: Org) => worker.execute<{ failed: number; variantIds: string[] }>('social.publish.fail_late', {}, { actor: system, orgId: org.orgId });
-    const events = (org: Org, type: string) => admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [org.orgId, type])).rows.map((r) => r.payload));
+    const events = (org: Org, type: string) => admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [org.orgId, type])).rows.map((r) => r.payload));
 
     const hasLate = (org: Org) => worker.query<boolean>('social.publish.has_late', {}, { actor: system, orgId: org.orgId });
     // A person cannot run it, or ask it.
@@ -398,7 +398,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(await evergreenDue()).not.toContain(commented.postId);
     expect(await worker.execute('social.post.repost_evergreen', { postId: commented.postId }, { actor: system, orgId: o.orgId })).toEqual({ postId: null });
     expect(platform.comments).toHaveLength(0);
-    const after = await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM crove_kernel.external_call WHERE org_id = $1 AND step <> 'publish'", [o.orgId])).rows);
+    const after = await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM ludy_kernel.external_call WHERE org_id = $1 AND step <> 'publish'", [o.orgId])).rows);
     expect(after).toEqual([]);
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.post WHERE repost_of = $1', [commented.postId])).rowCount)).toBe(0);
 
@@ -442,7 +442,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const sha = fileId.replaceAll('-', '').padEnd(64, '0');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 200000, 'social', 1080, 1350)`,
         [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`],
       ),
@@ -511,7 +511,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query('UPDATE crove_social.publish_hold SET reason = $1', ['x']);
         } finally {
           await c.query('ROLLBACK');

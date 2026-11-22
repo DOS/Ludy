@@ -35,10 +35,10 @@ export const followupSource = defineQuery({
     const found = await sql<{ id: string; deal_id: string; party_id: string; reason: DealNextStepReason; status: string; party_name: string; party_email: string | null; days: number; org_name: string; closed: boolean }>`
       SELECT n.id, n.deal_id, d.party_id, n.reason, n.status, p.name AS party_name, p.email AS party_email, d.closed_at IS NOT NULL AS closed,
              greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - n.since_on), 0)::int AS days,
-             (SELECT t.name FROM crove_kernel.tenant t WHERE t.org_id = n.org_id) AS org_name
+             (SELECT t.name FROM ludy_kernel.tenant t WHERE t.org_id = n.org_id) AS org_name
       FROM crove_crm.deal_next_step n
       JOIN crove_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = ${input.nextStepId}::uuid`.execute(ctx.trx);
     const step = found.rows[0];
     if (!step) throw new DomainError('NEXT_STEP_NOT_FOUND', 404, 'Không tìm thấy việc cần theo dõi này');

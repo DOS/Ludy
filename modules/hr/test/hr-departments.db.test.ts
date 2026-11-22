@@ -50,12 +50,12 @@ suite('HR departments & employee assignment (#3412)', () => {
     const created = await createOrg(rt, asUser(owner), `${namePrefix} ${tag}`);
     const orgId = created.orgId;
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
       [orgId, admin, member, viewer],
     );
     const defaultEntityRow = await adminPool.query<{ id: string }>(
-      `SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`,
+      `SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`,
       [orgId],
     );
     const defaultEntityId = defaultEntityRow.rows[0]?.id as string;
@@ -66,7 +66,7 @@ suite('HR departments & employee assignment (#3412)', () => {
       rt.query<O>(name, input, { actor, orgId });
     const branch = async (name = 'Chi nhánh HN') => {
       const res = await adminPool.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`,
         [orgId, name, owner],
       );
       return res.rows[0]?.id as string;
@@ -119,16 +119,16 @@ suite('HR departments & employee assignment (#3412)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appPool = createPool({ connectionString: appUrl.toString(), max: 4 });
 
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
 
@@ -223,7 +223,7 @@ suite('HR departments & employee assignment (#3412)', () => {
       payFunction: undefined,
     });
     const partialAudit = await adminPool.query<{ detail: { departmentId: string; changed: string[] } }>(
-      `SELECT detail FROM crove_kernel.audit_event
+      `SELECT detail FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'hr.department.edit' AND outcome = 'ok'
        ORDER BY occurred_at DESC, id DESC LIMIT 1`,
       [o.orgId],
@@ -235,7 +235,7 @@ suite('HR departments & employee assignment (#3412)', () => {
 
     await o.editDept(o.admin, { departmentId: opsId, name: 'Xưởng sản xuất', code: 'SX', payFunction: 'overhead' });
     const fullAudit = await adminPool.query<{ detail: { departmentId: string; changed: string[] } }>(
-      `SELECT detail FROM crove_kernel.audit_event
+      `SELECT detail FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'hr.department.edit' AND outcome = 'ok'
        ORDER BY occurred_at DESC, id DESC LIMIT 1`,
       [o.orgId],
@@ -311,15 +311,15 @@ suite('HR departments & employee assignment (#3412)', () => {
       o.editEmp(o.owner, { employeeId: hqEmpId as string, departmentId: branchDept }),
     ).rejects.toMatchObject({ code: 'HR_DEPARTMENT_WRONG_ENTITY', status: 422 });
 
-    // Direct SQL RLS verification as crove_tenant: member sees nothing and cannot insert;
+    // Direct SQL RLS verification as ludy_tenant: member sees nothing and cannot insert;
     // org admin sees only its own org's departments (cross-tenant isolated) and legalEntityId filter scopes results.
     const other = await org('Cty Khác RLS');
     await other.addDept(other.owner, { name: 'Khác', payFunction: 'admin' });
     const client = await adminPool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`SELECT crove_kernel.enter_context($1::uuid, $2::uuid)`, [o.member, o.orgId]);
-      await client.query('SET LOCAL ROLE crove_tenant');
+      await client.query(`SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)`, [o.member, o.orgId]);
+      await client.query('SET LOCAL ROLE ludy_tenant');
       const memberRows = await client.query(`SELECT id FROM crove_hr.department`);
       expect(memberRows.rowCount).toBe(0);
       await expect(
@@ -328,8 +328,8 @@ suite('HR departments & employee assignment (#3412)', () => {
       await client.query('ROLLBACK');
 
       await client.query('BEGIN');
-      await client.query(`SELECT crove_kernel.enter_context($1::uuid, $2::uuid)`, [o.admin, o.orgId]);
-      await client.query('SET LOCAL ROLE crove_tenant');
+      await client.query(`SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)`, [o.admin, o.orgId]);
+      await client.query('SET LOCAL ROLE ludy_tenant');
       const adminRows = await client.query<{ id: string }>(`SELECT id FROM crove_hr.department ORDER BY id`);
       expect(adminRows.rows.map((r) => r.id).sort()).toEqual([hqDept, branchDept].sort());
       await expect(
@@ -528,13 +528,13 @@ suite('HR departments & employee assignment (#3412)', () => {
       archived_at: null,
     });
 
-    // Backdate offboard timestamp and insert a 31-day-old export record, then run crove_kernel.org_purge(30) as worker role.
+    // Backdate offboard timestamp and insert a 31-day-old export record, then run ludy_kernel.org_purge(30) as worker role.
     const adminClient = await adminPool.connect();
     try {
       await adminClient.query('BEGIN');
       await adminClient.query('SET LOCAL session_replication_role = replica');
       await adminClient.query(
-        `UPDATE crove_kernel.audit_event SET occurred_at = now() - interval '35 days' WHERE org_id = $1 AND command = 'kernel.org.offboard'`,
+        `UPDATE ludy_kernel.audit_event SET occurred_at = now() - interval '35 days' WHERE org_id = $1 AND command = 'kernel.org.offboard'`,
         [o.orgId],
       );
       await adminClient.query('COMMIT');
@@ -542,7 +542,7 @@ suite('HR departments & employee assignment (#3412)', () => {
       adminClient.release();
     }
     await adminPool.query(
-      `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, occurred_at, input_sha256, detail)
+      `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, occurred_at, input_sha256, detail)
        VALUES ($1, 'system', 'kernel.org.export.record', $2, 'ok', now() - interval '31 days', repeat('0', 64), '{"format":"crove.org-export.v2"}'::jsonb)`,
       [o.orgId, randomUUID()],
     );
@@ -550,13 +550,13 @@ suite('HR departments & employee assignment (#3412)', () => {
     const worker = await workerPool.connect();
     try {
       await worker.query('BEGIN');
-      await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await worker.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       const purgeRes = await worker.query<{ outcome: string; counts: Record<string, Record<string, number>> }>(
-        'SELECT outcome, counts FROM crove_kernel.org_purge(30)',
+        'SELECT outcome, counts FROM ludy_kernel.org_purge(30)',
       );
       expect(purgeRes.rows[0]?.outcome).toBe('ok');
       await worker.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, occurred_at, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, occurred_at, input_sha256, detail)
          VALUES ($1, 'system', 'kernel.org.purge', $2, 'ok', now(), repeat('0', 64), '{}'::jsonb)`,
         [o.orgId, randomUUID()],
       );

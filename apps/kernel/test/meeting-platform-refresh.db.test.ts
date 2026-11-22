@@ -96,7 +96,7 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     const owner = await person('owner');
     const { orgId } = await createOrg(api, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const lan = await person('lan');
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, lan]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, lan]);
     return { orgId, lan };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -119,8 +119,8 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     const sealed = await worker.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId }, { actor: SYSTEM, orgId: o.orgId });
     return parseCredential(broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(o.orgId, 'zoom', sealed.externalAccount)));
   }
-  const envelopeOf = async (connectionId: string) => (await sqlAdmin<{ e: string }>("SELECT encode(envelope, 'base64') AS e FROM crove_kernel.meeting_platform_credential WHERE id = $1", [connectionId])).rows[0]?.e as string;
-  const rowOf = async (connectionId: string) => (await sqlAdmin<{ status: string; status_reason: string | null; expires_at: Date | null }>('SELECT status, status_reason, expires_at FROM crove_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0];
+  const envelopeOf = async (connectionId: string) => (await sqlAdmin<{ e: string }>("SELECT encode(envelope, 'base64') AS e FROM ludy_kernel.meeting_platform_credential WHERE id = $1", [connectionId])).rows[0]?.e as string;
+  const rowOf = async (connectionId: string) => (await sqlAdmin<{ status: string; status_reason: string | null; expires_at: Date | null }>('SELECT status, status_reason, expires_at FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0];
   const reset = (mode: 'ok' | 'down' | 'refuse' | 'throw_expired' | 'no_expiry' = 'ok') => {
     zoom.state.calls = 0;
     zoom.state.valid = 'refresh-0';
@@ -139,15 +139,15 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 8 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 8 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     // The API's runtime registers the command too (as a deployment never would), so the test can show that the command's own gate, `access: 'system'`, refuses a person.
@@ -183,7 +183,7 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     expect(row).toMatchObject({ status: 'active', status_reason: null });
     expect((row?.expires_at?.getTime() ?? 0) - Date.now()).toBeGreaterThan(HOUR - 60_000);
     // The audit row names the connection and the provider; no token, no account, no envelope.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'", [o.orgId, COMMAND]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'", [o.orgId, COMMAND]);
     expect(audit.rowCount).toBe(1);
     const text = JSON.stringify(audit.rows[0]?.detail);
     for (const secret of ['access-0', 'access-1', 'refresh-0', 'refresh-1', c.account]) expect(text).not.toContain(secret);
@@ -237,7 +237,7 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     expect(await refresh(o, c.connectionId)).toEqual({ outcome: 'not_active' });
     expect(zoom.state.calls).toBe(1);
     // The audit row says so, and holds no token.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' AND detail ->> 'expired' = 'true'", [o.orgId, COMMAND]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' AND detail ->> 'expired' = 'true'", [o.orgId, COMMAND]);
     expect(audit.rowCount).toBe(1);
     for (const secret of ['access-0', 'refresh-0', c.account]) expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain(secret);
   });
@@ -297,7 +297,7 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     expect(await refuses(refresh(o, randomUUID()))).toBe('MEETING_PLATFORM_NOT_FOUND');
     expect(await refuses(refresh(other, c.connectionId))).toBe('MEETING_PLATFORM_NOT_FOUND');
     // A member who left: the credential is not read for them.
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan]);
     expect(await refresh(o, c.connectionId)).toEqual({ outcome: 'not_active' });
     expect(zoom.state.calls).toBe(0);
   });
@@ -306,7 +306,7 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     reset();
     const o = await org();
     const c = await connect(o, 60_000);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET provider = 'sandbox' WHERE id = $1", [c.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET provider = 'sandbox' WHERE id = $1", [c.connectionId]);
     expect(await refresh(o, c.connectionId)).toEqual({ outcome: 'unsupported' });
     expect(zoom.state.calls).toBe(0);
   });

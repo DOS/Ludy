@@ -98,9 +98,9 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: process.env.CROVE_CONTEXT_TOKEN_KEY ?? null }).register({
@@ -115,12 +115,12 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     stranger = await person('stranger');
     ({ orgId: orgA } = await createOrg(rt, actor(owner), 'Công ty A'));
     ({ orgId: orgB } = await createOrg(rt, actor(stranger), 'Công ty B'));
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgA, member, viewer]));
-    entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgA, member, viewer]));
+    entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
     branch = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh', 'branch', $3)", [orgA, branch, owner]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh', 'branch', $3)", [orgA, branch, owner]));
     shopee = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee')", [orgA, shopee]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee')", [orgA, shopee]));
   }, 120_000);
 
   afterAll(async () => {
@@ -166,7 +166,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   it('does not net a platform that was overpaid against one that owes, nor count a negative fee balance', async () => {
     const tiktok = randomUUID();
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'TikTok Shop')", [orgA, tiktok]);
+      await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'TikTok Shop')", [orgA, tiktok]);
       await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2)", [orgA, tiktok]);
     });
     // TikTok was paid out 300000 more than it was owed, and the platform's 331 holds a credit (an invoice no fee waited for): both negative.

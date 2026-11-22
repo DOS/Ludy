@@ -118,12 +118,12 @@ test('review shortcuts, then approve several proposals under one step-up', async
   });
 
   await test.step('each proposal has its own approval row, all under the one step-up', async () => {
-    const [org] = sql<{ org_id: string }>(`SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+    const [org] = sql<{ org_id: string }>(`SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
     if (!org) throw new Error(`org ${slug} not found`);
     const vars = { org: org.org_id };
     const approvals = sql<{ outcome: string; aal: string; mfa_at: string | null; target_id: string | null }>(
       `SELECT outcome, detail->>'aal' AS aal, detail->>'mfaAt' AS mfa_at, target_id
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' AND outcome = 'ok'`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' AND outcome = 'ok'`,
       vars,
     );
     expect(approvals).toHaveLength(NUMBERS.length);
@@ -132,7 +132,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     expect(new Set(approvals.map((a) => a.mfa_at)).size).toBe(1);
     const batches = sql<{ outcome: string; code: string | null; approved: number | null }>(
       `SELECT outcome, detail->>'code' AS code, (detail->>'approved')::int AS approved
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve_many' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve_many' ORDER BY occurred_at, id`,
       vars,
     );
     expect(batches).toEqual([

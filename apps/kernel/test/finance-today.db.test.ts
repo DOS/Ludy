@@ -108,16 +108,16 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     const db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -127,14 +127,14 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Công ty có việc hôm nay'));
     ({ orgId: otherOrgId } = await createOrg(rt, asUser(users.outsider), 'Công ty khác'));
     await admin(async (c) => {
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
-      branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`,
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`,
         [orgId, users.admin, users.approver, users.member, users.scoped, users.viewer],
       );
       // The scoped member keeps the default entity's books only.
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.scoped, defaultEntity, users.owner]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.scoped, defaultEntity, users.owner]);
     });
   }, 300_000);
 
@@ -185,7 +185,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
           `SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail'))::text AS failed,
                   count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail')
                                     AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'warn'))::text AS warned
-           FROM crove_kernel.proposal p
+           FROM ludy_kernel.proposal p
            WHERE p.org_id = $1 AND p.status = 'pending' AND p.command LIKE 'finance.%'
              -- Only the proposals waiting for the owner, as the groups count them (#3591): the flags are about those, not about ones another approver decides.
              AND p.eligible_approvers @> ARRAY[$2::uuid] AND NOT p.authors @> jsonb_build_array(jsonb_build_object('type', 'user', 'id', $2::text))`,
@@ -275,9 +275,9 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
   it('shows the originals still to fetch and the originals that differ from a posting, the second until it is opened', async () => {
     const subject = await pending(users.admin, '7201', 'Công ty Delta');
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'finance.invoice.original_needed', $2, $3)`, [orgId, `check:${randomUUID()}`, JSON.stringify({ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: 'ABC12345' })]);
+      await c.query(`INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'finance.invoice.original_needed', $2, $3)`, [orgId, `check:${randomUUID()}`, JSON.stringify({ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: 'ABC12345' })]);
       await c.query(
-        `INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, detail) VALUES ($1, $2, 'kernel.original_flagged', $3, 'kernel.proposal', $4, $5, '{"differs":"true","signature":"none"}')`,
+        `INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, detail) VALUES ($1, $2, 'kernel.original_flagged', $3, 'kernel.proposal', $4, $5, '{"differs":"true","signature":"none"}')`,
         [orgId, users.owner, `original_flagged:${subject}:x`, subject, defaultEntity],
       );
     });
@@ -286,7 +286,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(items.find((i) => i.id === 'originals-flagged')).toMatchObject({ kind: 'flag', count: 1, severity: 'warn', href: `/inbox/${subject}` });
     // Only the member the notice is for; and once opened (read) it is gone.
     expect((await today(users.approver)).find((i) => i.id === 'originals-flagged')).toBeUndefined();
-    await admin((c) => c.query(`UPDATE crove_kernel.notification SET read_at = now() WHERE org_id = $1 AND kind = 'kernel.original_flagged'`, [orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.notification SET read_at = now() WHERE org_id = $1 AND kind = 'kernel.original_flagged'`, [orgId]));
     expect((await today(users.owner)).find((i) => i.id === 'originals-flagged')).toBeUndefined();
     // A viewer gets neither, and the member limited to one entity does not see the org-wide item to fetch.
     expect((await today(users.viewer)).filter((i) => i.kind === 'flag')).toEqual([]);
@@ -294,7 +294,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
   });
 
   it.each(['month', 'quarter'] as const)('shows the next VAT return of a %s filer, only when it is due within the tax calendar window, and none without a filing period', async (kind) => {
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
     expect((await today(users.owner)).filter((i) => i.kind === 'deadline')).toEqual([]);
     await rt.execute('kernel.org.set_vat_filing_period', { vatFilingPeriod: kind }, { actor: { ...asUser(users.owner), aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId });
     const next = nextVatDeadline(kind, vietnamToday());
@@ -303,8 +303,8 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     // entity always owes). The branch is created when the test runs, so which side of that day it falls on would change
     // with the date (#4193): set it from the period instead, once on each side.
     const lastDay = periodLastDay(next.period);
-    const createdOn = (day: string) => admin((c) => c.query(`UPDATE crove_kernel.legal_entity SET created_at = $2::timestamptz WHERE org_id = $1 AND id = $3`, [orgId, `${day}T12:00:00+07:00`, branch]));
-    const original = (await admin((c) => c.query<{ created_at: Date }>(`SELECT created_at FROM crove_kernel.legal_entity WHERE org_id = $1 AND id = $2`, [orgId, branch]))).rows[0]?.created_at as Date;
+    const createdOn = (day: string) => admin((c) => c.query(`UPDATE ludy_kernel.legal_entity SET created_at = $2::timestamptz WHERE org_id = $1 AND id = $3`, [orgId, `${day}T12:00:00+07:00`, branch]));
+    const original = (await admin((c) => c.query<{ created_at: Date }>(`SELECT created_at FROM ludy_kernel.legal_entity WHERE org_id = $1 AND id = $2`, [orgId, branch]))).rows[0]?.created_at as Date;
     for (const [side, day, entity] of [
       // The branch was added after the period ended, so only the default entity owes the return: the link names it.
       ['after the period', addDays(lastDay, 1), `&entity=${defaultEntity}`],
@@ -323,15 +323,15 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
         expect(deadlines[0]?.amount).toBeUndefined();
       }
     }
-    await admin((c) => c.query(`UPDATE crove_kernel.legal_entity SET created_at = $2 WHERE org_id = $1 AND id = $3`, [orgId, original, branch]));
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.legal_entity SET created_at = $2 WHERE org_id = $1 AND id = $3`, [orgId, original, branch]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
   });
 
   // A pending purchase proposal written directly, with the payload fields finance.today reads.
   const insertPending = (parties: { seller: string; direction?: string }, invoice: Record<string, unknown>, eligible: string[], authors: string[]) =>
     admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
          VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'pending', 'HĐ', $2, 1, $3::uuid[], $4, $5)`,
         [
           orgId,
@@ -364,7 +364,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     await insertPending({ seller: 'Acme Trading' }, { total: '2000000', currency: 'VND' }, [users.owner], [users.admin]);
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
          VALUES ($1, 'finance.cash_voucher', 'finance.voucher.record', 'pending', 'Phiếu chi', '{"total":"500000","type":"cash_payment"}', 1, ARRAY[$2::uuid], $3, $4)`,
         [orgId, users.owner, JSON.stringify([{ type: 'user', id: users.admin }]), defaultEntity],
       ),
@@ -392,7 +392,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     const before = { owner: await waiting(users.owner), admin: await waiting(users.admin), approver: await waiting(users.approver) };
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
          VALUES ($1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán lương', '{}', 1, $2::uuid[], $3, $4::uuid[], $5)`,
         [orgId, [users.owner, users.admin, users.approver], JSON.stringify([{ type: 'user', id: users.admin }]), [users.owner], defaultEntity],
       ),
@@ -402,16 +402,16 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(await waiting(users.admin)).toBe(before.admin);
     expect(await waiting(users.approver)).toBe(before.approver + 1);
     // With no one else left who may decide, the co-author sees it.
-    await admin((c) => c.query(`UPDATE crove_kernel.proposal SET eligible_approvers = $2::uuid[] WHERE org_id = $1 AND command = 'finance.payroll_posting.record' AND status = 'pending'`, [orgId, [users.owner, users.admin]]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET eligible_approvers = $2::uuid[] WHERE org_id = $1 AND command = 'finance.payroll_posting.record' AND status = 'pending'`, [orgId, [users.owner, users.admin]]));
     expect(await waiting(users.owner)).toBe(before.owner + 1);
     expect(await waiting(users.admin)).toBe(before.admin);
-    await admin((c) => c.query(`DELETE FROM crove_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
   });
 
   it('reads 1,000 pending proposals in one grouped pass', async () => {
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
          SELECT $1, 'finance.purchase', 'finance.purchase.record', 'pending', 'HĐ ' || g,
                 jsonb_build_object('seller', jsonb_build_object('name', 'Nhà cung cấp ' || (g % 40)), 'invoice', jsonb_build_object('total', '1000000', 'currency', 'VND'), 'checks', '[]'::jsonb),
                 1, ARRAY[$2::uuid], jsonb_build_array(jsonb_build_object('type', 'user', 'id', $3::text)), $4
@@ -429,7 +429,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(groups.length - 1).toBe(30);
     expect(rest?.count).toBeGreaterThan(0);
     expect(groups.filter((g) => g.title.params?.party?.toString().startsWith('Nhà cung cấp ')).every((g) => g.count === 25)).toBe(true);
-    const waiting = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.proposal WHERE org_id = $1 AND status = 'pending' AND command LIKE 'finance.%' AND eligible_approvers @> ARRAY[$2::uuid]`, [orgId, users.owner])).rows[0]?.n));
+    const waiting = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND status = 'pending' AND command LIKE 'finance.%' AND eligible_approvers @> ARRAY[$2::uuid]`, [orgId, users.owner])).rows[0]?.n));
     // The owner wrote none of these (the admin did), so all wait for the owner except those the owner wrote with the others.
     expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeLessThanOrEqual(waiting);
     expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
@@ -437,7 +437,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
   });
 
   it('flags the sales e-invoices that need a person (#2502): failed, sent back with a reason, or unanswered for an hour; not a fresh send nor a plain draft', async () => {
-    const entity = (await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [otherOrgId])).rows[0]))?.id as string;
+    const entity = (await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [otherOrgId])).rows[0]))?.id as string;
     // Seeded as the database owner with the triggers off: the states and times the job and the clock would make.
     await admin(async (c) => {
       await c.query('BEGIN');

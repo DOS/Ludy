@@ -52,7 +52,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     const id = randomUUID();
     counter += 1;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Dy test client', 'client.example.com', $5::text[], $6, clock_timestamp(), now() + interval '30 days', $3, $7, $8)`,
       [org, id, users[who], `client-${counter}-${id}`, scopes, `oauth-${id}`, kind, kind === 'member' ? users[who] : null],
     );
@@ -86,9 +86,9 @@ suite('the Engage R1 write tools (#3861)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -103,23 +103,23 @@ suite('the Engage R1 write tools (#3861)', () => {
     orgA = (await createOrg(runtime, browser('owner'), 'Org A')).orgId;
     orgB = (await createOrg(runtime, browser('foreign'), 'Org B')).orgId;
     for (const [who, role] of [['admin', 'admin'], ['member', 'member'], ['viewer', 'viewer']] as const) {
-      await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
     }
     for (const [key, org, owner] of [['a1', orgA, users.owner], ['b1', orgB, users.foreign]] as const) {
       channel[key] = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [org, channel[key], `ext-${key}`, `Trang ${key}`, owner]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [org, channel[key], `ext-${key}`, `Trang ${key}`, owner]);
     }
     const seed = async (org: string, ch: string, key: string) => {
       const id = randomUUID();
       const ident = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, 'Khách thử')`, [org, ident, `u-${key}-12345678`]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, 'Khách thử')`, [org, ident, `u-${key}-12345678`]);
       await sqlAdmin(
-        `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at)
+        `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at)
          VALUES ($1, $2, $3, 'comment_thread', $4, $5, 1, now(), now())`,
         [org, id, ch, `t-${key}`, ident],
       );
       await sqlAdmin(
-        `INSERT INTO crove_kernel.conversation_message (org_id, id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, body, tainted, author_identity_id)
+        `INSERT INTO ludy_kernel.conversation_message (org_id, id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, body, tainted, author_identity_id)
          VALUES ($1, $2, $3, $4, 'comment_thread', 1, 'in', now(), 'contact', 'Cho mình hỏi giá', true, $5)`,
         [org, randomUUID(), id, ch, ident],
       );
@@ -130,7 +130,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     identity = a.ident;
     threadB = (await seed(orgB, channel.b1 as string, 'b')).id;
     const connection = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
     adAccount = randomUUID();
     await sqlAdmin(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
   }, 300_000);
@@ -147,19 +147,19 @@ suite('the Engage R1 write tools (#3861)', () => {
   it('works a thread: takes it, adds a note, links a contact, resolves it and reopens it, each as the grant, and audits the grant, the client and the agent', async () => {
     const g = await dy();
     await run('kernel.mcp.conversation_assign', { conversationId: thread, assigneeUserId: users.member }, g);
-    expect(await one(`SELECT assignee_user_id, status FROM crove_kernel.conversation WHERE id = $1`, [thread])).toMatchObject({ assignee_user_id: users.member });
+    expect(await one(`SELECT assignee_user_id, status FROM ludy_kernel.conversation WHERE id = $1`, [thread])).toMatchObject({ assignee_user_id: users.member });
     const note = await run<{ noteId: string }>('kernel.mcp.conversation_note', { conversationId: thread, body: 'Khách hỏi giá, đã gửi bảng giá. (Dy)' }, g);
-    expect(await one(`SELECT author_user_id, body FROM crove_kernel.conversation_note WHERE id = $1`, [note.noteId])).toMatchObject({ author_user_id: users.owner });
+    expect(await one(`SELECT author_user_id, body FROM ludy_kernel.conversation_note WHERE id = $1`, [note.noteId])).toMatchObject({ author_user_id: users.owner });
     const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách Dy tạo', phone: '0901234567' }, g);
     await run('kernel.mcp.conversation_link_contact', { conversationId: thread, partyId: party.partyId }, g);
-    expect((await one(`SELECT party_id FROM crove_kernel.conversation WHERE id = $1`, [thread])).party_id).toBe(party.partyId);
+    expect((await one(`SELECT party_id FROM ludy_kernel.conversation WHERE id = $1`, [thread])).party_id).toBe(party.partyId);
     await run('kernel.mcp.conversation_resolve', { conversationId: thread }, g);
-    expect(await one(`SELECT status, resolved_by FROM crove_kernel.conversation WHERE id = $1`, [thread])).toMatchObject({ status: 'resolved', resolved_by: users.owner });
+    expect(await one(`SELECT status, resolved_by FROM ludy_kernel.conversation WHERE id = $1`, [thread])).toMatchObject({ status: 'resolved', resolved_by: users.owner });
     await run('kernel.mcp.conversation_reopen', { conversationId: thread }, g);
-    expect((await one(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [thread])).status).toBe('new');
+    expect((await one(`SELECT status FROM ludy_kernel.conversation WHERE id = $1`, [thread])).status).toBe('new');
     // The audit trail of the calls names the grant, the client and the agent (the grant).
     const audit = await sqlAdmin<{ command: string; outcome: string; detail: Record<string, unknown> }>(
-      `SELECT command, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2 AND command LIKE 'kernel.mcp.%' ORDER BY occurred_at`,
+      `SELECT command, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2 AND command LIKE 'kernel.mcp.%' ORDER BY occurred_at`,
       [orgA, g.grantId],
     );
     expect(audit.rows.map((r) => [r.command, r.outcome])).toEqual([
@@ -172,28 +172,28 @@ suite('the Engage R1 write tools (#3861)', () => {
     ]);
     for (const r of audit.rows) expect(r.detail).toMatchObject({ mcpCall: true, mcpGrant: g.grantId, mcpClientName: 'Dy test client' });
     // A person's own timeline row, made by a connected app, names the person (the grant is no org-chart agent).
-    expect(await one(`SELECT actor_id, agent_id FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'`, [orgA, party.partyId])).toMatchObject({ actor_id: users.owner, agent_id: null });
+    expect(await one(`SELECT actor_id, agent_id FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'`, [orgA, party.partyId])).toMatchObject({ actor_id: users.owner, agent_id: null });
   });
 
   it('links a contact and takes a thread although a colleague resolved another thread of the same customer', async () => {
     // The link also reaches the customer's other threads of the same kind; one that another member resolved keeps who resolved it.
     const other = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at, status, resolved_at, resolved_by)
+      `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at, status, resolved_at, resolved_by)
        VALUES ($1, $2, $3, 'comment_thread', 't-a-older', $4, 1, now(), now(), 'resolved', now(), $5)`,
       [orgA, other, channel.a1, identity, users.admin],
     );
     const g = await dy();
     const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách quay lại' }, g);
     await run('kernel.mcp.conversation_link_contact', { conversationId: thread, partyId: party.partyId }, g);
-    expect(await one(`SELECT party_id, resolved_by FROM crove_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ party_id: party.partyId, resolved_by: users.admin });
+    expect(await one(`SELECT party_id, resolved_by FROM ludy_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ party_id: party.partyId, resolved_by: users.admin });
     await run('kernel.mcp.conversation_assign', { conversationId: other, assigneeUserId: users.member }, g);
-    expect(await one(`SELECT assignee_user_id, resolved_by FROM crove_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ assignee_user_id: users.member, resolved_by: users.admin });
+    expect(await one(`SELECT assignee_user_id, resolved_by FROM ludy_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ assignee_user_id: users.member, resolved_by: users.admin });
   });
 
   it('adds a contact as an outside value, never one a person vouched for', async () => {
     const made = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty Dy thêm', email: 'ketoan@example.com' });
-    expect(await one(`SELECT source_trust, name FROM crove_kernel.party WHERE id = $1`, [made.partyId])).toMatchObject({ source_trust: 'external', name: 'Công ty Dy thêm' });
+    expect(await one(`SELECT source_trust, name FROM ludy_kernel.party WHERE id = $1`, [made.partyId])).toMatchObject({ source_trust: 'external', name: 'Công ty Dy thêm' });
     // The tax code is unique, as for a person.
     const tax = '0312345678';
     await run('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty có MST', taxCode: tax });
@@ -272,7 +272,7 @@ suite('the Engage R1 write tools (#3861)', () => {
       const err = await refusal(run(name, input, await dy()));
       expect(err.details, name).toMatchObject({ rule: 'mcp_scope' });
     }
-    expect((await one(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [thread])).status).not.toBe('resolved');
+    expect((await one(`SELECT status FROM ludy_kernel.conversation WHERE id = $1`, [thread])).status).not.toBe('resolved');
   });
 
   it('keeps to its own org: another org\'s thread is not found, and a grant of org B cannot work org A', async () => {
@@ -285,12 +285,12 @@ suite('the Engage R1 write tools (#3861)', () => {
   it('refuses the very next write when the grant is revoked or the grantor is demoted to a member', async () => {
     const g = await dy('admin');
     await run('kernel.mcp.conversation_note', { conversationId: thread, body: 'trước khi thu hồi' }, g);
-    await sqlAdmin(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [g.grantId]);
+    await sqlAdmin(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [g.grantId]);
     expect((await refusal(run('kernel.mcp.conversation_note', { conversationId: thread, body: 'sau khi thu hồi' }, g))).status).toBe(401);
     const g2 = await dy('admin');
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.admin]);
     expect((await refusal(run('kernel.mcp.conversation_note', { conversationId: thread, body: 'sau khi bị hạ quyền' }, g2))).status).toBe(401);
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, users.admin]);
     expect(identity).toBeTruthy();
   });
 });

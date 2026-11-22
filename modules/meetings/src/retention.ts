@@ -7,7 +7,7 @@
 // in each meeting's own org; the database checks every date again, so a bug in the job can fail a run but never shred early.
 //
 // Shredding is deleting the kind's media_key row: every copy of the ciphertext (current and old versions, bucket backups) is unreadable from that commit on.
-// The file rows and the objects follow as the store allows: a segment or video row deleted with its key leaves its crove_kernel.file row an orphan, which the
+// The file rows and the objects follow as the store allows: a segment or video row deleted with its key leaves its ludy_kernel.file row an orphan, which the
 // worker's sweep (meetings.media.orphan_keys, meetings.media.discard) deletes after the object, so a crash between the two steps repeats, never loses.
 import { sql } from 'kysely';
 import {
@@ -93,7 +93,7 @@ function settingsOf(row: TenantRetentionRow): MeetingSettings {
 /** The org's retention settings; the defaults for an org whose row cannot be read. */
 export async function readRetentionSettings(trx: QueryContext['trx'], orgId: string): Promise<MeetingSettings> {
   const row = await trx
-    .selectFrom('crove_kernel.tenant')
+    .selectFrom('ludy_kernel.tenant')
     .select(['meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days'])
     .where('org_id', '=', orgId)
     .executeTakeFirst();
@@ -102,7 +102,7 @@ export async function readRetentionSettings(trx: QueryContext['trx'], orgId: str
 
 /** The org's consent policy (A2, #3160); 'standard' for an org whose row cannot be read. */
 export async function readConsentPolicy(trx: QueryContext['trx'], orgId: string): Promise<MeetingConsentPolicy> {
-  const row = await trx.selectFrom('crove_kernel.tenant').select(['meeting_consent_policy']).where('org_id', '=', orgId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_kernel.tenant').select(['meeting_consent_policy']).where('org_id', '=', orgId).executeTakeFirst();
   return row?.meeting_consent_policy ?? 'standard';
 }
 
@@ -125,7 +125,7 @@ export const meetingConsentPolicySet = defineCommand({
   handler: async (ctx, input): Promise<MeetingConsentPolicyState> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
     const previous = await readConsentPolicy(ctx.trx, ctx.orgId);
-    await ctx.trx.updateTable('crove_kernel.tenant').set({ meeting_consent_policy: input.policy }).where('org_id', '=', ctx.orgId).execute();
+    await ctx.trx.updateTable('ludy_kernel.tenant').set({ meeting_consent_policy: input.policy }).where('org_id', '=', ctx.orgId).execute();
     ctx.audit({ policy: input.policy, previous });
     return { policy: input.policy };
   },
@@ -153,7 +153,7 @@ export const meetingSettingsSet = defineCommand({
     const before = await readRetentionSettings(ctx.trx, ctx.orgId);
     // Audio may not drop below the video in the same stroke: the table's check holds the pair, so write both in one statement.
     await ctx.trx
-      .updateTable('crove_kernel.tenant')
+      .updateTable('ludy_kernel.tenant')
       .set({
         meeting_audio_retention_days: input.audioRetentionDays,
         meeting_video_retention_days: input.videoRetentionDays,
@@ -246,8 +246,8 @@ export const meetingMediaOrphanKeys = defineQuery({
     requireSystem(ctx);
     const { rows } = await sql<{ id: string; storage_key: string; shared: boolean }>`
       SELECT f.id, f.storage_key,
-             EXISTS (SELECT 1 FROM crove_kernel.file o WHERE o.org_id = f.org_id AND o.storage_key = f.storage_key AND o.id <> f.id) AS shared
-        FROM crove_kernel.file f
+             EXISTS (SELECT 1 FROM ludy_kernel.file o WHERE o.org_id = f.org_id AND o.storage_key = f.storage_key AND o.id <> f.id) AS shared
+        FROM ludy_kernel.file f
        WHERE f.org_id = ${ctx.orgId}::uuid AND f.id = ANY (${input.fileIds}::uuid[]) AND f.source IN ('meeting_audio', 'meeting_video')`.execute(ctx.trx);
     return rows.map((r) => ({ fileId: r.id, storageKey: r.storage_key, shared: r.shared }));
   },

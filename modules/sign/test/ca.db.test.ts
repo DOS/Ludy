@@ -229,7 +229,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'ca-app-pw', crove_worker: 'ca-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'ca-app-pw', ludy_worker: 'ca-worker-pw' });
 
     const loginUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
@@ -239,8 +239,8 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     };
 
     adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'ca-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'ca-worker-pw'), max: 3 });
+    appPool = createPool({ connectionString: loginUrl('ludy_app', 'ca-app-pw'), max: 6 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'ca-worker-pw'), max: 3 });
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -264,7 +264,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     orgB = (await createOrg(runtime, asUser(ownerB), 'Cong ty CA B')).orgId;
 
     await adminPool.query(
-      "INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'admin'), ($1::uuid, $3::uuid, 'member'), ($1::uuid, $4::uuid, 'viewer')",
+      "INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'admin'), ($1::uuid, $3::uuid, 'member'), ($1::uuid, $4::uuid, 'viewer')",
       [orgA, adminA, memberA, viewerA],
     );
   }, 120_000);
@@ -360,7 +360,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
       ).rejects.toMatchObject({ status: 403 });
     }
 
-    // Direct SQL SELECT on crove_sign.ca_connection by crove_app or crove_worker fails with insufficient_privilege (42501).
+    // Direct SQL SELECT on crove_sign.ca_connection by ludy_app or ludy_worker fails with insufficient_privilege (42501).
     await expect(appPool!.query('SELECT * FROM crove_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
     await expect(workerPool!.query('SELECT * FROM crove_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
 
@@ -386,12 +386,12 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     const orgBSettings = await runtime.query<SignCaSettingsResult>('sign.ca.settings', {}, { actor: asUser(ownerB), orgId: orgB });
     expect(orgBSettings.connections).toEqual([]);
 
-    // crove_app (API runtime) CANNOT execute worker-only ca_connection_secret_get!
+    // ludy_app (API runtime) CANNOT execute worker-only ca_connection_secret_get!
     await expect(
       runtime.query('sign.ca.connection.secret', { connectionId: vnptConn.id }, { actor: asSystem('api'), orgId: orgA }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
-    // crove_worker CAN read sealed secret in system context.
+    // ludy_worker CAN read sealed secret in system context.
     const workerSecret = await workerRuntime.query<SealedCaConnectionSecret>(
       'sign.ca.connection.secret',
       { connectionId: vnptConn.id },
@@ -402,25 +402,25 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
 
     // Verify sentinel NEVER appears in audit_event, idempotency_key, or outbox_event!
     const leakScan = await adminPool!.query<{ found: string }>(
-      `SELECT 'audit' AS found FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%' || $2 || '%'
+      `SELECT 'audit' AS found FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%' || $2 || '%'
        UNION ALL
-       SELECT 'idempotency' AS found FROM crove_kernel.idempotency_key WHERE org_id = $1 AND response::text LIKE '%' || $2 || '%'
+       SELECT 'idempotency' AS found FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND response::text LIKE '%' || $2 || '%'
        UNION ALL
-       SELECT 'outbox' AS found FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%' || $2 || '%'`,
+       SELECT 'outbox' AS found FROM ludy_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%' || $2 || '%'`,
       [orgA, secretSentinel],
     );
     expect(leakScan.rows).toEqual([]);
 
     // Demoting adminA to 'member' blocks secret opening with SIGN_CA_CONNECTION_OWNER_LEFT!
     await adminPool!.query(
-      "UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1::uuid AND user_id = $2::uuid",
+      "UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1::uuid AND user_id = $2::uuid",
       [orgA, adminA],
     );
     await expect(
       workerRuntime.query('sign.ca.connection.secret', { connectionId: vnptConn.id }, { actor: asSystem('sign.worker'), orgId: orgA }),
     ).rejects.toMatchObject({ code: 'SIGN_CA_CONNECTION_OWNER_LEFT', status: 403 });
     await adminPool!.query(
-      "UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1::uuid AND user_id = $2::uuid",
+      "UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1::uuid AND user_id = $2::uuid",
       [orgA, adminA],
     );
 
@@ -460,7 +460,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     );
     expect(dupReq.id).toBe(req.id);
 
-    // Step 1: job_begin records 'started' in crove_kernel.external_call and returns action 'initiate'.
+    // Step 1: job_begin records 'started' in ludy_kernel.external_call and returns action 'initiate'.
     const begin1 = await workerRuntime.execute<SignCaJobBeginResult>(
       'sign.ca.request.job_begin',
       { requestId: req.id },
@@ -513,7 +513,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
       const client = await appPool!.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [ownerA, orgA]);
+        await client.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [ownerA, orgA]);
         await expect(client.query(sqlText, params)).rejects.toThrow(pattern);
       } finally {
         await client.query('ROLLBACK').catch(() => {});

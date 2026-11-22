@@ -27,7 +27,7 @@ suite('the CRM proposal twins (#3863)', () => {
   const day = bookableDay();
   beforeAll(async () => {
     h = await startHarness('engage_crm');
-    slug = (await h.q<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [h.orgId])).rows[0]?.slug as string;
+    slug = (await h.q<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [h.orgId])).rows[0]?.slug as string;
     // The owner hosts a 30-minute call, bookable all day every day in Vietnam time.
     await exec('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) });
     await exec<EventType>('crm.event_type.create', {
@@ -44,7 +44,7 @@ suite('the CRM proposal twins (#3863)', () => {
       locationValue: 'https://meet.example.test/x',
       hostUserId: h.owner,
     });
-    const party = (await h.q<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, 'Công ty Khách', 'organization', 'khach@example.test', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [h.orgId])).rows[0]?.id as string;
+    const party = (await h.q<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, 'Công ty Khách', 'organization', 'khach@example.test', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [h.orgId])).rows[0]?.id as string;
     await exec<PipelineStage[]>('crm.pipeline.setup', {});
     dealId = (await exec<Deal>('crm.deal.create', { partyId: party, title: 'Gói kế toán năm', amount: '15000000', expectedClose: '2026-12-31' })).id;
   }, 300_000);

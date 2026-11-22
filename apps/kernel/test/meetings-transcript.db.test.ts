@@ -142,7 +142,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const accepted = await rpc('invites/accept', name, { token: tokenPart }, null);
     expect(accepted.status).toBe(200);
     const uid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email]);
       return res.rows[0]!.id;
     });
     userIds.set(name, uid);
@@ -168,10 +168,10 @@ suite('the meeting transcript (#2578, M4a)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -219,7 +219,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     orgId = String(created.body.orgId);
     const ownerEmail = accounts.get('owner')?.email;
     const ownerUid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [ownerEmail]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [ownerEmail]);
       return res.rows[0]!.id;
     });
     userIds.set('owner', ownerUid);
@@ -256,7 +256,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
   const rows = (meetingId: string) =>
     admin(async (c) => (await c.query('SELECT id, stage, text, speaker_label, corrected FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id', [meetingId])).rows as Array<{ id: string; stage: string; text: string; speaker_label: string; corrected: boolean }>);
   const auditOf = (command: string) =>
-    admin(async (c) => (await c.query('SELECT detail, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command])).rows as Array<{ detail: Record<string, unknown>; target_id: string | null }>);
+    admin(async (c) => (await c.query('SELECT detail, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command])).rows as Array<{ detail: Record<string, unknown>; target_id: string | null }>);
   const get = (name: string, meetingId: string) => rpc('meetings/transcript/get', name, { meetingId });
   const storeDraft = (name: string, meetingId: string, segments: unknown[]) => rpc('meetings/transcript/draftStore', name, { meetingId, segments });
 
@@ -379,7 +379,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const [only] = await rows(meetingId);
     await rpc('meetings/transcript/correct', 'recorder', { segmentId: only!.id, text: 'Văn bản đã sửa riêng tư' });
     await get('recorder', meetingId);
-    const everything = JSON.stringify(await admin(async (c) => (await c.query(`SELECT detail, target_id, command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.transcript.%'`, [orgId])).rows));
+    const everything = JSON.stringify(await admin(async (c) => (await c.query(`SELECT detail, target_id, command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.transcript.%'`, [orgId])).rows));
     expect(everything).toContain('meetings.transcript.draft_store');
     expect(everything).toContain('meetings.transcript.correct');
     expect(everything).toContain('meetings.transcript.get');

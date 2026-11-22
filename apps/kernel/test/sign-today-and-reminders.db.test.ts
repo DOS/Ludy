@@ -273,7 +273,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -281,8 +281,8 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
 
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
@@ -409,7 +409,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     });
 
     const { rows: auditBefore } = await withAdmin((c) =>
-      c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgA]),
+      c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [orgA]),
     );
 
     const ownerItems = await runtime.query<TodayItem[]>(
@@ -478,7 +478,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
 
     // Zero audit/DB writes from sign.today & kernel.today.
     const { rows: auditAfter } = await withAdmin((c) =>
-      c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgA]),
+      c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [orgA]),
     );
     expect(auditAfter[0]?.n).toBe(auditBefore[0]?.n);
 
@@ -542,7 +542,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     );
     expect(updatedDetail.envelope.autoRemindBeforeExpiry).toBe(false);
 
-    // Non-worker role crove_app cannot call crove_sign.pre_expiry_remind_due_orgs.
+    // Non-worker role ludy_app cannot call crove_sign.pre_expiry_remind_due_orgs.
     await expect(
       sql`SELECT * FROM crove_sign.pre_expiry_remind_due_orgs(10, now())`.execute(db),
     ).rejects.toThrow();
@@ -560,7 +560,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     const guardClient = await pool.connect();
     try {
       await guardClient.query('BEGIN');
-      await guardClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [ownerA, orgA]);
+      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [ownerA, orgA]);
       const expectGuardFailure = async (sqlText: string, params: unknown[], pattern: RegExp) => {
         await guardClient.query('SAVEPOINT sign_3c_guard');
         await expect(guardClient.query(sqlText, params)).rejects.toThrow(pattern);
@@ -619,7 +619,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     // Hydrate the initial invite email for Active Email Signer so an active email token exists BEFORE the 24h sweep!
     const { rows: inviteMails } = await withAdmin((c) =>
       c.query<{ id: string; subject: string; payload: Record<string, unknown> }>(
-        `SELECT id, subject, payload FROM crove_kernel.mail_message
+        `SELECT id, subject, payload FROM ludy_kernel.mail_message
          WHERE org_id = $1::uuid AND to_address = $2 AND template_key = $3
          ORDER BY created_at DESC LIMIT 1`,
         [orgSweep, activeEmail, SIGN_INVITE_MAIL_TEMPLATE],
@@ -785,7 +785,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     const { rows: mailRows } = await withAdmin((c) =>
       c.query<{ id: string; to_address: string; status: string; subject: string; payload: Record<string, unknown> }>(
         `SELECT id, to_address, status, subject, payload
-         FROM crove_kernel.mail_message
+         FROM ludy_kernel.mail_message
          WHERE org_id = $1::uuid AND source = $2
          ORDER BY to_address ASC`,
         [orgSweep, SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE],
@@ -1012,7 +1012,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
              SELECT $1::uuid, $2::uuid, $3, 'sent', 'parallel', 'standalone', f.id,
                     f.storage_key, f.generation, f.sha256, 'passed', 1,
                     $4::timestamptz, true, now(), $5::uuid
-             FROM crove_kernel.file f
+             FROM ludy_kernel.file f
              WHERE f.org_id = $1::uuid AND f.id = $6::uuid`,
             [orgBatch, envId, `Batch Env ${idx + 1}`, dueIso, ownerB, sourceFileId],
           );

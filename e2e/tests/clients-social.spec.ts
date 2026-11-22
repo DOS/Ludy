@@ -49,7 +49,7 @@ test('an agency sees each client’s Social figures on the overview and opens th
   });
 
   await test.step('a channel whose sign-in expired shows as one to reconnect, leading to the channels page', async () => {
-    exec(`UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE org_id = (SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`, { slug: first });
+    exec(`UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`, { slug: first });
     await page.goto('/clients');
     const anBinh = page.getByRole('row').filter({ hasText: 'Công ty An Bình' });
     await expect(anBinh.getByRole('link', { name: '1 kênh cần kết nối lại' })).toBeVisible();

@@ -105,10 +105,10 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     });
   const pending = () =>
     rows<{ id: string; state: string; kind: string; source_url: string | null; source_ref: string | null; storage_key: string; message_id: string }>(
-      'SELECT id, state, kind, source_url, source_ref, storage_key, message_id FROM crove_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id',
+      'SELECT id, state, kind, source_url, source_ref, storage_key, message_id FROM ludy_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id',
       [orgId],
     );
-  const bodyOf = async (externalId: string) => (await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND external_message_id = $2', [orgId, externalId]))[0]?.body;
+  const bodyOf = async (externalId: string) => (await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND external_message_id = $2', [orgId, externalId]))[0]?.body;
 
   // Every text, json and bytea column of every table in the database that holds `needle`, so a secret that was stored there shows up wherever it is (arrays and other
   // types are not scanned).
@@ -169,9 +169,9 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -182,7 +182,7 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     app = createHttpApp({ config, runtime: api, store, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, telegramWebhook: { keys: derived } });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     pools.push(workerPool);
@@ -208,7 +208,7 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     };
     const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: hookFetch })).conversations;
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId, connectionId, action: 'chat', on: true })).toBe('on');
-    hook = ((await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0] as { chat_hook: string }).chat_hook;
+    hook = ((await rows<{ chat_hook: string }>('SELECT chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0] as { chat_hook: string }).chat_hook;
   });
 
   afterAll(async () => {
@@ -227,16 +227,16 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     expect(await bodyOf('3101:11')).toBe('Cái áo này còn không shop?');
     const [row] = await pending();
     expect(row).toMatchObject({ state: 'pending', kind: 'direct', source_url: null, source_ref: BIG_ID });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation_attachment WHERE org_id = $1 AND source_ref = $2', [orgId, SMALL_ID])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation_attachment WHERE org_id = $1 AND source_ref = $2', [orgId, SMALL_ID])).toHaveLength(0);
     // The relay hands the row out by ids; the queued event and the audit log hold no file id and no token.
     expect(await dueConversationAttachments(workerDb)).toEqual(expect.arrayContaining([{ orgId, connectionId, attachmentId: (row as { id: string }).id }]));
     expect(await requestConversationAttachments(worker, [{ orgId, attachmentId: (row as { id: string }).id }])).toBe(1);
     for (const needle of [BIG_ID, SMALL_ID, TOKEN_SECRET, FILE_PATH]) {
-      expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
-      expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
     }
     // Until the job has run, the file id is in exactly one place: the pending row's reference (which also shows that the scan the next test relies on finds what is there).
-    expect(await whereIs(BIG_ID)).toEqual(['crove_kernel.conversation_attachment.source_ref']);
+    expect(await whereIs(BIG_ID)).toEqual(['ludy_kernel.conversation_attachment.source_ref']);
     expect(await whereIs(TOKEN_SECRET)).toEqual([]);
     // The job reads the source (a reference, not an address) for the Telegram connection.
     expect(await worker.query('kernel.conversation.attachment_source', { attachmentId: (row as { id: string }).id }, { actor: SYSTEM, orgId })).toMatchObject({ provider: 'telegram', sourceUrl: null, mediaRef: BIG_ID });
@@ -261,9 +261,9 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     const after = (await pending())[0] as { id: string; state: string; source_ref: string | null; storage_key: string };
     expect(after).toMatchObject({ state: 'stored', source_ref: null });
     expect(Buffer.from(store.blobs.get(after.storage_key) as Uint8Array).equals(PNG)).toBe(true);
-    expect(await rows('SELECT content_type, width, height, size_bytes FROM crove_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [orgId, after.id])).toEqual([{ content_type: 'image/png', width: 2, height: 3, size_bytes: PNG.byteLength }]);
+    expect(await rows('SELECT content_type, width, height, size_bytes FROM ludy_kernel.conversation_attachment WHERE org_id = $1 AND id = $2', [orgId, after.id])).toEqual([{ content_type: 'image/png', width: 2, height: 3, size_bytes: PNG.byteLength }]);
     // The thread shows the image on its message.
-    const thread = (await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [orgId, '3101']))[0] as { id: string };
+    const thread = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [orgId, '3101']))[0] as { id: string };
     const detail = await api.query<{ messages: Array<{ attachments?: unknown[] }> }>('kernel.conversation.get', { conversationId: thread.id }, asOwner());
     expect(detail.messages[0]?.attachments).toEqual([expect.objectContaining({ id: after.id, contentType: 'image/png', width: 2, height: 3 })]);
     // Neither the token, nor the path of the file, nor the file id is in any text column of any table now: the job held them and let them go.
@@ -303,7 +303,7 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
     // Exactly one new image row: the customer's own photo, in the business thread's message, from the file id of the larger size.
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ state: 'pending', kind: 'direct', source_url: null, source_ref: BIG_ID });
-    const owner = (await rows<{ external_message_id: string }>('SELECT m.external_message_id FROM crove_kernel.conversation_message m WHERE m.org_id = $1 AND m.id = $2', [orgId, (created[0] as { message_id: string }).message_id]))[0];
+    const owner = (await rows<{ external_message_id: string }>('SELECT m.external_message_id FROM ludy_kernel.conversation_message m WHERE m.org_id = $1 AND m.id = $2', [orgId, (created[0] as { message_id: string }).message_id]))[0];
     expect(owner?.external_message_id).toBe(`${thread}:2`);
     // A document and a photo over the cap stay placeholder lines and make no image row.
     expect(await bodyOf('3203:4')).toBe('[Khách gửi tệp]');
@@ -335,7 +335,7 @@ suite('Telegram photos as images on PostgreSQL (#3192)', () => {
       expect((await fetchOne(id, bot)).outcome).toBe(expected);
     }
     // What a failed row leaves in the audit log is its outcome and a short code: never the token, the path of a file, an address, or Telegram's words.
-    const audits = await rows<{ detail: { outcome?: string; code?: string } }>("SELECT detail FROM crove_kernel.audit_event WHERE detail->>'outcome' IN ('dropped', 'retry') AND detail ? 'attachment_id'");
+    const audits = await rows<{ detail: { outcome?: string; code?: string } }>("SELECT detail FROM ludy_kernel.audit_event WHERE detail->>'outcome' IN ('dropped', 'retry') AND detail ? 'attachment_id'");
     expect(audits.map((a) => `${a.detail.outcome}:${a.detail.code}`)).toEqual(expect.arrayContaining(['dropped:TG_MEDIA_GONE', 'dropped:TELEGRAM_TOKEN_REFUSED', 'retry:TG_MEDIA_BUSY', 'retry:HTTP_500', 'dropped:NOT_AN_IMAGE', 'dropped:TG_MEDIA_PATH']));
     for (const a of audits) expect(a.detail.code).toMatch(/^[A-Za-z0-9_]{1,64}$/);
     expect(await whereIs(TOKEN_SECRET)).toEqual([]);

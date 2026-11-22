@@ -179,7 +179,7 @@ export interface SignRequestMeta {
 }
 
 // Two-stage IP keying: Node hashes with a domain prefix so raw client IPs never appear in SQL queries or logs, then
-// crove_sign.public_keyed_ip_hash(org_id, p_ip_hash) applies HMAC-SHA256 under crove_kernel.mail_hash_key scoped to org_id.
+// crove_sign.public_keyed_ip_hash(org_id, p_ip_hash) applies HMAC-SHA256 under ludy_kernel.mail_hash_key scoped to org_id.
 export function signIpHash(ip: string | null): string | null {
   const trimmed = ip?.trim() ?? '';
   if (!trimmed) return null;

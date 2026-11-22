@@ -269,7 +269,7 @@ export const projectsToday = defineQuery({
       .innerJoinLateral(
         (eb) =>
           eb
-            .selectFrom('crove_kernel.task as tk')
+            .selectFrom('ludy_kernel.task as tk')
             .select([
               'tk.org_id',
               'tk.id',
@@ -288,14 +288,14 @@ export const projectsToday = defineQuery({
             .as('t'),
         (join) => join.onTrue(),
       )
-      .leftJoin('crove_kernel.position as pos', (join) =>
+      .leftJoin('ludy_kernel.position as pos', (join) =>
         join.onRef('pos.org_id', '=', 't.org_id').onRef('pos.id', '=', 't.assignee_position_id'),
       )
       .leftJoin(
         sql<{ blocked_count: number }>`LATERAL (
           SELECT pg_catalog.count(*)::int AS blocked_count
             FROM crove_projects.task_dependency d
-            JOIN crove_kernel.task bt
+            JOIN ludy_kernel.task bt
               ON bt.org_id = d.org_id AND bt.id = d.blocked_task_id
            WHERE d.org_id = pt.org_id
              AND d.project_id = pt.project_id

@@ -127,7 +127,7 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
     .where('r.id', 'is', null)
     .execute();
   const proposed = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id', sql<string>`payload->>'bankLineId'`.as('line_id')])
     .where('org_id', '=', ctx.orgId)
     // A payment voucher of a pay run (#2532) settles a bank line too, so its pending proposal counts as proposed.
@@ -198,7 +198,7 @@ export async function checkBankLineVoucher(
 type PartyRow = { id: string; name: string; tax_code: string | null };
 
 export const readParties = (ctx: QueryContext): Promise<PartyRow[]> =>
-  ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).execute();
+  ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).execute();
 
 // The voucher a line makes and the party it is probably about, given the org's parties. withBalances: false leaves out
 // the open-balance reason (its query is the costliest, and only finance.bank.line_voucher shows it). Invoices and
@@ -384,7 +384,7 @@ export const bankOpenLines = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_kernel.proposal as p')
+            selectFrom('ludy_kernel.proposal as p')
               .select('p.id')
               .whereRef('p.org_id', '=', 'l.org_id')
               .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
@@ -447,7 +447,7 @@ export const bankPayrollMatch = defineQuery({
       .execute();
     for (const v of paid) taken.add(`${v.payroll_run_id}:${v.payroll_payment_kind}`);
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(sql<string>`request_input ->> 'runId'`.as('run_id'))
       .select(sql<string>`request_input ->> 'kind'`.as('kind'))
       .where('org_id', '=', ctx.orgId)

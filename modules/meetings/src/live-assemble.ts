@@ -125,7 +125,7 @@ export const liveAssemblePlan = defineQuery({
     recorderOnly(ctx, facts);
     if (facts.reason) throw refuseAssemble(facts.reason);
     const files = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'storage_key', 'generation', 'sha256', 'content_type'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', facts.pieces.map((p) => p.fileId))

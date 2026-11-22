@@ -65,7 +65,7 @@ export async function createMeetingRow(ctx: CommandContext, m: NewMeeting): Prom
     const uniqueReaderIds = Array.from(new Set(m.readerUserIds.filter((id) => id !== m.userId)));
     if (uniqueReaderIds.length > 0) {
       const validMembers = await ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select(['user_id'])
         .where('org_id', '=', ctx.orgId)
         .where('user_id', 'in', uniqueReaderIds)

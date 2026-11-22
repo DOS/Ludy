@@ -13,7 +13,7 @@
 // an entry out of the list takes effect on that person's next such request.
 //
 // Two credentials outlive a browser session and carry no email: a Ludy extension token and an MCP grant (issue #3223). With the
-// list set, the edge reads the email of the account that owns the token or grant (crove_kernel.extension_token_account_email,
+// list set, the edge reads the email of the account that owns the token or grant (ludy_kernel.extension_token_account_email,
 // mcp_grant_account_email, read-only definers) and applies the same list to it, BEFORE the definers that verify the credential
 // (they stamp last_used_at), so a refused account costs no database write: 403 ACCOUNT_NOT_ALLOWED on every use. Unset: the
 // edge asks nothing, as before. That email is the one Ludy saw at the account's last browser sign-in, so an address the provider

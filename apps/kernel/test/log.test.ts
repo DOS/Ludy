@@ -98,9 +98,9 @@ describe('JSON log lines', () => {
     expect(jwt.split('.')).toHaveLength(3);
     expect(redact(`Authorization: Bearer abc.def-ghi_jkl=== and more`)).toBe('Authorization: Bearer [redacted] and more');
     expect(redact(`token ${jwt} end`)).toBe('token [jwt redacted] end');
-    expect(redact('connect ECONNREFUSED postgres://crove_app:s3cret-pw@db:5432/postgres')).toBe('connect ECONNREFUSED postgres://crove_app:[redacted]@db:5432/postgres');
+    expect(redact('connect ECONNREFUSED postgres://ludy_app:s3cret-pw@db:5432/postgres')).toBe('connect ECONNREFUSED postgres://ludy_app:[redacted]@db:5432/postgres');
     // A URL with no password, or a host and port, is left alone.
-    expect(redact('http://localhost:8080/api and postgres://crove_app@db:5432/x')).toBe('http://localhost:8080/api and postgres://crove_app@db:5432/x');
+    expect(redact('http://localhost:8080/api and postgres://ludy_app@db:5432/x')).toBe('http://localhost:8080/api and postgres://ludy_app@db:5432/x');
     const log = capture();
     console.error(`[db] failed for ${jwt} at postgres://u:pw@h/x`);
     expect(log.raw[0]).not.toContain('pw@');
@@ -175,8 +175,8 @@ describe('JSON log lines', () => {
 
   it('blanks a URL password that spans the cut of an enormous message', () => {
     // 32,768 characters of filler, then a URL whose password straddles the cut, then more text.
-    const head = 'x'.repeat(32_768 - 30);
-    const out = redact(`${head}postgres://crove_app:straddling-password-value@db:5432/x and the rest`);
+    const head = `${'x'.repeat(32_768 - 31)} `;
+    const out = redact(`${head}postgres://ludy_app:straddling-password-value@db:5432/x and the rest`);
     expect(out).not.toContain('straddling-password');
     expect(out).not.toContain('straddling');
     expect(out).toMatch(/more characters\]$/);

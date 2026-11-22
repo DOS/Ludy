@@ -1,5 +1,5 @@
 // Search across parties, documents and journal entries (issue #673), for the command palette. finance.search folds
-// what was typed the way the stored search columns fold each row (crove_kernel.search_fold, migration
+// what was typed the way the stored search columns fold each row (ludy_kernel.search_fold, migration
 // 20261023060000_crove_finance_search: Vietnamese marks, đ and case ignored), so "dien luc" finds "Điện lực". Every
 // word must start a word of the row (a prefix match): parties by name or tax code, documents by series and number or
 // by their party, entries by description, and entries by amount when what was typed reads as one. Each group holds at
@@ -68,7 +68,7 @@ const ENTRY_VECTOR = sql`j.search`;
 
 async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult['parties']> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.party as p')
+    .selectFrom('ludy_kernel.party as p')
     .select(['p.id', 'p.name', 'p.tax_code'])
     // The same test as finance.vendors.list, which leaves these parties out.
     .select(({ and, exists, not, selectFrom }) =>
@@ -94,10 +94,10 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
     .where('p.org_id', '=', ctx.orgId)
     // A party marked as a duplicate (#887) is not listed; its documents still are, under its own name.
     .where('p.duplicate_of', 'is', null)
-    .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     // The exact tax code first, then the rows that match more of the words, then by name.
     .orderBy(sql`p.tax_code IS NOT DISTINCT FROM ${q.trim()}`, 'desc')
-    .orderBy(sql`pg_catalog.ts_rank(${PARTY_VECTOR}, crove_kernel.search_query(${q}))`, 'desc')
+    .orderBy(sql`pg_catalog.ts_rank(${PARTY_VECTOR}, ludy_kernel.search_query(${q}))`, 'desc')
     .orderBy('p.name')
     .limit(SEARCH_LIMIT)
     .execute();
@@ -115,7 +115,7 @@ async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: stri
   const base = () =>
     ctx.trx
       .selectFrom('crove_finance.purchase_document as d')
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
       .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
       .select([
         'd.id',
@@ -135,16 +135,16 @@ async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: stri
       .orderBy('d.created_at', 'desc')
       .limit(SEARCH_LIMIT);
   const byNumber = await base()
-    .where(sql<boolean>`${DOCUMENT_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${DOCUMENT_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .execute();
   // The matching parties first: none (the usual case for a number) skips the query, and a short list is read
   // through the party index. Past PARTY_IDS_LIMIT the words are generic enough that the newest documents are
   // found quickly by date.
   const parties = await ctx.trx
-    .selectFrom('crove_kernel.party as p')
+    .selectFrom('ludy_kernel.party as p')
     .select('p.id')
     .where('p.org_id', '=', ctx.orgId)
-    .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .limit(PARTY_IDS_LIMIT + 1)
     .execute();
   const byParty =
@@ -157,10 +157,10 @@ async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: stri
         : await base()
             .where('d.party_id', 'in', (eb) =>
               eb
-                .selectFrom('crove_kernel.party as p')
+                .selectFrom('ludy_kernel.party as p')
                 .select('p.id')
                 .where('p.org_id', '=', ctx.orgId)
-                .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`),
+                .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`),
             )
             .execute();
   // A number match is what was looked for, so those come first; then the party's documents.
@@ -202,7 +202,7 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
       .orderBy('j.created_at', 'desc')
       .limit(SEARCH_LIMIT);
   const byText = await base()
-    .where(sql<boolean>`${ENTRY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${ENTRY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .execute();
   const byAmount =
     amount === null

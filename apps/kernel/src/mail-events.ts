@@ -1,7 +1,7 @@
 // Delivery events from the mail provider (issue #539, Email plan §3.3).
 //
 // API side: POST /webhooks/mail/<provider> checks the provider's signature and hands the events to the worker
-// through crove_kernel.mail_event_enqueue(), without parsing anything further and without a tenant context. A forged,
+// through ludy_kernel.mail_event_enqueue(), without parsing anything further and without a tenant context. A forged,
 // stale or malformed delivery is refused and stored nowhere.
 //
 // Worker side: one job per event finds the mail by the provider's message id (the org comes from the stored mail,
@@ -35,7 +35,7 @@ export async function acceptMailWebhook(runtime: Runtime, provider: MailProvider
   if (events.length === 0) return { status: 200, queued: 0 };
   const queued = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ queued: number }>`
-      SELECT crove_kernel.mail_event_enqueue(${provider.name}, ${JSON.stringify(events)}::jsonb) AS queued`.execute(db);
+      SELECT ludy_kernel.mail_event_enqueue(${provider.name}, ${JSON.stringify(events)}::jsonb) AS queued`.execute(db);
     return Number(rows[0]?.queued ?? 0);
   });
   return { status: 202, queued };
@@ -75,7 +75,7 @@ export type MailEventResult = { recorded: boolean; status: string; suppressed: '
 
 export async function processMailEvent(deps: { runtime: Runtime; workerDb: Db }, job: MailEventJob): Promise<MailEventResult> {
   const { rows } = await sql<{ org_id: string; message_id: string }>`
-    SELECT org_id, message_id FROM crove_kernel.mail_message_by_provider_id(${job.provider}, ${job.providerMessageId})`.execute(deps.workerDb);
+    SELECT org_id, message_id FROM ludy_kernel.mail_message_by_provider_id(${job.provider}, ${job.providerMessageId})`.execute(deps.workerDb);
   const mail = rows[0];
   if (!mail) return { dropped: 'UNKNOWN_MESSAGE' };
   return deps.runtime.execute(

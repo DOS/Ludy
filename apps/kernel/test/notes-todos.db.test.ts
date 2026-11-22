@@ -56,7 +56,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     const viewer = await user('viewer');
     const { orgId } = await createOrg(app, asUser(owner), `Việc ${tag}`);
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [
         orgId,
         adminUser,
         mine,
@@ -79,7 +79,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -88,8 +88,8 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] });
     };
-    app = runtimeFor('crove_app', 'test-app-pw');
-    worker = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw');
+    worker = runtimeFor('ludy_worker', 'test-worker-pw');
   }, 300_000);
 
   afterAll(async () => {
@@ -183,7 +183,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     await expect(admin((c) => c.query(`UPDATE crove_notes.todo SET checklist = '[{"text": "", "done": false}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
     await expect(admin((c) => c.query(`UPDATE crove_notes.todo SET checklist = '[{"text": "x", "done": "yes"}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
     const audit = await admin((c) =>
-      c.query<{ command: string; detail: unknown }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%' ORDER BY occurred_at, id`, [o.orgId]),
+      c.query<{ command: string; detail: unknown }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%' ORDER BY occurred_at, id`, [o.orgId]),
     );
     const text = JSON.stringify(audit.rows);
     // The two edits, then the stale one the runtime refused, which is audited too.
@@ -193,7 +193,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     for (const secret of [TITLE, DETAILS, STEP, 'Lưu sao kê']) expect(text).not.toContain(secret);
     expect(text).toContain('"redacted":"pii"');
     // Results and outbox events carry no text either.
-    const events = await admin((c) => c.query<{ payload: unknown }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
+    const events = await admin((c) => c.query<{ payload: unknown }>(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
     expect(JSON.stringify(events.rows)).not.toContain(TITLE);
   });
 
@@ -259,12 +259,12 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
     expect((await o.list(o.mine)).map((t) => t.id)).toEqual([kept.todoId]);
     // A former member's to-dos go with their private notes; the other member's stay.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.mine]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.mine]));
     const event = await admin(
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
+            `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
             [o.orgId, o.mine],
           )
         ).rows[0]?.id ?? randomUUID(),
@@ -427,7 +427,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       JSON.stringify(
         (
           await c.query(
-            `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo%'`,
+            `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo%'`,
             [o.orgId],
           )
         ).rows,

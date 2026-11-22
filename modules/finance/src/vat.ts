@@ -249,7 +249,7 @@ const SALE_DATE: RawBuilder<string | null> = sql`(
 async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string; recordedAt: Date }>> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'd.created_at', 'p.name'])
     .select(SALE_DATE.as('sale_date'))
     .where('d.org_id', '=', ctx.orgId)
@@ -280,7 +280,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
   const periodDate = direction === 'purchase' ? sql<string>`j.entry_date` : sql<string>`COALESCE(${SALE_DATE}, d.invoice_date)`;
   const docs = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .innerJoin('crove_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
@@ -488,7 +488,7 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   );
   // Sales are told apart by the org's tax code (#313). Without one Crove cannot know them, so the output side says it
   // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const allSalesRows = await periodInvoices(ctx, period, 'sale', legalEntityId);
   const allSales = allSalesRows.map((p) => p.view);
   // A sale of this period invoiced after it (#3535) is a supplementary item only if it was RECORDED after the period was declared (see declaredAt): an invoice recorded before was
@@ -539,7 +539,7 @@ async function filingTimes(ctx: QueryContext, legalEntityId: string, periods: st
 async function lockedAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<Date | null> {
   if (lockedThrough === null || lockedThrough < period.to) return null;
   const { rows } = await sql<{ at: Date | null }>`
-    SELECT pg_catalog.max(e.occurred_at) AS at FROM crove_kernel.audit_event e
+    SELECT pg_catalog.max(e.occurred_at) AS at FROM ludy_kernel.audit_event e
     WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.period.lock' AND e.outcome = 'ok'
       AND e.occurred_at >= ${period.from}::date AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
   if (rows[0]?.at) return new Date(rows[0].at);
@@ -633,7 +633,7 @@ export const salesNumberGapsQuery = defineQuery({
 async function mayFileVat(ctx: QueryContext, legalEntityId: string): Promise<boolean> {
   if (ctx.actor.type !== 'user') return false;
   if (ctx.role === 'owner' || ctx.role === 'admin') return true;
-  const { rows } = await sql<{ entities: string[] }>`SELECT crove_kernel.ctx_permission_entities('finance.vat.file') AS entities`.execute(ctx.trx);
+  const { rows } = await sql<{ entities: string[] }>`SELECT ludy_kernel.ctx_permission_entities('finance.vat.file') AS entities`.execute(ctx.trx);
   const entities = rows[0]?.entities ?? [];
   return entities.includes('*') || entities.includes(legalEntityId);
 }
@@ -659,7 +659,7 @@ export const vatDeclarationQuery = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<VatDeclaration> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['tax_code', 'name', 'address', 'vat_filing_period']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['tax_code', 'name', 'address', 'vat_filing_period']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!org?.tax_code) {
       throw new DomainError('TAX_CODE_REQUIRED', 422, 'Tổ chức chưa có mã số thuế. Nhập mã số thuế trong Cài đặt rồi xuất lại.');
     }

@@ -269,8 +269,8 @@ type Ctx = CommandContext;
 // The org's legal entity a new employee belongs to: the one named (it must exist), else the org's default entity.
 export async function resolveEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, requested: string | undefined): Promise<string> {
   const row = requested
-    ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', requested).executeTakeFirst()
-    : await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
+    ? await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', requested).executeTakeFirst()
+    : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
   if (!row) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của nhân viên');
   return row.id;
 }
@@ -347,7 +347,7 @@ export const employeeAdd = defineCommand({
     const dept = input.departmentId === undefined ? null : await resolveDepartment(ctx, input.departmentId, legalEntityId);
     const prepared = prepareEmploymentTerms(input.employment, dept?.payFunction ?? 'admin');
     // The id first: the subject of the sealed values names it.
-    const { rows } = await sql<{ id: string }>`SELECT crove_kernel.uuid_v7() AS id`.execute(ctx.trx);
+    const { rows } = await sql<{ id: string }>`SELECT ludy_kernel.uuid_v7() AS id`.execute(ctx.trx);
     const employeeId = rows[0]?.id;
     if (!employeeId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     const subject = subjectOf(employeeId);
@@ -760,8 +760,8 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
-    // The person's key, deleted by crove_kernel.subject_key_shred.
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
+    // The person's key, deleted by ludy_kernel.subject_key_shred.
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
   handler: async (ctx, input): Promise<HrEmployeeErased> => {
     const employee = await loadEmployee(ctx, input.employeeId);
@@ -803,7 +803,7 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
       employeeId: input.employeeId,
@@ -838,7 +838,7 @@ export const employeeLinkMember = defineCommand({
     if (input.userId !== null) {
       requireActive(employee);
       const member = await ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select('role')
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', input.userId)
@@ -1463,13 +1463,13 @@ export const employeeContractPdf = defineQuery({
 
     const [entity, tenant, hiredCandidate] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_kernel.legal_entity')
+        .selectFrom('ludy_kernel.legal_entity')
         .select(['name', 'tax_code'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.legal_entity_id)
         .executeTakeFirst(),
       ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['name', 'tax_code', 'address'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirst(),

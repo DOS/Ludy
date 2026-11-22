@@ -37,18 +37,18 @@ export const quoteSuggestSource = defineQuery({
     const deal = await sql<{ title: string; amount: string; party_id: string; party_name: string }>`
       SELECT d.title, d.amount::text AS amount, d.party_id, p.name AS party_name
       FROM crove_crm.deal d
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND d.id = ${input.dealId}::uuid`.execute(ctx.trx);
     const row = deal.rows[0];
     if (!row) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
-    const setting = await sql<{ auto_draft: boolean }>`SELECT auto_draft FROM crove_kernel.conversation_setting WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+    const setting = await sql<{ auto_draft: boolean }>`SELECT auto_draft FROM ludy_kernel.conversation_setting WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     const wordsAllowed = setting.rows[0]?.auto_draft ?? true;
     const messages: string[] = [];
     if (wordsAllowed) {
       const written = await sql<{ body: string }>`
         SELECT pg_catalog.left(m.body, 600) AS body
-        FROM crove_kernel.conversation_message m
-        JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+        FROM ludy_kernel.conversation_message m
+        JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
         WHERE c.org_id = ${ctx.orgId}::uuid AND c.party_id = ${row.party_id}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.body <> ''
         ORDER BY m.id DESC LIMIT ${SUGGEST_MESSAGES_MAX}`.execute(ctx.trx);
       messages.push(...written.rows.map((r) => r.body).reverse());

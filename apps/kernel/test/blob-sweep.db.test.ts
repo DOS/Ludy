@@ -60,7 +60,7 @@ suite('inbound blob sweep on PostgreSQL (#212)', () => {
 
   const job = (blobId: string, state: string) =>
     admin((c) =>
-      c.query(`INSERT INTO crove_jobs.job (name, data, state, singleton_key) VALUES ($1, $2, $3::crove_jobs.job_state, $4)`, [
+      c.query(`INSERT INTO ludy_jobs.job (name, data, state, singleton_key) VALUES ($1, $2, $3::ludy_jobs.job_state, $4)`, [
         QUEUES.inbound,
         { blobId, sha256: 'x', sizeBytes: 1, recipient: null },
         state,
@@ -77,15 +77,15 @@ suite('inbound blob sweep on PostgreSQL (#212)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 2 });
+    appPool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 2 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), max: 2 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     root = await mkdtemp(join(tmpdir(), 'crove-blob-sweep-'));
@@ -108,7 +108,7 @@ suite('inbound blob sweep on PostgreSQL (#212)', () => {
     // Stored by the API and not claimed yet.
     const pending = await storedMail(old);
     const enqueued = await sql<{ ok: boolean }>`
-      SELECT crove_kernel.inbound_enqueue(${pending.id}, ${pending.sha256}, ${10}::bigint, ${'in@x.test'}) AS ok`.execute(appDb);
+      SELECT ludy_kernel.inbound_enqueue(${pending.id}, ${pending.sha256}, ${10}::bigint, ${'in@x.test'}) AS ok`.execute(appDb);
     expect(enqueued.rows[0]?.ok).toBe(true);
     // Claimed and queued, waiting or being retried or running.
     const queued = await storedMail(old);
@@ -132,7 +132,7 @@ suite('inbound blob sweep on PostgreSQL (#212)', () => {
     for (const gone of [failed, completed, orphan]) expect(await exists(gone.key)).toBe(false);
 
     // Once its row is claimed and its job finished, the pending message goes on the next run.
-    await sql`SELECT * FROM crove_kernel.inbound_claim(100)`.execute(workerDb);
+    await sql`SELECT * FROM ludy_kernel.inbound_claim(100)`.execute(workerDb);
     await expect(sweepInboundBlobs(store, workerDb, new Date(), silent)).resolves.toEqual({ deleted: 1, kept: 3, more: false });
     expect(await exists(pending.key)).toBe(false);
   });
@@ -140,12 +140,12 @@ suite('inbound blob sweep on PostgreSQL (#212)', () => {
   it('keeps the pending check to the worker', async () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_tenant', 'crove_definer_tenant', 'crove_worker']) r
-         WHERE has_function_privilege(r, 'crove_kernel.inbound_pending_blobs(text[])', 'EXECUTE')`,
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_worker']) r
+         WHERE has_function_privilege(r, 'ludy_kernel.inbound_pending_blobs(text[])', 'EXECUTE')`,
       ),
     );
-    expect(rows.map((r) => r.role)).toEqual(['crove_worker']);
-    await expect(sql`SELECT crove_kernel.inbound_pending_blobs(ARRAY['x'])`.execute(appDb)).rejects.toThrow(/permission denied/);
-    await expect(sql`SELECT crove_kernel.inbound_pending_blobs(array_fill('x'::text, ARRAY[10001]))`.execute(workerDb)).rejects.toThrow(/TOO_MANY_BLOB_IDS/);
+    expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
+    await expect(sql`SELECT ludy_kernel.inbound_pending_blobs(ARRAY['x'])`.execute(appDb)).rejects.toThrow(/permission denied/);
+    await expect(sql`SELECT ludy_kernel.inbound_pending_blobs(array_fill('x'::text, ARRAY[10001]))`.execute(workerDb)).rejects.toThrow(/TOO_MANY_BLOB_IDS/);
   });
 });

@@ -69,7 +69,7 @@ export const goalSet = defineCommand({
     const userId = requireUser(ctx);
     if (input.connectionId !== null) {
       const found = await ctx.trx
-        .selectFrom('crove_kernel.channel_connection')
+        .selectFrom('ludy_kernel.channel_connection')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -306,7 +306,7 @@ export async function reportGoals(trx: Trx, orgId: string, start: Date, end: Dat
   if (shown.length === 0) return null;
   const ids = shown.flatMap((g) => (g.connectionId === null ? [] : [g.connectionId]));
   const names = new Map(
-    ids.length === 0 ? [] : (await trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
+    ids.length === 0 ? [] : (await trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
   );
   const actuals = await goalActuals(trx, orgId, start, end);
   const none: GoalActuals = { posts: 0, reach: 0, impressions: 0, engagement: 0, followersGained: null };

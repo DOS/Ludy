@@ -157,9 +157,9 @@ suite('bank statement import (#326)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db: Db = createDb(pool);
@@ -212,7 +212,7 @@ suite('bank statement import (#326)', () => {
     };
     tingeeApp = createHttpApp({ ...feedDeps, channels: { broker: vault, sandbox: false, bankFeedHosted: { bank_tingee: tingeeAdapter } } });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     workerPools.push(workerPool);
@@ -282,7 +282,7 @@ suite('bank statement import (#326)', () => {
       ['2026-09-07', '2000000.0000', 'FT004', 'ref:FT004'],
     ]);
     const audits = await admin(
-      async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.import' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
+      async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.import' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
     );
     expect(audits.map((a) => a.detail)).toEqual([
       expect.objectContaining({ bankAccount: '1121', new: 3, duplicate: 0, from: '2026-09-01', to: '2026-09-05', breaks: 0, filename: 'sao-ke.xlsx' }),
@@ -396,7 +396,7 @@ suite('bank statement import (#326)', () => {
     reference,
   });
   const defaultEntity = () =>
-    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
+    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
   const ingest = async (lines: BankFeedLine[], bankAccount = '1121.VCB') =>
     worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount, legalEntityId: await defaultEntity(), source: 'sandbox', lines }, { actor: SYSTEM, orgId });
 
@@ -425,7 +425,7 @@ suite('bank statement import (#326)', () => {
     // The import and the pulls are audited with their source.
     const audits = await admin(
       async (c) =>
-        (await c.query<{ detail: { source: string; new: number } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.ingest' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
+        (await c.query<{ detail: { source: string; new: number } }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.ingest' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
           .rows,
     );
     expect(audits.map((a) => [a.detail.source, a.detail.new])).toEqual([
@@ -500,12 +500,12 @@ suite('bank statement import (#326)', () => {
     expect((await feed('listed', owner, { connectionId })).body.map((a: { externalAccountId: string }) => a.externalAccountId)).toEqual(['SBX-001', 'SBX-002']);
     expect((await feed('listed', viewer, { connectionId })).status).toBe(403);
     // Sealed like any channel's: a credential row holds it, and no audit row or answer carries a sandbox secret.
-    const stored = await admin(async (c) => (await c.query<{ provider: string }>('SELECT provider FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).rows);
+    const stored = await admin(async (c) => (await c.query<{ provider: string }>('SELECT provider FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).rows);
     expect(stored).toEqual([{ provider: 'bank_sandbox' }]);
-    expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBeGreaterThan(0);
+    expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBeGreaterThan(0);
     expect(JSON.stringify(connected.body)).not.toMatch(/sbx_/);
     expect(
-      await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbx\\_%'`, [orgId])).rows),
+      await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbx\\_%'`, [orgId])).rows),
     ).toEqual([]);
     expect((await rpc('channels/list', await tokenFor(owner), {}, slug, feedApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
 
@@ -522,7 +522,7 @@ suite('bank statement import (#326)', () => {
     expect(again.body.feedAccountId).toBe(mapped.body.feedAccountId);
     const branch = await admin(
       async (c) =>
-        (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh ngân hàng', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]
+        (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh ngân hàng', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]
           ?.id as string,
     );
     expect(await map(owner, { bankAccount: '1121', legalEntityId: branch })).toMatchObject({ status: 409, body: { code: 'BANK_FEED_ACCOUNT_MAPPED' } });
@@ -586,7 +586,7 @@ suite('bank statement import (#326)', () => {
     expect((await map({})).status).toBe(200);
     expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
     // A feed that stopped supplies nothing, so it must not keep file lines out: an expired connection lifts the skip.
-    const setStatus = (status: string) => admin((c) => c.query('UPDATE crove_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
+    const setStatus = (status: string) => admin((c) => c.query('UPDATE ludy_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
     await setStatus('expired');
     expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
     await setStatus('active');
@@ -597,7 +597,7 @@ suite('bank statement import (#326)', () => {
     await sync(connectionId);
     expect(await feedFromOf()).toBe(dayOf(-7));
     // The move-up is on the trail, with the day it was and the day it became.
-    const moved = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ? 'feedFromMovedTo' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
+    const moved = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail ? 'feedFromMovedTo' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
     expect(moved.rows[0]?.detail).toMatchObject({ feedFromMovedTo: dayOf(-7), feedFromWas: dayOf(-9) });
     // The pull leaves out the lines the feed brings from before the day: nothing it stored is dated before it.
     const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
@@ -621,7 +621,7 @@ suite('bank statement import (#326)', () => {
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
     // A Tingee connection writes its cursor as yyyyMMddHHmmss: the floor is the day after, or the day itself at midnight.
     const stampOf = (day: string, time: string) => `${day.replaceAll('-', '')}${time}`;
-    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
     expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
@@ -630,7 +630,7 @@ suite('bank statement import (#326)', () => {
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
     // Back to the sandbox provider: the connection is only a stand-in for Tingee's cursor here, and other tests count Tingee connections.
-    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 
@@ -639,7 +639,7 @@ suite('bank statement import (#326)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by) VALUES ($1, 'sandbox', $2, 'Trang', $3) RETURNING id`,
+            `INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by) VALUES ($1, 'sandbox', $2, 'Trang', $3) RETURNING id`,
             [orgId, randomUUID(), owner.userId],
           )
         ).rows[0]?.id as string,
@@ -649,7 +649,7 @@ suite('bank statement import (#326)', () => {
       body: { code: 'BANK_FEED_NOT_FOUND' },
     });
     const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng cũ' })).body.connectionId);
-    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
     expect(await feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() })).toMatchObject({
       status: 422,
       body: { code: 'BANK_FEED_INACTIVE' },
@@ -742,16 +742,16 @@ suite('bank statement import (#326)', () => {
     await sync(connectionId);
     // The connector is no longer an owner or admin: the channel layer no longer opens the credential for the worker,
     // and the sync marks the connection expired, so the daily sweep leaves it until it is connected again.
-    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET connected_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, connectionId, viewer.userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET connected_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, connectionId, viewer.userId]));
     expect(await sync(connectionId)).toEqual({ accounts: 0, pages: 0, stored: 0 });
-    expect(await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).rows[0]?.status)).toBe('expired');
+    expect(await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).rows[0]?.status)).toBe('expired');
     expect(await sync(connectionId)).toEqual({ accounts: 0, pages: 0, stored: 0 });
   });
 
   it("pages the daily sweep's bank feeds by key, active ones of active orgs only, for the worker login alone", async () => {
     const workerAdmin = async <T>(fn: (c: pg.Client) => Promise<T>) => {
       const url = new URL(adminUrl);
-      url.username = 'crove_worker';
+      url.username = 'ludy_worker';
       url.password = 'test-worker-pw';
       const c = new pg.Client({ connectionString: url.toString() });
       await c.connect();
@@ -766,18 +766,18 @@ suite('bank statement import (#326)', () => {
         async (c) =>
           (
             await c.query<{ id: string }>(
-              `INSERT INTO crove_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by, status) VALUES ($1, $2, $3, 'Sweep', $4, $5) RETURNING id`,
+              `INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by, status) VALUES ($1, $2, $3, 'Sweep', $4, $5) RETURNING id`,
               [org, provider, `sweep-${randomUUID()}`, owner.userId, status],
             )
           ).rows[0]?.id as string,
       );
-    const otherOrg = await admin(async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.tenant WHERE slug = $1', [otherSlug])).rows[0]?.org_id as string);
+    const otherOrg = await admin(async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.tenant WHERE slug = $1', [otherSlug])).rows[0]?.org_id as string);
     const live = [await connection(orgId, 'bank_sandbox'), await connection(orgId, 'bank_sandbox')];
     await connection(orgId, 'bank_sandbox', 'revoked');
     await connection(orgId, 'bank_sandbox', 'expired');
     await connection(orgId, 'sandbox');
     await connection(otherOrg, 'bank_sandbox');
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [otherOrg]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [otherOrg]));
     // A page of one at a time, by key, reaches every live bank feed of this org and nothing else.
     const seen: string[] = [];
     let after: [string | null, string | null] = [null, null];
@@ -796,12 +796,12 @@ suite('bank statement import (#326)', () => {
         (
           await c.query<{ role: string }>(
             `SELECT r.rolname AS role FROM pg_catalog.pg_roles r
-             WHERE r.rolname = ANY (ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_prober'])
+             WHERE r.rolname = ANY (ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_prober'])
                AND pg_catalog.has_function_privilege(r.oid, 'crove_finance.bank_feeds_due(uuid, uuid, integer)', 'EXECUTE')`,
           )
         ).rows,
     );
-    expect(callers.map((r) => r.role)).toEqual(['crove_worker']);
+    expect(callers.map((r) => r.role)).toEqual(['ludy_worker']);
   });
 
   // ADR-0039, #2044 part 2b-ii: a provider's signed notice only asks for a pull.
@@ -817,7 +817,7 @@ suite('bank statement import (#326)', () => {
   const waiting = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_feed_notice_pending')).rows[0]?.n));
   const claim = async () => {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
@@ -865,7 +865,7 @@ suite('bank statement import (#326)', () => {
     expect(claimed.every((r) => r.org_id === orgId || r.org_id === null)).toBe(true);
     expect(await waiting()).toBe(0);
     // A revoked connection is not synced for a notice.
-    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
     await notice(['SBX-001']);
     expect((await claim()).map((r) => r.connection_id)).not.toContain(connectionId);
   });
@@ -878,7 +878,7 @@ suite('bank statement import (#326)', () => {
     const setFinance = (off: boolean) =>
       admin(async (c) => {
         await c.query('SET session_replication_role = replica');
-        await c.query('UPDATE crove_kernel.tenant SET apps_off = $2::text[] WHERE org_id = $1', [orgId, off ? ['finance'] : []]);
+        await c.query('UPDATE ludy_kernel.tenant SET apps_off = $2::text[] WHERE org_id = $1', [orgId, off ? ['finance'] : []]);
         await c.query('SET session_replication_role = DEFAULT');
       });
     await setFinance(true);
@@ -913,18 +913,18 @@ suite('bank statement import (#326)', () => {
           await c.query<{ fn: string; role: string }>(
             `SELECT f AS fn, r AS role
              FROM unnest(ARRAY['crove_finance.bank_feed_notice_enqueue(text, text[])', 'crove_finance.bank_feed_notice_claim(integer)']) f
-             CROSS JOIN unnest(ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_prober']) r
+             CROSS JOIN unnest(ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_prober']) r
              WHERE pg_catalog.has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
           )
         ).rows,
     );
     expect(privileges).toEqual([
-      { fn: 'crove_finance.bank_feed_notice_claim(integer)', role: 'crove_worker' },
-      { fn: 'crove_finance.bank_feed_notice_enqueue(text, text[])', role: 'crove_app' },
+      { fn: 'crove_finance.bank_feed_notice_claim(integer)', role: 'ludy_worker' },
+      { fn: 'crove_finance.bank_feed_notice_enqueue(text, text[])', role: 'ludy_app' },
     ]);
     // The queue table itself is read and written by no login role.
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const apiLogin = new pg.Client({ connectionString: url.toString() });
     await apiLogin.connect();
@@ -949,7 +949,7 @@ suite('bank statement import (#326)', () => {
     // restrictive SELECT policy stands in for the other entity's row security. It hides that one row by its id: the row an
     // insert proposes must pass a SELECT policy too (RETURNING), so a policy on `external_account_id` would refuse the
     // insert itself.
-    await admin((c) => c.query(`CREATE POLICY crove_test_hidden_2079 ON crove_finance.bank_feed_account AS RESTRICTIVE FOR SELECT TO crove_tenant USING (id <> '${mapped.body.feedAccountId}'::uuid)`));
+    await admin((c) => c.query(`CREATE POLICY crove_test_hidden_2079 ON crove_finance.bank_feed_account AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (id <> '${mapped.body.feedAccountId}'::uuid)`));
     try {
       const refused = await feed('map', owner, at('SBX-001'));
       expect(refused).toMatchObject({ status: 409, body: { code: 'BANK_FEED_ACCOUNT_MAPPED' } });
@@ -1067,7 +1067,7 @@ suite('bank statement import (#326)', () => {
         ['2026-09-03', -850000, 11139000, 'FT-APPROVE-3'],
       ]);
       // The Inbox says who imported it, from the audit row of the decision.
-      const decision = await admin(async (c) => (await c.query<{ actor_id: string }>(`SELECT actor_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extraction.statement_state' AND target_id = $2 AND outcome = 'ok'`, [orgId, fileId])).rows);
+      const decision = await admin(async (c) => (await c.query<{ actor_id: string }>(`SELECT actor_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extraction.statement_state' AND target_id = $2 AND outcome = 'ok'`, [orgId, fileId])).rows);
       expect(decision).toEqual([{ actor_id: member.userId }]);
       const imported = await status(fileId);
       expect(imported).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 3, duplicateLines: 0 }, canReextract: false });
@@ -1078,7 +1078,7 @@ suite('bank statement import (#326)', () => {
       expect(await lineCount()).toBe(before + 3);
       expect((await importFile(rows, '1121.VCB')).body.counts).toMatchObject({ new: 0, duplicate: 3 });
       // A finished run never changes, so the decision is a new run of the file: the newest one, with no rows; the staged run before it keeps its rows like any run keeps its result.
-      const runs = await admin(async (c) => (await c.query<{ version: number; has_rows: boolean; requested_by: string | null }>(`SELECT version, result ? 'rows' AS has_rows, requested_by FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
+      const runs = await admin(async (c) => (await c.query<{ version: number; has_rows: boolean; requested_by: string | null }>(`SELECT version, result ? 'rows' AS has_rows, requested_by FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
       expect(runs.map((r) => [r.version, r.has_rows])).toEqual([[1, true], [2, false]]);
       // Who decided is the audit row's (checked above), not the run's: a run inserted already finished has no requester.
       expect(runs[1]?.requested_by).toBeNull();
@@ -1092,7 +1092,7 @@ suite('bank statement import (#326)', () => {
       const [first, second] = await Promise.all([confirm(fileId, member), confirm(fileId, owner)]);
       expect([first.status, second.status].sort()).toEqual([200, 409]);
       expect(await lineCount()).toBe(before + 3);
-      const decisions = await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extraction.statement_state' AND target_id = $2 AND outcome = 'ok'`, [orgId, fileId])).rows);
+      const decisions = await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extraction.statement_state' AND target_id = $2 AND outcome = 'ok'`, [orgId, fileId])).rows);
       expect(decisions).toHaveLength(1);
     });
 
@@ -1180,7 +1180,7 @@ suite('bank statement import (#326)', () => {
       // An account mapped to another legal entity than the one the first (failed) read belongs to.
       const branch = await admin(
         async (c) =>
-          (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh sao kê', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]?.id as string,
+          (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh sao kê', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]?.id as string,
       );
       await admin((c) =>
         c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '5566 7788 9900', 'TK chi nhánh']),
@@ -1195,7 +1195,7 @@ suite('bank statement import (#326)', () => {
       expect(outcome.summary.legalEntityId).toBe(branch);
       await recordRead(fileId, { version: 2, status: 'done', statement: true, legalEntityId: branch, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
       // The run the account's entity sees is a new one; the pending run of the first entity is closed with nothing of the statement.
-      const runs = await admin(async (c) => (await c.query<{ version: number; status: string; legal_entity_id: string; has_result: boolean }>(`SELECT version, status, legal_entity_id, result IS NOT NULL AS has_result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
+      const runs = await admin(async (c) => (await c.query<{ version: number; status: string; legal_entity_id: string; has_result: boolean }>(`SELECT version, status, legal_entity_id, result IS NOT NULL AS has_result FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
       expect(runs.map((r) => [r.version, r.status, r.legal_entity_id === branch, r.has_result])).toEqual([[1, 'failed', false, false], [2, 'failed', false, false], [3, 'done', true, true]]);
       expect(await waiting()).toContain(fileId);
     });
@@ -1262,7 +1262,7 @@ suite('bank statement import (#326)', () => {
         [3000000, null, true],
       ]);
       // The owners and admins are told there is a line to look at, as for any flagged line.
-      const told = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.ingest' AND outcome = 'ok' AND (detail->>'conflict')::int > 0`, [orgId])).rows[0]?.n);
+      const told = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.ingest' AND outcome = 'ok' AND (detail->>'conflict')::int > 0`, [orgId])).rows[0]?.n);
       expect(Number(told)).toBeGreaterThan(0);
       // The same pull again stores nothing more.
       expect((await feedOne(real)).counts).toEqual({ new: 0, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 0 });
@@ -1317,7 +1317,7 @@ suite('bank statement import (#326)', () => {
     it('shows the sender of a statement that came by email to members who read mails, and to nobody else', async () => {
       const fileId = await receiveStatementMail('ketoan@ngan-hang.example');
       // The receive path linked the file to its mail.
-      const link = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM crove_kernel.file f JOIN crove_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [fileId])).rows);
+      const link = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM ludy_kernel.file f JOIN ludy_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [fileId])).rows);
       expect(link).toEqual([{ from_address: 'ketoan@ngan-hang.example' }]);
       expect(await originAs(owner, fileId)).toEqual({ channel: 'email', by: null, from: 'ketoan@ngan-hang.example' });
       expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: 'ketoan@ngan-hang.example' });
@@ -1325,21 +1325,21 @@ suite('bank statement import (#326)', () => {
       expect(await originAs(viewer, fileId)).toEqual({ channel: 'email', by: null, from: null });
       // Nor does a member limited to one legal entity (a mail has none).
       const entityId = await defaultEntity();
-      await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member.userId, entityId, owner.userId]));
+      await admin((c) => c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member.userId, entityId, owner.userId]));
       try {
         expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: null });
       } finally {
-        await admin((c) => c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2`, [orgId, member.userId]));
+        await admin((c) => c.query(`DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND user_id = $2`, [orgId, member.userId]));
       }
       // An address erased with its mail (personal-data erasure) is no longer shown; the card says the sender is unknown.
-      await admin((c) => c.query(`UPDATE crove_kernel.inbound_message m SET from_address = NULL FROM crove_kernel.file f WHERE f.id = $1 AND m.org_id = f.org_id AND m.id = f.inbound_message_id`, [fileId]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.inbound_message m SET from_address = NULL FROM ludy_kernel.file f WHERE f.id = $1 AND m.org_id = f.org_id AND m.id = f.inbound_message_id`, [fileId]));
       expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: null });
     });
 
     it('lets a member name no mail for an upload, and the receive path only for a file that is an email attachment', async () => {
       const bytes = new TextEncoder().encode(`PK-forged-${randomUUID()}`);
       const sha256 = sha256Hex(bytes);
-      const mail = await admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.inbound_message WHERE org_id = $1 LIMIT 1`, [orgId])).rows[0]?.id as string);
+      const mail = await admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.inbound_message WHERE org_id = $1 LIMIT 1`, [orgId])).rows[0]?.id as string);
       const file = { filename: 'sao-ke.zip', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), inboundMessageId: mail };
       // A member's upload cannot claim a mail of the org as its source.
       await expect(api.execute('kernel.file.ingest', { ...file, source: 'upload' }, { actor: ownerActor(), orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -1351,7 +1351,7 @@ suite('bank statement import (#326)', () => {
         { messageId: `<${randomUUID()}@ngan-hang.test>`, from: 'a@b.example', subject: null, files: [{ ...file, source: 'email', inboundMessageId: mail }] },
         { actor: { type: 'system', component: 'inbound' }, orgId },
       );
-      const linked = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM crove_kernel.file f JOIN crove_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [received.fileIds[0]])).rows);
+      const linked = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM ludy_kernel.file f JOIN ludy_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [received.fileIds[0]])).rows);
       expect(linked).toEqual([{ from_address: 'a@b.example' }]);
     });
 
@@ -1366,7 +1366,7 @@ suite('bank statement import (#326)', () => {
         async (c) =>
           (
             await c.query<{ id: string }>(
-              `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'sao-ke.zip', 'application/zip', $5, 'email') RETURNING id`,
+              `INSERT INTO ludy_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'sao-ke.zip', 'application/zip', $5, 'email') RETURNING id`,
               [orgId, sha256, fileKey(orgId, sha256), contentGeneration(sha256), bytes.byteLength],
             )
           ).rows[0]?.id as string,
@@ -1470,13 +1470,13 @@ suite('bank statement import (#326)', () => {
         const org = await secondOrg();
         const first = await setNumber('1121', '8880001111', owner, org);
         expect(first.status).toBe(200);
-        const orgOf = async () => (await admin((c) => c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.tenant WHERE slug = $1', [org]))).rows[0]?.org_id as string;
+        const orgOf = async () => (await admin((c) => c.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.tenant WHERE slug = $1', [org]))).rows[0]?.org_id as string;
         const secondOrgId = await orgOf();
         // Fill the org to 500 by SQL (it may already hold numbers of the tests above).
         await admin((c) =>
           c.query(
             `INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number)
-             SELECT $1::uuid, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', (900000000000 + g)::text
+             SELECT $1::uuid, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', (900000000000 + g)::text
              FROM generate_series(1, 500 - (SELECT count(*)::int FROM crove_finance.bank_account_number WHERE org_id = $1)) g`,
             [secondOrgId],
           ),
@@ -1496,14 +1496,14 @@ suite('bank statement import (#326)', () => {
 
       it('answers ambiguous for a number a bank feed and a recording put on two different bank accounts, and stages nothing', async () => {
         // The set command refuses this; raw rows (a mapping made after the number, say) are what the statement path guards against.
-        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));
+        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));
         try {
           expect(await stage(rowsOf('AMBIG'), '19880001234')).toEqual({ outcome: 'ambiguous', accountNumber: '19880001234' });
         } finally {
           await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
         }
         // The same account named by both is one place.
-        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121.VCB', '19880001234')`, [orgId]));
+        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121.VCB', '19880001234')`, [orgId]));
         try {
           expect(await stage(rowsOf('SAME'), '19880001234')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121.VCB' } });
         } finally {
@@ -1522,7 +1522,7 @@ suite('bank statement import (#326)', () => {
         expect(await stageFor('5550004444')).toEqual({ outcome: 'unmapped', accountNumber: '5550004444' });
         const audits = await admin(
           async (c) =>
-            (await c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.bank_account_number.%' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
+            (await c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.bank_account_number.%' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
         );
         // Both rows name the record and keep the number's class, never its digits (#1626).
         const mine = audits.filter((a) => a.detail['numberId'] === set.body.id);
@@ -1557,15 +1557,15 @@ suite('bank statement import (#326)', () => {
     });
 
     it('refuses a credential Tingee does not accept, with a fixed sentence, and seals nothing', async () => {
-      const before = Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)));
+      const before = Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)));
       const wrongSecret = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'another-secret-token-0123456789' });
       expect(wrongSecret).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
       expect(await connect(owner, { clientId: 'nobody-by-this-id', secretToken: TINGEE_SECRET })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
       // A control character is refused before any call.
       expect((await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'a\u0000b' })).status).toBe(400);
       expect(JSON.stringify(wrongSecret.body)).not.toContain('another-secret-token');
-      expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBe(before);
-      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'bank_tingee'`, [orgId])).rows)).toEqual([]);
+      expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBe(before);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1 AND provider = 'bank_tingee'`, [orgId])).rows)).toEqual([]);
     });
 
     it('connects, then the worker lists the account, a mapped account is pulled once, and no secret is stored or shown in the clear', async () => {
@@ -1595,9 +1595,9 @@ suite('bank statement import (#326)', () => {
 
       // The credential is sealed: no row of the org holds the Secret Token, and no audit row mentions it.
       expect(
-        await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.credential cr WHERE cr.org_id = $1 AND row_to_json(cr)::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows),
+        await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.credential cr WHERE cr.org_id = $1 AND row_to_json(cr)::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows),
       ).toEqual([]);
-      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
       expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
     });
 
@@ -1629,7 +1629,7 @@ suite('bank statement import (#326)', () => {
 
       // Nothing the provider said, and no line, is kept: only the kind, a time and a position.
       expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_feed_account WHERE org_id = $1 AND row_to_json(bank_feed_account)::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
-      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
 
       // The next good pull clears it.
       await tingeeSync(connectionId);

@@ -68,9 +68,9 @@ export const summaryReadyNotice = defineCommand({
     });
     // Turned off, left the org, or told already for this run: no in-app line, so no mail either.
     if (sent === 0) return { notified: false, mailed: false };
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     // The recorder's address while they are a member with an account that is not disabled (the worker's member_emails: no name, no other account column).
-    const { rows } = await sql<{ email: string | null }>`SELECT email FROM crove_kernel.member_emails(${[ready.recorderUserId]}::uuid[])`.execute(ctx.trx);
+    const { rows } = await sql<{ email: string | null }>`SELECT email FROM ludy_kernel.member_emails(${[ready.recorderUserId]}::uuid[])`.execute(ctx.trx);
     const email = rows[0]?.email ?? null;
     const mail = email
       ? await createMailMessage(ctx, {

@@ -106,7 +106,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     const org = await createOrg(rt, asUser(owner.userId), 'Công ty Tư Vấn');
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES
            ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`,
         [org.orgId, admin.userId, creator.userId, invited.userId, bystander.userId],
       );
@@ -124,13 +124,13 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -288,7 +288,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     const outboxId = randomUUID();
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.outbox_event (org_id, id, type, payload, actor_type, actor_id, created_at)
+        `INSERT INTO ludy_kernel.outbox_event (org_id, id, type, payload, actor_type, actor_id, created_at)
          VALUES ($1, $2, 'projects.weekly_status.sent', $3::jsonb, 'user', $4, now())`,
         [o.orgId, outboxId, JSON.stringify({ projectId, userIds: [o.creator.userId, o.invited.userId] }), o.admin.userId],
       );
@@ -339,7 +339,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
 
     // Demoting admin to member immediately revokes access cleanly (404).
     await withAdmin((c) =>
-      c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+      c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
         o.orgId,
         o.admin.userId,
       ]),
@@ -437,7 +437,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     try {
       await c1.query('BEGIN');
       await enterUser(c1, o.owner.userId, o.orgId);
-      await c1.query('SET LOCAL ROLE crove_tenant');
+      await c1.query('SET LOCAL ROLE ludy_tenant');
       await c1.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
         o.orgId,
         proj1,
@@ -526,7 +526,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     try {
       await c2.query('BEGIN');
       await enterUser(c2, o.owner.userId, o.orgId);
-      await c2.query('SET LOCAL ROLE crove_tenant');
+      await c2.query('SET LOCAL ROLE ludy_tenant');
       const chk = await c2.query<{ state: number }>(
         `SELECT crove_sign.check_project_acceptance_source($1::uuid, $2::uuid) AS state`,
         [o.orgId, proj2],
@@ -651,7 +651,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
             SET occurred_at = $1
           WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), o.orgId],

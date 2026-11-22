@@ -97,7 +97,7 @@ suite('member invite flows on PostgreSQL', () => {
 
   const tokenOf = (acceptPath: unknown) => String(acceptPath).split('#')[1] ?? '';
   const rows = (orgId: string, table: 'audit_event' | 'activity', where: string) =>
-    admin(async (c) => (await c.query(`SELECT * FROM crove_kernel.${table} WHERE org_id = $1 AND ${where} ORDER BY id`, [orgId])).rows);
+    admin(async (c) => (await c.query(`SELECT * FROM ludy_kernel.${table} WHERE org_id = $1 AND ${where} ORDER BY id`, [orgId])).rows);
 
   beforeAll(async () => {
     const base = new URL(ADMIN as string);
@@ -108,9 +108,9 @@ suite('member invite flows on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -230,7 +230,7 @@ suite('member invite flows on PostgreSQL', () => {
     await admin((c) =>
       c.query(
         // Created two days ago, so the daily limits (below) do not apply.
-        `INSERT INTO crove_kernel.member_invite (org_id, email, role, token_sha256, invited_by, created_at, expires_at)
+        `INSERT INTO ludy_kernel.member_invite (org_id, email, role, token_sha256, invited_by, created_at, expires_at)
          SELECT $1::uuid, 'cap-' || g || '@flows.test', 'member', encode(sha256(convert_to('cap-' || g || $1::text, 'UTF8')), 'hex'), $2::uuid,
                 now() - interval '2 days', now() + interval '5 days'
          FROM generate_series(1, $3::int) g`,
@@ -258,7 +258,7 @@ suite('member invite flows on PostgreSQL', () => {
     // Revoked invites count too: revoking frees a pending slot, not the daily budget.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.member_invite (org_id, email, role, token_sha256, invited_by, status, revoked_at, revoked_by)
+        `INSERT INTO ludy_kernel.member_invite (org_id, email, role, token_sha256, invited_by, status, revoked_at, revoked_by)
          SELECT $1::uuid, 'day-' || g || '@flows.test', 'member', encode(sha256(convert_to('day-' || g || $1::text, 'UTF8')), 'hex'), $2::uuid,
                 'revoked', now(), $2::uuid
          FROM generate_series(1, $3::int) g`,
@@ -304,7 +304,7 @@ suite('member invite flows on PostgreSQL', () => {
     let answers: Awaited<ReturnType<typeof rpc>>[];
     try {
       await holder.query('BEGIN');
-      await holder.query('SELECT 1 FROM crove_kernel.member_invite WHERE org_id = $1 AND id = $2 FOR UPDATE', [org.orgId, created.body?.inviteId]);
+      await holder.query('SELECT 1 FROM ludy_kernel.member_invite WHERE org_id = $1 AND id = $2 FOR UPDATE', [org.orgId, created.body?.inviteId]);
       const racing = Promise.all([rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null)]);
       let waiting = 0;
       for (let i = 0; i < 100 && waiting < 3; i += 1) {
@@ -320,7 +320,7 @@ suite('member invite flows on PostgreSQL', () => {
     }
     expect(answers.filter((a) => a.status === 200), 'exactly one accept wins').toHaveLength(1);
     for (const lost of answers.filter((a) => a.status !== 200)) expect(lost).toMatchObject({ status: 409, body: { code: 'INVITE_USED' } });
-    const members = await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [org.orgId, invitee.userId])).rows);
+    const members = await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [org.orgId, invitee.userId])).rows);
     expect(members, 'one membership').toHaveLength(1);
     expect((await rows(org.orgId, 'audit_event', "command = 'kernel.member.invite.accept'")).length - before, 'one accept recorded').toBe(1);
   });

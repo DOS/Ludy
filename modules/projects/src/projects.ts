@@ -467,7 +467,7 @@ export const projectTaskAdd = defineCommand({
     assertNotArchived(row);
 
     const visibleTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -534,7 +534,7 @@ export const projectTaskRemove = defineCommand({
     assertNotArchived(row);
 
     const visibleTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -583,7 +583,7 @@ export const projectTaskReorder = defineCommand({
     assertNotArchived(row);
 
     const visibleTasks = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', [input.taskId, input.anchorId])
@@ -593,7 +593,7 @@ export const projectTaskReorder = defineCommand({
     const { rows: allRows } = await sql<ProjectOrderRow>`
       SELECT pt.task_id, pt.sort_key
         FROM crove_projects.project_task pt
-        LEFT JOIN crove_kernel.task t
+        LEFT JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND pt.project_id = ${row.id}::uuid
@@ -630,14 +630,14 @@ export const projectTaskCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   // Calls kernel.task.create via ctx.run (which has no writes declaration), so omits writes to avoid checking
-  // nested crove_kernel.task / wakeup inserts against a crove_projects-only declaration (human-only command).
+  // nested ludy_kernel.task / wakeup inserts against a crove_projects-only declaration (human-only command).
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string }> => {
     const userId = userOf(ctx.actor);
     if (!isValidScheduleRange(input.startOn ?? null, input.due ?? null)) {
       throw new DomainError('INVALID_DATE_RANGE', 422, 'Ngày bắt đầu không được sau hạn hoàn thành');
     }
-    // Check existence/status without a row lock before calling kernel.task.create (which locks crove_kernel.position),
+    // Check existence/status without a row lock before calling kernel.task.create (which locks ludy_kernel.position),
     // then lock crove_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
     const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
     assertNotArchived(preview);
@@ -790,13 +790,13 @@ export const projectList = defineQuery({
        GROUP BY project_id`.execute(ctx.trx);
     const membersByProject = new Map(memberCounts.map((r) => [r.project_id, Number(r.n)]));
 
-    // Join crove_kernel.task so open/done counts automatically follow le_scope RLS.
+    // Join ludy_kernel.task so open/done counts automatically follow le_scope RLS.
     const { rows: taskCounts } = await sql<{ project_id: string; open_n: string; done_n: string }>`
       SELECT pt.project_id,
              pg_catalog.count(*) FILTER (WHERE t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))::text AS open_n,
              pg_catalog.count(*) FILTER (WHERE t.status = 'done')::text AS done_n
         FROM crove_projects.project_task pt
-        JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+        JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND pt.project_id = ANY(${projectIds}::uuid[])
        GROUP BY pt.project_id`.execute(ctx.trx);
@@ -949,7 +949,7 @@ export const projectBoard = defineQuery({
 
     let taskQuery = ctx.trx
       .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select([
         't.id',
         't.title',
@@ -977,7 +977,7 @@ export const projectBoard = defineQuery({
 
     let countQuery = ctx.trx
       .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('pt.org_id', '=', ctx.orgId)
       .where('pt.project_id', '=', row.id);
@@ -1119,7 +1119,7 @@ export const projectUnassignedTasks = defineQuery({
       created_at: Date | string;
     }>`
       SELECT t.id, t.title, t.tainted, t.status, t.assignee_position_id, t.due, t.created_at
-        FROM crove_kernel.task t
+        FROM ludy_kernel.task t
        WHERE t.org_id = ${ctx.orgId}::uuid
          AND NOT EXISTS (
            SELECT 1 FROM crove_projects.project_task pt
@@ -1151,13 +1151,13 @@ export const projectTaskProjects = defineQuery({
     userOf(ctx.actor);
     const taskIds = [...new Set(input.taskIds)];
     if (taskIds.length === 0) return [];
-    // Join crove_kernel.task so le_scope RLS filters out tasks outside the caller's legal entities.
+    // Join ludy_kernel.task so le_scope RLS filters out tasks outside the caller's legal entities.
     const { rows } = await sql<{ task_id: string; project_id: string; project_name: string }>`
       SELECT pt.task_id, p.id AS project_id, p.name AS project_name
         FROM crove_projects.project_task pt
         JOIN crove_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
-        JOIN crove_kernel.task t
+        JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND NOT p.is_template

@@ -47,7 +47,7 @@ suite('a series of meetings (#3542)', () => {
   async function connection(who: string, provider: 'google' | 'microsoft' = 'google'): Promise<string> {
     const id = randomUUID();
     const scopes = provider === 'google' ? [GOOGLE_CALENDAR_EVENTS_READ_SCOPE] : [MICROSOFT_CALENDAR_READ_SCOPE];
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, $6, $4, $4, $5, true)`, [
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, $6, $4, $4, $5, true)`, [
       orgId,
       id,
       users[who],
@@ -81,7 +81,7 @@ suite('a series of meetings (#3542)', () => {
 
   async function seat(title: string, holder: string | null): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, holder === null ? null : users[holder]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, holder === null ? null : users[holder]]);
     return id;
   }
 
@@ -91,7 +91,7 @@ suite('a series of meetings (#3542)', () => {
     let taskId: string | null = null;
     if (over.task !== undefined) {
       taskId = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status, due, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5, $6)`, [
+      await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status, due, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5, $6)`, [
         orgId,
         taskId,
         title,
@@ -117,29 +117,29 @@ suite('a series of meetings (#3542)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'rec', 'lan', 'nam', 'other']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'series', subject: key, email: `${key}@series.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Chuỗi')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.rec, users.lan, users.nam, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.rec, users.lan, users.nam, users.other]);
   }, 300_000);
 
   beforeEach(async () => {
-    await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM crove_kernel.task WHERE org_id = $1', [orgId]);
-    await sqlAdmin(`DELETE FROM crove_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.task WHERE org_id = $1', [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
   });
 
   afterAll(async () => {
@@ -253,7 +253,7 @@ suite('a series of meetings (#3542)', () => {
       expect(out.items.find((i) => i.title === 'Gửi báo giá')?.due).toBe('2026-12-01T00:00:00.000Z');
     }
     // The task moves on: the list follows it.
-    await sqlAdmin(`UPDATE crove_kernel.task SET status = 'done' WHERE org_id = $1 AND title = 'Gửi báo giá'`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_kernel.task SET status = 'done' WHERE org_id = $1 AND title = 'Gửi báo giá'`, [orgId]);
     expect((await openItems('lan', current)).items.map((i) => i.title).sort()).toEqual(['Chưa ai nhận', 'Gọi lại khách']);
   });
 

@@ -154,7 +154,7 @@ const CHAT_ALERT_SINGLETON_SECONDS = 3600;
 // An owner's test line: one job per org in a slot this short, on top of the API's few a minute.
 const CHAT_ALERT_TEST_SINGLETON_SECONDS = 10;
 // Every 10 minutes the worker wakes agents whose wake-up is still pending and that can run now
-// (crove_kernel.agent_wakeups_due): a run refused earlier by the daily cap, a kill switch or a budget that has since
+// (ludy_kernel.agent_wakeups_due): a run refused earlier by the daily cap, a kill switch or a budget that has since
 // lifted, or blocked by a run left live by a crashed worker. Agents still capped, switched off, out of budget or of a
 // module this deployment does not enable are left out, so the sweep writes no refused start for them.
 export const AGENT_SWEEP_CRON = '*/10 * * * *';
@@ -188,7 +188,7 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 // Refusal tally windows (issue #162) older than the retention are deleted by the daily retention job, in batches.
 export const DEFAULT_REFUSAL_TALLY_RETENTION_DAYS = 7;
 const REFUSAL_TALLY_PRUNE_BATCH = 10_000;
-// Days of crove_kernel.security_event windows kept (plan §4.9: 30 days).
+// Days of ludy_kernel.security_event windows kept (plan §4.9: 30 days).
 export const SECURITY_EVENT_RETENTION_DAYS = 30;
 const SECURITY_EVENT_PRUNE_BATCH = 10_000;
 
@@ -541,11 +541,11 @@ export interface WorkerDeps {
   inboundDomain: string | null;
   // Supabase Auth sign-out after a Crove-side revoke (ADR-0028 section 4); null keeps revocation Crove-side only.
   revoker?: SessionRevoker | null;
-  // Names this worker in crove_kernel.worker_heartbeat (default: the host name, the container id under Docker).
+  // Names this worker in ludy_kernel.worker_heartbeat (default: the host name, the container id under Docker).
   instance?: string;
   // The build it records there (#1952); default: none known.
   build?: WorkerBuild;
-  // Days of crove_kernel.refusal_tally windows kept (default DEFAULT_REFUSAL_TALLY_RETENTION_DAYS).
+  // Days of ludy_kernel.refusal_tally windows kept (default DEFAULT_REFUSAL_TALLY_RETENTION_DAYS).
   refusalTallyRetentionDays?: number;
   // The built-in program of each agent template (ADR-0029 section 8), by template key.
   agentPrograms?: Readonly<Record<string, AgentProgram>>;
@@ -767,15 +767,15 @@ export interface WorkerBuild {
 
 /**
  * Records that this worker is alive, the modules whose queues it works and the build it runs
- * (crove_kernel.worker_beat, crove_worker only): the prober ages only those queues, so a module left out does not read
+ * (ludy_kernel.worker_beat, ludy_worker only): the prober ages only those queues, so a module left out does not read
  * as stuck workers (#1877), and the API's /readyz waits while a live worker runs an older build (#1952).
  */
 export async function beat(workerDb: Db, instance: string, modules: readonly string[], build: WorkerBuild = { id: null, time: null }): Promise<void> {
-  await sql`SELECT crove_kernel.worker_beat(${instance.slice(0, 128)}, ${[...modules]}::text[], ${build.id}::text, ${build.time}::timestamptz)`.execute(workerDb);
+  await sql`SELECT ludy_kernel.worker_beat(${instance.slice(0, 128)}, ${[...modules]}::text[], ${build.id}::text, ${build.time}::timestamptz)`.execute(workerDb);
 }
 
 /**
- * Deletes refusal tally windows older than keepDays (crove_kernel.refusal_tally_prune, crove_worker only), batch by
+ * Deletes refusal tally windows older than keepDays (ludy_kernel.refusal_tally_prune, ludy_worker only), batch by
  * batch until none is left, and returns how many rows went. Several workers may run it at once; each batch is its
  * own statement.
  */
@@ -783,7 +783,7 @@ export async function pruneRefusalTally(workerDb: Db, keepDays: number): Promise
   let total = 0;
   for (;;) {
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_kernel.refusal_tally_prune(${keepDays}::integer, ${REFUSAL_TALLY_PRUNE_BATCH}::integer) AS n`.execute(workerDb);
+      SELECT ludy_kernel.refusal_tally_prune(${keepDays}::integer, ${REFUSAL_TALLY_PRUNE_BATCH}::integer) AS n`.execute(workerDb);
     const n = rows[0]?.n ?? 0;
     total += n;
     if (n < REFUSAL_TALLY_PRUNE_BATCH) return total;
@@ -791,14 +791,14 @@ export async function pruneRefusalTally(workerDb: Db, keepDays: number): Promise
 }
 
 /**
- * Deletes security_event windows older than SECURITY_EVENT_RETENTION_DAYS (crove_kernel.security_event_prune,
- * crove_worker only), batch by batch, and returns how many rows went.
+ * Deletes security_event windows older than SECURITY_EVENT_RETENTION_DAYS (ludy_kernel.security_event_prune,
+ * ludy_worker only), batch by batch, and returns how many rows went.
  */
 export async function pruneSecurityEvents(workerDb: Db): Promise<number> {
   let total = 0;
   for (;;) {
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_kernel.security_event_prune(${SECURITY_EVENT_RETENTION_DAYS}::integer, ${SECURITY_EVENT_PRUNE_BATCH}::integer) AS n`.execute(workerDb);
+      SELECT ludy_kernel.security_event_prune(${SECURITY_EVENT_RETENTION_DAYS}::integer, ${SECURITY_EVENT_PRUNE_BATCH}::integer) AS n`.execute(workerDb);
     const n = rows[0]?.n ?? 0;
     total += n;
     if (n < SECURITY_EVENT_PRUNE_BATCH) return total;
@@ -809,9 +809,9 @@ export async function pruneSecurityEvents(workerDb: Db): Promise<number> {
 // switch, the identity provider subject itself. The job table holds no subject otherwise.
 export type SignOutJob = { userId?: string; subject?: string; sessionId: string; scope: 'local' | 'global' };
 
-// The identity provider subject of a user account (crove_kernel.user_auth_subject, crove_worker only), or null.
+// The identity provider subject of a user account (ludy_kernel.user_auth_subject, ludy_worker only), or null.
 export async function authSubject(workerDb: Db, userId: string): Promise<string | null> {
-  const { rows } = await sql<{ subject: string | null }>`SELECT crove_kernel.user_auth_subject(${userId}::uuid) AS subject`.execute(workerDb);
+  const { rows } = await sql<{ subject: string | null }>`SELECT ludy_kernel.user_auth_subject(${userId}::uuid) AS subject`.execute(workerDb);
   return rows[0]?.subject ?? null;
 }
 
@@ -935,13 +935,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     };
     if (defaultAiBudget) {
       await attempt('gave the default budget to', async () => {
-        const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.ai_budget_seed_due(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+        const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_kernel.ai_budget_seed_due(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
         for (const row of rows) await deps.runtime.execute('kernel.ai.budget.ensure_default', { monthlyLimit: defaultAiBudget }, { actor: system, orgId: row.org_id });
         return rows.length;
       });
     }
     await attempt('told owners of', async () => {
-      const { rows } = await sql<{ org_id: string; scope: string; target: string; level: string }>`SELECT org_id, scope, target, level FROM crove_kernel.ai_budget_crossings(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+      const { rows } = await sql<{ org_id: string; scope: string; target: string; level: string }>`SELECT org_id, scope, target, level FROM ludy_kernel.ai_budget_crossings(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
       for (const row of rows) await deps.runtime.execute('kernel.ai.budget.notify', { scope: row.scope, target: row.target, level: row.level }, { actor: system, orgId: row.org_id });
       return rows.length;
     });
@@ -2216,7 +2216,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }));
 
   await background.add(QUEUES.agentSweep, () => boss.work(QUEUES.agentSweep, { batchSize: 1 }, async () => {
-    const { rows } = await sql<{ org_id: string; agent_id: string }>`SELECT * FROM crove_kernel.agent_wakeups_due(${AGENT_SWEEP_LIMIT}::int, ${deps.runtime.modules()}::text[])`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string; agent_id: string }>`SELECT * FROM ludy_kernel.agent_wakeups_due(${AGENT_SWEEP_LIMIT}::int, ${deps.runtime.modules()}::text[])`.execute(deps.workerDb);
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
     await aiBudgetSweep();
@@ -2931,7 +2931,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // How many events the claim took, parked ones included: a full claim means more may wait, whatever the batch parked.
         let claimedCount = 0;
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
-          const { rows: claimed } = await sql<OutboxRow>`SELECT * FROM crove_kernel.outbox_claim(100)`.execute(trx);
+          const { rows: claimed } = await sql<OutboxRow>`SELECT * FROM ludy_kernel.outbox_claim(100)`.execute(trx);
           claimedCount = claimed.length;
           // The events of an app that is off for the org wait (ADR-0053, C3b): they leave the outbox with this claim and are parked in the same transaction, with no job
           // queued; the held sweep puts them back once the app is on. One fresh read per org and app for the batch.
@@ -3494,7 +3494,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
       for (;;) {
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
-          const { rows } = await sql<InboundRow>`SELECT * FROM crove_kernel.inbound_claim(100)`.execute(trx);
+          const { rows } = await sql<InboundRow>`SELECT * FROM ludy_kernel.inbound_claim(100)`.execute(trx);
           return rows.map(
             (row) => (boss: JobSender) =>
               boss.send(
@@ -3513,7 +3513,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
       for (;;) {
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
-          const { rows } = await sql<MailEventRow>`SELECT * FROM crove_kernel.mail_event_claim(100)`.execute(trx);
+          const { rows } = await sql<MailEventRow>`SELECT * FROM ludy_kernel.mail_event_claim(100)`.execute(trx);
           return rows.map(
             (row) => (boss: JobSender) =>
               boss.send(QUEUES.mailEvent, mailEventJob(row) satisfies MailEventJob, {
@@ -3692,7 +3692,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // Without a handler a dropped connection would crash the process; the 1 s timer keeps draining the outbox.
   listener.on('error', (error) => console.error('[relay] listen connection lost', error.message));
   await listener.connect();
-  await listener.query('LISTEN crove_outbox');
+  await listener.query('LISTEN ludy_outbox');
   listener.on('notification', () => void relay());
   const timer = setInterval(() => void relay(), 1000);
   void relay();

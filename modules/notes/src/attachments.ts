@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
 // <= 25 MiB files and clipboard screenshots attached directly to a note under crove_notes.attachment
-// and private BlobStore keys notes/<org_id>/<attachment_id>, never touching crove_kernel.file.
+// and private BlobStore keys notes/<org_id>/<attachment_id>, never touching ludy_kernel.file.
 import {
   auditValue,
   NOTE_ATTACHMENTS_PER_NOTE_MAX,

@@ -58,7 +58,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer, name };
   }
@@ -66,7 +66,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Trang', o.owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Trang', o.owner]),
     );
     return id;
   }
@@ -87,15 +87,15 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -126,7 +126,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     expect(shown).toMatchObject({ name: 'Sao Mai Agency', logo: png(), accent: '#1d4ed8', hideCrove: true });
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.report_branding WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
     // The audit keeps the logo's size, never its bytes.
-    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.report_branding.%'", [o.orgId])).rows));
+    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.report_branding.%'", [o.orgId])).rows));
     expect(audit).toContain('"logo_bytes":48');
     expect(audit).not.toContain('base64');
     // An empty name is the org's own.
@@ -220,7 +220,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     await admin((cl) => cl.query("UPDATE crove_social.review_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 second' WHERE id = $1", [plan.linkId]));
     expect(await reviewView(rt, { token: plan.token })).toBeNull();
     // A closed org's links open nothing either.
-    await admin((cl) => cl.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [c.orgId]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [c.orgId]));
     expect(await reportView(rt, { token: linkC.token })).toBeNull();
   });
 
@@ -228,11 +228,11 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     const a = await org();
     const b = await org();
     await save(a, a.owner, { name: 'Brand A' });
-    for (const role of ['crove_app', 'crove_worker', 'crove_tenant']) {
+    for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant']) {
       expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'crove_social.report_brand(uuid)', 'EXECUTE') AS ok", [role])).rows[0]?.ok)).toBe(false);
     }
-    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('crove_app', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(true);
-    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('crove_tenant', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(false);
+    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_app', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(true);
+    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_tenant', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(false);
     // The API role cannot call the helper with another org's id.
     await expect(pool.query('SELECT crove_social.report_brand($1)', [a.orgId])).rejects.toMatchObject({ code: '42501' });
     expect(await get(b, b.owner)).toBeNull();

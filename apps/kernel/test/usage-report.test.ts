@@ -86,7 +86,7 @@ describe('usage report exit codes', () => {
       throw new Error('permission denied\nfor function usage_weekly');
     };
     expect(await runUsageReport([], { REPORTER_DATABASE_URL: 'postgres://r@db/p' }, { ...a.deps, readUsage: failing })).toBe(USAGE_EXIT.failed);
-    expect(a.err).toEqual(['[usage-report] could not read crove_kernel.usage_weekly(): permission denied for function usage_weekly']);
+    expect(a.err).toEqual(['[usage-report] could not read ludy_kernel.usage_weekly(): permission denied for function usage_weekly']);
     const out: string[] = [];
     expect(await runUsageReport(['--csv'], { REPORTER_DATABASE_URL: 'postgres://r@db/p' }, { log: (t) => out.push(t), error: () => {}, readUsage: async () => [total] })).toBe(USAGE_EXIT.ok);
     expect(out[0]?.split('\n')[1]).toBe('2026-W42,2026-10-12,2,3,10,4,8,6,75,1,1.5,2,0');

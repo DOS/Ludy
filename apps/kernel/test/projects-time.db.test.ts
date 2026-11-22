@@ -113,12 +113,12 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -396,21 +396,21 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     await withAdmin(async (c) => {
       leA = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh A', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]!.id;
       leB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]!.id;
       taskLeB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Nhiệm vụ mật B', 'todo', 'human', 'user', $2) RETURNING id`,
           [org.orgId, leB],
         )
@@ -421,7 +421,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
         [org.orgId, projB, taskLeB, owner.userId],
       );
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, memberB.userId, leA, owner.userId],
       );
@@ -606,7 +606,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     await withAdmin(async (c) => {
       movableTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Nhiệm vụ chuyển chi nhánh', 'todo', 'human', 'user', $2) RETURNING id`,
           [org.orgId, leB],
         )
@@ -618,7 +618,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
       );
       tempLeBRoleId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+          `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
            VALUES ($1, $2, 'external_accountant', $3, $4) RETURNING id`,
           [org.orgId, memberB.userId, leB, owner.userId],
         )
@@ -629,7 +629,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
       taskId: movableTaskId,
     });
     await withAdmin(async (c) => {
-      await c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND id = $2`, [org.orgId, tempLeBRoleId]);
+      await c.query(`DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND id = $2`, [org.orgId, tempLeBRoleId]);
     });
     const stoppedMovedTaskTimer = await exec<ProjectTimeStopResult>(memberB.userId, org.orgId, 'projects.time.stop', {
       projectId: projA,
@@ -691,7 +691,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
             SET occurred_at = $1
           WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), org.orgId],
@@ -708,7 +708,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
         'crove_projects.project_task',
         'crove_projects.project_member',
         'crove_projects.project',
-        'crove_kernel.task',
+        'ludy_kernel.task',
       ]) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
         expect(rows[0]?.n, tbl).toBe('0');

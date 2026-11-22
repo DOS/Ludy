@@ -65,13 +65,13 @@ async function adjustableOf(ctx: QueryContext, settlementId: string, household: 
 
 // The pending proposal of a command that names the item, if any (the id in a stored payload keeps the case it was given, so both sides are lowered).
 const pendingOf = (ctx: QueryContext, command: string, key: string, id: string) =>
-  sql<{ id: string }>`SELECT p.id FROM crove_kernel.proposal p WHERE p.org_id = ${ctx.orgId}::uuid AND p.command = ${command} AND p.status = 'pending' AND lower(p.payload->>${key}) = ${id.toLowerCase()} ORDER BY p.created_at LIMIT 1`
+  sql<{ id: string }>`SELECT p.id FROM ludy_kernel.proposal p WHERE p.org_id = ${ctx.orgId}::uuid AND p.command = ${command} AND p.status = 'pending' AND lower(p.payload->>${key}) = ${id.toLowerCase()} ORDER BY p.created_at LIMIT 1`
     .execute(ctx.trx)
     .then((r) => r.rows[0]?.id ?? null);
 
 // Whether the account map of every entity in view is confirmed for `paths`, on the chart the entity keeps today.
 async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undefined, maps: Maps, paths: Parameters<typeof requireConfirmedMarketplaceMap>[2]): Promise<boolean> {
-  const entities = (await sql<{ id: string }>`SELECT id FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND (${legalEntityId ?? null}::uuid IS NULL OR id = ${legalEntityId ?? null}::uuid)`.execute(ctx.trx)).rows;
+  const entities = (await sql<{ id: string }>`SELECT id FROM ludy_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND (${legalEntityId ?? null}::uuid IS NULL OR id = ${legalEntityId ?? null}::uuid)`.execute(ctx.trx)).rows;
   if (entities.length === 0) return false;
   const today = await databaseToday(ctx.trx);
   for (const entity of entities) {
@@ -157,7 +157,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const payable = standingPosted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && (money(p.other).isZero() || !money(p.min_other).isNegative()));
       const payouts: MarketplaceWorklist['payouts'] = [];
       const kinds = new Map<string, string>();
-      for (const e of payable.length === 0 ? [] : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(payable.map((p) => p.legal_entity_id))]).execute()) kinds.set(e.id, e.kind);
+      for (const e of payable.length === 0 ? [] : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(payable.map((p) => p.legal_entity_id))]).execute()) kinds.set(e.id, e.kind);
       for (const p of payable) {
         // A settlement whose `other` adds up to something is classified line by line; an offsetting pair is no adjustment, as before.
         const adjustable = await adjustableOf(ctx, p.id, kinds.get(p.legal_entity_id) === 'household', !money(p.other).isZero());

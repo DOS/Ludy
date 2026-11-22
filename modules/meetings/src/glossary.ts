@@ -31,7 +31,7 @@ const taken = () => new DomainError('GLOSSARY_TERM_TAKEN', 409, 'The glossary al
 
 // An owner or admin of the org, as the caller. The database policy says the same; the command answers 403 first.
 async function requireOwnerOrAdmin(trx: Trx, orgId: string, userId: string): Promise<void> {
-  const row = await trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
   if (row?.role !== 'owner' && row?.role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Only an owner or admin keeps the glossary');
 }
 

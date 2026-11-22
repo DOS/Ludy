@@ -153,7 +153,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   const exportAudits = (orgId = org.orgId) =>
     admin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.ledger.export' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.ledger.export' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
           .rows,
     );
 
@@ -170,17 +170,17 @@ suite('ledger reports per month, quarter or year (#321)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -391,7 +391,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   const statementAudits = (orgId = org.orgId) =>
     admin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.statements.export' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.statements.export' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]))
           .rows,
     );
   type StatementLine = { code: string; amount: string; total: boolean };

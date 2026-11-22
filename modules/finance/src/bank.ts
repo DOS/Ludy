@@ -158,7 +158,7 @@ async function check(ctx: QueryContext, input: BankStatementImport, legalEntityI
 export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string, syncedOnly = false): Promise<string | null> {
   const row = await ctx.trx
     .selectFrom('crove_finance.bank_feed_account as a')
-    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
     .select((eb) => eb.fn.min('a.feed_from').as('feed_from'))
     .where('a.org_id', '=', ctx.orgId)
     .where('a.legal_entity_id', '=', legalEntityId)
@@ -173,7 +173,7 @@ export async function feedCutover(ctx: QueryContext, legalEntityId: string, bank
 // holds it), and returns the import's id. Every source stores through here (ADR-0039).
 async function storeLines(ctx: CommandContext, legalEntityId: string, bankAccountCode: string, lines: StatementCheck['lines']): Promise<string> {
   // Time-ordered and taken under the lock, so ordering by import_id is the order the imports were made in.
-  const { rows: ids } = await sql<{ id: string }>`SELECT crove_kernel.uuid_v7() AS id`.execute(ctx.trx);
+  const { rows: ids } = await sql<{ id: string }>`SELECT ludy_kernel.uuid_v7() AS id`.execute(ctx.trx);
   const importId = ids[0]?.id;
   if (!importId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
   const actor = ctx.actor.type === 'user' ? ctx.actor.userId : null;
@@ -380,7 +380,7 @@ export const bankLines = defineQuery({
 });
 
 // The lines of every bank and card account of one legal entity in a range whose description holds one of the terms as
-// whole words, with marks and case set aside as the search folds them (crove_kernel.search_fold): what Ads lays beside a
+// whole words, with marks and case set aside as the search folds them (ludy_kernel.search_fold): what Ads lays beside a
 // month's spend (slice D2, plan docs/plan/ads.md section 6). Read only, and the same rows `finance.bank.lines` shows, so
 // the row policy and the legal entity scope decide what is seen.
 export const bankPlatformLines = defineQuery({
@@ -390,7 +390,7 @@ export const bankPlatformLines = defineQuery({
   handler: async (ctx, input): Promise<BankPlatformLines> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     // A folded description is words of a-z and 0-9 apart by one space, so padded with spaces a term is found only as whole words.
-    const named = sql<boolean>`pg_catalog.strpos(' ' || crove_kernel.search_fold(l.description) || ' ', ' ' || crove_kernel.search_fold(t.term) || ' ') > 0`;
+    const named = sql<boolean>`pg_catalog.strpos(' ' || ludy_kernel.search_fold(l.description) || ' ', ' ' || ludy_kernel.search_fold(t.term) || ' ') > 0`;
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_line as l')
       .select(['l.id', 'l.bank_account', 'l.value_date', 'l.description', 'l.amount'])
@@ -398,7 +398,7 @@ export const bankPlatformLines = defineQuery({
       .where('l.legal_entity_id', '=', legalEntityId)
       .where('l.value_date', '>=', input.from)
       .where('l.value_date', '<=', input.to)
-      .where(sql<boolean>`EXISTS (SELECT 1 FROM pg_catalog.unnest(${input.terms}::text[]) AS t (term) WHERE crove_kernel.search_fold(t.term) <> '' AND ${named})`)
+      .where(sql<boolean>`EXISTS (SELECT 1 FROM pg_catalog.unnest(${input.terms}::text[]) AS t (term) WHERE ludy_kernel.search_fold(t.term) <> '' AND ${named})`)
       .orderBy('l.value_date', 'desc')
       .orderBy('l.import_id')
       .orderBy('l.position')

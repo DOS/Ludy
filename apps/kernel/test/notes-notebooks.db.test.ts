@@ -78,10 +78,10 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
 
     const pool = createPool({ connectionString: appUrl.toString(), max: 6 });
@@ -104,7 +104,7 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
         [orgId, users.admin, users.alice, users.bob, users.viewer],
       );
@@ -221,7 +221,7 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     // Verify audit events contain zero raw notebook name or stack name strings.
     const auditDump = await admin(async (c) => {
       const { rows } = await c.query<{ detail: unknown }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.notebook.%'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.notebook.%'`,
         [orgId],
       );
       return JSON.stringify(rows);
@@ -498,13 +498,13 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     // Simulate worker dispatching the personal_data_notice notification to Alice.
     const notifyEvent = await admin(async (c) => {
       const { rows } = await c.query<{ event: string }>(
-        `SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event
+        `SELECT detail ->> 'event' AS event FROM ludy_kernel.audit_event
          WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY occurred_at DESC LIMIT 1`,
         [orgId],
       );
       const ev = rows[0]?.event as string;
       await c.query(
-        `INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key)
+        `INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key)
          VALUES ($1, $2, 'kernel.personal_data_notice', $3)`,
         [orgId, users.alice, `personal_data_notice:${ev}`],
       );
@@ -532,12 +532,12 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours'
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours'
          WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
         [orgId],
       );
       await c.query(
-        `UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours'
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours'
          WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
         [orgId],
       );

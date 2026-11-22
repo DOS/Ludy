@@ -52,7 +52,7 @@ export interface TableWrite {
 }
 
 // A TableWrite built from a module's manifest, so the classes are the manifest's and a column the table does not have
-// fails typecheck: tableWrite(kernelManifest.tables, 'crove_kernel', 'task', ['status']).
+// fails typecheck: tableWrite(kernelManifest.tables, 'ludy_kernel', 'task', ['status']).
 export function tableWrite<
   const T extends ModuleManifest['tables'],
   const S extends keyof T & string,
@@ -83,7 +83,7 @@ export function auditValue<T extends TableColumns, V>(table: T, column: keyof T 
 }
 
 // A permission the module owns (plan §5.2, §4.6, #1630). Its key is `<module id>.<name>`. A member holds it through an
-// org-wide assignment of one of its default roles, which are the crove_kernel.role_permission rows the migrations seed
+// org-wide assignment of one of its default roles, which are the ludy_kernel.role_permission rows the migrations seed
 // for it (a declaration, not a grant: the test fails when the two differ). The base roles of tenant_member.role (owner,
 // admin) are never listed: who passes a command by base role is the command's `access`, and who approves by base role
 // is the approval policy. The risk is the highest risk of the commands that name the permission.
@@ -145,7 +145,7 @@ export interface ModuleScreens {
 // How an entity's changes are recorded (plan §5.2 `audit`, #1656):
 // - command: every change is a command, recorded in audit_event (and the WORM stream) with the record as its target;
 //   the row itself may be updated.
-// - append_only: as command, and the row is never updated or deleted (the table carries crove_kernel.make_append_only's
+// - append_only: as command, and the row is never updated or deleted (the table carries ludy_kernel.make_append_only's
 //   trigger), so the table is its own history: a correction is a new row, such as a reversal or a void.
 export type EntityAudit = 'command' | 'append_only';
 

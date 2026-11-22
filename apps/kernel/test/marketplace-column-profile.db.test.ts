@@ -86,8 +86,8 @@ suite('the confirmed column mapping (#4037)', () => {
   async function fileOf(org: string): Promise<string> {
     const id = randomUUID();
     const sha256 = randomBytes(32).toString('hex');
-    await rows('INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, sha256, `org/${org}/${sha256}`, 'bao-cao.xlsx', XLSX, 1000, 'upload']);
-    await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'failed', NULL, '[]')", [org, id]);
+    await rows('INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, sha256, `org/${org}/${sha256}`, 'bao-cao.xlsx', XLSX, 1000, 'upload']);
+    await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'failed', NULL, '[]')", [org, id]);
     return id;
   }
   const requestedAt = async (fileId: string, org = orgId) => new Date((await rows('SELECT requested_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [org, fileId]))[0]?.requested_at).toISOString();
@@ -117,15 +117,15 @@ suite('the confirmed column mapping (#4037)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (db: Db) => new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     rt = register(createDb(pool));
     worker = register(createDb(workerPool));
@@ -138,7 +138,7 @@ suite('the confirmed column mapping (#4037)', () => {
     member = await person('member');
     viewer = await person('viewer');
     admin2 = await person('admin');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, admin2]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, admin2]);
     // A live agent of the first org: installed from the template, holding its own position, with a run started through a task that wakes it (so its actor is a real one, and the call reaches the command's own gate).
     const { agentId, positionId } = await rt.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: asMfa(owner), orgId });
     await rt.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
@@ -324,7 +324,7 @@ suite('the confirmed column mapping (#4037)', () => {
     const sheet = { ...SIGNED_SHEET, columns: COLUMNS.map((c) => (c.index === 5 ? { ...c, header: PLANTED_HEADER } : c)) };
     const lazada = await checked([...ASSIGN.slice(0, 1), { index: 5, field: 'lineKey' }], { platform: 'lazada', sheet });
     await confirm(lazada, 'lazada', [...ASSIGN.slice(0, 1), { index: 5, field: 'lineKey' }]);
-    const audit = await rows("SELECT detail::text AS detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.columns_confirm'", [orgId]);
+    const audit = await rows("SELECT detail::text AS detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.columns_confirm'", [orgId]);
     expect(audit.length).toBeGreaterThan(0);
     expect(audit.some((r) => String(r.detail).includes(PLANTED_HEADER) || String(r.detail).includes('Bút'))).toBe(false);
     // The header text is in the profile row itself, which is where it belongs.

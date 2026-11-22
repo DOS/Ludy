@@ -50,7 +50,7 @@ function requireUser(ctx: CommandContext): string {
 
 async function checkConnections(ctx: CommandContext, ids: readonly string[]): Promise<void> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...ids])
@@ -195,7 +195,7 @@ type Item = z.infer<typeof zItem>;
 // A draft for the feed's channels that are still connected; null when none is.
 async function draftFrom(ctx: CommandContext, feed: FeedRow, item: Item): Promise<string | null> {
   const live = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', feed.connection_ids)

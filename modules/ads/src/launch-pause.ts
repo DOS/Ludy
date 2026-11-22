@@ -133,7 +133,7 @@ export const adsPauseBegin = defineCommand({
     if ((STARTED_STATES as readonly string[]).includes(launch.state)) {
       const owner = await ctx.trx.selectFrom('crove_ads.ad_account').select('write_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', launch.ad_account_id).executeTakeFirst();
       const open = owner?.write_connection_id
-        ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', owner.write_connection_id).executeTakeFirst()
+        ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', owner.write_connection_id).executeTakeFirst()
         : undefined;
       if (open?.status === 'active') return none('not_stopped');
       await lockedSetting(ctx);
@@ -164,7 +164,7 @@ export const adsPauseBegin = defineCommand({
       .executeTakeFirst();
     if (!account) return none('not_found');
     const connection = account.write_connection_id
-      ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', account.write_connection_id).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', account.write_connection_id).executeTakeFirst()
       : undefined;
     // The launch row is locked (the account first, the order every command takes), so a record of the writer, which locks it too, either commits before the lists below
     // are read or waits for this transaction: "nothing to pause" and the objects are one reading, never two with a create between them.
@@ -174,7 +174,7 @@ export const adsPauseBegin = defineCommand({
     // What there is to pause: the objects Ludy recorded, and a create that was begun and never settled (it may have landed). With neither, nothing was ever made.
     const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'level', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launchId).orderBy('slot').execute();
     const { rows: unsettled } = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM crove_kernel.external_call
+      SELECT count(*)::int AS n FROM ludy_kernel.external_call
       WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%`} AND state IN ('started', 'ambiguous')`.execute(ctx.trx);
     if (objects.length === 0 && (unsettled[0]?.n ?? 0) === 0) {
       await settleWindDown(ctx, launchId, true, null, null);
@@ -185,13 +185,13 @@ export const adsPauseBegin = defineCommand({
     // An activation call that was begun and may still be in flight (its row is not settled and is younger than the longest a call can take, with its read) could switch an
     // object on after this run paused it: this run waits (the sweep brings the launch back), and the record of that call settles the row (W2-4b).
     const { rows: inFlight } = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM crove_kernel.external_call
+      SELECT count(*)::int AS n FROM ludy_kernel.external_call
       WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} AND state IN ('started', 'ambiguous') AND updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
     if ((inFlight[0]?.n ?? 0) > 0) return none('activation_in_flight');
     // The same for a change of the launch's objects (W4, #3835): a resume that was begun and may still be in flight could switch an object on after this run paused it.
     // A change that ended unclear has no call pending (nothing calls it again; a sweep's read only looks and touches the row's clock, #3898), so it never holds the pause back.
     const { rows: manageInFlight } = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM crove_kernel.external_call e
+      SELECT count(*)::int AS n FROM ludy_kernel.external_call e
       JOIN crove_ads.ad_manage_change c ON c.org_id = e.org_id AND e.key = 'ads.manage:' || c.id::text || ':apply'
       WHERE e.org_id = ${ctx.orgId}::uuid AND c.launch_id = ${launchId}::uuid AND c.state <> 'unclear' AND e.state IN ('started', 'ambiguous') AND e.updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
     if ((manageInFlight[0]?.n ?? 0) > 0) return none('manage_in_flight');
@@ -214,7 +214,7 @@ export const adsPauseBegin = defineCommand({
     const tries = taken[0]?.tries ?? null;
     if (tries === null) return none('in_flight');
     const callKey = pauseCallKey(launchId, tries);
-    await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: 'pause', retry_safety: 'idempotent', started_at: ctx.now }).execute();
+    await ctx.trx.insertInto('ludy_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: 'pause', retry_safety: 'idempotent', started_at: ctx.now }).execute();
     return {
       action: 'pause',
       launchId,
@@ -288,7 +288,7 @@ export const adsPauseRecord = defineCommand({
     if (launch.state !== 'stopped' || launch.wound_down_at || launch.wind_down_code) return { recorded: false, reason: 'settled' };
     // Only the run that holds the lease records: a run that stalled past it and was claimed again by a newer one is stale.
     if (launch.wind_down_tries !== tries) return { recorded: false, reason: 'stale' };
-    const call = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
+    const call = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!call || call.state !== 'started') return { recorded: false, reason: 'settled' };
 
     const result = input.result;
@@ -335,7 +335,7 @@ export const adsPauseRecord = defineCommand({
       // A create of this launch that is still in flight (begun a few minutes ago and not settled) may land after the platform was asked: the launch is not wound down
       // until it has settled or is old enough to be lost, and the next run lists again.
       const { rows: young } = await sql<{ age: number | null }>`
-        SELECT min(EXTRACT(EPOCH FROM (${ctx.now.toISOString()}::timestamptz - e.updated_at)))::float AS age FROM crove_kernel.external_call e
+        SELECT min(EXTRACT(EPOCH FROM (${ctx.now.toISOString()}::timestamptz - e.updated_at)))::float AS age FROM ludy_kernel.external_call e
         WHERE e.org_id = ${ctx.orgId}::uuid AND e.state = 'started' AND e.updated_at > ${ctx.now.toISOString()}::timestamptz - make_interval(secs => ${STARTED_STALE_SECONDS}::int)
           AND (e.key LIKE ${`ads.launch:${launchId}:%`}
                OR EXISTS (SELECT 1 FROM crove_ads.ad_manage_change c WHERE c.org_id = e.org_id AND c.launch_id = ${launchId}::uuid AND e.key = 'ads.manage:' || c.id::text || ':apply'))`.execute(ctx.trx);
@@ -366,7 +366,7 @@ export const adsPauseRecord = defineCommand({
     const settlement = settlePause({ tries: launch.wind_down_tries, stoppedAt: launch.finished_at ?? launch.started_at ?? ctx.now }, summary, ctx.now);
     if (!(await settleWindDown(ctx, launchId, settlement.state === 'done', settlement.nextAt, settlement.code))) return { recorded: false, reason: 'stale' };
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set(summary.complete ? { state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now } : { state: 'failed', error_kind: errorKind, error_code: errorCode, finished_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', call.id)
@@ -439,7 +439,7 @@ export const adsPausePending = defineQuery({
       // and `ads.pause.begin` stops the launch first. With the connection open the launch is not this obligation's (the connection that closed is another one).
       const holder = await ctx.trx.selectFrom('crove_ads.ad_account').select('write_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', own).executeTakeFirst();
       const current = holder?.write_connection_id
-        ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', holder.write_connection_id).executeTakeFirst()
+        ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', holder.write_connection_id).executeTakeFirst()
         : undefined;
       const connectionClosed = current?.status !== 'active';
       const rows = await ctx.trx

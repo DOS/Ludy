@@ -68,13 +68,13 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const admin = await person('admin');
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `Đối soát sàn ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
+        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
       );
     }
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
     // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
     await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     return { orgId, owner, admin, member, entity };
@@ -129,13 +129,13 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
   }
   const payloadOf = async (o: Org, proposalId: string) =>
-    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
       'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
       [o.orgId, entryId],
     );
-  const parties = (o: Org, name: string) => rows<{ id: string; kind: string }>('SELECT id, kind FROM crove_kernel.party WHERE org_id = $1 AND name = $2', [o.orgId, name]);
+  const parties = (o: Org, name: string) => rows<{ id: string; kind: string }>('SELECT id, kind FROM ludy_kernel.party WHERE org_id = $1 AND name = $2', [o.orgId, name]);
   const links = (o: Org, platform: string) => rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]);
   const vouchersOf = (o: Org, settlementId: string) => rows<{ id: string; proposal_id: string }>('SELECT id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2', [o.orgId, settlementId]);
 
@@ -150,8 +150,8 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
@@ -192,7 +192,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const lines = await entryOf(o, done.journalEntryId);
     expect(lines.map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['131', '335000', '0', created?.id], ['5111', '0', '335000', null]]);
     // The proposal moved to executed with its ledger effect (the database checks it at commit).
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
   });
 
   it("reuses the platform's party for its next settlement, named on the proposal from the start", async () => {
@@ -259,11 +259,11 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
       await rt.execute('kernel.proposal.reject', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     };
     // Larger amounts (balanced, so only the rebuild catches it), other accounts, another settlement's id, another entity, a party the link does not hold.
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"999000"'), '{lines,1,credit}', '"999000"'), '{total}', '"999000"') WHERE org_id = $1 AND id = $2`);
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"511"') WHERE org_id = $1 AND id = $2`);
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, randomUUID());
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,party}', jsonb_build_object('id', $3::text, 'name', 'Shopee', 'taxCode', null)) WHERE org_id = $1 AND id = $2`, randomUUID());
-    await tamper(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,memo}', '"khác"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"999000"'), '{lines,1,credit}', '"999000"'), '{total}', '"999000"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,account}', '"511"') WHERE org_id = $1 AND id = $2`);
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, randomUUID());
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,party}', jsonb_build_object('id', $3::text, 'name', 'Shopee', 'taxCode', null)) WHERE org_id = $1 AND id = $2`, randomUUID());
+    await tamper(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,1,memo}', '"khác"') WHERE org_id = $1 AND id = $2`);
     expect(await vouchersOf(o, settlement)).toHaveLength(0);
     expect(await parties(o, 'Shopee')).toHaveLength(0);
     // Lines the settlement does not hold: a line added to the stored settlement after the proposal changes the rebuilt amount (the table is append-only for tenants, so a superuser adds it).
@@ -336,7 +336,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const { proposalId } = await ask(h, taxed);
     await expect(approve(h, proposalId, h.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     expect(await vouchersOf(h, taxed)).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, proposalId]))[0]?.status).toBe('pending');
     // The shipped map is unchanged by all of it.
     expect(MARKETPLACE_POSTING_MAPS.tt133?.vatPayable.status).toBe('commentary');
   });
@@ -350,7 +350,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     ]);
     // One proposal for the settlement: September (the sale of the first line) and October (the other two, less the refund of the second, dated on the settlement's last day).
     const { proposalId } = await ask(o, settlement);
-    const stored = (await rows<{ payload: { date: string; total: string; sales: string; refund: string; months: { month: string; date: string; total: string }[]; lines: { account: string; memo: string }[] } }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    const stored = (await rows<{ payload: { date: string; total: string; sales: string; refund: string; months: { month: string; date: string; total: string }[]; lines: { account: string; memo: string }[] } }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
     expect(stored).toMatchObject({ date: '2026-10-15', total: '310000', sales: '350000', refund: '30000', months: [{ month: '2026-09', date: '2026-09-30', total: '90000' }, { month: '2026-10', date: '2026-10-15', total: '220000' }] });
     // Every month's entry is on the proposal, each line's memo naming its month.
     expect(stored?.lines).toHaveLength(4);
@@ -390,7 +390,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
   // A household seller: the default entity of the org is made a household with the given trades, and the rates of its trade are confirmed for the test (the shipped rows are commentary).
   async function household(o: Org, trades: string[], rateStatus: 'confirmed' | 'commentary' = 'confirmed') {
     await withAdmin(async (c) => {
-      await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]);
+      await c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]);
       await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3::text[])", [o.orgId, o.entity, trades]);
       await c.query("UPDATE crove_finance.household_trade_rate SET status = $1 WHERE trade = 'goods'", [rateStatus]);
     });
@@ -398,7 +398,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     return { vat: Number(rate?.vat_percent), pit: Number(rate?.pit_percent) };
   }
   type Stored = { total: string; taxWithheld?: string; taxEstimate?: { withheld: string; expected: string; difference: string }; lines: { account: string; debit: string; credit: string }[] };
-  const proposalOf = async (id: string) => (await rows<{ payload: Stored }>('SELECT payload FROM crove_kernel.proposal WHERE id = $1', [id]))[0]?.payload as Stored;
+  const proposalOf = async (id: string) => (await rows<{ payload: Stored }>('SELECT payload FROM ludy_kernel.proposal WHERE id = $1', [id]))[0]?.payload as Stored;
 
   it('credits the tax a platform withheld from a household to 3331 and 3335 in the month of the sale, split by the rate pair of its one trade, and nets to zero', async () => {
     const o = await org();
@@ -451,7 +451,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
 
   it('refuses an entity of kind household that has no profile in force, rather than treating it as a company', async () => {
     const o = await org();
-    await withAdmin((c) => c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]));
+    await withAdmin((c) => c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]));
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
     await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
@@ -556,7 +556,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await setRate(o, [{ from: '2026-01-01', method: 'deduction', percent: '10' }]);
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_MISMATCH', status: 422 });
     expect(await vouchersOf(o, settlement)).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     // A new request is built with the corrected rate: 1080000 x 10 / 110 = 98182 of VAT.
     const again = await ask(o, settlement, o.owner);
     expect((await payloadOf(o, again.proposalId))?.lines.map((l) => [l.account, l.credit])).toEqual([['131', '0'], ['5111', '981818'], ['33311', '98182']]);

@@ -118,10 +118,10 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
 
     const uApp = new URL(adminUrl);
-    uApp.username = 'crove_app';
+    uApp.username = 'ludy_app';
     uApp.password = 'test-app-pw';
     const appPool = createPool({ connectionString: uApp.toString(), max: 4 });
     pools.push(appPool);
@@ -190,23 +190,23 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
 
     const ids = await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`,
         [orgId, member.userId, otherMember.userId, limitedMember.userId],
       );
       const entities = await c.query<{ id: string }>(
-        `SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY is_default DESC`,
+        `SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY is_default DESC`,
         [orgId],
       );
       const entityA = entities.rows[0]?.id as string;
       const entityB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
           [orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [orgId, limitedMember.userId, entityA, owner.userId],
       );
@@ -214,7 +214,7 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
       const addSeat = async (title: string, holder: string, leScope: string[]) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status, le_scope)
+            `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status, le_scope)
              VALUES ($1, $2, 'kernel', 'staff', $3, 'active', $4::text[]) RETURNING id`,
             [orgId, title, holder, leScope],
           )
@@ -314,14 +314,14 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
     const { taskIdA, taskIdB } = await withAdmin(async (c) => {
       const a = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, assignee_position_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, assignee_position_id)
            VALUES ($1, 'Entity A Task', 'human', 'user', $2, $3) RETURNING id`,
           [orgId, ids.entityA, ids.seatLimited],
         )
       ).rows[0]?.id as string;
       const b = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, assignee_position_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, assignee_position_id)
            VALUES ($1, 'Entity B Secret Task', 'human', 'user', $2, $3) RETURNING id`,
           [orgId, ids.entityB, ids.seatMember],
         )
@@ -358,12 +358,12 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
 
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'member'), ($1, $3, 'admin'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
         [teamOrgId, unseatedMember.userId, unseatedAdmin.userId, archivedSeatMember.userId, viewer.userId],
       );
       await c.query(
-        `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status)
+        `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status)
          VALUES ($1, 'Old Seat', 'kernel', 'staff', $2, 'archived')`,
         [teamOrgId, archivedSeatMember.userId],
       );
@@ -395,10 +395,10 @@ suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
     const { orgId, slug } = await createOrg(fullRt, asUser(owner.userId), 'Toggle Org');
 
     const seatId = await withAdmin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member.userId]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member.userId]);
       return (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status)
+          `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status)
            VALUES ($1, 'Staff', 'kernel', 'staff', $2, 'active') RETURNING id`,
           [orgId, member.userId],
         )

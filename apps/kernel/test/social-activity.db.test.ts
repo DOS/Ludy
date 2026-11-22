@@ -43,7 +43,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'member' | 'viewer', string> = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -52,7 +52,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -72,9 +72,9 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -155,7 +155,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ privilege_type: string }>(
-          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' ORDER BY 1",
+          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' ORDER BY 1",
         )
       ).rows.map((r) => r.privilege_type),
     );
@@ -163,7 +163,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
@@ -173,7 +173,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query(statement, params);
         } finally {
           await c.query('ROLLBACK');
@@ -191,7 +191,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const o = await org();
     const [adminUser, assignee, bystander] = [await person('admin'), await person('assignee'), await person('bystander')];
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [o.orgId, adminUser, assignee, bystander]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [o.orgId, adminUser, assignee, bystander]),
     );
     const conn = await connection(o.orgId, o.owner);
     // The member writes the post; the owner, the assignee and another member comment on it.
@@ -235,7 +235,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const audited = await admin(async (c) =>
       (
         await c.query<{ target_type: string; target_id: string }>(
-          "SELECT target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.resolve', 'social.post_comment.reopen') AND outcome = 'ok'",
+          "SELECT target_type, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.resolve', 'social.post_comment.reopen') AND outcome = 'ok'",
           [o.orgId],
         )
       ).rows,

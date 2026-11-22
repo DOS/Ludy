@@ -83,7 +83,7 @@ function refuseProblems(type: VoucherType, problems: VoucherProblem[]): void {
 
 // The party as stored, or a refusal. Read FOR SHARE when posting, so it stays as read until commit.
 async function findParty(ctx: QueryContext, partyId: string, lock: boolean) {
-  let query = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', partyId);
+  let query = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', partyId);
   if (lock) query = query.forShare();
   const party = await query.executeTakeFirst();
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 422, 'Không tìm thấy đối tượng đã chọn; hãy chọn lại');
@@ -162,7 +162,7 @@ async function payrollPayableVoucherCheck(
   const kinds = [...byKind.keys()];
   const { rows } = await sql<{ kind: string | null }>`
     SELECT DISTINCT coalesce(p.payload #>> '{payroll,kind}', p.request_input ->> 'kind') AS kind
-    FROM crove_kernel.proposal p
+    FROM ludy_kernel.proposal p
     WHERE p.org_id = ${ctx.orgId}
       AND p.legal_entity_id = ${legalEntityId}
       AND p.command = ${PAYROLL_PAYMENT_COMMAND}
@@ -405,7 +405,7 @@ export const vouchersList = defineQuery({
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     let query = ctx.trx
       .selectFrom('crove_finance.cash_voucher as v')
-      .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
+      .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
       .leftJoin('crove_finance.journal_entry as j', (join) =>
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
@@ -479,7 +479,7 @@ export const cashVouchers = defineQuery({
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
       .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
-      .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
+      .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
       .select([
         'v.id as source_id',
         'v.voucher_type',

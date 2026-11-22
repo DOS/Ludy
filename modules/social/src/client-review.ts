@@ -19,7 +19,7 @@ export const clientSettle = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
-    const event = await ctx.trx.selectFrom('crove_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
+    const event = await ctx.trx.selectFrom('ludy_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
     const postId = (event?.payload as { post_id?: unknown } | undefined)?.post_id;
     if (event?.type !== 'social.review.answered' || typeof postId !== 'string') return { settled: [] as string[], verdict: null };
     const post = await lockPost(ctx.trx, ctx.orgId, postId).catch(() => null);

@@ -59,9 +59,9 @@ suite('duplicate parties (#887)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -71,7 +71,7 @@ suite('duplicate parties (#887)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     o = { orgId, owner, admin: await person('admin'), member: await person('member') };
     for (const role of ['admin', 'member'] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, o[role], role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, o[role], role]));
     }
     // Two payables for what is one vendor, entered once with its tax code and once by name only, and a third vendor.
     await execute('finance.opening_balance.post', {
@@ -83,7 +83,7 @@ suite('duplicate parties (#887)', () => {
         { rowNo: 5, accountCode: '331', accountName: 'Phải trả', debit: '', credit: '10000000', partyName: 'Nước sạch Sông Đà' },
       ],
     });
-    const ids = await admin(async (c) => (await c.query<{ id: string; name: string }>('SELECT id, name FROM crove_kernel.party WHERE org_id = $1', [orgId])).rows);
+    const ids = await admin(async (c) => (await c.query<{ id: string; name: string }>('SELECT id, name FROM ludy_kernel.party WHERE org_id = $1', [orgId])).rows);
     const idOf = (name: string) => String(ids.find((p) => p.name === name)?.id);
     kept = idOf('Công ty TNHH Dịch vụ Mẫu');
     duplicate = idOf('CONG TY TNHH DICH VU MAU');
@@ -132,10 +132,10 @@ suite('duplicate parties (#887)', () => {
     const lines = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_finance.journal_line WHERE org_id = $1 AND party_id = $2`, [o.orgId, duplicate])).rows);
     expect(lines).toEqual([{ n: 1 }]);
     const audit = await admin(
-      async (c) => (await c.query(`SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.mark_duplicate' AND outcome = 'ok'`, [o.orgId])).rows,
+      async (c) => (await c.query(`SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.mark_duplicate' AND outcome = 'ok'`, [o.orgId])).rows,
     );
     expect(audit).toEqual([{ actor_id: o.admin, detail: expect.objectContaining({ partyId: duplicate, keepId: kept, name: { redacted: 'pii' }, keepName: { redacted: 'pii' } }) }]);
-    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.marked_duplicate'`, [o.orgId, duplicate])).rows);
+    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.marked_duplicate'`, [o.orgId, duplicate])).rows);
     expect(activity).toEqual([{ summary: 'Gộp vào một đối tác trùng' }]);
     // Marking the same pair again changes nothing.
     expect(await execute('kernel.party.mark_duplicate', { partyId: duplicate, keepId: kept })).toEqual({ partyId: duplicate, keepId: kept });
@@ -149,9 +149,9 @@ suite('duplicate parties (#887)', () => {
     await expect(refused(kept, other)).rejects.toMatchObject({ code: 'PARTY_HAS_DUPLICATES', status: 422 });
     await expect(refused(randomUUID(), kept)).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND', status: 404 });
     // Any writer, not only the commands: the trigger refuses a chain.
-    await expect(admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3', [o.orgId, duplicate, other]))).rejects.toThrow(/PARTY_DUPLICATE_CHAIN/);
-    await expect(admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3', [o.orgId, other, kept]))).rejects.toThrow(/PARTY_DUPLICATE_CHAIN/);
-    await expect(admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = id WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rejects.toThrow(/party_duplicate_not_self/);
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3', [o.orgId, duplicate, other]))).rejects.toThrow(/PARTY_DUPLICATE_CHAIN/);
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3', [o.orgId, other, kept]))).rejects.toThrow(/PARTY_DUPLICATE_CHAIN/);
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = id WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rejects.toThrow(/party_duplicate_not_self/);
   });
 
   it('separates them again, which undoes the mark', async () => {
@@ -163,7 +163,7 @@ suite('duplicate parties (#887)', () => {
       [kept, '30000000'],
       [other, '10000000'],
     ]);
-    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.unmarked_duplicate'`, [o.orgId, duplicate])).rows);
+    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.unmarked_duplicate'`, [o.orgId, duplicate])).rows);
     expect(activity).toEqual([{ summary: 'Tách khỏi đối tác đã gộp vào' }]);
     // Unmarking a party that is not a duplicate changes nothing.
     expect(await execute('kernel.party.unmark_duplicate', { partyId: duplicate })).toEqual({ partyId: duplicate });
@@ -172,7 +172,7 @@ suite('duplicate parties (#887)', () => {
   it('lists vendors by name regardless of case, then by name and id (#999)', async () => {
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'xưởng in Bình An'), ($1, 'Xưởng in Bình An'), ($1, 'XƯỞNG IN BÌNH AN 2')`,
+        `INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'xưởng in Bình An'), ($1, 'Xưởng in Bình An'), ($1, 'XƯỞNG IN BÌNH AN 2')`,
         [o.orgId],
       ),
     );

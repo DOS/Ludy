@@ -1,7 +1,7 @@
 // Invite mail (issue #129) against a real PostgreSQL 17, through the HTTP API: one mail per created invite with the
 // accept link, none when the invite is refused, the same mail whether or not the invitee has an account, a failed or
 // missing mail server never failing the invite, and the raw token in no table and no log line. Each invite mail has a
-// crove_kernel.mail_message row with its outcome, and an address the org stopped gets none (#538). Set
+// ludy_kernel.mail_message row with its outcome, and an address the org stopped gets none (#538). Set
 // CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -135,7 +135,7 @@ suite('invite mail on PostgreSQL', () => {
         provider: string | null;
         provider_message_id: string | null;
       }>(
-        `SELECT status, error_code, to_address, message_id_header, created_by::text, attempts, provider, provider_message_id FROM crove_kernel.mail_message
+        `SELECT status, error_code, to_address, message_id_header, created_by::text, attempts, provider, provider_message_id FROM ludy_kernel.mail_message
           WHERE source = 'kernel.member.invite.create' AND source_id = $1`,
         [inviteId],
       );
@@ -151,7 +151,7 @@ suite('invite mail on PostgreSQL', () => {
         `SELECT pg_catalog.format('%I.%I', table_schema, table_name) AS name FROM information_schema.tables
           WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema')`,
       );
-      expect(tables.map((t) => t.name)).toEqual(expect.arrayContaining(['crove_kernel.member_invite', 'crove_kernel.outbox_event']));
+      expect(tables.map((t) => t.name)).toEqual(expect.arrayContaining(['ludy_kernel.member_invite', 'ludy_kernel.outbox_event']));
       const hits: string[] = [];
       for (const { name } of tables) {
         const { rows } = await c.query<{ n: number }>(`SELECT pg_catalog.count(*)::int AS n FROM ${name} t WHERE t::text LIKE '%' || $1 || '%'`, [needle]);
@@ -170,9 +170,9 @@ suite('invite mail on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -252,11 +252,11 @@ suite('invite mail on PostgreSQL', () => {
     expect(sent).toHaveLength(1);
 
     // The scan finds what is stored (the email, the token's hash), and not the token.
-    expect(await tablesContaining(invitee.email)).toContain('crove_kernel.member_invite');
+    expect(await tablesContaining(invitee.email)).toContain('ludy_kernel.member_invite');
     const [{ hash } = { hash: '' }] = await admin(
-      async (c) => (await c.query<{ hash: string }>('SELECT token_sha256 AS hash FROM crove_kernel.member_invite WHERE id = $1', [created.body?.inviteId])).rows,
+      async (c) => (await c.query<{ hash: string }>('SELECT token_sha256 AS hash FROM ludy_kernel.member_invite WHERE id = $1', [created.body?.inviteId])).rows,
     );
-    expect(await tablesContaining(hash)).toEqual(['crove_kernel.member_invite']);
+    expect(await tablesContaining(hash)).toEqual(['ludy_kernel.member_invite']);
     expect(await tablesContaining(token)).toEqual([]);
     expect(printed.join('\n')).not.toContain(token);
   });

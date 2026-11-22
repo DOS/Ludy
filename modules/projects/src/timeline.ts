@@ -49,7 +49,7 @@ export const projectTaskSetDates = defineCommand({
   access: WRITERS,
   writes: [
     tableWrite(TABLES, 'crove_projects', 'project_task', ['start_on']),
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'task', ['due']),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'task', ['due']),
   ],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectTaskSetDatesResult> => {
@@ -59,7 +59,7 @@ export const projectTaskSetDates = defineCommand({
 
     // Lock kernel task first (enforcing le_scope and private_project_scope RLS), then project_task.
     const task = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select(['id', 'due', 'checkout_run_id', 'lock_expires_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -111,7 +111,7 @@ export const projectTaskSetDates = defineCommand({
 
     if (dueChanged) {
       await ctx.trx
-        .updateTable('crove_kernel.task')
+        .updateTable('ludy_kernel.task')
         .set({ due: nextDueIso === null ? null : new Date(nextDueIso) })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', task.id)
@@ -212,9 +212,9 @@ export const projectTimeline = defineQuery({
         t.created_at,
         t.updated_at
       FROM crove_projects.project_task pt
-      JOIN crove_kernel.task t
+      JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
-      LEFT JOIN crove_kernel.position pos
+      LEFT JOIN ludy_kernel.position pos
         ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${row.id}::uuid
@@ -237,7 +237,7 @@ export const projectTimeline = defineQuery({
       const { rows: countRows } = await sql<{ n: string }>`
         SELECT pg_catalog.count(*)::text AS n
           FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t
+          JOIN ludy_kernel.task t
             ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${row.id}::uuid
@@ -263,9 +263,9 @@ export const projectTimeline = defineQuery({
       }>`
         SELECT d.id, d.blocker_task_id, d.blocked_task_id
           FROM crove_projects.task_dependency d
-          JOIN crove_kernel.task bt
+          JOIN ludy_kernel.task bt
             ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-          JOIN crove_kernel.task dt
+          JOIN ludy_kernel.task dt
             ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
          WHERE d.org_id = ${ctx.orgId}::uuid
            AND d.project_id = ${row.id}::uuid

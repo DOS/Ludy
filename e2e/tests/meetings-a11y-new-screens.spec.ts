@@ -45,7 +45,7 @@ async function ensureMorning(page: Page, slug: string, on: boolean): Promise<voi
   if ((await toggle.isChecked()) !== on) await toggle.click();
   await expect(toggle).toBeChecked({ checked: on });
   const stored = () =>
-    sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.morning_notice m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0]?.n ?? 0;
+    sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.morning_notice m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0]?.n ?? 0;
   await expect.poll(stored).toBe(on ? 1 : 0);
   // Saved: the switch can be used again (it waits while the save is on its way).
   await expect(toggle).toBeEnabled();
@@ -63,10 +63,10 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
     exec(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT t.org_id, gen_random_uuid(), 'Họp tuần cho màn hình mới', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
-         FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
-    meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
+    meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
     await page.goto(`/o/${slug}/meetings/${meetingId}`);
     const panel = page.getByTestId('meeting-results');
     await expect(panel).toBeVisible();
@@ -79,21 +79,21 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
 
   await test.step('a connected calendar that reads events, with two events today: one recorded (linked to the meeting), one not', async () => {
     exec(
-      `INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
+      `INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
        SELECT t.org_id, gen_random_uuid(), u.id, 'google', 'a11y@calendar.test', 'a11y', '{}', true
-         FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, meeting_id)
        SELECT c.org_id, c.id, c.user_id, 'a11y-recorded', :'recorded', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh' + interval '30 minutes', 'Asia/Ho_Chi_Minh', :'meeting'::uuid
-         FROM crove_kernel.calendar_connection c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_kernel.calendar_connection c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
       { slug, recorded: EVENT_TITLES.recorded, meeting: meetingId },
     );
     exec(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
        SELECT c.org_id, c.id, c.user_id, 'a11y-open', :'open', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh' + interval '45 minutes', 'Asia/Ho_Chi_Minh'
-         FROM crove_kernel.calendar_connection c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_kernel.calendar_connection c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
       { slug, open: EVENT_TITLES.open },
     );
   });

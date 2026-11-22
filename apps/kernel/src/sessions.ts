@@ -24,7 +24,7 @@ function sqlSource(mode: SessionCheckMode): SessionStatusSource {
     liveCheckForR3: mode === 'jwt',
     async check(trx, actor, orgId) {
       const aal = actor.aal === 'aal2' ? 'aal2' : 'aal1';
-      await sql`SELECT crove_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text)`.execute(
+      await sql`SELECT ludy_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text)`.execute(
         trx,
       );
     },

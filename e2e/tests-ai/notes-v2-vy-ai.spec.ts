@@ -19,49 +19,49 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
     exec(
       `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
        SELECT t.org_id, u.id, 'Nộp tờ khai thuế quá hạn', 1, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'Asia/Ho_Chi_Minh', '000001'
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
       `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
        SELECT t.org_id, u.id, 'Gọi khách chốt báo giá', 2, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'Asia/Ho_Chi_Minh', '000002'
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
       `INSERT INTO crove_notes.notebook (org_id, author_user_id, visibility, name, sort_key)
        SELECT t.org_id, u.id, 'private', 'Hồ sơ tài chính', '000001'
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
       `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title, body)
        SELECT t.org_id, u.id, 'private', 'Hóa đơn điện tháng 11', 'Cần lưu vào sổ tay tài chính'
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
 
     overdueTodoId = (
       sql<{ id: string }>(
-        `SELECT td.id FROM crove_notes.todo td JOIN crove_kernel.tenant t ON t.org_id = td.org_id
+        `SELECT td.id FROM crove_notes.todo td JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
          WHERE t.slug = :'slug' AND td.title = 'Nộp tờ khai thuế quá hạn'`,
         { slug },
       )[0] as { id: string }
     ).id;
     notebookId = (
       sql<{ id: string }>(
-        `SELECT nb.id FROM crove_notes.notebook nb JOIN crove_kernel.tenant t ON t.org_id = nb.org_id
+        `SELECT nb.id FROM crove_notes.notebook nb JOIN ludy_kernel.tenant t ON t.org_id = nb.org_id
          WHERE t.slug = :'slug' AND nb.name = 'Hồ sơ tài chính'`,
         { slug },
       )[0] as { id: string }
     ).id;
     unfiledNoteId = (
       sql<{ id: string }>(
-        `SELECT n.id FROM crove_notes.note n JOIN crove_kernel.tenant t ON t.org_id = n.org_id
+        `SELECT n.id FROM crove_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
          WHERE t.slug = :'slug' AND n.title = 'Hóa đơn điện tháng 11'`,
         { slug },
       )[0] as { id: string }

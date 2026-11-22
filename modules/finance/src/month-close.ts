@@ -26,7 +26,7 @@ const DATE = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$';
 
 // The org's filing period (an org that never set one files monthly, so null reads as month).
 async function filingPeriod(ctx: QueryContext): Promise<VatFilingPeriod | null> {
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
   return (org?.vat_filing_period as VatFilingPeriod | null | undefined) ?? null;
 }
 
@@ -36,7 +36,7 @@ async function filingPeriod(ctx: QueryContext): Promise<VatFilingPeriod | null> 
 async function pendingProposals(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const { rows } = await sql<{ n: string }>`
     SELECT pg_catalog.count(*)::text AS n
-    FROM crove_kernel.proposal p
+    FROM ludy_kernel.proposal p
     CROSS JOIN LATERAL (
       SELECT COALESCE(
         CASE WHEN p.payload->>'date' ~ ${DATE} THEN p.payload->>'date' END,
@@ -111,7 +111,7 @@ async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBoun
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_kernel.proposal as p')
+          selectFrom('ludy_kernel.proposal as p')
             .select('p.id')
             .whereRef('p.org_id', '=', 'l.org_id')
             .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, MARKETPLACE_PAYOUT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
@@ -136,7 +136,7 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
     AND s.reversal_of IS NULL
     AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
   const pending = (command: string) =>
-    sql`NOT EXISTS (SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND pg_catalog.lower(p.payload->>'settlementId') = pg_catalog.lower(s.id::text))`;
+    sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND pg_catalog.lower(p.payload->>'settlementId') = pg_catalog.lower(s.id::text))`;
   const candidates = (
     await sql<{ id: string; period_end: string }>`
       SELECT s.id, s.period_end::text AS period_end FROM crove_finance.channel_settlement s
@@ -157,7 +157,7 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
   }
   // The lines a person must classify before the payout (adjustableOf): the other amounts above zero, only when the settlement's other amounts add up to something, and the tax withheld when the seller
   // is no household. The settlement is not offered when one of them holds a fraction of a dong (an adjustment is whole dong), or when they come to more than one request carries.
-  const household = (await sql<{ kind: string }>`SELECT kind FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND id = ${entity}::uuid`.execute(ctx.trx)).rows[0]?.kind === 'household';
+  const household = (await sql<{ kind: string }>`SELECT kind FROM ludy_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND id = ${entity}::uuid`.execute(ctx.trx)).rows[0]?.kind === 'household';
   const { rows } = await sql<{ n: string }>`
     SELECT pg_catalog.count(*)::text AS n FROM (
       SELECT s.id,

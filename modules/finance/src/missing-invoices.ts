@@ -196,7 +196,7 @@ export const missingInvoicesRequest = defineCommand({
     // One request per period and entity at a time: concurrent clicks wait here, then see the first one's mail.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.missing_invoices:${ctx.orgId}:${legalEntityId}:${input.period}`}, 0))`.execute(ctx.trx);
     const recent = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', MISSING_INVOICE_REQUEST_SOURCE)
@@ -210,7 +210,7 @@ export const missingInvoicesRequest = defineCommand({
     }
     const items = await missingIn(ctx, input.period, legalEntityId);
     if (items.length === 0) throw new DomainError('NOTHING_MISSING', 409, `Không còn hóa đơn mua vào nào thiếu trong ${periodLabel(input.period)}`);
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const queued = await ctx.run<Queued>('kernel.mail.contact.queue', {
       source: MISSING_INVOICE_REQUEST_SOURCE,
       templateKey: MISSING_INVOICE_TEMPLATE,
@@ -240,7 +240,7 @@ export const missingInvoicesReminderSet = defineCommand({
   access: EDITORS,
   handler: async (ctx, input) => {
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['contact_email', 'missing_invoice_reminder_day'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
@@ -248,7 +248,7 @@ export const missingInvoicesReminderSet = defineCommand({
       throw new DomainError('CONTACT_EMAIL_REQUIRED', 409, 'Công ty chưa có email liên hệ; chủ sở hữu hoặc quản trị viên nhập email này trong Cài đặt');
     }
     if (tenant.missing_invoice_reminder_day !== input.day) {
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ missing_invoice_reminder_day: input.day }).where('org_id', '=', ctx.orgId).execute();
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ missing_invoice_reminder_day: input.day }).where('org_id', '=', ctx.orgId).execute();
       await ctx.activity(
         'kernel.tenant',
         ctx.orgId,
@@ -281,13 +281,13 @@ export const missingInvoicesRemind = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới gửi được email nhắc');
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.missing_invoices:${ctx.orgId}:remind`}, 0))`.execute(ctx.trx);
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['name', 'contact_email', 'missing_invoice_reminder_day'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
     if (tenant.missing_invoice_reminder_day === null) return { action: 'off' };
     const sent = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', MISSING_INVOICE_REMIND_SOURCE)
@@ -297,7 +297,7 @@ export const missingInvoicesRemind = defineCommand({
     // Once a month: a run that sent nothing (every period too large to reconcile) counts too, so the sweep does not
     // run it again all day.
     const ran = await ctx.trx
-      .selectFrom('crove_kernel.audit_event')
+      .selectFrom('ludy_kernel.audit_event')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', 'finance.missing_invoices.remind')
@@ -344,7 +344,7 @@ export const missingInvoicesRemind = defineCommand({
       return { action: 'skipped', skipped };
     }
     if (missing.length === 0) {
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ missing_invoice_reminder_day: null }).where('org_id', '=', ctx.orgId).execute();
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ missing_invoice_reminder_day: null }).where('org_id', '=', ctx.orgId).execute();
       await ctx.activity('kernel.tenant', ctx.orgId, 'missing_invoices.reminder_stopped', 'Dừng email nhắc hằng tháng vì không còn hóa đơn mua vào nào thiếu');
       ctx.audit({ stopped: true });
       return { action: 'stopped' };
@@ -402,12 +402,12 @@ export const missingInvoicesStatus = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<MissingInvoiceStatus> => {
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['contact_email', 'missing_invoice_reminder_day'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'source', 'status', 'payload', 'created_at', 'sent_at'])
       .where('org_id', '=', ctx.orgId)
       .where('source', 'in', [MISSING_INVOICE_REQUEST_SOURCE, MISSING_INVOICE_REMIND_SOURCE])

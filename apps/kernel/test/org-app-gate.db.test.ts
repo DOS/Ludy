@@ -94,7 +94,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
 
   const appUrlOf = () => {
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = 'ludy_app';
     u.password = 'test-app-pw';
     return u.toString();
   };
@@ -120,7 +120,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Gate ${randomUUID().slice(0, 6)}`);
     const [admin, member, viewer] = [await person('admin'), await person('member'), await person('viewer')];
     await withAdmin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, admin, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, admin, member, viewer]),
     );
     const setApp = (module: string, enabled: boolean) => rt.execute('kernel.org.set_app', { module, enabled }, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() });
     const exec = <T = string>(runtime: Runtime, name: string, user: string, input: unknown = {}) => runtime.execute<T>(name, input, { actor: asUser(user), orgId, idempotencyKey: randomUUID() });
@@ -138,8 +138,8 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     };
     const traces = (command: string) =>
       withAdmin(async (c) => ({
-        keys: (await c.query('SELECT 1 FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = $2', [orgId, command])).rowCount,
-        audits: (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'", [orgId, command])).rowCount,
+        keys: (await c.query('SELECT 1 FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND command = $2', [orgId, command])).rowCount,
+        audits: (await c.query("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'", [orgId, command])).rowCount,
       }));
     return { orgId, owner, admin, member, viewer, setApp, exec, query, agent, traces };
   }
@@ -155,13 +155,13 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 8 });
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     definitions = {
@@ -238,7 +238,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
         const { rows } = await c.query<{ id: string }>(
           `SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`,
           [
@@ -263,7 +263,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     expect(await todayApps(o.owner)).not.toContain('finance');
     const approve = () => rt.execute('kernel.proposal.approve', { id: requested.proposalId, revision: 1 }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(approve()).rejects.toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'finance' } });
-    const state = async () => withAdmin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE id = $1', [requested.proposalId])).rows[0]?.status);
+    const state = async () => withAdmin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE id = $1', [requested.proposalId])).rows[0]?.status);
     expect(await state()).toBe('pending');
     // Slice e (#3311): the Inbox leaves the proposal out of its list and says so with one count, for every member who could read it; the proposal itself is untouched.
     const listed = async (user: string) => (await o.query<Array<{ id: string }>>(rt, 'kernel.inbox.list', user)).map((i) => i.id);
@@ -379,13 +379,13 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
       },
     });
     // No answer ever known: the app runs (fail open to full), and a security event says the port failed.
-    const before = await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount);
+    const before = await withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount);
     await expect(o.exec(flaky, 'probe.touch', o.member)).resolves.toBe('ran');
     // The event is noted after the call's transaction, so it arrives a moment later.
     let after = before ?? 0;
     for (let i = 0; i < 100 && after === (before ?? 0); i++) {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      after = (await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount)) ?? 0;
+      after = (await withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount)) ?? 0;
     }
     expect(after).toBe((before ?? 0) + 1);
     // A known answer is kept after the cache expires: [] holds nothing, so the app stays off while the port is down.
@@ -401,12 +401,12 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   it('reads a database before the migration that adds the choice as having nothing switched off, and fails closed on a missing row after it', async () => {
     const o = await org();
     // A database that does not yet have the column (an upgrade in progress): nothing can be off, so the app runs. A fresh runtime has not seen the column.
-    await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off TO apps_off_hidden'));
+    await withAdmin((c) => c.query('ALTER TABLE ludy_kernel.tenant RENAME COLUMN apps_off TO apps_off_hidden'));
     const upgrading = runtimeWith();
     try {
       await expect(o.exec(upgrading, 'probe.touch', o.member)).resolves.toBe('ran');
     } finally {
-      await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off_hidden TO apps_off'));
+      await withAdmin((c) => c.query('ALTER TABLE ludy_kernel.tenant RENAME COLUMN apps_off_hidden TO apps_off'));
     }
     // Back with the column: the same runtime reads the choice again ("absent" is never cached).
     await o.setApp('probe', false);
@@ -415,7 +415,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
 
   it('records no sensitive read of an app that is off', async () => {
     const o = await org();
-    const rows = () => withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'probe.secret' AND outcome = 'ok'", [o.orgId])).rowCount);
+    const rows = () => withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'probe.secret' AND outcome = 'ok'", [o.orgId])).rowCount);
     await expect(o.query(rt, 'probe.secret', o.owner)).resolves.toBe('secret');
     expect(await rows()).toBe(1);
     await o.setApp('probe', false);
@@ -453,7 +453,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     await holder.connect();
     try {
       await holder.query('BEGIN');
-      await holder.query('SELECT 1 FROM crove_kernel.tenant WHERE org_id = $1 FOR UPDATE', [o.orgId]);
+      await holder.query('SELECT 1 FROM ludy_kernel.tenant WHERE org_id = $1 FOR UPDATE', [o.orgId]);
       const started = o.exec(rt, 'probe.busy', o.member).then(
         (v) => ({ ok: v }),
         (e: unknown) => ({ refused: e as { code?: string } }),
@@ -465,7 +465,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
         if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
       }
       expect(waiting).toBe(true);
-      await holder.query("UPDATE crove_kernel.tenant SET apps_off = '{probe}', apps_version = 2 WHERE org_id = $1", [o.orgId]);
+      await holder.query("UPDATE ludy_kernel.tenant SET apps_off = '{probe}', apps_version = 2 WHERE org_id = $1", [o.orgId]);
       await holder.query('COMMIT');
       expect(await started).toMatchObject({ refused: { code: 'MODULE_OFF' } });
     } finally {
@@ -510,7 +510,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     const agent = await o.agent();
     await o.setApp('probe', false);
     const refusals = (command: string) =>
-      withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome IN ('denied', 'failed')", [o.orgId, command])).rowCount);
+      withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome IN ('denied', 'failed')", [o.orgId, command])).rowCount);
     // The worker, a sweep and the relay meet MODULE_OFF every tick for every item: no row, so none of the refusal budget is spent.
     for (let i = 0; i < 3; i++) {
       await expect(worker.execute('probe.sys_touch', {}, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'MODULE_OFF' });

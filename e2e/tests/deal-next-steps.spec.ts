@@ -14,7 +14,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
   await page.goto('/');
   await signInNewUser(page, email);
   const slug = await createOrg(page, 'Công ty Theo Dõi');
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
 
   await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
@@ -40,7 +40,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
   await test.step('the steps the daily rule raises show as a badge on the cards and as a count on the tab', async () => {
     exec(
       `INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, assignee_user_id, since_on)
-       SELECT d.org_id, d.id, 'no_activity', d.owner_user_id, current_date - 20 FROM crove_crm.deal d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+       SELECT d.org_id, d.id, 'no_activity', d.owner_user_id, current_date - 20 FROM crove_crm.deal d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     await page.reload();
@@ -84,12 +84,12 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     await expect(page.getByRole('status').filter({ hasText: 'Đã đánh dấu xong 2 việc.' })).toBeVisible();
     // One audit row for the two, ids only.
     const audits = sql<{ n: number }>(
-      `SELECT count(*)::int AS n FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'crm.next_step.done' AND jsonb_array_length(a.detail -> 'nextStepIds') = 2`,
+      `SELECT count(*)::int AS n FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'crm.next_step.done' AND jsonb_array_length(a.detail -> 'nextStepIds') = 2`,
       { slug },
     );
     expect(audits).toEqual([{ n: 1 }]);
     const stored = sql<{ status: string; n: number }>(
-      `SELECT n.status, count(*)::int AS n FROM crove_crm.deal_next_step n JOIN crove_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' GROUP BY n.status ORDER BY n.status`,
+      `SELECT n.status, count(*)::int AS n FROM crove_crm.deal_next_step n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' GROUP BY n.status ORDER BY n.status`,
       { slug },
     );
     expect(stored).toEqual([{ status: 'done', n: 3 }, { status: 'open', n: 1 }]);
@@ -108,7 +108,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     await setting.getByLabel('Số ngày').fill('30');
     await setting.getByRole('button', { name: 'Lưu' }).click();
     await expect(setting.getByText('Đã lưu.')).toBeVisible();
-    const stored = sql<{ stale_days: number }>(`SELECT s.stale_days FROM crove_crm.deal_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
+    const stored = sql<{ stale_days: number }>(`SELECT s.stale_days FROM crove_crm.deal_setting s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
     expect(stored).toEqual([{ stale_days: 30 }]);
   });
 });

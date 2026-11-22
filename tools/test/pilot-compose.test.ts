@@ -58,7 +58,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const services = config(['docker-compose.yml']);
     expect(services['crove']?.command).toEqual(['all']);
     expect(services['crove']?.profiles).toBeUndefined();
-    expect(services['crove']?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
+    expect(services['crove']?.environment?.['WORKER_DATABASE_URL']).toContain('ludy_worker');
     expect(services['crove']?.environment?.['LUDY_MODULES']).toBe('');
     expect(services['crove']?.networks).toEqual({ default: { aliases: ['ludy'] }, extract: null, media: null });
     expect(services['api']).toBeUndefined();
@@ -91,8 +91,8 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     // The API reaches ludy-media (and not ludy-extract): it measures the length of a meeting recording at upload (#2985).
     expect(Object.keys(api?.networks ?? {}).sort()).toEqual(['default', 'media']);
     expect(api?.environment?.['MEDIA_URL']).toBe('http://ludy-media:8095');
-    expect(api?.environment?.['DATABASE_URL']).toContain('crove_app');
-    expect(worker?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
+    expect(api?.environment?.['DATABASE_URL']).toContain('ludy_app');
+    expect(worker?.environment?.['WORKER_DATABASE_URL']).toContain('ludy_worker');
     expect(worker?.environment?.['EXTRACT_URL']).toBe('http://ludy-extract:8090');
     expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
     expect(worker?.environment?.['MEDIA_URL']).toBe('http://ludy-media:8095');
@@ -175,10 +175,10 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
       AUTH_JWT_SECRET: random(),
       AUTH_AUTOCONFIRM: 'false',
       LUDY_CONTEXT_TOKEN_KEY: random(),
-      DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
+      DATABASE_URL: `postgres://ludy_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
       EXPORT_ENCRYPTION_KEY: random(),
     };
-    const workerSecret = { WORKER_DATABASE_URL: `postgres://crove_worker:${randomBytes(18).toString('hex')}@db:5432/postgres` };
+    const workerSecret = { WORKER_DATABASE_URL: `postgres://ludy_worker:${randomBytes(18).toString('hex')}@db:5432/postgres` };
     // The API: loads, refuses nothing of its own, and has none of the worker's.
     const api = loadConfig({ ...strings('api'), ...secrets });
     expect(() => assertSplitRoles(api, 'api')).not.toThrow();
@@ -230,7 +230,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
       AUTH_JWT_SECRET: random(),
       AUTH_AUTOCONFIRM: 'false',
       LUDY_CONTEXT_TOKEN_KEY: random(),
-      DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
+      DATABASE_URL: `postgres://ludy_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
       EXPORT_ENCRYPTION_KEY: random(),
     });
     expect(loaded.AUTH_SESSION_CHECK).toBe('jwt');

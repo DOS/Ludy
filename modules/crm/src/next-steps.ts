@@ -94,7 +94,7 @@ export const nextStepRaise = defineCommand({
     // raised for it is never one for a deal that just changed.
     const candidates = await ctx.trx
       .selectFrom('crove_crm.deal as d')
-      .select(['d.id', 'd.owner_user_id', 'd.expected_close', 'd.updated_at', sql<string | null>`(SELECT m.role FROM crove_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id)`.as('owner_role')])
+      .select(['d.id', 'd.owner_user_id', 'd.expected_close', 'd.updated_at', sql<string | null>`(SELECT m.role FROM ludy_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id)`.as('owner_role')])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.closed_at', 'is', null)
       .where((eb) => eb.or([eb('d.expected_close', '<', today), eb('d.updated_at', '<=', quietSince)]))
@@ -156,12 +156,12 @@ async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ ra
     .execute();
   const resolvedSince = new Date(ctx.now.getTime() - 7 * DAY_MS);
   // The org's own N (Settings, Engage's wake rules #3862), else the product's default: the days a sent quote waits before the follow-up is raised, for Home and for the coworker's wake-up alike.
-  const setting = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('wake_quote_days').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const setting = await ctx.trx.selectFrom('ludy_kernel.conversation_setting').select('wake_quote_days').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const quoteDays = setting?.wake_quote_days ?? QUOTE_UNANSWERED_DAYS;
   const soon = sql<boolean>`(q.valid_until >= ${today}::date AND q.valid_until <= ${today}::date + ${QUOTE_EXPIRING_DAYS}::int)`;
   const found = await sql<{ deal_id: string; owner_user_id: string | null; owner_role: string | null; reason: DealNextStepReason; since_on: Date | string }>`
     SELECT DISTINCT ON (d.id) d.id AS deal_id, d.owner_user_id,
-           (SELECT m.role FROM crove_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id) AS owner_role,
+           (SELECT m.role FROM ludy_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id) AS owner_role,
            CASE WHEN ${soon} THEN 'quote_expiring' ELSE 'quote_unanswered' END AS reason,
            CASE WHEN ${soon} THEN q.valid_until ELSE (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date END AS since_on
     FROM crove_crm.quote q
@@ -273,7 +273,7 @@ export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cu
   let q = ctx.trx
     .selectFrom('crove_crm.deal_next_step as n')
     .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
-    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     .select(['n.id', 'n.deal_id', 'n.reason', 'n.since_on', 'n.raised_at', 'n.assignee_user_id', 'd.title', 'd.party_id', 'd.amount', 'd.expected_close', 'p.name as party_name', 's.name as stage_name'])
     .where('n.org_id', '=', ctx.orgId)

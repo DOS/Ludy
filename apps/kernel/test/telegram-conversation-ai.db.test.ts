@@ -53,9 +53,9 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
     const connectionId = randomUUID();
-    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'telegram', $3, 'Bot thử', $4)", [orgId, connectionId, `-100${Math.floor(Math.random() * 1e9)}`, owner]);
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'telegram', $3, 'Bot thử', $4)", [orgId, connectionId, `-100${Math.floor(Math.random() * 1e9)}`, owner]);
     return { orgId, owner, member, connectionId };
   }
 
@@ -71,11 +71,11 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     at: new Date(Date.now() - 600_000 + tick * 100).toISOString(),
   });
   const ingest = (o: Org, events: ConversationEvent[]) => worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events }, { actor: SYSTEM, orgId: o.orgId });
-  const threadOf = async (o: Org, chat: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, chat]))[0] as { id: string }).id;
+  const threadOf = async (o: Org, chat: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, chat]))[0] as { id: string }).id;
   const detail = (o: Org, id: string) => rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: id }, { actor: asUser(o.owner), orgId: o.orgId });
-  const drafts = (o: Org) => rows<{ id: string; state: string; body: string | null; source: string; tainted: boolean }>('SELECT id, state, body, source, tainted FROM crove_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
-  const outgoing = (o: Org) => rows<{ send_state: string | null; body: string }>("SELECT send_state, body FROM crove_kernel.conversation_message WHERE org_id = $1 AND direction = 'out'", [o.orgId]);
-  const queuedReplies = (o: Org) => rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.reply_queued'", [o.orgId]);
+  const drafts = (o: Org) => rows<{ id: string; state: string; body: string | null; source: string; tainted: boolean }>('SELECT id, state, body, source, tainted FROM ludy_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+  const outgoing = (o: Org) => rows<{ send_state: string | null; body: string }>("SELECT send_state, body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND direction = 'out'", [o.orgId]);
+  const queuedReplies = (o: Org) => rows("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.reply_queued'", [o.orgId]);
 
   function model(answer: ReplyDraftResult, usage: AiUsage = { inputTokens: 1000, outputTokens: 200 }) {
     const asked: ReplyDraftRequest[] = [];
@@ -104,16 +104,16 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
@@ -145,14 +145,14 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     expect(m.asked[0]?.maxChars).toBeLessThanOrEqual(CONVERSATION_PROVIDER_RULES.telegram?.replyMax as number);
     // The draft is tainted AI text, live for a person to read; the cost counted against the org's AI cost.
     expect((await detail(o, id)).draft).toMatchObject({ state: 'live', source: 'auto', body: DRAFT_TEXT, tainted: true });
-    expect(Number((await rows<{ amount: string }>("SELECT sum(amount)::text AS amount FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'", [o.orgId]))[0]?.amount)).toBeCloseTo(1.6, 6);
+    expect(Number((await rows<{ amount: string }>("SELECT sum(amount)::text AS amount FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'", [o.orgId]))[0]?.amount)).toBeCloseTo(1.6, 6);
     // No auto-send: no message out, no reply queued, however long the draft is live.
     expect(await outgoing(o)).toEqual([]);
     expect(await queuedReplies(o)).toHaveLength(0);
     // Nothing of the customer's words or the draft in an audit row or an event.
     const leaks = await rows<{ n: string }>(
-      `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%xyzzy%' OR detail::text LIKE '%Dạ áo%'))
-            + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%xyzzy%' OR payload::text LIKE '%Dạ áo%')) AS n`,
+      `SELECT (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%xyzzy%' OR detail::text LIKE '%Dạ áo%'))
+            + (SELECT count(*) FROM ludy_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%xyzzy%' OR payload::text LIKE '%Dạ áo%')) AS n`,
       [o.orgId],
     );
     expect(Number(leaks[0]?.n)).toBe(0);
@@ -189,7 +189,7 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     expect(await queuedReplies(o)).toHaveLength(1);
     // The reply may be as long as Telegram takes (4096), and no longer.
     await ingest(o, [event('503', 'Còn size M không ạ?')]);
-    const seq = (await rows<{ last_seq: number }>('SELECT last_seq FROM crove_kernel.conversation WHERE id = $1', [id]))[0]?.last_seq as number;
+    const seq = (await rows<{ last_seq: number }>('SELECT last_seq FROM ludy_kernel.conversation WHERE id = $1', [id]))[0]?.last_seq as number;
     await expect(rt.execute('kernel.conversation.reply', { conversationId: id, body: 'a'.repeat(4097), lastSeenSeq: seq }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'REPLY_TOO_LONG' });
     await rt.execute('kernel.conversation.reply', { conversationId: id, body: 'a'.repeat(4096), lastSeenSeq: seq }, { actor: asUser(o.owner), orgId: o.orgId });
   });
@@ -202,7 +202,7 @@ suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
     expect(source).toEqual([{ id, lastSeq: 1, texts: ['Cho mình đặt 3 cái áo, ship về Đà Nẵng nhé'] }]);
     // The model never stores a label: only a person's choice is kept, with who set it.
     await rt.execute('kernel.conversation.set_intent', { conversationId: id, intent: 'order_or_price' }, { actor: asUser(o.owner), orgId: o.orgId });
-    expect(await rows('SELECT intent, intent_set_by FROM crove_kernel.conversation WHERE id = $1', [id])).toEqual([{ intent: 'order_or_price', intent_set_by: o.owner }]);
+    expect(await rows('SELECT intent, intent_set_by FROM ludy_kernel.conversation WHERE id = $1', [id])).toEqual([{ intent: 'order_or_price', intent_set_by: o.owner }]);
   });
 
   it('works with AI off: with no model a requested draft is settled as none, the message is in the inbox, and a person can still answer it', async () => {

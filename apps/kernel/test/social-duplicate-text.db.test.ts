@@ -45,7 +45,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function connection(orgId: string, owner: string, provider: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -54,7 +54,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     return { orgId, owner, member, x: await connection(orgId, owner, 'x', 'Kênh X'), other: await connection(orgId, owner, 'sandbox', 'Kênh khác') };
   }
 
@@ -96,9 +96,9 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = 'ludy_app';
     u.password = 'test-app-pw';
     appPool = createPool({ connectionString: u.toString(), max: 4 });
     db = createDb(appPool);

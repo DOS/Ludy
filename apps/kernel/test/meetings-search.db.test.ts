@@ -65,9 +65,9 @@ suite('search across readable meetings (#2589, L2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -77,7 +77,7 @@ suite('search across readable meetings (#2589, L2)', () => {
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'stranger', 'viewer', 'outsider']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'meetings-search', subject: key, email: `${key}@meetings-search.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tìm trong họp')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('outsider'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [
       orgId,
       users.admin,
       users.recorder,
@@ -261,7 +261,7 @@ suite('search across readable meetings (#2589, L2)', () => {
     const plan = await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL enable_seqscan = off');
-      const rows = (await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM crove_meetings.transcript_segment WHERE search @@ crove_kernel.search_query('quynhlam')`)).rows;
+      const rows = (await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM crove_meetings.transcript_segment WHERE search @@ ludy_kernel.search_query('quynhlam')`)).rows;
       await c.query('ROLLBACK');
       return rows.map((r) => r['QUERY PLAN']).join('\n');
     });

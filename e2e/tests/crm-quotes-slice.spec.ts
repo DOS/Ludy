@@ -17,7 +17,7 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
   await page.goto('/');
   await signInNewUser(page, newEmail('quote-slice'));
   const slug = await createOrg(page, 'Công ty Cả Luồng Báo Giá');
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
   const nav = page.getByRole('navigation');
   const dealCard = () => page.getByTestId('deal-card').filter({ hasText: 'Gói kế toán năm' });
 

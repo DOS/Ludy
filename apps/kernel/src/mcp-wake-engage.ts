@@ -2,7 +2,7 @@
 // Engage's wake rules, the part the sweep runs (#3862, E3 of epic #3857; ADR-0051 decision 13): the deterministic rules, with no model, that tell the AI coworkers (Dy for Engage, Uy for Social and Ads) there is work.
 // The sweep (mcp-wake-sweep.ts) offers this feed to every company grant whose wake-up is due; for each it reads the rules' answers AS THE GRANT (an MCP actor holding the grant's own scopes, so each read runs in the
 // grant's sealed read-only context and the database's own policies decide what it may see), turns them into events of the types registered in mcp-wake-body.ts, and the sweep sends each only if it is new for the
-// grant (the item's own "seen" rule: an item, the day of its window, kept with the event: crove_kernel.mcp_wake_line_check and mcp_wake_enqueue).
+// grant (the item's own "seen" rule: an item, the day of its window, kept with the event: ludy_kernel.mcp_wake_line_check and mcp_wake_enqueue).
 //
 // What an event carries is ids, a day, an amount and enum words: never a customer's name, a message, a subject, a deal's title, a booking's guest or a note. This file builds the data from the reads' strict
 // shapes (packages/kernel-contract/src/engage-wake.ts), and the builder (mcp-wake-body.ts) and the database refuse anything else.

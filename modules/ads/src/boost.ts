@@ -127,7 +127,7 @@ export const adsBoostDraft = defineCommand({
       await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', stale.row.id).execute();
     }
     // Every ad runs as a Page: it must be an active Facebook Page of this org (the launch stops a plan without one, so say it now, before an approval is asked for).
-    const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', input.pageConnectionId.toLowerCase()).executeTakeFirst();
+    const page = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', input.pageConnectionId.toLowerCase()).executeTakeFirst();
     if (!page || page.provider !== 'facebook_page' || page.status !== 'active') throw refused('page_needed');
     const today = todayIn(account.timeZone, ctx.now);
     const made = boostPlan({ ...input, adAccountId, postId }, { today, currency: account.currency });
@@ -162,7 +162,7 @@ export const adsBoostOptions = defineQuery({
     const accounts = found.map((a) => ({ id: a.id, name: a.name, currency: a.currency as string, provider: a.provider }));
     if (accounts.length === 0) return { enabled: false, reason: 'no_account', accounts, pages: [] };
     const pageRows = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'display_name'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', 'facebook_page')

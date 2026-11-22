@@ -70,7 +70,7 @@ async function booksFor(ctx: Ctx, method: 'none' | 'percentage' | 'income', date
 
 export async function householdProfileView(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfileView> {
   // An entity that is no longer a household (its kind was changed) keeps its old rows but shows no profile and no book.
-  const kind = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+  const kind = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
   const profile = kind?.kind === 'household' ? await profileAt(ctx, entity, date) : null;
   if (!profile) return { date, profile: null, books: [], commentary: false };
   const books = await booksFor(ctx, profile.pitMethod ?? 'none', date);
@@ -96,7 +96,7 @@ export const householdProfileSet = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<HouseholdProfileView> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    const kind = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+    const kind = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
     if (kind?.kind !== 'household') throw notHousehold();
     // Group 1 pays no PIT, group 2 pays a percentage of revenue or, by choice, on income, group 3 on income.
     const okMethod =

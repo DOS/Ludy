@@ -54,7 +54,7 @@ export const adsObjectSyncTarget = defineQuery({
       .executeTakeFirst();
     if (!account?.write_connection_id) return null;
     const write = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.write_connection_id)
@@ -178,14 +178,14 @@ export const adsObjectSyncState = defineCommand({
     if (input.states.length + failed > 0) {
       const key = stateReadKey(launchId, ctx.now);
       const inserted = await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({ org_id: ctx.orgId, key, module: 'ads', target: 'launch', step: 'state_read', retry_safety: 'safe', started_at: ctx.now })
         .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
         .returning('id')
         .executeTakeFirst();
       if (inserted) {
         await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({ state: failed === 0 ? 'succeeded' : 'failed', error_kind: firstFailure?.kind ?? null, error_code: firstFailure?.code ?? null, finished_at: ctx.now, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', inserted.id)

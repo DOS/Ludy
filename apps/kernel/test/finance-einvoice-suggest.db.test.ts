@@ -70,14 +70,14 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hóa Đơn ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
   const auditOf = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows);
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -88,14 +88,14 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -116,7 +116,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
 
   const sync = async (o: Org) => execute<{ series: Series[] }>(o, 'finance.einvoice_series.sync', { legalEntityId: null, provider: 'sandbox' });
   const party = (o: Org, name: string, extra: { taxCode?: string; address?: string; kind?: string } = {}) =>
-    admin(async (c) => (await c.query<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, tax_code, address, kind) VALUES ($1, $2, $3, $4, $5) RETURNING id', [o.orgId, name, extra.taxCode ?? null, extra.address ?? null, extra.kind ?? 'organization'])).rows[0]?.id as string);
+    admin(async (c) => (await c.query<{ id: string }>('INSERT INTO ludy_kernel.party (org_id, name, tax_code, address, kind) VALUES ($1, $2, $3, $4, $5) RETURNING id', [o.orgId, name, extra.taxCode ?? null, extra.address ?? null, extra.kind ?? 'organization'])).rows[0]?.id as string);
   const saveDraft = (o: Org, seriesId: string | null, partyId: string | null, vatRate: string) =>
     execute<Draft>(o, 'finance.einvoice_draft.save', {
       draftId: null,
@@ -155,7 +155,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     const o = await org();
     const keep = await party(o, 'Nguyễn Văn Nam', { kind: 'person' });
     const merged = await party(o, 'Nguyễn Văn Nam cũ', { kind: 'person' });
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, keep]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, keep]));
     expect((await source(o, 'bán cho anh Nam')).parties.map((p) => p.id)).toEqual([keep]);
   });
 
@@ -185,7 +185,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     const nam = await party(o, 'Nguyễn Văn Nam', { kind: 'person' });
     const hoa = await party(o, 'Công ty Hoa Mai', { taxCode: VALID_TAX_CODE });
     const merged = await party(o, 'Hoa Mai cũ');
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, hoa]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, hoa]));
     await saveDraft(o, series?.id ?? null, nam, '8%');
     await saveDraft(o, series?.id ?? null, nam, '8%');
     await saveDraft(o, series?.id ?? null, hoa, '10%');
@@ -233,7 +233,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       await c.query(
         "UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() - make_interval(mins => $4::int) WHERE org_id = $1 AND id = $2",
         [o.orgId, draftId, `000${minutesAgo}`, minutesAgo],
@@ -262,11 +262,11 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     await issue(o, newer.id, 5);
     // The buyer's name comes from the record, and the invoice's own tax code and address stay while the record has none; once it has, the record's win (#2883): an address changed since is not lost.
     expect((await previous(o, hoa)).invoice?.buyer).toMatchObject({ name: 'Công ty Hoa Mai', taxCode: VALID_TAX_CODE, address: '1 Phố Thử, Hà Nội' });
-    await admin((c) => c.query("UPDATE crove_kernel.party SET tax_code = $3, address = '7 Phố Mới, Hà Nội' WHERE org_id = $1 AND id = $2", [o.orgId, hoa, VALID_TAX_CODE]));
+    await admin((c) => c.query("UPDATE ludy_kernel.party SET tax_code = $3, address = '7 Phố Mới, Hà Nội' WHERE org_id = $1 AND id = $2", [o.orgId, hoa, VALID_TAX_CODE]));
     // A record value longer than the form's field is not used (the response would not pass its own contract): the invoice's own value stands.
-    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, hoa, 'x'.repeat(600), 'y'.repeat(300)]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, hoa, 'x'.repeat(600), 'y'.repeat(300)]));
     expect((await previous(o, hoa)).invoice?.buyer).toMatchObject({ address: '1 Phố Thử, Hà Nội', email: null });
-    await admin((c) => c.query("UPDATE crove_kernel.party SET address = '7 Phố Mới, Hà Nội', email = NULL WHERE org_id = $1 AND id = $2", [o.orgId, hoa]));
+    await admin((c) => c.query("UPDATE ludy_kernel.party SET address = '7 Phố Mới, Hà Nội', email = NULL WHERE org_id = $1 AND id = $2", [o.orgId, hoa]));
     const got = (await previous(o, hoa)).invoice;
     expect(got).toMatchObject({ draftId: newer.id, buyer: { kind: 'business', partyId: hoa, name: 'Công ty Hoa Mai', taxCode: VALID_TAX_CODE, address: '7 Phố Mới, Hà Nội' } });
     expect(got?.lines).toEqual([expect.objectContaining({ description: 'Hàng A', quantity: '2', unitPrice: '100000', vatRate: '10%', vatAllowed: true })]);
@@ -322,13 +322,13 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
   it('follows the legal entity of the form on both queries, and a member scoped to one entity cannot reach the other', async () => {
     const o = await org();
     const hoa = await party(o, 'Công ty Hoa Mai');
-    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
-    const main = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
+    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
+    const main = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
     // A member who keeps the branch's books only.
     const scoped = await identity('scoped');
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, scoped]);
-      await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, scoped, branch, o.owner]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, scoped]);
+      await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, scoped, branch, o.owner]);
     });
     const inMain = await saveDraft(o, null, hoa, '10%');
     const inBranch = await execute<Draft>(o, 'finance.einvoice_draft.save', {

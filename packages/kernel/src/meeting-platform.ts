@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Meeting platforms a member connects and the recordings they offer (meetings integrations C1, issue #3173, plan docs/plan/meetings-integrations.md section 6.1). The same shape as the
-// outside calendars (calendar-connections.ts): thin commands over the crove_kernel.meeting_platform_* definers.
+// outside calendars (calendar-connections.ts): thin commands over the ludy_kernel.meeting_platform_* definers.
 //
 // Who may do what:
 // - A member who edits (owner, admin, member) connects their own platform account and reads only their own connections and recordings (the tables' row policies). No query returns a token.
@@ -110,7 +110,7 @@ export const meetingPlatformOAuthBegin = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.meeting_platform_oauth_begin(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
+      SELECT ludy_kernel.meeting_platform_oauth_begin(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
       .execute(ctx.trx)
       .catch(oauthError);
     const attemptId = rows[0]?.id;
@@ -131,7 +131,7 @@ export const meetingPlatformOAuthConsume = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ code_verifier: string | null }>`
-      SELECT code_verifier FROM crove_kernel.meeting_platform_oauth_consume(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash})`
+      SELECT code_verifier FROM ludy_kernel.meeting_platform_oauth_consume(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash})`
       .execute(ctx.trx)
       .catch(oauthError);
     if (rows.length !== 1) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
@@ -160,7 +160,7 @@ export const meetingPlatformConnect = defineCommand({
     // Two connects of one account at once serialize here, so the second finds the first's row and reconnects instead of failing on the unique index.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.meeting_platform:${ctx.orgId}:${userId}:${input.provider}:${input.externalAccount}`}, 0))`.execute(ctx.trx);
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_connection')
+      .selectFrom('ludy_kernel.meeting_platform_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -172,7 +172,7 @@ export const meetingPlatformConnect = defineCommand({
     if (existing) {
       // Active again, and listed at the sweep's next pass (last_synced_at cleared).
       await ctx.trx
-        .updateTable('crove_kernel.meeting_platform_connection')
+        .updateTable('ludy_kernel.meeting_platform_connection')
         .set({ display_name: input.displayName, scopes: input.scopes, expires_at: input.expiresAt, status: 'active', status_reason: null, last_synced_at: null, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
@@ -180,13 +180,13 @@ export const meetingPlatformConnect = defineCommand({
       id = existing.id;
     } else {
       const row = await ctx.trx
-        .insertInto('crove_kernel.meeting_platform_connection')
+        .insertInto('ludy_kernel.meeting_platform_connection')
         .values({ org_id: ctx.orgId, user_id: userId, provider: input.provider, external_account: input.externalAccount, display_name: input.displayName, scopes: input.scopes, expires_at: input.expiresAt, status: 'active', status_reason: null, connected_at: ctx.now, updated_at: ctx.now })
         .returning('id')
         .executeTakeFirstOrThrow();
       id = row.id;
     }
-    await sql`SELECT crove_kernel.meeting_platform_credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.meeting_platform_credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(platformError);
     // The audit row names the connection and provider only: never the envelope, the account or the display name.
@@ -206,7 +206,7 @@ export const meetingPlatformDisconnect = defineCommand({
     const userId = requireUser(ctx);
     // The row policy shows a member only their own, so another member's connection is not found.
     const row = await ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_connection')
+      .selectFrom('ludy_kernel.meeting_platform_connection')
       .select(['provider', 'user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -215,7 +215,7 @@ export const meetingPlatformDisconnect = defineCommand({
     if (!row || row.user_id !== userId) throw new DomainError('MEETING_PLATFORM_NOT_FOUND', 404, 'Không tìm thấy kết nối này');
     // An import in flight holds bytes in staging and a meeting being made: it finishes or fails first, so a disconnect never strands them.
     const busy = await ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_recording')
+      .selectFrom('ludy_kernel.meeting_platform_recording')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -224,8 +224,8 @@ export const meetingPlatformDisconnect = defineCommand({
       .executeTakeFirst();
     if (busy) throw new DomainError('MEETING_PLATFORM_BUSY', 409, 'Đang nhập một bản ghi từ kết nối này, hãy thử lại sau khi nhập xong');
     // The tokens first, then the row: its foreign keys delete the recordings it listed.
-    await sql`SELECT crove_kernel.meeting_platform_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(platformError);
-    await ctx.trx.deleteFrom('crove_kernel.meeting_platform_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    await sql`SELECT ludy_kernel.meeting_platform_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(platformError);
+    await ctx.trx.deleteFrom('ludy_kernel.meeting_platform_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider });
     return { connectionId: input.connectionId, disconnected: true as const };
   },
@@ -242,7 +242,7 @@ export const meetingPlatformRefresh = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const rows = await ctx.trx
-      .updateTable('crove_kernel.meeting_platform_connection')
+      .updateTable('ludy_kernel.meeting_platform_connection')
       .set({ last_synced_at: null })
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -264,7 +264,7 @@ export const meetingPlatformRecordingDismiss = defineCommand({
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireUser(ctx);
-    await sql`SELECT crove_kernel.meeting_platform_recording_dismiss(${input.recordingId}::uuid)`.execute(ctx.trx).catch(platformError);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_dismiss(${input.recordingId}::uuid)`.execute(ctx.trx).catch(platformError);
     ctx.audit({ recording_id: input.recordingId });
     return { recordingId: input.recordingId, dismissed: true as const };
   },
@@ -282,7 +282,7 @@ export const meetingPlatformImportClaim = defineCommand({
   handler: async (ctx, input): Promise<{ stagingKey: string; meetingId: string; sizeBytes: number | null }> => {
     requireUser(ctx);
     const { rows } = await sql<{ staging_key: string; meeting_id: string; size_bytes: string | number | null }>`
-      SELECT staging_key, meeting_id, size_bytes FROM crove_kernel.meeting_platform_recording_claim(${input.recordingId}::uuid, ${input.meetingId}::uuid)`
+      SELECT staging_key, meeting_id, size_bytes FROM ludy_kernel.meeting_platform_recording_claim(${input.recordingId}::uuid, ${input.meetingId}::uuid)`
       .execute(ctx.trx)
       .catch(platformError);
     const row = rows[0];
@@ -303,7 +303,7 @@ export const meetingPlatformImportClaimFailed = defineCommand({
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireUser(ctx);
-    await sql`SELECT crove_kernel.meeting_platform_recording_claim_failed(${input.recordingId}::uuid, ${input.code})`.execute(ctx.trx).catch(platformError);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_claim_failed(${input.recordingId}::uuid, ${input.code})`.execute(ctx.trx).catch(platformError);
     ctx.audit({ recording_id: input.recordingId, code: input.code });
     return { recordingId: input.recordingId, code: input.code };
   },
@@ -331,7 +331,7 @@ export const meetingPlatformCredential = defineQuery({
   handler: async (ctx, input): Promise<SealedMeetingPlatformCredential> => {
     requireSystem(ctx.actor);
     const { rows } = await sql<{ key_id: string; envelope: Buffer; provider: string; external_account: string }>`
-      SELECT key_id, envelope, provider, external_account FROM crove_kernel.meeting_platform_credential_get(${input.connectionId}::uuid)`
+      SELECT key_id, envelope, provider, external_account FROM ludy_kernel.meeting_platform_credential_get(${input.connectionId}::uuid)`
       .execute(ctx.trx)
       .catch(platformError);
     const row = rows[0];
@@ -354,7 +354,7 @@ export const meetingPlatformSyncDue = defineQuery({
   handler: async (ctx, input): Promise<MeetingPlatformSyncDue[]> => {
     requireSystem(ctx.actor);
     const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-      SELECT org_id, connection_id, provider FROM crove_kernel.meeting_platform_sync_due(${input.afterOrg}::uuid, ${input.afterId}::uuid, ${input.limit}::int)`
+      SELECT org_id, connection_id, provider FROM ludy_kernel.meeting_platform_sync_due(${input.afterOrg}::uuid, ${input.afterId}::uuid, ${input.limit}::int)`
       .execute(ctx.trx)
       .catch(platformError);
     return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
@@ -372,7 +372,7 @@ export const meetingPlatformRecordingReplace = defineCommand({
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
     const { rows } = await sql<{ count: number }>`
-      SELECT crove_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS count`
+      SELECT ludy_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS count`
       .execute(ctx.trx)
       .catch(platformError);
     const count = Number(rows[0]?.count ?? 0);
@@ -393,7 +393,7 @@ export const meetingPlatformSyncFailed = defineCommand({
   target: (input) => ({ type: 'kernel.meeting_platform_connection', id: input.connectionId }),
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
-    await sql`SELECT crove_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${input.code}, ${input.expired})`.execute(ctx.trx).catch(platformError);
+    await sql`SELECT ludy_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${input.code}, ${input.expired})`.execute(ctx.trx).catch(platformError);
     ctx.audit({ connection_id: input.connectionId, code: input.code, expired: input.expired });
     return { connectionId: input.connectionId, code: input.code, expired: input.expired };
   },
@@ -430,7 +430,7 @@ export const meetingPlatformImportOpen = defineQuery({
       staging_key: string;
     }>`
       SELECT org_id, id, connection_id, provider, external_id, has_audio, has_video, size_bytes, staging_key
-      FROM crove_kernel.meeting_platform_import_open(${input.limit}::integer)`
+      FROM ludy_kernel.meeting_platform_import_open(${input.limit}::integer)`
       .execute(ctx.trx)
       .catch(platformError);
     return rows.map((r) => ({
@@ -460,7 +460,7 @@ export const meetingPlatformImportStaged = defineCommand({
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_import_staged(${input.recordingId}::uuid, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.meeting_platform_import_staged(${input.recordingId}::uuid, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
     ctx.audit({ recording_id: input.recordingId, applied: rows[0]?.n ?? 0 });
     return { recordingId: input.recordingId, applied: rows[0]?.n ?? 0 };
   },
@@ -475,7 +475,7 @@ export const meetingPlatformImportFailed = defineCommand({
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_import_failed(${input.recordingId}::uuid, ${input.code}, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.meeting_platform_import_failed(${input.recordingId}::uuid, ${input.code}, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
     ctx.audit({ recording_id: input.recordingId, code: input.code, applied: rows[0]?.n ?? 0 });
     return { recordingId: input.recordingId, code: input.code, applied: rows[0]?.n ?? 0 };
   },
@@ -488,7 +488,7 @@ export const meetingPlatformImportHolds = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<'importing' | 'staged' | 'claimed' | 'none'> => {
     requireSystem(ctx.actor);
-    const { rows } = await sql<{ holds: 'importing' | 'staged' | 'claimed' | 'none' }>`SELECT crove_kernel.meeting_platform_import_holds(${input.recordingId}::uuid, ${input.stagingKey}) AS holds`.execute(ctx.trx).catch(platformError);
+    const { rows } = await sql<{ holds: 'importing' | 'staged' | 'claimed' | 'none' }>`SELECT ludy_kernel.meeting_platform_import_holds(${input.recordingId}::uuid, ${input.stagingKey}) AS holds`.execute(ctx.trx).catch(platformError);
     return rows[0]?.holds ?? 'none';
   },
 });
@@ -505,7 +505,7 @@ export const meetingPlatformSweep = defineCommand({
   access: 'system',
   handler: async (ctx): Promise<{ keys: string[] }> => {
     requireSystem(ctx.actor);
-    const { rows } = await sql<{ staging_key: string }>`SELECT staging_key FROM crove_kernel.meeting_platform_recording_sweep()`.execute(ctx.trx).catch(platformError);
+    const { rows } = await sql<{ staging_key: string }>`SELECT staging_key FROM ludy_kernel.meeting_platform_recording_sweep()`.execute(ctx.trx).catch(platformError);
     ctx.audit({ expired: rows.length });
     return { keys: rows.map((r) => r.staging_key) };
   },
@@ -523,7 +523,7 @@ export const meetingPlatformConnections = defineQuery({
   handler: async (ctx): Promise<MeetingPlatformConnectionView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được kết nối nền tảng họp');
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_connection')
+      .selectFrom('ludy_kernel.meeting_platform_connection')
       .select(['id', 'provider', 'display_name', 'status', 'status_reason', 'last_synced_at', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', ctx.actor.userId)
@@ -590,7 +590,7 @@ async function matchedMeetingsForSuggestions(
         ) > rec.win_start
         AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
         AND NOT EXISTS (
-          SELECT 1 FROM crove_kernel.meeting_platform_recording pr
+          SELECT 1 FROM ludy_kernel.meeting_platform_recording pr
           WHERE pr.org_id = m.org_id AND pr.meeting_id = m.id AND pr.status IN ('failed', 'dismissed')
         )
       ORDER BY m.started_at DESC
@@ -621,8 +621,8 @@ export const meetingPlatformRecordings = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được bản ghi từ nền tảng họp');
     const only = input.recordingId;
     let query = ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_recording as r')
-      .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
+      .selectFrom('ludy_kernel.meeting_platform_recording as r')
+      .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
       .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)

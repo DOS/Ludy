@@ -269,7 +269,7 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
   };
 
   // 1. Deliveries that need the queue again, or have waited too long.
-  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' }>`SELECT org_id, id, kind FROM crove_kernel.mcp_wake_open(${PER_PASS}::int)`.execute(deps.workerDb);
+  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' }>`SELECT org_id, id, kind FROM ludy_kernel.mcp_wake_open(${PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of open.rows) {
     const ctx = { actor: ACTOR, orgId: row.org_id };
     try {
@@ -289,7 +289,7 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
 
   // 2 and 3. The wake-ups with a schedule due or signals to look at.
   const due = await sql<{ org_id: string; grant_id: string; user_id: string; schedule_due: boolean; due_day: string | null; signals_due: boolean }>`
-    SELECT org_id, grant_id, user_id, schedule_due, due_day, signals_due FROM crove_kernel.mcp_wake_due(${PER_PASS}::int)`.execute(deps.workerDb);
+    SELECT org_id, grant_id, user_id, schedule_due, due_day, signals_due FROM ludy_kernel.mcp_wake_due(${PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of due.rows) {
     const grant: WakeGrant = { orgId: row.org_id, grantId: row.grant_id, userId: row.user_id };
     const ctx = { actor: ACTOR, orgId: grant.orgId };

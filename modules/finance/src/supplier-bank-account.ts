@@ -88,7 +88,7 @@ const supplierNotFound = () => new DomainError('SUPPLIER_NOT_FOUND', 404, 'Khôn
 const accountNotFound = () => new DomainError('SUPPLIER_BANK_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản ngân hàng này');
 
 async function requireSupplier(trx: Trx, orgId: string, partyId: string): Promise<void> {
-  const party = await trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', orgId).where('id', '=', partyId.toLowerCase()).forShare().executeTakeFirst();
+  const party = await trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', orgId).where('id', '=', partyId.toLowerCase()).forShare().executeTakeFirst();
   if (!party) throw supplierNotFound();
 }
 
@@ -236,7 +236,7 @@ export const supplierBankAccountErase = defineCommand({
     // A payment waiting (approved, or a request not decided yet) names this supplier's account: it is cancelled or decided first, so no approver is left holding a request for an account that is gone.
     const waiting = await sql<{ n: number }>`
       SELECT (SELECT count(*) FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.party_id = ${partyId}::uuid AND p.status = 'approved')
-           + (SELECT count(*) FROM crove_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = 'finance.supplier_payment.record' AND q.status = 'pending' AND pg_catalog.lower(q.payload->>'partyId') = ${partyId}) AS n`.execute(ctx.trx);
+           + (SELECT count(*) FROM ludy_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = 'finance.supplier_payment.record' AND q.status = 'pending' AND pg_catalog.lower(q.payload->>'partyId') = ${partyId}) AS n`.execute(ctx.trx);
     if (Number(waiting.rows[0]?.n ?? 0) > 0) throw new DomainError('SUPPLIER_PAYMENT_WAITING', 409, 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước khi xóa dữ liệu ngân hàng');
     const active = await ctx.trx
       .selectFrom('crove_finance.supplier_bank_account')
@@ -250,7 +250,7 @@ export const supplierBankAccountErase = defineCommand({
       await ctx.trx.updateTable('crove_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
       await insertChange(ctx, { partyId, accountId: account.id, kind: 'retired', oldHash: account.number_hash, newHash: null });
     }
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.subject_key_shred(ARRAY[${supplierSubject(partyId)}]::text[]) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${supplierSubject(partyId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({ partyId, shreddedKeys, retired: active.length });
     return { partyId, shreddedKeys, retired: active.length };

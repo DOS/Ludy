@@ -1,4 +1,4 @@
-// The pg-boss schema (`crove_jobs`) is committed SQL like every other schema (plan principle 4, External-tenant
+// The pg-boss schema (`ludy_jobs`) is committed SQL like every other schema (plan principle 4, External-tenant
 // gate T6). `pnpm db:vendor:pgboss` renders pg-boss's own plans into a migration; no code path runs pg-boss with
 // `migrate: true`. The worker starts pg-boss with `migrate: false`, which refuses any other schema version, and
 // /readyz compares the database's version with the one the pinned pg-boss expects.
@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { getConstructionPlans, getMigrationPlans } from 'pg-boss';
 import { CHANNEL_PROVIDERS } from '@ludy/channel';
 
-export const JOB_SCHEMA = 'crove_jobs';
+export const JOB_SCHEMA = 'ludy_jobs';
 
 // Created by the migration that vendors the schema. A new queue, or a new policy, needs a new migration; a new queue
 // names QUEUES.deadLetter as its dead letter queue there ('{"policy":"standard","deadLetter":"kernel-job.dlq"}', #1720).
@@ -313,7 +313,7 @@ const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
 // the database or the command is briefly unavailable.
 const DEAD_LETTER_OPTIONS = { policy: 'standard', retryLimit: 5, retryDelay: 30, retryBackoff: true } as const;
 
-// What `boss.createQueue(name, options)` sends to crove_jobs.create_queue: the queue's policy, and every queue but the
+// What `boss.createQueue(name, options)` sends to ludy_jobs.create_queue: the queue's policy, and every queue but the
 // dead letter queue sends its dead letters there (#1720, #1780).
 export function queueOptions(queue: string): string {
   if (queue === QUEUES.deadLetter) return JSON.stringify(DEAD_LETTER_OPTIONS);
@@ -367,19 +367,19 @@ export function adaptPlans(plans: string): string {
   return body.trim();
 }
 
-const GRANTS = `-- The worker (pg-boss and the outbox relay) uses crove_jobs; nobody else may.
+const GRANTS = `-- The worker (pg-boss and the outbox relay) uses ludy_jobs; nobody else may.
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ${JOB_SCHEMA} FROM PUBLIC;
-GRANT USAGE ON SCHEMA ${JOB_SCHEMA} TO crove_worker;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${JOB_SCHEMA} TO crove_worker;
+GRANT USAGE ON SCHEMA ${JOB_SCHEMA} TO ludy_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${JOB_SCHEMA} TO ludy_worker;
 -- The version row decides whether a vendored upgrade runs, so only migrations write it. pg-boss started with
 -- migrate: false only stamps its maintenance columns.
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ${JOB_SCHEMA}.version FROM crove_worker;
-GRANT UPDATE (cron_on, bam_on, flow_on, reindex_on, monitor_backoff_on) ON ${JOB_SCHEMA}.version TO crove_worker;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${JOB_SCHEMA} TO crove_worker;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${JOB_SCHEMA} TO crove_worker;
-ALTER DEFAULT PRIVILEGES IN SCHEMA ${JOB_SCHEMA} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crove_worker;`;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ${JOB_SCHEMA}.version FROM ludy_worker;
+GRANT UPDATE (cron_on, bam_on, flow_on, reindex_on, monitor_backoff_on) ON ${JOB_SCHEMA}.version TO ludy_worker;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${JOB_SCHEMA} TO ludy_worker;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${JOB_SCHEMA} TO ludy_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${JOB_SCHEMA} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ludy_worker;`;
 
-// Renders the migration that brings crove_jobs to `target`: pg-boss's construction plans on a fresh database
+// Renders the migration that brings ludy_jobs to `target`: pg-boss's construction plans on a fresh database
 // (`from` null), else its migration plans from `from`. Re-applying it is a no-op; any other version stops it.
 export function renderJobsMigration(target: number, from: number | null, queues: readonly string[]): string {
   const plans = from === null ? getConstructionPlans(JOB_SCHEMA) : getMigrationPlans(JOB_SCHEMA, from);
@@ -446,12 +446,12 @@ ${from === null ? `
 ${createQueues}
 
 -- /readyz (the API role) compares this with the version its pg-boss expects.
-CREATE OR REPLACE FUNCTION crove_kernel.jobs_schema_version()
+CREATE OR REPLACE FUNCTION ludy_kernel.jobs_schema_version()
 RETURNS integer LANGUAGE sql STABLE SECURITY DEFINER ${PIN} AS $$
   SELECT max(v.version) FROM ${JOB_SCHEMA}.version v
 $$;
-REVOKE ALL ON FUNCTION crove_kernel.jobs_schema_version() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_kernel.jobs_schema_version() TO crove_app;
+REVOKE ALL ON FUNCTION ludy_kernel.jobs_schema_version() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ludy_kernel.jobs_schema_version() TO ludy_app;
 ` : ''}
 ${GRANTS}
 `;

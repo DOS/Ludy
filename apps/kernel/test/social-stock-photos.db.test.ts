@@ -121,7 +121,7 @@ suite('stock photos from Pexels through the API (#1106)', () => {
 
   const counts = () =>
     admin(async (c) => {
-      const files = await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.file WHERE org_id = $1', [org.orgId]);
+      const files = await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.file WHERE org_id = $1', [org.orgId]);
       const credits = await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.media_attribution WHERE org_id = $1', [org.orgId]);
       return { files: Number(files.rows[0]?.n), credits: Number(credits.rows[0]?.n) };
     });
@@ -135,9 +135,9 @@ suite('stock photos from Pexels through the API (#1106)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -168,7 +168,7 @@ suite('stock photos from Pexels through the API (#1106)', () => {
     const created = await rpc('org/create', owner, { name: 'Tiệm bánh mì', idempotencyKey: randomUUID() }, { slug: null });
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [org.orgId, member.userId, viewer.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [org.orgId, member.userId, viewer.userId]));
   });
 
   afterAll(async () => {
@@ -210,7 +210,7 @@ suite('stock photos from Pexels through the API (#1106)', () => {
     const rows = await admin((c) =>
       c.query(
         `SELECT f.source, f.content_type, f.filename, f.created_by AS file_by, a.provider, a.external_id, a.photographer, a.photographer_url, a.source_url, a.alt_text, a.created_by
-           FROM crove_kernel.file f JOIN crove_social.media_attribution a ON a.org_id = f.org_id AND a.file_id = f.id WHERE f.org_id = $1 AND f.id = $2`,
+           FROM ludy_kernel.file f JOIN crove_social.media_attribution a ON a.org_id = f.org_id AND a.file_id = f.id WHERE f.org_id = $1 AND f.id = $2`,
         [org.orgId, fileId],
       ),
     );
@@ -239,7 +239,7 @@ suite('stock photos from Pexels through the API (#1106)', () => {
     expect(again.body).toMatchObject({ fileId, duplicate: true, credited: false });
     const credit = await admin((c) => c.query('SELECT photographer, external_id FROM crove_social.media_attribution WHERE org_id = $1 AND file_id = $2', [org.orgId, fileId]));
     expect(credit.rows).toEqual([{ photographer: 'Trần Thị B', external_id: '11' }]);
-    const audit = await admin((c) => c.query("SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.media.save_stock' ORDER BY occurred_at, id", [org.orgId]));
+    const audit = await admin((c) => c.query("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.media.save_stock' ORDER BY occurred_at, id", [org.orgId]));
     expect(audit.rows.map((r) => [r.actor_id, r.detail.external_id, r.detail.credited])).toEqual([
       [member.userId, '11', true],
       [owner.userId, '13', false],

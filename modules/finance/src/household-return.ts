@@ -218,7 +218,7 @@ export const householdCnkd = defineQuery({
       );
     }
 
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
+    const entityRow = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
     return zHouseholdCnkd.parse({
       period: { year: input.year, quarter: input.quarter, from, to },
       household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: profile.representativeName },

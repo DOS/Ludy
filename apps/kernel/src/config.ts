@@ -349,7 +349,7 @@ const schema = z.object({
   // Bound on denied/failed audit rows (issue #162), counted in the database across API instances: in each fixed
   // window of REFUSAL_AUDIT_WINDOW_SECONDS, an actor's refusals get an audit row until the actor has
   // REFUSAL_AUDIT_LIMIT_PER_ACTOR or the org REFUSAL_AUDIT_LIMIT_PER_ORG refusals in it; later ones are only counted
-  // (crove_kernel.refusal_tally). The first refusal of each command and code of an actor in a window is always audited,
+  // (ludy_kernel.refusal_tally). The first refusal of each command and code of an actor in a window is always audited,
   // so are an actor's first REFUSAL_AUDIT_RESERVE_PER_ACTOR refusals whatever the org's count, and security-relevant
   // refusals (FORBIDDEN, STEP_UP_REQUIRED, 404s and the like) up to the actor's own limit. The worker deletes tally
   // windows older than REFUSAL_TALLY_RETENTION_DAYS.
@@ -793,9 +793,9 @@ const schema = z.object({
   // Role passwords applied by `migrate` (self-host).
   LUDY_APP_DB_PASSWORD: optional,
   LUDY_WORKER_DB_PASSWORD: optional,
-  // The prober's login (crove_prober); it may only execute crove_kernel.health().
+  // The prober's login (ludy_prober); it may only execute ludy_kernel.health().
   LUDY_PROBER_DB_PASSWORD: optional,
-  // The usage report's login (crove_reporter); it may only execute crove_kernel.usage_weekly().
+  // The usage report's login (ludy_reporter); it may only execute ludy_kernel.usage_weekly().
   LUDY_REPORTER_DB_PASSWORD: optional,
   AUTH_DB_PASSWORD: optional,
 });
@@ -1392,7 +1392,8 @@ export function assertSplitRoles(
           'remove it from the api container (docs/runbooks/deploy.md, "The pilot layout")',
       );
     }
-    if (config.DATABASE_LISTEN_URL !== undefined && databaseLogin(config.DATABASE_LISTEN_URL) === 'crove_worker') {
+    const listenLogin = config.DATABASE_LISTEN_URL !== undefined ? databaseLogin(config.DATABASE_LISTEN_URL) : undefined;
+    if (listenLogin === 'ludy_worker' || listenLogin === 'crove_worker') {
       throw new Error(
         'the api role must not hold a DATABASE_LISTEN_URL on the worker login on a public PUBLIC_URL: that login enters the system context of every org; ' +
           'point it at the app login (docs/runbooks/deploy.md, "The pilot layout")',

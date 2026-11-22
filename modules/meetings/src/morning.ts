@@ -55,7 +55,7 @@ export const morningSet = defineCommand({
     // The member's own membership row, locked FOR KEY SHARE until this command commits: a removal of the member (a DELETE of that row, whose trigger deletes the setting) waits for the save, so the save cannot land
     // after the trigger and leave a setting for a departed member; and a save that meets a removal already committed finds no row and is refused. (A role change or a removal waits for the save to commit, for a moment; another save does not wait.)
     const member = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -99,9 +99,9 @@ export const morningNotice = defineCommand({
     });
     // Turned off, left the org, or told already for this day: no in-app line, so no mail either.
     if (sent === 0) return { notified: false, mailed: false };
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     // The member's address while they are a member with an account that is not disabled (the worker's member_emails: no name, no other account column).
-    const { rows } = await sql<{ email: string | null }>`SELECT email FROM crove_kernel.member_emails(${[input.userId]}::uuid[])`.execute(ctx.trx);
+    const { rows } = await sql<{ email: string | null }>`SELECT email FROM ludy_kernel.member_emails(${[input.userId]}::uuid[])`.execute(ctx.trx);
     const email = rows[0]?.email ?? null;
     // The function returns a flag, not the language's text (no text leaves a definer of crove_meetings, meetings-readers.db.test.ts).
     const lang = due.english ? 'en' : 'vi';

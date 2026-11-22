@@ -112,7 +112,7 @@ export class PausableWork {
 }
 
 export async function outboxLagSeconds(workerDb: Db): Promise<number> {
-  const { rows } = await sql<{ lag: number }>`SELECT crove_kernel.outbox_lag_seconds() AS lag`.execute(workerDb);
+  const { rows } = await sql<{ lag: number }>`SELECT ludy_kernel.outbox_lag_seconds() AS lag`.execute(workerDb);
   return Number(rows[0]?.lag ?? 0);
 }
 

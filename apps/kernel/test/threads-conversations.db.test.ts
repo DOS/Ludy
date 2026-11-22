@@ -66,14 +66,14 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -214,7 +214,7 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     expect(platformCalls.find((c) => c.method === 'POST' && c.path === `/v1.0/${USER}/threads`)?.form.get('reply_to_id')).toBe('18100000000000010');
     detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
     expect(detail.messages.at(-1)).toMatchObject({ direction: 'out', sendState: 'sent' });
-    const storedId = await admin(async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM crove_kernel.conversation_message WHERE id = $1', [messageId])).rows[0]?.external_message_id);
+    const storedId = await admin(async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM ludy_kernel.conversation_message WHERE id = $1', [messageId])).rows[0]?.external_message_id);
     expect(storedId).toBe(replyId);
 
     // The customer answers the business's answer: Threads names the answer as the parent, and the reply stays in the same thread (one conversation
@@ -238,15 +238,15 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     const mfa = { type: 'user' as const, userId: owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: convId, confirm: true }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
     expect(erased.threads).toBe(1);
-    const left = await admin((c) => c.query('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body ILIKE $2', [orgId, '%0909123456%']));
+    const left = await admin((c) => c.query('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body ILIKE $2', [orgId, '%0909123456%']));
     expect(left.rows).toHaveLength(0);
-    const names = await admin((c) => c.query<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 AND provider = $2', [orgId, 'threads']));
+    const names = await admin((c) => c.query<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND provider = $2', [orgId, 'threads']));
     expect(names.rows.map((r) => r.external_user_id)).not.toContain('le.thi.hoa');
     expect((await rt.query<ConversationListed>('kernel.conversation.list', {}, asOwner)).conversations).toHaveLength(1);
 
     // No customer text, name or phone number reaches audit_event or outbox_event.
     for (const table of ['audit_event', 'outbox_event']) {
-      const leaked = await admin((c) => c.query(`SELECT 1 FROM crove_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3 OR row_to_json(t)::text ILIKE $4)`, [orgId, '%0909123456%', '%le.thi.hoa%', '%đối soát%']));
+      const leaked = await admin((c) => c.query(`SELECT 1 FROM ludy_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3 OR row_to_json(t)::text ILIKE $4)`, [orgId, '%0909123456%', '%le.thi.hoa%', '%đối soát%']));
       expect(leaked.rows).toHaveLength(0);
     }
   });

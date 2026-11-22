@@ -1297,7 +1297,7 @@ export async function isSignAiStoppedOnTrx(
   orgId: string,
 ): Promise<boolean> {
   const stopped = await trx
-    .selectFrom('crove_kernel.kill_switch')
+    .selectFrom('ludy_kernel.kill_switch')
     .select('id')
     .where('org_id', '=', orgId)
     .where('released_at', 'is', null)
@@ -1307,7 +1307,7 @@ export async function isSignAiStoppedOnTrx(
     .limit(1)
     .executeTakeFirst();
   const { rows: globalStopped } = await sql<{ on: boolean }>`
-    SELECT crove_kernel.global_kill_switch_on('ai') AS on
+    SELECT ludy_kernel.global_kill_switch_on('ai') AS on
   `.execute(trx);
   return Boolean(stopped) || globalStopped[0]?.on === true;
 }

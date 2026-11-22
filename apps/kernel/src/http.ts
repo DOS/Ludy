@@ -846,12 +846,12 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       const missing = await schemaMissing(client, config.MIGRATIONS_DIR);
       if (missing.length > 0) return c.json({ ready: false, reason: 'schema' }, 503);
-      // The vendored crove_jobs schema must be the version this pg-boss release expects (External-tenant gate T6).
-      const jobs = await client.query<{ version: number | null }>('SELECT crove_kernel.jobs_schema_version() AS version');
+      // The vendored ludy_jobs schema must be the version this pg-boss release expects (External-tenant gate T6).
+      const jobs = await client.query<{ version: number | null }>('SELECT ludy_kernel.jobs_schema_version() AS version');
       if (jobs.rows[0]?.version !== pgBossSchemaVersion()) return c.json({ ready: false, reason: 'jobs_schema' }, 503);
       // The session check fails closed until it can read Supabase Auth's tables (ADR-0028).
       if (config.AUTH_SESSION_CHECK === 'db') {
-        const { rows } = await client.query<{ ok: boolean }>('SELECT crove_kernel.auth_grants_ready() AS ok');
+        const { rows } = await client.query<{ ok: boolean }>('SELECT ludy_kernel.auth_grants_ready() AS ok');
         if (!rows[0]?.ok) return c.json({ ready: false, reason: 'auth_grants' }, 503);
       }
       // Worker build >= API build (#1952, plan §3.5): the deploy rolls the workers out first and back last, and this API
@@ -860,7 +860,7 @@ export function createHttpApp(deps: HttpDeps) {
       // (a local build) nothing is compared. No live worker is not a reason: the prober alerts on a missing heartbeat,
       // and readiness must not flap on a worker's restart.
       if (deps.workerBuildCheck && config.LUDY_BUILD_TIME) {
-        const { rows } = await client.query<{ older: number }>('SELECT older FROM crove_kernel.worker_build_lag($1::timestamptz)', [config.LUDY_BUILD_TIME]);
+        const { rows } = await client.query<{ older: number }>('SELECT older FROM ludy_kernel.worker_build_lag($1::timestamptz)', [config.LUDY_BUILD_TIME]);
         if ((rows[0]?.older ?? 0) > 0) return c.json({ ready: false, reason: 'worker_build' }, 503);
       }
       return c.json({ ready: true });
@@ -3246,7 +3246,7 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
-  // never touches crove_kernel.file, refuses extension tokens (403), checks Origin on POST, streams <= 25 MiB,
+  // never touches ludy_kernel.file, refuses extension tokens (403), checks Origin on POST, streams <= 25 MiB,
   // and serves downloads with strict sandbox CSP, X-Content-Type-Options: nosniff, and safe Content-Disposition.
   const assertNoteUploadOrigin = (c: Context) => {
     const origin = c.req.header('origin');

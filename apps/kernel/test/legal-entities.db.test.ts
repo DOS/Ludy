@@ -14,11 +14,12 @@ import type { LegalEntity } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const MIGRATION = readFileSync(new URL('../../../supabase/migrations/20261030001000_crove_kernel_legal_entity.sql', import.meta.url), 'utf8');
-const SYNC_MIGRATION = readFileSync(new URL('../../../supabase/migrations/20261101110000_crove_kernel_default_entity_tax_sync.sql', import.meta.url), 'utf8');
+const MIGRATION = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261030001000_crove_kernel_legal_entity.sql', import.meta.url), 'utf8'));
+const SYNC_MIGRATION = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261101110000_crove_kernel_default_entity_tax_sync.sql', import.meta.url), 'utf8'));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('legal entities on PostgreSQL (#1278)', () => {
@@ -48,11 +49,11 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const list = (user: string) => rt.query<LegalEntity[]>('kernel.legal_entity.list', {}, { actor: asUser(user), orgId });
-    const tenantTaxCode = async () => (await admin((c) => c.query<{ tax_code: string | null }>('SELECT tax_code FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.tax_code;
+    const tenantTaxCode = async () => (await admin((c) => c.query<{ tax_code: string | null }>('SELECT tax_code FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.tax_code;
     return { orgId, name, owner, admin: adminUser, member, viewer, exec, list, tenantTaxCode };
   }
 
@@ -65,9 +66,9 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -131,7 +132,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     const audit = await admin(async (c) =>
       (
         await c.query<{ command: string; detail: Record<string, unknown> }>(
-          `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.legal_entity.%' AND outcome = 'ok' ORDER BY occurred_at, id`,
+          `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.legal_entity.%' AND outcome = 'ok' ORDER BY occurred_at, id`,
           [o.orgId],
         )
       ).rows,
@@ -153,7 +154,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     for (const value of ['Chi nhánh Hà Nội', '0101234567']) expect(JSON.stringify(audit)).not.toContain(value);
     // The refusals are audited as refused, not as done.
     const refused = await admin(async (c) =>
-      (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.legal_entity.%' AND outcome <> 'ok'`, [o.orgId])).rows[0]?.n,
+      (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.legal_entity.%' AND outcome <> 'ok'`, [o.orgId])).rows[0]?.n,
     );
     expect(refused).toBeGreaterThan(0);
   });
@@ -204,7 +205,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     const defaultRow = async () =>
       (
         await admin((c) =>
-          c.query<{ tax_code: string | null; updated_by: string | null }>('SELECT tax_code, updated_by FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [
+          c.query<{ tax_code: string | null; updated_by: string | null }>('SELECT tax_code, updated_by FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [
             o.orgId,
           ]),
         )
@@ -213,7 +214,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     expect(await defaultRow()).toEqual({ tax_code: '0101234564', updated_by: o.owner });
 
     // A support fix straight on the tenant row (staff, the path tenant_tax_code_guard leaves open).
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET tax_code = '0312345670' WHERE org_id = $1`, [o.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET tax_code = '0312345670' WHERE org_id = $1`, [o.orgId]));
     expect(await o.tenantTaxCode()).toBe('0312345670');
     expect(await defaultRow()).toEqual({ tax_code: '0312345670', updated_by: null });
 
@@ -224,12 +225,12 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     expect(await o.tenantTaxCode()).toBe('0312345670');
 
     // Staff clear it: the default entity follows.
-    await admin((c) => c.query('UPDATE crove_kernel.tenant SET tax_code = NULL WHERE org_id = $1', [o.orgId]));
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET tax_code = NULL WHERE org_id = $1', [o.orgId]));
     expect(await defaultRow()).toMatchObject({ tax_code: null });
 
     // A code another entity of the org holds fails the staff change itself, and nothing changes.
     await o.exec(o.owner, 'kernel.legal_entity.create', { name: 'Chi nhánh', kind: 'branch', taxCode: '0312345670-001', parentId: main!.id });
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.tenant SET tax_code = '0312345670-001' WHERE org_id = $1`, [o.orgId]))).rejects.toMatchObject({
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.tenant SET tax_code = '0312345670-001' WHERE org_id = $1`, [o.orgId]))).rejects.toMatchObject({
       code: '23505',
       constraint: 'legal_entity_tax_code_uq',
     });
@@ -240,7 +241,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     // The guard's rules stand: a member's own write of the tenant code is refused before the default entity moves, and
     // an admin's write outside kernel.org.set_tax_code (no audit row) is refused at commit with it.
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: app.toString() });
     await c.connect();
@@ -251,10 +252,10 @@ suite('legal entities on PostgreSQL (#1278)', () => {
       ] as const) {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
+          await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
           await expect(
             (async () => {
-              await c.query(`UPDATE crove_kernel.tenant SET tax_code = '0101234564' WHERE org_id = $1`, [o.orgId]);
+              await c.query(`UPDATE ludy_kernel.tenant SET tax_code = '0101234564' WHERE org_id = $1`, [o.orgId]);
               await c.query('COMMIT');
             })(),
           ).rejects.toThrow(error);
@@ -277,11 +278,11 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     // A staff change from before this fix: the tenant row moved alone.
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query(`UPDATE crove_kernel.tenant SET tax_code = '0312345670' WHERE org_id = $1`, [drifted.orgId]);
-      await c.query(`UPDATE crove_kernel.tenant SET tax_code = '0101234564-001' WHERE org_id = $1`, [blocked.orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET tax_code = '0312345670' WHERE org_id = $1`, [drifted.orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET tax_code = '0101234564-001' WHERE org_id = $1`, [blocked.orgId]);
     });
     const codeOf = async (o: { orgId: string }) =>
-      (await admin((c) => c.query<{ tax_code: string | null }>('SELECT tax_code FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]
+      (await admin((c) => c.query<{ tax_code: string | null }>('SELECT tax_code FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]
         ?.tax_code;
     expect(await codeOf(drifted)).toBeNull();
 
@@ -302,7 +303,7 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     const [main] = await o.list(o.owner);
     // As the API's tenant role in the owner's context, bypassing the commands.
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: app.toString() });
     await c.connect();
@@ -310,19 +311,19 @@ suite('legal entities on PostgreSQL (#1278)', () => {
       const inContext = async (sql: string, params: unknown[]) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+          await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
           return await c.query(sql, params);
         } finally {
           await c.query('ROLLBACK');
         }
       };
-      await expect(inContext('DELETE FROM crove_kernel.legal_entity WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
-      await expect(inContext('UPDATE crove_kernel.legal_entity SET is_default = false WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
+      await expect(inContext('DELETE FROM ludy_kernel.legal_entity WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
+      await expect(inContext('UPDATE ludy_kernel.legal_entity SET is_default = false WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
       await expect(
-        inContext(`INSERT INTO crove_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Thứ hai', true, $2)`, [o.orgId, o.owner]),
+        inContext(`INSERT INTO ludy_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Thứ hai', true, $2)`, [o.orgId, o.owner]),
       ).rejects.toMatchObject({ code: '23505', constraint: 'legal_entity_default_uq' });
-      await expect(inContext('UPDATE crove_kernel.legal_entity SET parent_id = id WHERE org_id = $1 AND id = $2', [o.orgId, main!.id])).rejects.toThrow(/LEGAL_ENTITY_CYCLE/);
-      await expect(inContext(`UPDATE crove_kernel.legal_entity SET tax_code = '0101234564' WHERE org_id = $1 AND id = $2`, [o.orgId, main!.id])).rejects.toThrow(
+      await expect(inContext('UPDATE ludy_kernel.legal_entity SET parent_id = id WHERE org_id = $1 AND id = $2', [o.orgId, main!.id])).rejects.toThrow(/LEGAL_ENTITY_CYCLE/);
+      await expect(inContext(`UPDATE ludy_kernel.legal_entity SET tax_code = '0101234564' WHERE org_id = $1 AND id = $2`, [o.orgId, main!.id])).rejects.toThrow(
         /LEGAL_ENTITY_DEFAULT_TAX_CODE/,
       );
     } finally {
@@ -332,20 +333,20 @@ suite('legal entities on PostgreSQL (#1278)', () => {
 
   it('renames the org with its default entity, and never with another entity (#1317)', async () => {
     const o = await org('Công ty Tên Cũ');
-    const tenantName = async () => (await admin((c) => c.query<{ name: string }>('SELECT name FROM crove_kernel.tenant WHERE org_id = $1', [o.orgId]))).rows[0]?.name;
+    const tenantName = async () => (await admin((c) => c.query<{ name: string }>('SELECT name FROM ludy_kernel.tenant WHERE org_id = $1', [o.orgId]))).rows[0]?.name;
     const [main] = await o.list(o.owner);
     const branch = await o.exec<LegalEntity>(o.owner, 'kernel.legal_entity.create', { name: 'Chi nhánh Một', kind: 'branch', taxCode: null, parentId: main!.id });
     const audits = async () =>
       (
         await admin((c) =>
           c.query<{ detail: Record<string, unknown> }>(
-            "SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.legal_entity.update' AND outcome = 'ok' ORDER BY occurred_at, id",
+            "SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.legal_entity.update' AND outcome = 'ok' ORDER BY occurred_at, id",
             [o.orgId],
           ),
         )
       ).rows.map((r) => r.detail);
     const activity = async () =>
-      (await admin((c) => c.query<{ kind: string }>("SELECT kind FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'org.renamed'", [o.orgId]))).rows;
+      (await admin((c) => c.query<{ kind: string }>("SELECT kind FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'org.renamed'", [o.orgId]))).rows;
 
     // Another entity's new name leaves the org's alone.
     await o.exec(o.admin, 'kernel.legal_entity.update', { legalEntityId: branch.id, name: 'Chi nhánh Hai', kind: 'branch', taxCode: null, parentId: main!.id });
@@ -367,12 +368,12 @@ suite('legal entities on PostgreSQL (#1278)', () => {
 
   it('makes the default entity a household business for a 12-digit tax code, unless its kind was chosen (#1317)', async () => {
     const kindOf = async (o: { orgId: string }) =>
-      (await admin((c) => c.query<{ kind: string }>('SELECT kind FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]?.kind;
+      (await admin((c) => c.query<{ kind: string }>('SELECT kind FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]?.kind;
     const taxAudits = async (o: { orgId: string }) =>
       (
         await admin((c) =>
           c.query<{ detail: Record<string, unknown> }>(
-            "SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_tax_code' AND outcome = 'ok' ORDER BY occurred_at, id",
+            "SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_tax_code' AND outcome = 'ok' ORDER BY occurred_at, id",
             [o.orgId],
           ),
         )
@@ -414,8 +415,8 @@ suite('legal entities on PostgreSQL (#1278)', () => {
     const modern = await org();
     await legacy.exec(legacy.owner, 'kernel.org.set_tax_code', { taxCode: '012345678901' });
     // An org from before #1278: no entity at all.
-    await admin((c) => c.query('DELETE FROM crove_kernel.legal_entity WHERE org_id = $1', [legacy.orgId]));
-    const tenantBefore = await admin(async (c) => (await c.query('SELECT * FROM crove_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0]);
+    await admin((c) => c.query('DELETE FROM ludy_kernel.legal_entity WHERE org_id = $1', [legacy.orgId]));
+    const tenantBefore = await admin(async (c) => (await c.query('SELECT * FROM ludy_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0]);
     const modernBefore = await modern.list(modern.owner);
 
     await admin(async (c) => {
@@ -425,11 +426,11 @@ suite('legal entities on PostgreSQL (#1278)', () => {
         await c.query('COMMIT');
       }
     });
-    const created = await admin(async (c) => (await c.query<{ created_at: Date }>('SELECT created_at FROM crove_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0]!.created_at);
+    const created = await admin(async (c) => (await c.query<{ created_at: Date }>('SELECT created_at FROM ludy_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0]!.created_at);
     expect(await legacy.list(legacy.owner)).toEqual([
       expect.objectContaining({ name: 'Hộ kinh doanh Cũ', kind: 'company', taxCode: '012345678901', parentId: null, isDefault: true, createdAt: created.toISOString() }),
     ]);
-    expect(await admin(async (c) => (await c.query('SELECT * FROM crove_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0])).toEqual(tenantBefore);
+    expect(await admin(async (c) => (await c.query('SELECT * FROM ludy_kernel.tenant WHERE org_id = $1', [legacy.orgId])).rows[0])).toEqual(tenantBefore);
     expect(await modern.list(modern.owner)).toEqual(modernBefore);
   });
 });

@@ -44,14 +44,14 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
   // The sweep's answer for one agent, read as the worker login role.
   async function due(agentId: string, modules?: string[]) {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     const w = new pg.Client({ connectionString: url.toString() });
     await w.connect();
     try {
       const { rows } = modules
-        ? await w.query<{ org_id: string; agent_id: string }>('SELECT * FROM crove_kernel.agent_wakeups_due(100, $1::text[])', [modules])
-        : await w.query<{ org_id: string; agent_id: string }>('SELECT * FROM crove_kernel.agent_wakeups_due(100)');
+        ? await w.query<{ org_id: string; agent_id: string }>('SELECT * FROM ludy_kernel.agent_wakeups_due(100, $1::text[])', [modules])
+        : await w.query<{ org_id: string; agent_id: string }>('SELECT * FROM ludy_kernel.agent_wakeups_due(100)');
       return rows.filter((r) => r.agent_id === agentId);
     } finally {
       await w.end();
@@ -60,20 +60,20 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
 
   // Makes the agent's pending wake-up old enough for the sweep (a minute).
   async function age(agentId: string) {
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_wakeup SET updated_at = now() - interval '2 minutes' WHERE agent_id = $1 AND status = 'pending'`, [agentId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_wakeup SET updated_at = now() - interval '2 minutes' WHERE agent_id = $1 AND status = 'pending'`, [agentId]));
   }
 
   // A pending proposal and its kernel.proposal.created event, as the extraction writes them.
   async function proposalCreated(title: string, checks: Array<{ id: string; status: string; message: string }>) {
     return admin(async (c) => {
       const proposal = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors)
          VALUES ($1, 'finance.purchase', 'finance.purchase.record', $2, $3, ARRAY[$4::uuid], '[]') RETURNING id`,
         [orgId, title, JSON.stringify({ checks }), owner],
       );
       const proposalId = proposal.rows[0]?.id as string;
       const event = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.outbox_event (org_id, type, payload) VALUES ($1, 'kernel.proposal.created', $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.outbox_event (org_id, type, payload) VALUES ($1, 'kernel.proposal.created', $2) RETURNING id`,
         [orgId, JSON.stringify({ proposalId, kind: 'finance.purchase' })],
       );
       return { proposalId, eventId: event.rows[0]?.id as string };
@@ -89,7 +89,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (user: string, password: string, withFinance = true) => {
       const url = new URL(adminUrl);
       url.username = user;
@@ -102,10 +102,10 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
         : { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry) };
     };
-    const api = runtimeFor('crove_app', 'test-app-pw');
+    const api = runtimeFor('ludy_app', 'test-app-pw');
     app = api.runtime;
-    worker = runtimeFor('crove_worker', 'test-worker-pw').runtime;
-    kernelOnly = { app: runtimeFor('crove_app', 'test-app-pw', false).runtime, worker: runtimeFor('crove_worker', 'test-worker-pw', false).runtime };
+    worker = runtimeFor('ludy_worker', 'test-worker-pw').runtime;
+    kernelOnly = { app: runtimeFor('ludy_app', 'test-app-pw', false).runtime, worker: runtimeFor('ludy_worker', 'test-worker-pw', false).runtime };
     owner = await upsertIdentity(api.db, { issuer: 'agents', subject: 'owner', email: 'owner@agents.test', name: null });
     orgId = (await createOrg(app, asUser(owner), 'Agents')).orgId;
   });
@@ -135,8 +135,8 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       await worker.execute('kernel.agent.dispatch_event', { eventId }, { actor: SYSTEM, orgId });
     }
     const state = await admin(async (c) => ({
-      tasks: (await c.query('SELECT title, kind, tainted, status FROM crove_kernel.task WHERE org_id = $1 ORDER BY created_at', [orgId])).rows,
-      wakeups: (await c.query('SELECT status, request_count FROM crove_kernel.agent_wakeup WHERE org_id = $1', [orgId])).rows,
+      tasks: (await c.query('SELECT title, kind, tainted, status FROM ludy_kernel.task WHERE org_id = $1 ORDER BY created_at', [orgId])).rows,
+      wakeups: (await c.query('SELECT status, request_count FROM ludy_kernel.agent_wakeup WHERE org_id = $1', [orgId])).rows,
     }));
     // A redelivered event adds nothing; two tasks share one pending wake-up.
     expect(state.tasks).toEqual([
@@ -148,14 +148,14 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     const result = await runAgentWake({ runtime: worker, programs: financeAgentPrograms }, orgId, agentId);
     expect(result).toMatchObject({ runId: expect.any(String), outcome: 'succeeded' });
     const after = await admin(async (c) => ({
-      reviews: (await c.query(`SELECT status, checkout_run_id FROM crove_kernel.task WHERE org_id = $1 AND kind = 'proposal_review' ORDER BY created_at`, [orgId])).rows,
+      reviews: (await c.query(`SELECT status, checkout_run_id FROM ludy_kernel.task WHERE org_id = $1 AND kind = 'proposal_review' ORDER BY created_at`, [orgId])).rows,
       escalations: (
-        await c.query(`SELECT title, assignee_position_id, request_depth, created_by_type, created_by_id FROM crove_kernel.task WHERE org_id = $1 AND kind = 'escalation' ORDER BY title`, [orgId])
+        await c.query(`SELECT title, assignee_position_id, request_depth, created_by_type, created_by_id FROM ludy_kernel.task WHERE org_id = $1 AND kind = 'escalation' ORDER BY title`, [orgId])
       ).rows,
-      comments: (await c.query(`SELECT body, author_type, author_id FROM crove_kernel.task_comment WHERE org_id = $1 ORDER BY created_at`, [orgId])).rows,
-      run: (await c.query('SELECT status FROM crove_kernel.ai_run WHERE org_id = $1', [orgId])).rows,
-      wakeups: (await c.query('SELECT status FROM crove_kernel.agent_wakeup WHERE org_id = $1', [orgId])).rows,
-      audit: (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND actor_type = 'agent' AND actor_id = $2`, [orgId, agentId])).rows[0],
+      comments: (await c.query(`SELECT body, author_type, author_id FROM ludy_kernel.task_comment WHERE org_id = $1 ORDER BY created_at`, [orgId])).rows,
+      run: (await c.query('SELECT status FROM ludy_kernel.ai_run WHERE org_id = $1', [orgId])).rows,
+      wakeups: (await c.query('SELECT status FROM ludy_kernel.agent_wakeup WHERE org_id = $1', [orgId])).rows,
+      audit: (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND actor_type = 'agent' AND actor_id = $2`, [orgId, agentId])).rows[0],
     }));
     expect(after.reviews).toEqual([
       { status: 'waiting', checkout_run_id: null },
@@ -178,7 +178,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       async (c) =>
         (
           await c.query<{ type: string; actor_type: string; actor_id: string | null; agent_id: string | null; agent_run: string | null }>(
-            `SELECT type, actor_type, actor_id, agent_id, agent_run FROM crove_kernel.outbox_event
+            `SELECT type, actor_type, actor_id, agent_id, agent_run FROM ludy_kernel.outbox_event
              WHERE org_id = $1 AND type IN ('kernel.agent.installed', 'kernel.agent.wakeup_requested', 'kernel.task.escalated', 'kernel.proposal.created')
              ORDER BY created_at, id`,
             [orgId],
@@ -263,19 +263,19 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       kernelOnly.app.execute('kernel.agent.template.install', { templateKey: 'finance.chief_accountant' }, { actor: asMfa(owner), orgId }),
     ).rejects.toMatchObject({ code: 'MODULE_DISABLED', status: 409 });
     const wakeEvents = async () =>
-      admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.agent.wakeup_requested'`, [orgId])).rows[0]?.n);
+      admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.agent.wakeup_requested'`, [orgId])).rows[0]?.n);
     const before = await wakeEvents();
     await kernelOnly.app.execute('kernel.task.create', { title: 'Không đánh thức', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
     // The request stays pending for when the module is enabled again, but nothing wakes the agent now.
     expect(await wakeEvents()).toBe(before);
-    const pending = await admin(async (c) => (await c.query(`SELECT status FROM crove_kernel.agent_wakeup WHERE agent_id = $1 AND status = 'pending'`, [agentId])).rows);
+    const pending = await admin(async (c) => (await c.query(`SELECT status FROM ludy_kernel.agent_wakeup WHERE agent_id = $1 AND status = 'pending'`, [agentId])).rows);
     expect(pending).toEqual([{ status: 'pending' }]);
     await expect(kernelOnly.worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'module_disabled' });
     // Inbox triage skips it as well.
     const { eventId } = await proposalCreated('Hóa đơn tắt phân hệ', []);
-    const tasksBefore = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.task WHERE assignee_position_id = $1`, [positionId])).rows[0]);
+    const tasksBefore = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.task WHERE assignee_position_id = $1`, [positionId])).rows[0]);
     await kernelOnly.worker.execute('kernel.agent.dispatch_event', { eventId }, { actor: SYSTEM, orgId });
-    const tasksAfter = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.task WHERE assignee_position_id = $1`, [positionId])).rows[0]);
+    const tasksAfter = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.task WHERE assignee_position_id = $1`, [positionId])).rows[0]);
     expect(tasksAfter).toEqual(tasksBefore);
   });
 
@@ -287,7 +287,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       { actor: asMfa(owner), orgId },
     );
     const wakeEvents = async () =>
-      admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.agent.wakeup_requested'`, [orgId])).rows[0]?.n);
+      admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.agent.wakeup_requested'`, [orgId])).rows[0]?.n);
     const setApp = (enabled: boolean) => app.execute('kernel.org.set_app', { module: 'finance', enabled }, { actor: asMfa(owner), orgId });
     await setApp(false);
     try {
@@ -295,7 +295,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       await app.execute('kernel.task.create', { title: 'Không đánh thức vì app tắt', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
       // The request is pending, but no wake-up event went out, the sweep leaves it out and a run does not start.
       expect(await wakeEvents()).toBe(before);
-      const pending = await admin(async (c) => (await c.query(`SELECT status FROM crove_kernel.agent_wakeup WHERE agent_id = $1 AND status = 'pending'`, [agentId])).rows);
+      const pending = await admin(async (c) => (await c.query(`SELECT status FROM ludy_kernel.agent_wakeup WHERE agent_id = $1 AND status = 'pending'`, [agentId])).rows);
       expect(pending).toEqual([{ status: 'pending' }]);
       await age(agentId);
       expect(await due(agentId)).toEqual([]);
@@ -324,7 +324,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     await app.execute('kernel.task.create', { title: 'Hai', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
     await expect(worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'busy' });
     await app.execute('kernel.agent.update', { id: agentId, status: 'paused' }, { actor: asMfa(owner), orgId });
-    const status = await admin(async (c) => (await c.query('SELECT status FROM crove_kernel.ai_run WHERE id = $1', [run.runId])).rows[0]);
+    const status = await admin(async (c) => (await c.query('SELECT status FROM ludy_kernel.ai_run WHERE id = $1', [run.runId])).rows[0]);
     expect(status).toEqual({ status: 'cancelled' });
     await expect(worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'not_runnable' });
   });
@@ -333,14 +333,14 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
   // changes them on update.
   it("answers each position's legal entities, only those the reader sees", async () => {
     const [defaultEntity, branch] = await admin(async (c) => [
-      (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
-      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 1763', 'branch', $2) RETURNING id`, [orgId, owner]))
+      (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 1763', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string,
     ]);
     const limited = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'agents', subject: 'limited-1763', email: 'limited@agents.test', name: null });
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, limited]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, limited]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         limited,
         defaultEntity,
@@ -368,8 +368,8 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
   // archived or when the new seat cannot read the task's legal entity.
   it('edits a task, notifies the seat holder on create and seat change, and refuses checked-out, archived or out-of-entity seats (#2588)', async () => {
     const [defaultEntity, branch] = await admin(async (c) => [
-      (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
-      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 2588', 'branch', $2) RETURNING id`, [orgId, owner]))
+      (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 2588', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string,
     ]);
     const db = createDb(pools[0] as pg.Pool);
@@ -377,13 +377,13 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     const secondHolder = await upsertIdentity(db, { issuer: 'agents', subject: 'holder2-2588', email: 'holder2@agents.test', name: null });
     const branchOnly = await upsertIdentity(db, { issuer: 'agents', subject: 'branch-2588', email: 'branch@agents.test', name: null });
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [
         orgId,
         firstHolder,
         secondHolder,
         branchOnly,
       ]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         branchOnly,
         branch,
@@ -416,7 +416,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       { actor: asUser(owner), orgId },
     );
     const createEvents = await admin((c) =>
-      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
+      c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
     );
     for (const e of createEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
     const firstNotices = await app.query<{ items: Array<{ kind: string; subjectId: string | null; detail: Record<string, string> }> }>(
@@ -427,7 +427,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     expect(firstNotices.items).toEqual([expect.objectContaining({ kind: 'kernel.task_assigned', subjectId: taskId, detail: { title: 'Kiểm tra sổ quỹ' } })]);
     // A task a person made carries no taint flag; once the task is an AI coworker's (tainted), the notice says so, so the screen marks the title's invisible characters (#4421).
     expect(firstNotices.items[0]).not.toHaveProperty('tainted');
-    await admin((c) => c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, taskId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, taskId]));
     const taintedNotices = await app.query<{ items: Array<{ subjectId: string | null; tainted?: boolean }> }>('kernel.notification.list', {}, { actor: asUser(firstHolder), orgId });
     expect(taintedNotices.items.find((n) => n.subjectId === taskId)?.tainted).toBe(true);
 
@@ -438,7 +438,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       { actor: asUser(owner), orgId },
     );
     const rootEvents = await admin((c) =>
-      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, rootTaskId]),
+      c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, rootTaskId]),
     );
     for (const e of rootEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
     const ownerNotices = await app.query<{ items: Array<{ subjectId: string | null }> }>('kernel.notification.list', {}, { actor: asUser(owner), orgId });
@@ -462,7 +462,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       due: '2026-11-25T16:59:00.000Z',
     });
     const assignEvents = await admin((c) =>
-      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.assigned' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
+      c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.assigned' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
     );
     for (const e of assignEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
     const secondNotices = await app.query<{ items: Array<{ kind: string; subjectId: string | null; detail: Record<string, string> }> }>(
@@ -482,7 +482,7 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type)
+            `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type)
              VALUES ($1, 'Việc pháp nhân chính', $2, 'human', $3, 'user') RETURNING id`,
             [orgId, seatA, JSON.stringify({ type: 'kernel.legal_entity', id: defaultEntity })],
           )

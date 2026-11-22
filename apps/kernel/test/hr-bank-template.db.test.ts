@@ -128,7 +128,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Ngân hàng ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
     );
     const exec = <O>(userId: string, name: string, input: unknown = {}) => rt.execute<O>(name, input, { actor: asUser(userId), orgId });
     const peek = <O>(userId: string) => rt.query<O>('t2532.peek', {}, { actor: asUser(userId), orgId });
@@ -144,8 +144,8 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -213,7 +213,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     expect(await o.exec(o.admin, 't2532.change', { id: made.id, name: 'Bank A (new)', layout: layout({ content: 'Pay {month}' }) })).toEqual({ changed: 1 });
     const other = await withAdmin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Second entity', false, $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Second entity', false, $2) RETURNING id`,
         [o.orgId, o.owner],
       );
       return rows[0]?.id as string;

@@ -67,8 +67,8 @@ suite('channel options on PostgreSQL (#1120)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
     });
     return { orgId, owner, member, viewer };
   }
@@ -91,7 +91,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
   const request = (o: Org, user: string, connectionId: string) => rt.execute<ChannelOptionList>('social.channel_option.request', { connectionId }, { actor: asUser(user), orgId: o.orgId });
   const get = (o: Org, user: string, connectionId: string) => rt.query<ChannelOptionList | null>('social.channel_option.get', { connectionId }, { actor: asUser(user), orgId: o.orgId });
   const requests = (o: Org) =>
-    admin(async (c) => (await c.query<{ payload: { option_id: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at", [o.orgId])).rows);
+    admin(async (c) => (await c.query<{ payload: { option_id: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at", [o.orgId])).rows);
   const optionId = async (o: Org, connectionId: string) =>
     admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
   const job = (o: Org, id: string, publisher: Publisher) => runChannelOptionJob({ runtime: worker, broker: vault, publishers: { pinterest: publisher } }, o.orgId, id);
@@ -102,7 +102,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
       return await c.query(text, params);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -119,15 +119,15 @@ suite('channel options on PostgreSQL (#1120)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    pool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -219,7 +219,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
     // A credential that no longer opens (dropped since): recorded as refused, nothing asked of Pinterest.
     await rest();
     await request(o, o.member, b.connectionId);
-    await admin((c) => c.query('DELETE FROM crove_kernel.credential WHERE connection_id = $1', [b.connectionId]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.credential WHERE connection_id = $1', [b.connectionId]));
     const none = sections(b.boardId, []);
     expect(await job(o, await optionId(o, b.connectionId), none.publisher)).toBe('failed');
     expect(none.calls).toEqual([]);
@@ -233,7 +233,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
     await expect(request(o, o.viewer, b.connectionId)).rejects.toMatchObject({ status: 403 });
     await expect(get(o, o.viewer, b.connectionId)).rejects.toMatchObject({ status: 403 });
     // The member is limited to the other board (#1081).
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, other.connectionId, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, other.connectionId, o.owner]));
     await expect(request(o, o.member, b.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     await expect(get(o, o.member, b.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     expect((await request(o, o.member, other.connectionId)).status).toBe('pending');
@@ -241,7 +241,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
     const stranger = await org();
     await expect(request(stranger, stranger.owner, b.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     // A connection that needs reconnecting: refused to members, and a request already queued is dropped by the worker.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [other.connectionId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [other.connectionId]));
     await expect(request(o, o.owner, other.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
     await expect(get(o, o.owner, other.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
     const untouched = sections(other.boardId, []);
@@ -330,7 +330,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
       blobs.set(`org/${o.orgId}/${sha}`, bytes);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, 'banh.jpg', 'image/jpeg', $6, 'social')`,
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
         ),

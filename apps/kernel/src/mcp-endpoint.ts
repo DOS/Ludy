@@ -262,7 +262,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
 
   // Whether each org the user belongs to lets members connect their own AI app (the org's switch; a boolean per org of the user's own memberships).
   async function memberGrantsByOrg(user: AuthUser): Promise<Map<string, boolean>> {
-    const rows = await runtime.forUser(actorOf(user), async (db) => (await sql<{ org_id: string; enabled: boolean }>`SELECT org_id, enabled FROM crove_kernel.mcp_member_grants_for_user(${user.userId}::uuid)`.execute(db)).rows);
+    const rows = await runtime.forUser(actorOf(user), async (db) => (await sql<{ org_id: string; enabled: boolean }>`SELECT org_id, enabled FROM ludy_kernel.mcp_member_grants_for_user(${user.userId}::uuid)`.execute(db)).rows);
     return new Map(rows.map((r) => [r.org_id, r.enabled]));
   }
 
@@ -380,7 +380,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     // nothing, not even a call audit row). A grant no row has gives no email and falls through to the 401 below, as before.
     if (accountAccess) {
       try {
-        const { rows } = await runtime.orgless((db) => sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(${claims.grantId}::uuid) AS email`.execute(db));
+        const { rows } = await runtime.orgless((db) => sql<{ email: string | null }>`SELECT ludy_kernel.mcp_grant_account_email(${claims.grantId}::uuid) AS email`.execute(db));
         const email = rows[0]?.email;
         if (typeof email === 'string') accountAccess(email);
       } catch (error) {
@@ -392,12 +392,12 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     try {
       const { rows } = await runtime.orgless((db) =>
         sql<{ org_id: string; user_id: string; scopes: string[]; client_name: string }>`
-          SELECT org_id, user_id, scopes, client_name FROM crove_kernel.mcp_grant_verify(${claims.grantId}::uuid, ${claims.clientId}::text)`.execute(db),
+          SELECT org_id, user_id, scopes, client_name FROM ludy_kernel.mcp_grant_verify(${claims.grantId}::uuid, ${claims.clientId}::text)`.execute(db),
       );
       const row = rows[0];
       // The grant's kind, read in the database for a grant in good standing; no answer is a refusal like any other.
       const kindRow = row
-        ? (await runtime.orgless((db) => sql<{ kind: string | null }>`SELECT crove_kernel.mcp_grant_kind(${claims.grantId}::uuid, ${claims.clientId}::text) AS kind`.execute(db))).rows[0]
+        ? (await runtime.orgless((db) => sql<{ kind: string | null }>`SELECT ludy_kernel.mcp_grant_kind(${claims.grantId}::uuid, ${claims.clientId}::text) AS kind`.execute(db))).rows[0]
         : undefined;
       if (row && kindRow && (kindRow.kind === 'company' || kindRow.kind === 'member') && row.org_id === claims.orgId && row.user_id === claims.userId && claims.scopes.every((s) => row.scopes.includes(s))) {
         grant = { orgId: row.org_id, userId: row.user_id, scopes: claims.scopes, clientName: row.client_name, kind: kindRow.kind };
@@ -409,12 +409,12 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
 
     const writeCallAudit = (tool: string, requestId: string, outcome: 'ok' | 'refused' | 'rate_limited' | 'failed') =>
       runtime.orgless((db) =>
-        sql`SELECT crove_kernel.mcp_call_audit(${grant.orgId}::uuid, ${claims.grantId}::uuid, ${tool}::text, ${requestId}::text, ${outcome}::text)`.execute(db),
+        sql`SELECT ludy_kernel.mcp_call_audit(${grant.orgId}::uuid, ${claims.grantId}::uuid, ${tool}::text, ${requestId}::text, ${outcome}::text)`.execute(db),
       );
     const requestId = randomUUID();
     const chargeRows = async (rows: number): Promise<number> => {
       const { rows: out } = await runtime.orgless((db) =>
-        sql<{ rows_left: number }>`SELECT crove_kernel.mcp_rows_charge(${claims.grantId}::uuid, ${grant.orgId}::uuid, ${rows}::int, ${config.MCP_GRANT_DAILY_ROWS}::int) AS rows_left`.execute(db),
+        sql<{ rows_left: number }>`SELECT ludy_kernel.mcp_rows_charge(${claims.grantId}::uuid, ${grant.orgId}::uuid, ${rows}::int, ${config.MCP_GRANT_DAILY_ROWS}::int) AS rows_left`.execute(db),
       );
       return out[0]?.rows_left ?? 0;
     };

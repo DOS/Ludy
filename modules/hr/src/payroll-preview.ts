@@ -687,7 +687,7 @@ async function resolveTargetLegalEntity(
 ): Promise<{ id: string; name: string }> {
   if (requestedId !== undefined) {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', requestedId)
@@ -696,14 +696,14 @@ async function resolveTargetLegalEntity(
     return row;
   }
   const defaultEntity = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'name'])
     .where('org_id', '=', ctx.orgId)
     .where('is_default', '=', true)
     .executeTakeFirst();
   if (defaultEntity) return defaultEntity;
   const fallback = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'name'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('id')

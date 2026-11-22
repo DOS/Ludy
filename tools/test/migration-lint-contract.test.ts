@@ -65,7 +65,7 @@ describe('migration lint: contract-header', () => {
       'ALTER TABLE ONLY crove_social.sample DROP note;',
       'ALTER TABLE crove_social.sample ADD COLUMN y int, DROP COLUMN x;',
       'ALTER TABLE crove_social.sample ALTER x TYPE text USING x::text;',
-      'ALTER TABLE crove_social.sample SET SCHEMA crove_kernel;',
+      'ALTER TABLE crove_social.sample SET SCHEMA ludy_kernel;',
       'ALTER FUNCTION crove_social.f(int) RENAME TO g;',
       'ALTER VIEW crove_social.v RENAME COLUMN a TO b;',
       'ALTER TYPE crove_social.t DROP ATTRIBUTE a;',
@@ -95,8 +95,8 @@ describe('migration lint: contract-header', () => {
       'DROP DATABASE crove_d;',
       'ALTER COLLATION crove_social.c RENAME TO d;',
       'ALTER OPERATOR CLASS crove_social.oc USING btree RENAME TO oc2;',
-      'ALTER OPERATOR crove_social.=== (int, int) SET SCHEMA crove_kernel;',
-      'ALTER CONVERSION crove_social.c SET SCHEMA crove_kernel;',
+      'ALTER OPERATOR crove_social.=== (int, int) SET SCHEMA ludy_kernel;',
+      'ALTER CONVERSION crove_social.c SET SCHEMA ludy_kernel;',
       'ALTER SEQUENCE IF EXISTS crove_social.s RENAME TO s2;',
       'ALTER ROLE crove_old RENAME TO crove_new;',
       'ALTER TEXT SEARCH DICTIONARY crove_social.d RENAME TO d2;',
@@ -214,7 +214,7 @@ describe('migration lint: contract-header', () => {
   });
 
   it('accepts -- ludy:contract headers alongside -- crove:contract headers (#3969)', () => {
-    const LUDY_FILE = 'supabase/migrations/20270210000000_ludy_social_sample.sql';
+    const LUDY_FILE = 'supabase/migrations/20270315070000_ludy_social_sample.sql';
     const ludyAdrs = new Set(['0028', '0054']);
     const sql = [
       '-- ludy:contract adr=0054',

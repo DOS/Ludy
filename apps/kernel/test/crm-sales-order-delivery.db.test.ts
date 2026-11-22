@@ -58,11 +58,11 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     const party = (name: string) =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name])
+          .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name])
           .then((r) => r.rows[0]!.id),
       );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
@@ -106,9 +106,9 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -271,7 +271,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     await deliver(o, o.member, order.id, 1);
     await undeliver(o, o.member, order.id, 1);
     const audit = await admin((c) =>
-      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.sales_order.%deliver' AND outcome = 'ok' ORDER BY id", [o.orgId]),
+      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.sales_order.%deliver' AND outcome = 'ok' ORDER BY id", [o.orgId]),
     );
     expect(audit.rows.map((r) => r.command)).toEqual(['crm.sales_order.deliver', 'crm.sales_order.undeliver']);
     const text = JSON.stringify(audit.rows);

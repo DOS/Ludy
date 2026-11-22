@@ -1,5 +1,5 @@
 // Tags on media library files (issue #904): members tag the org's post images and videos by product, campaign or
-// client brand, and the library filters by tag. crove_kernel.file never changes, so the tags live in
+// client brand, and the library filters by tag. ludy_kernel.file never changes, so the tags live in
 // crove_social.media_tag; they go with their file. A tag is normalized (trimmed, inner spaces collapsed, case kept),
 // a file has each tag once whatever its case, and at most MAX_TAGS_PER_FILE.
 import { sql } from 'kysely';
@@ -47,7 +47,7 @@ function requireUser(ctx: CommandContext): string {
 // time, so the count check below holds.
 async function lockLibraryFile(ctx: CommandContext, fileId: string) {
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
@@ -136,7 +136,7 @@ export const mediaTags = defineQuery({
     const rows = await sql<{ tag: string; files: string }>`
       SELECT min(t.tag) AS tag, count(DISTINCT t.file_id) AS files
       FROM crove_social.media_tag t
-      JOIN crove_kernel.file f ON f.org_id = t.org_id AND f.id = t.file_id
+      JOIN ludy_kernel.file f ON f.org_id = t.org_id AND f.id = t.file_id
       WHERE t.org_id = ${ctx.orgId} AND f.source = 'social' AND f.content_type IN (${sql.join([...LIBRARY_MEDIA_TYPES])})
       GROUP BY lower(t.tag)
       ORDER BY count(DISTINCT t.file_id) DESC, lower(t.tag), min(t.tag)

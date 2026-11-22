@@ -101,7 +101,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
         await c.query<{ s: string; t: string; c: string; type: string }>(
           `SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS c, c.data_type AS type
              FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-            WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
+            WHERE (c.table_schema LIKE 'ludy\\_%' OR c.table_schema LIKE 'crove\\_%') AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
         )
       ).rows;
       const found: string[] = [];
@@ -124,14 +124,14 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Nhân sự ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
     );
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
     const add = (userId: string, extra: Record<string, unknown> = {}) =>
       exec<HrWritten>(userId, 'hr.payroll.employee.add', { displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT, employment: TERMS, ...extra });
     const audits = (command: string) =>
-      withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
+      withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
     return { orgId, owner, admin, member, viewer, exec, query, add, audits };
   }
 
@@ -144,8 +144,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -203,7 +203,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
       // Even a caller the module's own lists would admit sees no row and cannot write one: the database's owner_admin policy.
       expect(await o.query(who, 't2530.peek')).toEqual({ employees: 0, employments: 0, dependents: 0 });
     }
-    const entity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
+    const entity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       for (const who of [o.member, o.viewer]) await expect(o.exec(who, 't2530.insert', { legalEntityId: entity })).rejects.toBeInstanceOf(DomainError);
@@ -226,7 +226,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await o.query(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect((await o.audits('hr.payroll.employee.list')).map((a) => a.outcome)).toEqual(['ok', 'ok']);
     expect((await o.audits('hr.payroll.employee.get')).map((a) => a.outcome)).toEqual(['ok']);
-    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
+    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
     for (const needle of [...NEEDLES, NAME, ADDRESS, '15000000']) expect(all, needle).not.toContain(needle);
     // What the add's own audit row says: ids, flags and a marker for each classified value.
     const [added] = await o.audits('hr.payroll.employee.add');
@@ -416,7 +416,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     // The sealed text is byte for byte as it was; the key that opens it is gone.
     const after = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     expect(after).toEqual(before);
-    expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
+    expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
     // Nothing about the person is found anywhere, and the record cannot be changed again.
     expect(await hits()).toEqual([]);
     // The name, the address and the dependent's name are in no column of any crove table (the audit rows hold markers, the rows hold the placeholder).
@@ -454,7 +454,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
       (await c.query<{ erased_at: Date | null; display_name: string }>('SELECT erased_at, display_name FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0],
     );
     expect(row).toEqual({ erased_at: null, display_name: NAME });
-    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(1);
+    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(1);
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(detail).toMatchObject({ erased: false, displayName: NAME, identityNumber: IDENTITY, accountNumber: ACCOUNT });
   });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Zoom's signed webhook, the doorbell of the recording import (meetings integrations C3, issue #3175, plan docs/plan/meetings-integrations.md section 6.3). The notice says a cloud recording finished, and
-// all this route does with it is ask the sweep to list the host's connections again at its next pass (crove_kernel.meeting_platform_ring clears their last listing time). It is a doorbell and never data:
+// all this route does with it is ask the sweep to list the host's connections again at its next pass (ludy_kernel.meeting_platform_ring clears their last listing time). It is a doorbell and never data:
 //
 // - The notice carries a download address, a download token and the host's email. None is read, stored, logged or used: a recording is fetched only through the member's own sealed token, by the adapter,
 //   after the member's click. A forged notice, even a correctly shaped one, can at worst cause one extra listing.
@@ -87,7 +87,7 @@ export async function acceptZoomWebhook(
     const key = notice.uuid !== '' && notice.eventTs !== '' ? `${notice.event}:${notice.uuid}:${notice.eventTs}` : null;
     if (!(key && replays?.has(key))) {
       await runtime.orgless(async (db) => {
-        await sql`SELECT crove_kernel.meeting_platform_ring('zoom', ${notice.hostId})`.execute(db);
+        await sql`SELECT ludy_kernel.meeting_platform_ring('zoom', ${notice.hostId})`.execute(db);
       });
       if (key) replays?.add(key);
     }

@@ -1,5 +1,5 @@
 // A kill switch per relay type (#1696, plan §4.12) on PostgreSQL 17: while the operator's 'relay:<event type>' switch
-// is engaged, the relay's claim (crove_kernel.outbox_claim, what the worker's relay calls) leaves that type's outbox
+// is engaged, the relay's claim (ludy_kernel.outbox_claim, what the worker's relay calls) leaves that type's outbox
 // rows pending and claims every other type, and the back-pressure lag does not age them; releasing the switch drains
 // them, in order. The claim marks a held row once and then passes it without touching it (#1713), so a large held
 // backlog does not slow every relay pass. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -46,27 +46,27 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
   }
   const admin = <T>(fn: (client: pg.Client) => Promise<T>) => connect(adminUrl, fn);
 
-  // An outbox event of the given type and age, pending as crove_kernel.emit leaves it; returns its id.
+  // An outbox event of the given type and age, pending as ludy_kernel.emit leaves it; returns its id.
   const add = (type: string, age = '0 seconds') =>
     admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `WITH e AS (INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+        `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     VALUES ($1, $2, '{}', now() - $3::interval) RETURNING org_id, id)
-         INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e RETURNING event_id AS id`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e RETURNING event_id AS id`,
         [orgId, type, age],
       );
       return rows[0]?.id as string;
     });
   // The relay's claim, as the worker login runs it.
   const claim = async (limit = 100) =>
-    connect(login('crove_worker', 'test-worker-pw'), async (c) => (await c.query<{ event_id: string; type: string }>('SELECT event_id, type FROM crove_kernel.outbox_claim($1)', [limit])).rows);
+    connect(login('ludy_worker', 'test-worker-pw'), async (c) => (await c.query<{ event_id: string; type: string }>('SELECT event_id, type FROM ludy_kernel.outbox_claim($1)', [limit])).rows);
   // Claims until nothing is left: the org's own events, so the outbox holds only a test's rows.
   const drain = async () => {
     for (let i = 0; i < 100; i++) if ((await claim()).length === 0) return;
     throw new Error('the outbox never drained');
   };
-  const pending = () => admin(async (c) => (await c.query<{ id: string }>('SELECT event_id AS id FROM crove_kernel.outbox_pending ORDER BY seq')).rows.map((r) => r.id));
-  const set = (key: string, engaged: boolean) => admin((c) => c.query('SELECT crove_kernel.global_kill_switch_set($1, $2, $3, $4)', [key, engaged, 'diễn tập', 'ops']));
+  const pending = () => admin(async (c) => (await c.query<{ id: string }>('SELECT event_id AS id FROM ludy_kernel.outbox_pending ORDER BY seq')).rows.map((r) => r.id));
+  const set = (key: string, engaged: boolean) => admin((c) => c.query('SELECT ludy_kernel.global_kill_switch_set($1, $2, $3, $4)', [key, engaged, 'diễn tập', 'ops']));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -77,13 +77,13 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const appDb = createDb(appPool);
     const runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const owner = await upsertIdentity(appDb, { issuer: 'relay-kill-test', subject: 'owner', email: 'owner@relay-kill.test', name: null });
     ({ orgId } = await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Relay kill switch test'));
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
   });
 
@@ -94,7 +94,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
       async (c) =>
         (
           await c.query<{ key: string }>(
-            `SELECT DISTINCT key FROM crove_kernel.global_kill_switch WHERE key LIKE 'relay:%' AND crove_kernel.global_kill_switch_on(key)`,
+            `SELECT DISTINCT key FROM ludy_kernel.global_kill_switch WHERE key LIKE 'relay:%' AND ludy_kernel.global_kill_switch_on(key)`,
           )
         ).rows,
     );
@@ -121,7 +121,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     const other2 = await add(OTHER);
 
     await set(`relay:${HELD}`, true);
-    expect(await admin(async (c) => (await c.query('SELECT crove_kernel.global_kill_switch_on($1) AS on', [`relay:${HELD}`])).rows[0])).toEqual({ on: true });
+    expect(await admin(async (c) => (await c.query('SELECT ludy_kernel.global_kill_switch_on($1) AS on', [`relay:${HELD}`])).rows[0])).toEqual({ on: true });
     // The relay passes the held rows at the head of the outbox and claims the others, in order.
     expect(await claim()).toEqual([
       { event_id: other1, type: OTHER },
@@ -135,7 +135,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     // The held hour-old row does not count as relay lag, so back-pressure does not pause other work for it.
     expect(await outboxLagSeconds(workerDb)).toBe(0);
     // The prober still sees the waiting work (incidents runbook §7).
-    expect(await admin(async (c) => (await c.query<{ n: number }>('SELECT outbox_pending AS n FROM crove_kernel.health()')).rows[0]?.n)).toBe(2);
+    expect(await admin(async (c) => (await c.query<{ n: number }>('SELECT outbox_pending AS n FROM ludy_kernel.health()')).rows[0]?.n)).toBe(2);
 
     // Released: the next relay pass drains them, oldest first.
     await set(`relay:${HELD}`, false);
@@ -164,7 +164,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     await set(`relay:${HELD}`, false);
     expect(await claim()).toEqual([{ event_id: held, type: HELD }]);
     // The relay switches leave the deployment-wide 'ai' and 'mail' keys alone.
-    expect(await admin(async (c) => (await c.query(`SELECT crove_kernel.global_kill_switch_on('ai') AS ai, crove_kernel.global_kill_switch_on('mail') AS mail`)).rows[0])).toEqual({
+    expect(await admin(async (c) => (await c.query(`SELECT ludy_kernel.global_kill_switch_on('ai') AS ai, ludy_kernel.global_kill_switch_on('mail') AS mail`)).rows[0])).toEqual({
       ai: false,
       mail: false,
     });
@@ -175,10 +175,10 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     const before = new Set(await pending());
     await admin((c) =>
       c.query(
-        `WITH e AS (INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+        `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     SELECT $1, $2, jsonb_build_object('i', g), now() - interval '1 hour' FROM generate_series(1, $3) g
                     RETURNING org_id, id)
-         INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
         [orgId, type, n],
       ),
     );
@@ -199,7 +199,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
           await c.query<{ relname: string; scans: string; rows: string; updated: string }>(
             `SELECT relname, (coalesce(seq_scan, 0) + coalesce(idx_scan, 0))::text AS scans,
                     (coalesce(seq_tup_read, 0) + coalesce(idx_tup_fetch, 0))::text AS rows, n_tup_upd::text AS updated
-             FROM pg_stat_xact_user_tables WHERE schemaname = 'crove_kernel' AND relname IN ('outbox_event', 'outbox_pending')`,
+             FROM pg_stat_xact_user_tables WHERE schemaname = 'ludy_kernel' AND relname IN ('outbox_event', 'outbox_pending')`,
           )
         ).rows.map((r) => [r.relname, { scans: Number(r.scans), rows: Number(r.rows), updated: Number(r.updated) }]),
       ) as Record<'outbox_event' | 'outbox_pending', { scans: number; rows: number; updated: number }>;
@@ -221,12 +221,12 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
       throw error;
     }
   };
-  const asWorker = <T>(fn: (c: pg.Client) => Promise<T>) => connect(login('crove_worker', 'test-worker-pw'), fn);
+  const asWorker = <T>(fn: (c: pg.Client) => Promise<T>) => connect(login('ludy_worker', 'test-worker-pw'), fn);
   const claimIn = (c: pg.Client, limit = 100) =>
-    c.query<{ event_id: string; type: string }>('SELECT event_id, type FROM crove_kernel.outbox_claim($1)', [limit]).then((r) => r.rows);
+    c.query<{ event_id: string; type: string }>('SELECT event_id, type FROM ludy_kernel.outbox_claim($1)', [limit]).then((r) => r.rows);
 
   // Statistics that know the outbox as it is now, as autovacuum would take them after the claim's marks (#2074).
-  const analyze = () => admin((c) => c.query('ANALYZE crove_kernel.outbox_pending, crove_kernel.outbox_event'));
+  const analyze = () => admin((c) => c.query('ANALYZE ludy_kernel.outbox_pending, ludy_kernel.outbox_event'));
   // Rounds of the backlog test: 1 in every run, 20 to show it stable (#2074).
   const ROUNDS = 1;
 
@@ -272,7 +272,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     // The back-pressure lag passes the marked backlog too, and does not age it.
     const other = await add(OTHER, '10 minutes');
     await analyze();
-    const lag = await asWorker((c) => touched(c, async () => (await c.query<{ lag: number }>('SELECT crove_kernel.outbox_lag_seconds() AS lag')).rows[0]?.lag));
+    const lag = await asWorker((c) => touched(c, async () => (await c.query<{ lag: number }>('SELECT ludy_kernel.outbox_lag_seconds() AS lag')).rows[0]?.lag));
     expect(lag.result).toBeGreaterThanOrEqual(600);
     expect(lag.result).toBeLessThan(3600);
     expect(lag.event.scans).toBeLessThan(5);
@@ -280,7 +280,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     expect(await claim()).toEqual([{ event_id: other, type: OTHER }]);
     expect(await outboxLagSeconds(workerDb)).toBe(0);
     // The prober and the operator's status still count every held row.
-    expect(await admin(async (c) => (await c.query<{ n: number }>('SELECT outbox_pending AS n FROM crove_kernel.health()')).rows[0]?.n)).toBe(BACKLOG + 1);
+    expect(await admin(async (c) => (await c.query<{ n: number }>('SELECT outbox_pending AS n FROM ludy_kernel.health()')).rows[0]?.n)).toBe(BACKLOG + 1);
     expect(await pending()).toEqual([...held, lateHeld]);
 
     // Released while another type stays held: the marks of the released type stop counting at once (the lag ages them
@@ -319,7 +319,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
     }
     throw new Error('the outbox never drained');
   };
-  const marked = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_pending WHERE held_type IS NOT NULL')).rows[0]?.n));
+  const marked = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.outbox_pending WHERE held_type IS NOT NULL')).rows[0]?.n));
 
   it('refuses a NULL limit, held types or not, before it claims or marks anything (#1782)', async () => {
     await drain();
@@ -399,19 +399,19 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
       await expect(set(key, true), key).rejects.toMatchObject({ code: '23514' });
     }
     for (const [role, password] of [
-      ['crove_app', 'test-app-pw'],
-      ['crove_worker', 'test-worker-pw'],
+      ['ludy_app', 'test-app-pw'],
+      ['ludy_worker', 'test-worker-pw'],
     ] as const) {
       await connect(login(role, password), async (c) => {
-        await expect(c.query(`SELECT crove_kernel.global_kill_switch_set('relay:a.b', true, 'x', 'y')`), role).rejects.toMatchObject({ code: '42501' });
-        await expect(c.query('SELECT crove_kernel.relay_held_types()'), role).rejects.toMatchObject({ code: '42501' });
-        expect((await c.query(`SELECT crove_kernel.global_kill_switch_on('relay:a.b') AS on`)).rows[0]).toEqual({ on: false });
+        await expect(c.query(`SELECT ludy_kernel.global_kill_switch_set('relay:a.b', true, 'x', 'y')`), role).rejects.toMatchObject({ code: '42501' });
+        await expect(c.query('SELECT ludy_kernel.relay_held_types()'), role).rejects.toMatchObject({ code: '42501' });
+        expect((await c.query(`SELECT ludy_kernel.global_kill_switch_on('relay:a.b') AS on`)).rows[0]).toEqual({ on: false });
       });
     }
     // No Crove role may read the held types or flip a switch; the claim stays the worker's alone.
-    const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter'];
+    const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader', 'ludy_prober', 'ludy_reporter'];
     const matrix = await admin(async (c) => {
-      const fns = ['crove_kernel.relay_held_types()', 'crove_kernel.global_kill_switch_set(text,boolean,text,text)', 'crove_kernel.outbox_claim(integer)'];
+      const fns = ['ludy_kernel.relay_held_types()', 'ludy_kernel.global_kill_switch_set(text,boolean,text,text)', 'ludy_kernel.outbox_claim(integer)'];
       const { rows } = await c.query<{ fn: string; role: string }>(
         `SELECT f AS fn, r AS role FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r
          WHERE has_function_privilege(r, f::regprocedure, 'EXECUTE') ORDER BY 1, 2`,
@@ -419,18 +419,18 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
       );
       return rows;
     });
-    expect(matrix).toEqual([{ fn: 'crove_kernel.outbox_claim(integer)', role: 'crove_worker' }]);
+    expect(matrix).toEqual([{ fn: 'ludy_kernel.outbox_claim(integer)', role: 'ludy_worker' }]);
     // Every change is kept, with who and why; a key of this test's own, so the other tests' changes do not count.
     const key = 'relay:test.relay.history';
     await set(key, true);
     await set(key, false);
     const history = await admin(
-      async (c) => (await c.query(`SELECT key, engaged, reason, changed_by FROM crove_kernel.global_kill_switch WHERE key = $1 ORDER BY changed_at, id`, [key])).rows,
+      async (c) => (await c.query(`SELECT key, engaged, reason, changed_by FROM ludy_kernel.global_kill_switch WHERE key = $1 ORDER BY changed_at, id`, [key])).rows,
     );
     expect(history).toEqual([
       { key, engaged: true, reason: 'diễn tập', changed_by: 'ops' },
       { key, engaged: false, reason: 'diễn tập', changed_by: 'ops' },
     ]);
-    await expect(admin((c) => c.query(`DELETE FROM crove_kernel.global_kill_switch WHERE key LIKE 'relay:%'`))).rejects.toThrow();
+    await expect(admin((c) => c.query(`DELETE FROM ludy_kernel.global_kill_switch WHERE key LIKE 'relay:%'`))).rejects.toThrow();
   });
 });

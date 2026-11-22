@@ -1,6 +1,6 @@
 // Realtime invalidation over SSE (issue #69, plan §2 Realtime, §4.11 and §9).
 //
-// Writes to the records the SPA shows send `NOTIFY crove_stream, '<org_id> <type> <id>'` from a trigger
+// Writes to the records the SPA shows send `NOTIFY ludy_stream, '<org_id> <type> <id>'` from a trigger
 // (20261018140000_crove_kernel_stream_invalidation.sql), and rows that belong to one legal entity add it:
 // `<org_id> <type> <id> <legal_entity_id>` (20261103080000 and 20261103090000 *_stream_legal_entity.sql, #1692), and a
 // member's own row (a notification, a to-do, a note) names its recipient last, `... @<user_id>`, and a shared note adds
@@ -32,7 +32,7 @@ import pg from 'pg';
 import { STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint, type StreamHintType } from '@ludy/kernel-contract';
 import { DomainError, type Aal, type UserActor } from '@ludy/kernel-runtime';
 
-export const STREAM_CHANNEL = 'crove_stream';
+export const STREAM_CHANNEL = 'ludy_stream';
 // The query every check runs (packages/kernel/src/queries.ts).
 export const STREAM_CHECK_QUERY = 'kernel.stream.check';
 // A ticket is redeemed within seconds of being issued; the SPA opens the stream right away.
@@ -58,7 +58,7 @@ const TYPES: ReadonlySet<string> = new Set(STREAM_HINT_TYPES);
 const TICKET = /^[A-Za-z0-9_-]{43}$/;
 
 // The hints about one member's own rows, which only that member may read (own_notification, todo_read, note_read): each
-// names its recipient and reaches only the streams of that user. crove_kernel.stream_notify names the same types
+// names its recipient and reaches only the streams of that user. ludy_kernel.stream_notify names the same types
 // (20261104000000_crove_kernel_stream_notes_audience.sql).
 export const RECIPIENT_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['notification', 'todo', 'note']);
 // The hints that may add `+shared`: a shared note, which the members who read the org's shared notes may hear too.
@@ -737,7 +737,7 @@ export function createDbTicketStore(pool: pg.Pool, options: { ttlSeconds?: numbe
       // stream_ticket_issue answers false both for an expired token and for the per-user limit. `expired` repeats its
       // token test in the same statement: now() is the transaction's start in both, so the two always agree.
       const { rows } = await pool.query<{ ok: boolean; expired: boolean }>(
-        `SELECT crove_kernel.stream_ticket_issue($1, $2::uuid, $3::uuid, $4::uuid, $5, $6::bigint, pg_catalog.to_timestamp($7::double precision), $8::integer, $9::integer) AS ok,
+        `SELECT ludy_kernel.stream_ticket_issue($1, $2::uuid, $3::uuid, $4::uuid, $5, $6::bigint, pg_catalog.to_timestamp($7::double precision), $8::integer, $9::integer) AS ok,
                 pg_catalog.to_timestamp($7::double precision) <= pg_catalog.now() AS expired`,
         [hash, b.userId, b.orgId, b.sessionId, b.aal, b.mfaAt, b.tokenExp, ttl, perUser],
       );
@@ -755,7 +755,7 @@ export function createDbTicketStore(pool: pg.Pool, options: { ttlSeconds?: numbe
         token_exp: string;
       }>(
         `SELECT user_id, org_id, session_id, aal, mfa_at::text AS mfa_at, pg_catalog.date_part('epoch', token_expires_at)::text AS token_exp
-         FROM crove_kernel.stream_ticket_redeem($1)`,
+         FROM ludy_kernel.stream_ticket_redeem($1)`,
         [hash],
       );
       const row = rows[0];

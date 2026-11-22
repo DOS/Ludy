@@ -50,9 +50,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const adminUser = await person('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, adminUser]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, adminUser]));
     const party = (name: string) =>
-      admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
+      admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const newDeal = async (partyId: string, title = 'Gói kế toán năm') => {
@@ -75,9 +75,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -316,9 +316,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
   // The document the PDF is made from (#2695): the quote, the org as the seller, the customer as the buyer; read only, for anyone who reads quotes.
   it('gives the quote document to a viewer: the quote, the org as seller, the customer as buyer, and another org\'s quote as missing', async () => {
     const o = await org();
-    await admin((c) => c.query('UPDATE crove_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
     const party = await o.party('Công ty TNHH Đặng Thị Hằng');
-    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
     const deal = await o.newDeal(party);
     const quote = await o.exec<Quote>(o.member, 'crm.quote.save', {
       dealId: deal.id,
@@ -442,9 +442,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await o.send(quote.id);
     const revision = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
     await o.exec(o.member, 'crm.quote.delete_draft', { quoteId: revision.id });
-    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 AND kind LIKE 'quote.%' ORDER BY occurred_at, id", [o.orgId, party]));
+    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 AND kind LIKE 'quote.%' ORDER BY occurred_at, id", [o.orgId, party]));
     expect(timeline.rows.map((r) => r.kind)).toEqual(['quote.created', 'quote.revised', 'quote.deleted']);
-    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.quote%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
+    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.quote%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
     expect(audit.rows.map((r) => r.command)).toEqual(['crm.quote.save', 'crm.quote.save', 'crm.quote.revise', 'crm.quote.delete_draft']);
     const text = JSON.stringify(timeline.rows) + JSON.stringify(audit.rows);
     for (const secret of ['Bí mật', 'bí mật', 'Điều khoản', '7770001', saved.total, '1500000']) expect(text).not.toContain(secret);

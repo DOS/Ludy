@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MailTemplate adapters for Crove eSign Slice 1b outbound mail (ADR-0034, #3324).
 // Hydrates short-lived signing links and 6-digit email OTPs in memory at dispatch time via system commands,
-// so raw tokens and OTP codes never sit in crove_kernel.mail_message.payload.
+// so raw tokens and OTP codes never sit in ludy_kernel.mail_message.payload.
 import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@ludy/kernel-runtime';
 import type { MailAttachment } from '@ludy/mail';
 import {

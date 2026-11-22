@@ -31,8 +31,8 @@ export function sinceYesterdayQuery(options: { now?: () => Date } = {}) {
       // member's own Vy (kind 'member_vy') works in that member's private context and is never counted here (ADR-0049).
       const { rows } = await sql<{ agent_id: string; name: string; n: string }>`
         SELECT a.agent_id, g.display_name AS name, count(*)::text AS n
-        FROM crove_kernel.activity a
-        JOIN crove_kernel.agent g ON g.org_id = a.org_id AND g.id = a.agent_id
+        FROM ludy_kernel.activity a
+        JOIN ludy_kernel.agent g ON g.org_id = a.org_id AND g.id = a.agent_id
         WHERE a.org_id = ${ctx.orgId}::uuid AND a.agent_id IS NOT NULL AND g.kind = 'org_chart'
           AND a.occurred_at > ${since.toISOString()}::timestamptz
         GROUP BY a.agent_id, g.display_name

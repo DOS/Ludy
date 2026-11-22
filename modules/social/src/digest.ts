@@ -97,7 +97,7 @@ async function weekOf(ctx: CommandContext): Promise<DigestWeek> {
 // What happened last week and what is planned this week, on every channel of the org.
 async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWeekData> {
   const org = ctx.orgId;
-  const channelRows = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name', 'provider', 'status']).where('org_id', '=', org).execute();
+  const channelRows = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name', 'provider', 'status']).where('org_id', '=', org).execute();
   const channels = new Map(channelRows.map((c) => [c.id, { name: c.display_name, provider: c.provider }] as const));
   const [published, failures, planned] = await Promise.all([
     sql<{ variant_id: string; post_id: string; connection_id: string; title: string | null; body: string | null; status: string; metrics: Record<string, number> | null }>`
@@ -135,7 +135,7 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
   // The queues of active channels, not paused: their posting days left this week with no post.
   const queues = await ctx.trx
     .selectFrom('crove_social.queue as q')
-    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'q.org_id').onRef('c.id', '=', 'q.channel_connection_id'))
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'q.org_id').onRef('c.id', '=', 'q.channel_connection_id'))
     .select(['q.id', 'q.channel_connection_id', 'q.time_zone'])
     .where('q.org_id', '=', org)
     .where('q.paused', '=', false)
@@ -256,7 +256,7 @@ export const digestSend = defineCommand({
     const week = await weekOf(ctx);
     const none = { week: week.isoWeek, mails: 0, suppressed: 0 };
     if (!week.due) return { state: 'not_due', ...none };
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return { state: 'not_due', ...none };
     // The claim: one command per org and week gets the row, and only it sends.
     const marker = await ctx.trx
@@ -267,7 +267,7 @@ export const digestSend = defineCommand({
       .executeTakeFirst();
     if (!marker) return { state: 'claimed', ...none };
     const { rows: recipients } = await sql<{ user_id: string; role: string }>`
-      SELECT m.user_id, m.role FROM crove_kernel.tenant_member m
+      SELECT m.user_id, m.role FROM ludy_kernel.tenant_member m
       WHERE m.org_id = ${ctx.orgId}::uuid AND m.role IN ('owner', 'admin', 'member')
         AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${DIGEST_KIND})
         AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mail_off o WHERE o.org_id = m.org_id AND o.user_id = m.user_id)
@@ -275,14 +275,14 @@ export const digestSend = defineCommand({
     if (recipients.length === 0) return { state: 'sent', ...none };
     const ids = recipients.map((r) => r.user_id);
     const { rows: people } = await sql<{ user_id: string; email: string | null }>`
-      SELECT user_id, email FROM crove_kernel.member_emails(${ids}::uuid[])`.execute(ctx.trx);
+      SELECT user_id, email FROM ludy_kernel.member_emails(${ids}::uuid[])`.execute(ctx.trx);
     const emails = new Map(people.filter((p) => p.email).map((p) => [p.user_id, p.email as string]));
     const data = await weekData(ctx, week);
     // A member's channel list (#1081); owners and admins are never limited.
     const limited = recipients.filter((r) => r.role === 'member').map((r) => r.user_id);
     const lists = new Map<string, Set<string>>();
     if (limited.length > 0) {
-      const access = await ctx.trx.selectFrom('crove_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', ctx.orgId).where('user_id', 'in', limited).execute();
+      const access = await ctx.trx.selectFrom('ludy_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', ctx.orgId).where('user_id', 'in', limited).execute();
       for (const a of access) lists.set(a.user_id, (lists.get(a.user_id) ?? new Set<string>()).add(a.channel_connection_id));
     }
     const reviews = await reviewsFor(

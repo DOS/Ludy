@@ -55,7 +55,7 @@ interface PgLikeError {
   constraint?: string;
 }
 
-// The JSON DETAIL of ORG_CREATE_RATE_LIMITED (crove_kernel.create_or_replay_org): which limit refused, and for the
+// The JSON DETAIL of ORG_CREATE_RATE_LIMITED (ludy_kernel.create_or_replay_org): which limit refused, and for the
 // rolling 24-hour limit, when the oldest org in the window leaves it. org_create_busy: the user's other creations held
 // the per-user lock past the definer's lock_timeout.
 function rateLimited(detail: string | undefined): DomainError {
@@ -85,7 +85,7 @@ function rateLimited(detail: string | undefined): DomainError {
   );
 }
 
-// The JSON DETAIL of INBOUND_ROTATE_RATE_LIMITED (crove_kernel.inbound_rotate, #113): which per-org limit refused,
+// The JSON DETAIL of INBOUND_ROTATE_RATE_LIMITED (ludy_kernel.inbound_rotate, #113): which per-org limit refused,
 // and for the rolling 24-hour limit, when the oldest rotation in the window leaves it. inbound_rotate_busy: another
 // rotation of the same org held the per-org lock past the definer's lock_timeout.
 function inboundRotateLimited(detail: string | undefined): DomainError {
@@ -127,7 +127,7 @@ export function toDomainError(error: unknown): DomainError {
   if (error instanceof DomainError) return error;
   const pg = error as PgLikeError;
   switch (pg?.code) {
-    // Raised by crove_kernel.session_check (ADR-0028): signed out, revoked, expired upstream, banned or deleted.
+    // Raised by ludy_kernel.session_check (ADR-0028): signed out, revoked, expired upstream, banned or deleted.
     // MFA_REQUIRED: the session is valid but has not passed the user's second factor yet (issue #126); the SPA
     // answers it with the MFA challenge instead of signing out. SESSION_REVOKED_IN_ORG: see below.
     case '28000':
@@ -147,11 +147,11 @@ export function toDomainError(error: unknown): DomainError {
       if (pg.message === 'OAUTH_CLIENT_SESSION') {
         return new DomainError('OAUTH_CLIENT_TOKEN_REFUSED', 401, 'Mã truy cập này được cấp cho một ứng dụng bên thứ ba, không dùng để đăng nhập');
       }
-      // crove_kernel.extension_token_check (issue #2582): the Ludy extension's token is revoked, expired or its member left.
+      // ludy_kernel.extension_token_check (issue #2582): the Ludy extension's token is revoked, expired or its member left.
       if (pg.message === 'EXTENSION_TOKEN_INVALID') {
         return new DomainError('EXTENSION_TOKEN_INVALID', 401, 'Mã của tiện ích Ludy không còn hiệu lực, hãy đăng nhập lại tiện ích');
       }
-      // crove_kernel.mcp_grant_check (issue #2975): the MCP grant is revoked, expired, stopped, or its consenting user is no longer an owner or admin.
+      // ludy_kernel.mcp_grant_check (issue #2975): the MCP grant is revoked, expired, stopped, or its consenting user is no longer an owner or admin.
       if (pg.message === 'MCP_GRANT_INVALID') {
         return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực');
       }
@@ -162,12 +162,12 @@ export function toDomainError(error: unknown): DomainError {
       }
       return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     case '42501':
-      // crove_kernel.enter_mcp_member_context (ADR-0051 decision 2, slice 3b): a member-bound grant that cannot enter. The client gets the one generic
+      // ludy_kernel.enter_mcp_member_context (ADR-0051 decision 2, slice 3b): a member-bound grant that cannot enter. The client gets the one generic
       // answer above whatever the reason; the specific reason travels only in `audit` (never enumerable) for the security event the runtime notes.
       if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_GRANT_NOT_COMPANY' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
         return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực', undefined, { audit: { mcpRefusal: pg.message } });
       }
-      // crove_kernel.enter_mcp_company_draft_context (#3227): the grant does not hold the write scope the command declares (the runtime checks it first, so this is the database agreeing).
+      // ludy_kernel.enter_mcp_company_draft_context (#3227): the grant does not hold the write scope the command declares (the runtime checks it first, so this is the database agreeing).
       if (pg.message === 'MCP_GRANT_SCOPE') {
         return new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: MCP_SCOPE_RULE });
       }
@@ -183,7 +183,7 @@ export function toDomainError(error: unknown): DomainError {
       // A write in an agent context without the task lease its run must hold (ADR-0029 section 4): the run lost its
       // checkout, or never had it.
       if (pg.message === 'AGENT_LEASE_REQUIRED') return new DomainError('LEASE_LOST', 409, 'Tác tử AI không còn giữ việc này');
-      // Agent context entry and the database guards on agents (crove_kernel.enter_agent_context, refuse_agent_write).
+      // Agent context entry and the database guards on agents (ludy_kernel.enter_agent_context, refuse_agent_write).
       if (pg.message && AGENT_REFUSALS.has(pg.message)) return new DomainError(pg.message, 403, 'Tác tử AI không được thực hiện việc này');
       return new DomainError('FORBIDDEN', 403, 'Không có quyền thực hiện');
     case '23505':
@@ -197,7 +197,7 @@ export function toDomainError(error: unknown): DomainError {
     case 'P0001':
       if (pg.message === 'ORG_CREATE_RATE_LIMITED') return rateLimited(pg.detail);
       if (pg.message === 'INBOUND_ROTATE_RATE_LIMITED') return inboundRotateLimited(pg.detail);
-      // The owner backstop (crove_kernel.tenant_member_keeps_owner, at commit): the same refusal as the commands'.
+      // The owner backstop (ludy_kernel.tenant_member_keeps_owner, at commit): the same refusal as the commands'.
       if (pg.message === 'LAST_OWNER') return new DomainError('LAST_OWNER', 409, 'Tổ chức phải còn ít nhất một chủ sở hữu');
       return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     case '53400':

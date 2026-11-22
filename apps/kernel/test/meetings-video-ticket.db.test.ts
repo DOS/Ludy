@@ -135,7 +135,7 @@ suite('meeting video tickets (#2703)', () => {
     expect(invited.status).toBe(200);
     const accepted = await rpc('invites/accept', name, { token: String(invited.body.acceptPath).split('#')[1] }, null);
     expect(accepted.status).toBe(200);
-    userIds.set(name, await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email])).rows[0]!.id));
+    userIds.set(name, await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email])).rows[0]!.id));
   }
 
   // A meeting recorded by `recorder`, readable by `attendee` too, with this video sealed into it.
@@ -155,7 +155,7 @@ suite('meeting video tickets (#2703)', () => {
       store.staged.set(stagingKey, bytes);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+          `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
            VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
           [orgId, uploadId, stagingKey, userIds.get('recorder'), 2 * 1024 * 1024 * 1024],
         ),
@@ -216,9 +216,9 @@ suite('meeting video tickets (#2703)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -243,7 +243,7 @@ suite('meeting video tickets (#2703)', () => {
     expect(created.status).toBe(200);
     slug = String(created.body.slug);
     orgId = String(created.body.orgId);
-    userIds.set('owner', await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email])).rows[0]!.id));
+    userIds.set('owner', await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email])).rows[0]!.id));
     await join('recorder', 'member');
     await join('attendee', 'member');
     await join('otherMember', 'member');
@@ -563,7 +563,7 @@ suite('meeting video tickets (#2703)', () => {
     // Re-recorded: the meeting now names another file.
     await run((meetingId) =>
       admin(async (c) => {
-        const other = (await c.query<{ id: string }>('SELECT f.id FROM crove_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM crove_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
+        const other = (await c.query<{ id: string }>('SELECT f.id FROM ludy_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM crove_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
         await c.query('UPDATE crove_meetings.meeting_video SET file_id = $1 WHERE meeting_id = $2', [other, meetingId]);
       }),
     );

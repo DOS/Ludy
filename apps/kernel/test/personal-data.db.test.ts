@@ -65,15 +65,15 @@ suite('finding a person in the org (#923)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -81,7 +81,7 @@ suite('finding a person in the org (#923)', () => {
     const owner = await identity('owner');
     org = { orgId: (await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`)).orgId, owner, admin: await identity('admin'), member: await identity('member') };
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [org.orgId, org.admin, org.member]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [org.orgId, org.admin, org.member]),
     );
     const otherOwner = await identity('other');
     other = { orgId: (await createOrg(rt, asUser(otherOwner), `Other ${randomUUID().slice(0, 6)}`)).orgId, owner: otherOwner };
@@ -90,7 +90,7 @@ suite('finding a person in the org (#923)', () => {
     for (const orgId of [org.orgId, other.orgId]) {
       const { rows } = await admin((c) =>
         c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.party (org_id, kind, name, tax_code, email, phone)
+          `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, email, phone)
            VALUES ($1, 'person', 'Nguyễn Văn Mẫu', '0101234564', 'Mau.Nguyen@example.vn', '+84 912 345 678') RETURNING id`,
           [orgId],
         ),
@@ -98,13 +98,13 @@ suite('finding a person in the org (#923)', () => {
       if (orgId === org.orgId) person = String(rows[0]?.id);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status)
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status)
            VALUES ($1, 'transactional', 'social.report_schedule.run', 'social.report', 'mau.nguyen@example.vn', $2, $3, 'queued')`,
           [orgId, 'a'.repeat(63) + '0', `<pdpl-${randomUUID()}@test>`],
         ),
       );
     }
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET contact_email = 'mau.nguyen@example.vn' WHERE org_id = $1`, [org.orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET contact_email = 'mau.nguyen@example.vn' WHERE org_id = $1`, [org.orgId]));
   });
 
   afterAll(async () => {
@@ -120,8 +120,8 @@ suite('finding a person in the org (#923)', () => {
   it('finds an email address in every column that holds one, case aside, with what an erasure does', async () => {
     const result = await find(' mau.nguyen@EXAMPLE.vn ');
     expect(result.kind).toBe('email');
-    expect(columns(result)).toEqual(['crove_kernel.mail_message.to_address', 'crove_kernel.party.email', 'crove_kernel.tenant.contact_email']);
-    const party = result.matches.find((m) => m.column === 'crove_kernel.party.email');
+    expect(columns(result)).toEqual(['ludy_kernel.mail_message.to_address', 'ludy_kernel.party.email', 'ludy_kernel.tenant.contact_email']);
+    const party = result.matches.find((m) => m.column === 'ludy_kernel.party.email');
     expect(party).toMatchObject({ handling: 'erase', rowId: person, row: { name: 'Nguyễn Văn Mẫu', phone: '+84 912 345 678' } });
     // Only this org's rows.
     expect(result.matches.every((m) => m.row.org_id === org.orgId)).toBe(true);
@@ -130,10 +130,10 @@ suite('finding a person in the org (#923)', () => {
 
   it('finds a phone number however it is spelled, and a tax code', async () => {
     for (const phone of ['0912345678', '0912.345.678', '+84 912 345 678', '84912345678', '(091) 234 5678']) {
-      expect(columns(await find(phone)), phone).toContain('crove_kernel.party.phone');
+      expect(columns(await find(phone)), phone).toContain('ludy_kernel.party.phone');
     }
     const byCode = await find('0101234564');
-    expect(byCode.matches.find((m) => m.column === 'crove_kernel.party.tax_code')).toMatchObject({ handling: 'keep_legal', rowId: person });
+    expect(byCode.matches.find((m) => m.column === 'ludy_kernel.party.tax_code')).toMatchObject({ handling: 'keep_legal', rowId: person });
   });
 
   it('is for owners and admins only, and refuses a value that is not an email, a phone or a code', async () => {
@@ -147,7 +147,7 @@ suite('finding a person in the org (#923)', () => {
   it('matches and edits out a value inside free text, and refuses a value of another shape (#1678)', async () => {
     const check = async (text: string | null, kind: string, value: string) =>
       admin(async (c) => (await c.query<{ found: boolean; edited: string | null }>(
-        `SELECT crove_kernel.text_mentions($1, $2, $3) AS found, crove_kernel.text_redact($1, $2, $3, '[đã xóa]') AS edited`,
+        `SELECT ludy_kernel.text_mentions($1, $2, $3) AS found, ludy_kernel.text_redact($1, $2, $3, '[đã xóa]') AS edited`,
         [text, kind, value],
       )).rows[0]);
     // The shared table (pii-text-cases.ts), each value read as the finder reads it.
@@ -162,7 +162,7 @@ suite('finding a person in the org (#923)', () => {
     }
     expect(await check(null, 'email', 'a@x.example')).toEqual({ found: false, edited: null });
     // The mark is taken literally: an & or a backslash in it never brings the value back (#1678 review).
-    const marked = await admin(async (c) => (await c.query<{ edited: string }>(`SELECT crove_kernel.text_redact('mail a@x.example.', 'email', 'a@x.example', $1) AS edited`, ['R&D \\1 \\&'])).rows[0]?.edited);
+    const marked = await admin(async (c) => (await c.query<{ edited: string }>(`SELECT ludy_kernel.text_redact('mail a@x.example.', 'email', 'a@x.example', $1) AS edited`, ['R&D \\1 \\&'])).rows[0]?.edited);
     expect(marked).toBe('mail R&D \\1 \\&.');
     // A value of another shape, or another kind, raises instead of matching nothing.
     for (const [kind, value] of [['email', 'A@X.example'], ['email', 'not an email'], ['digits', '1234'], ['name', 'Nguyễn']]) {
@@ -180,9 +180,9 @@ suite('finding a person in the org (#923)', () => {
         `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
            ($1, $2, $4, 'org', 'Khách hàng mới', 'Liên hệ giám đốc: Giam.Doc@khach.example.', '{}'),
            ($1, $3, $4, 'org', 'Địa chỉ khác', 'xgiam.doc@khach.example và giam.doc@khach.example.test', '{}'),
-           ($1, crove_kernel.uuid_v7(), $5, 'private', 'Riêng một', 'gọi giam.doc@khach.example sau 15h', '{}'),
-           ($1, crove_kernel.uuid_v7(), $5, 'private', 'Riêng hai: giam.doc@khach.example', '', '{}'),
-           ($1, crove_kernel.uuid_v7(), $4, 'private', 'Của chủ', 'không liên quan', '{giam.doc@khach.example}')`,
+           ($1, ludy_kernel.uuid_v7(), $5, 'private', 'Riêng một', 'gọi giam.doc@khach.example sau 15h', '{}'),
+           ($1, ludy_kernel.uuid_v7(), $5, 'private', 'Riêng hai: giam.doc@khach.example', '', '{}'),
+           ($1, ludy_kernel.uuid_v7(), $4, 'private', 'Của chủ', 'không liên quan', '{giam.doc@khach.example}')`,
         [org.orgId, shared, near, org.owner, org.member],
       );
       await c.query(
@@ -215,7 +215,7 @@ suite('finding a person in the org (#923)', () => {
     const audits = (
       await admin((c) =>
         c.query<{ actor_id: string; detail: unknown }>(
-          `SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.find' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
+          `SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.find' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
           [org.orgId],
         ),
       )
@@ -282,7 +282,7 @@ suite('finding a person in the org (#923)', () => {
       { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
       { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
     ]);
-    const note = (await admin((c) => c.query(`SELECT title, body, tags, revision, search @@ crove_kernel.search_query('khach.example') AS searchable FROM crove_notes.note WHERE id = $1`, [shared]))).rows[0];
+    const note = (await admin((c) => c.query(`SELECT title, body, tags, revision, search @@ ludy_kernel.search_query('khach.example') AS searchable FROM crove_notes.note WHERE id = $1`, [shared]))).rows[0];
     expect(note).toEqual({ title: 'Gặp [đã xóa]', body: 'Thư ký: [đã xóa], số cũ', tags: ['khach'], revision: 2, searchable: false });
     expect(await privateLeft()).toEqual([...memberNotes, unrelated, memberTodo, adminTodo].sort());
 
@@ -290,7 +290,7 @@ suite('finding a person in the org (#923)', () => {
     await expect(notify(org.admin)).rejects.toMatchObject({ status: 403 });
     await expect(notify(org.member)).rejects.toMatchObject({ status: 403 });
     // The member turned this kind off; the notice reaches them anyway.
-    await admin((c) => c.query(`INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.personal_data_notice')`, [org.orgId, org.member]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.personal_data_notice')`, [org.orgId, org.member]));
     const notice = await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value }, { actor: asMfa(org.owner), orgId: org.orgId, idempotencyKey: randomUUID() });
     expect(notice.told).toBe(2);
     expect(byAuthor(notice.authors)).toEqual(
@@ -302,7 +302,7 @@ suite('finding a person in the org (#923)', () => {
     const audit = (
       await admin((c) =>
         c.query<{ detail: { key: string; notes: string[]; todos: string[]; authors: number; event: string } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok'`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok'`,
           [org.orgId],
         ),
       )
@@ -312,7 +312,7 @@ suite('finding a person in the org (#923)', () => {
     expect([...(audit[0]?.detail.notes ?? [])].sort()).toEqual(memberNotes.map((id) => `${id}:1`).sort());
     expect([...(audit[0]?.detail.todos ?? [])].sort()).toEqual([memberTodo, adminTodo].map((id) => `${id}:1`).sort());
     const { rows: events } = await admin((c) =>
-      c.query<{ id: string; payload: unknown }>(`SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified'`, [org.orgId]),
+      c.query<{ id: string; payload: unknown }>(`SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified'`, [org.orgId]),
     );
     expect(events).toHaveLength(1);
     expect(audit[0]?.detail.event).toBe(events[0]?.id);
@@ -343,7 +343,7 @@ suite('finding a person in the org (#923)', () => {
     await workerRt.execute('kernel.notification.dispatch', { eventId: events[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
     const { rows: notes } = await admin((c) =>
       c.query<{ user_id: string; detail: Record<string, string>; subject_id: string | null }>(
-        `SELECT user_id, detail, subject_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.personal_data_notice' ORDER BY user_id`,
+        `SELECT user_id, detail, subject_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.personal_data_notice' ORDER BY user_id`,
         [org.orgId],
       ),
     );
@@ -364,8 +364,8 @@ suite('finding a person in the org (#923)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
-      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
       await c.query('COMMIT');
     });
 
@@ -392,7 +392,7 @@ suite('finding a person in the org (#923)', () => {
     expect((await find(value)).privateItems).toEqual([{ authorUserId: org.member, notes: 1, todos: 1 }]);
     const erasedAudit = (
       await admin((c) =>
-        c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [
+        c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [
           org.orgId,
         ]),
       )
@@ -437,7 +437,7 @@ suite('finding a person in the org (#923)', () => {
     const audit = (
       await admin((c) =>
         c.query<{ detail: { todo_lists?: string[]; todos?: string[] } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
           [org.orgId],
         ),
       )
@@ -445,13 +445,13 @@ suite('finding a person in the org (#923)', () => {
     expect([...(audit?.detail.todo_lists ?? [])].sort()).toEqual([`${memberList}:1`, `${adminList}:1`].sort());
     expect(audit?.detail.todos ?? []).toEqual([`${taggedTodo}:1`]);
 
-    await workerRt.execute('kernel.notification.dispatch', { eventId: (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [org.orgId]))).rows[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
+    await workerRt.execute('kernel.notification.dispatch', { eventId: (await admin((c) => c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [org.orgId]))).rows[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
 
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
-      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
       await c.query('COMMIT');
     });
 
@@ -485,7 +485,7 @@ suite('finding a person in the org (#923)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
       await c.query('COMMIT');
     });
     const [eraseOutcome, updateOutcome] = await Promise.allSettled([
@@ -524,7 +524,7 @@ suite('finding a person in the org (#923)', () => {
     const byId = await find('0790 9100 1234');
     expect(byId.matches).toEqual([
       {
-        column: 'crove_kernel.legal_entity.tax_code',
+        column: 'ludy_kernel.legal_entity.tax_code',
         handling: 'keep_legal',
         reason: expect.stringContaining('national ID number'),
         rowId: household.id,
@@ -533,16 +533,16 @@ suite('finding a person in the org (#923)', () => {
     ]);
     // An admin finds a client company the same way; another org does not.
     expect((await find('0317777773', org.admin)).matches).toEqual([
-      expect.objectContaining({ column: 'crove_kernel.legal_entity.tax_code', handling: 'keep_legal', rowId: client.id, row: expect.objectContaining({ name: 'Công ty TNHH Khách' }) }),
+      expect.objectContaining({ column: 'ludy_kernel.legal_entity.tax_code', handling: 'keep_legal', rowId: client.id, row: expect.objectContaining({ name: 'Công ty TNHH Khách' }) }),
     ]);
     expect((await find('079091001234', other.owner, other.orgId)).matches).toEqual([]);
     // The default entity carries the org's own code, as the tenant row does.
     const own = await find('0108888881');
     expect(own.matches.map((m) => [m.column, m.handling]).sort()).toEqual([
-      ['crove_kernel.legal_entity.tax_code', 'keep_org'],
-      ['crove_kernel.tenant.tax_code', 'keep_org'],
+      ['ludy_kernel.legal_entity.tax_code', 'keep_org'],
+      ['ludy_kernel.tenant.tax_code', 'keep_org'],
     ]);
-    expect(own.matches.find((m) => m.column === 'crove_kernel.legal_entity.tax_code')).toMatchObject({
+    expect(own.matches.find((m) => m.column === 'ludy_kernel.legal_entity.tax_code')).toMatchObject({
       reason: expect.stringContaining('default legal entity'),
       row: expect.objectContaining({ is_default: true }),
     });
@@ -550,8 +550,8 @@ suite('finding a person in the org (#923)', () => {
     // Erasing by the ID number keeps the entity as it is and says why.
     const erased = await erase('079091001234');
     expect(erased.erased).toEqual([]);
-    expect(erased.kept).toEqual([{ column: 'crove_kernel.legal_entity.tax_code', rows: 1, reason: expect.stringContaining('Kept with its books') }]);
-    const row = (await admin((c) => c.query('SELECT name, kind, tax_code FROM crove_kernel.legal_entity WHERE id = $1', [household.id]))).rows[0];
+    expect(erased.kept).toEqual([{ column: 'ludy_kernel.legal_entity.tax_code', rows: 1, reason: expect.stringContaining('Kept with its books') }]);
+    const row = (await admin((c) => c.query('SELECT name, kind, tax_code FROM ludy_kernel.legal_entity WHERE id = $1', [household.id]))).rows[0];
     expect(row).toEqual({ name: 'Hộ kinh doanh Phạm Thị Hộ', kind: 'household', tax_code: '079091001234' });
 
     // Every override names a boolean column of its table.
@@ -575,7 +575,7 @@ suite('finding a person in the org (#923)', () => {
     // checks, which this test is not about).
     const { rows } = await admin((c) =>
       c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.party (org_id, kind, name, tax_code, email, phone, address)
+        `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, email, phone, address)
          VALUES ($1, 'person', 'Trần Thị Sổ', '0309876546', 'so.tran@example.vn', '0987 654 321', '1 Đường Sổ') RETURNING id`,
         [org.orgId],
       ),
@@ -601,7 +601,7 @@ suite('finding a person in the org (#923)', () => {
     );
 
     // Owners only, with a fresh second factor (R3); an admin may search but not erase.
-    expect(columns(await find('so.tran@example.vn', org.admin))).toContain('crove_kernel.party.email');
+    expect(columns(await find('so.tran@example.vn', org.admin))).toContain('ludy_kernel.party.email');
     await expect(erase('so.tran@example.vn', org.admin)).rejects.toMatchObject({ status: 403 });
     await expect(erase('so.tran@example.vn', org.member)).rejects.toMatchObject({ status: 403 });
     await expect(
@@ -610,19 +610,19 @@ suite('finding a person in the org (#923)', () => {
 
     const result = await erase('So.Tran@example.vn');
     expect(Object.fromEntries(result.erased.map((e) => [e.column, e.rows]))).toEqual({
-      'crove_kernel.party.email': 1,
-      'crove_kernel.party.phone': 1,
-      'crove_kernel.party.address': 1,
+      'ludy_kernel.party.email': 1,
+      'ludy_kernel.party.phone': 1,
+      'ludy_kernel.party.address': 1,
       'crove_social.report_schedule.recipients': 2,
     });
-    const party = (await admin((c) => c.query('SELECT name, tax_code, email, phone, address FROM crove_kernel.party WHERE id = $1', [booked]))).rows[0];
+    const party = (await admin((c) => c.query('SELECT name, tax_code, email, phone, address FROM ludy_kernel.party WHERE id = $1', [booked]))).rows[0];
     expect(party).toEqual({ name: 'Trần Thị Sổ', tax_code: '0309876546', email: null, phone: null, address: null });
     const schedules = (await admin((c) => c.query('SELECT name, recipients FROM crove_social.report_schedule WHERE org_id = $1', [org.orgId]))).rows;
     expect(schedules).toEqual([{ name: 'Báo cáo tuần', recipients: ['ke.toan@example.vn'] }]);
     // Erasing by the tax code now keeps the party's name and code, as the books need them.
     const byCode = await erase('0309876546');
     expect(byCode.erased).toEqual([]);
-    expect(byCode.kept).toEqual([{ column: 'crove_kernel.party.tax_code', rows: 1, reason: expect.stringContaining('accounting records') }]);
+    expect(byCode.kept).toEqual([{ column: 'ludy_kernel.party.tax_code', rows: 1, reason: expect.stringContaining('accounting records') }]);
   });
 
   it('keeps the original files of posted invoices naming the party, and says until when they are held (#1009)', async () => {
@@ -634,11 +634,11 @@ suite('finding a person in the org (#923)', () => {
       // Without the posting and guard triggers, which this test is not about.
       await c.query("SET LOCAL session_replication_role = 'replica'");
       const party = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.party (org_id, kind, name, tax_code, email) VALUES ($1, 'person', 'Lê Văn Giữ', '0312345678', 'giu.le@example.vn') RETURNING id`,
+        `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, email) VALUES ($1, 'person', 'Lê Văn Giữ', '0312345678', 'giu.le@example.vn') RETURNING id`,
         [org.orgId],
       );
       await c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, held_until)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, held_until)
          VALUES ($1, $2, $3, $4, 's3:v1', 'hd.xml', 'application/xml', 1, 'upload', $5)`,
         [org.orgId, fileId, sha256, `org/${org.orgId}/${sha256}`, until],
       );
@@ -654,8 +654,8 @@ suite('finding a person in the org (#923)', () => {
       await c.query('COMMIT');
     });
     const result = await erase('giu.le@example.vn');
-    expect(result.kept).toContainEqual({ column: 'crove_kernel.file', rows: 1, reason: expect.stringContaining('held in storage until 2036-10-20') });
-    const file = (await admin((c) => c.query('SELECT held_until FROM crove_kernel.file WHERE id = $1', [fileId]))).rows[0];
+    expect(result.kept).toContainEqual({ column: 'ludy_kernel.file', rows: 1, reason: expect.stringContaining('held in storage until 2036-10-20') });
+    const file = (await admin((c) => c.query('SELECT held_until FROM ludy_kernel.file WHERE id = $1', [fileId]))).rows[0];
     expect(file).toEqual({ held_until: new Date(until) });
 
     // A second posted file of the party with no hold recorded yet: no date is claimed for the group.
@@ -666,7 +666,7 @@ suite('finding a person in the org (#923)', () => {
       const party = await c.query<{ id: string }>(`SELECT party_id AS id FROM crove_finance.purchase_document WHERE source_file_id = $1`, [fileId]);
       const second = randomUUID();
       await c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, 's3:v2', 'hd2.xml', 'application/xml', 1, 'upload')`,
         [org.orgId, second, sha2, `org/${org.orgId}/${sha2}`],
       );
@@ -682,23 +682,23 @@ suite('finding a person in the org (#923)', () => {
       await c.query('COMMIT');
     });
     const again = await erase('0312345678');
-    expect(again.kept).toContainEqual({ column: 'crove_kernel.file', rows: 2, reason: expect.stringContaining('kept for the legal period') });
+    expect(again.kept).toContainEqual({ column: 'ludy_kernel.file', rows: 2, reason: expect.stringContaining('kept for the legal period') });
   });
 
   it('forgets a party the books do not name, drops the mail recipient but keeps its hash, and audits counts only', async () => {
     const result = await erase('mau.nguyen@example.vn');
     expect(Object.fromEntries(result.erased.map((e) => [e.column, e.rows]))).toEqual({
-      'crove_kernel.party.email': 1,
-      'crove_kernel.party.phone': 1,
-      'crove_kernel.party.name': 1,
-      'crove_kernel.party.tax_code': 1,
-      'crove_kernel.mail_message.to_address': 1,
-      'crove_kernel.tenant.contact_email': 1,
+      'ludy_kernel.party.email': 1,
+      'ludy_kernel.party.phone': 1,
+      'ludy_kernel.party.name': 1,
+      'ludy_kernel.party.tax_code': 1,
+      'ludy_kernel.mail_message.to_address': 1,
+      'ludy_kernel.tenant.contact_email': 1,
     });
     expect(result.kept).toEqual([]);
-    const party = (await admin((c) => c.query('SELECT name, tax_code, email, phone FROM crove_kernel.party WHERE id = $1', [person]))).rows[0];
+    const party = (await admin((c) => c.query('SELECT name, tax_code, email, phone FROM ludy_kernel.party WHERE id = $1', [person]))).rows[0];
     expect(party).toEqual({ name: 'Đã xóa theo yêu cầu', tax_code: null, email: null, phone: null });
-    const mail = (await admin((c) => c.query('SELECT to_address, to_hash FROM crove_kernel.mail_message WHERE org_id = $1', [org.orgId]))).rows[0];
+    const mail = (await admin((c) => c.query('SELECT to_address, to_hash FROM ludy_kernel.mail_message WHERE org_id = $1', [org.orgId]))).rows[0];
     expect(mail).toEqual({ to_address: null, to_hash: 'a'.repeat(63) + '0' });
     // Nothing is left to find, and the other org still has its copy.
     expect((await find('mau.nguyen@example.vn')).matches).toEqual([]);
@@ -707,24 +707,24 @@ suite('finding a person in the org (#923)', () => {
     const audit = (
       await admin((c) =>
         c.query<{ detail: unknown }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
           [org.orgId],
         ),
       )
     ).rows[0];
     expect(JSON.stringify(audit)).not.toContain('mau.nguyen');
-    expect(audit?.detail).toMatchObject({ kind: 'email', erased: { 'crove_kernel.party.email': 1 } });
+    expect(audit?.detail).toMatchObject({ kind: 'email', erased: { 'ludy_kernel.party.email': 1 } });
   });
 
   it("erases a forwarded mail's text with its sender (#779), and leaves the mails of others", async () => {
     const mail = (from: string) =>
-      admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.inbound_message (org_id, message_id, from_address, subject, body_text) VALUES ($1, $2, $3, 'Khuyến mãi', 'Chào chị Mẫu, ưu đãi 20%') RETURNING id`, [org.orgId, `<pdpl-${randomUUID()}@test>`, from]));
+      admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.inbound_message (org_id, message_id, from_address, subject, body_text) VALUES ($1, $2, $3, 'Khuyến mãi', 'Chào chị Mẫu, ưu đãi 20%') RETURNING id`, [org.orgId, `<pdpl-${randomUUID()}@test>`, from]));
     const theirs = String((await mail('ban.hang@shop-mau.example')).rows[0]?.id);
     const others = String((await mail('khac@shop-khac.example')).rows[0]?.id);
-    expect(columns(await find('ban.hang@shop-mau.example'))).toContain('crove_kernel.inbound_message.from_address');
+    expect(columns(await find('ban.hang@shop-mau.example'))).toContain('ludy_kernel.inbound_message.from_address');
     const erased = await erase('ban.hang@shop-mau.example');
-    expect(erased.erased).toEqual(expect.arrayContaining([expect.objectContaining({ column: 'crove_kernel.inbound_message.from_address', rows: 1 }), expect.objectContaining({ column: 'crove_kernel.inbound_message.body_text', rows: 1 })]));
-    const rows = (await admin((c) => c.query<{ id: string; from_address: string | null; body_text: string | null }>('SELECT id, from_address, body_text FROM crove_kernel.inbound_message WHERE id = ANY($1)', [[theirs, others]]))).rows;
+    expect(erased.erased).toEqual(expect.arrayContaining([expect.objectContaining({ column: 'ludy_kernel.inbound_message.from_address', rows: 1 }), expect.objectContaining({ column: 'ludy_kernel.inbound_message.body_text', rows: 1 })]));
+    const rows = (await admin((c) => c.query<{ id: string; from_address: string | null; body_text: string | null }>('SELECT id, from_address, body_text FROM ludy_kernel.inbound_message WHERE id = ANY($1)', [[theirs, others]]))).rows;
     expect(rows.find((r) => r.id === theirs)).toMatchObject({ from_address: null, body_text: null });
     expect(rows.find((r) => r.id === others)).toMatchObject({ from_address: 'khac@shop-khac.example', body_text: 'Chào chị Mẫu, ưu đãi 20%' });
   });
@@ -738,7 +738,7 @@ suite('finding a person in the org (#923)', () => {
       const line = async (summary: string) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', $3) RETURNING id`,
+            `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', $3) RETURNING id`,
             [org.orgId, person, summary],
           )
         ).rows[0]?.id as string;
@@ -747,11 +747,11 @@ suite('finding a person in the org (#923)', () => {
       const longer = await line('Mã đơn 0987654321999 không phải số điện thoại');
       const task = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Liên hệ khách', 'human', 'user') RETURNING id`,
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Liên hệ khách', 'human', 'user') RETURNING id`,
           [org.orgId],
         )
       ).rows[0]?.id as string;
-      await c.query(`INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type, author_id) VALUES ($1, $2, $3, 'user', $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.task_comment (org_id, task_id, body, author_type, author_id) VALUES ($1, $2, $3, 'user', $4)`, [
         org.orgId,
         task,
         `Đã hẹn với tu.tran@example.vn`,
@@ -807,24 +807,24 @@ suite('finding a person in the org (#923)', () => {
       'crove_finance.cash_voucher.description',
       'crove_finance.journal_entry.description',
       'crove_finance.journal_voucher.description',
-      'crove_kernel.activity.summary',
-      'crove_kernel.task_comment.body',
+      'ludy_kernel.activity.summary',
+      'ludy_kernel.task_comment.body',
     ]);
-    expect(found.matches.find((m) => m.column === 'crove_kernel.activity.summary')).toMatchObject({ handling: 'erase', rowId: seeded.byEmail });
-    expect(found.matches.find((m) => m.column === 'crove_kernel.task_comment.body')?.handling).toBe('keep_record');
+    expect(found.matches.find((m) => m.column === 'ludy_kernel.activity.summary')).toMatchObject({ handling: 'erase', rowId: seeded.byEmail });
+    expect(found.matches.find((m) => m.column === 'ludy_kernel.task_comment.body')?.handling).toBe('keep_record');
     expect(found.matches.filter((m) => m.column.startsWith('crove_finance.')).map((m) => m.handling)).toEqual(['keep_legal', 'keep_legal', 'keep_legal']);
     // A phone however it is spelled, never inside a longer number.
     const byPhone = await find('+84 987 654 321');
-    expect(byPhone.matches.filter((m) => m.column === 'crove_kernel.activity.summary').map((m) => m.rowId)).toEqual([seeded.byPhone]);
+    expect(byPhone.matches.filter((m) => m.column === 'ludy_kernel.activity.summary').map((m) => m.rowId)).toEqual([seeded.byPhone]);
 
     const erased = await erase(email);
-    expect(erased.erased).toContainEqual({ column: 'crove_kernel.activity.summary', rows: 1 });
-    for (const column of ['crove_kernel.task_comment.body', 'crove_finance.journal_entry.description', 'crove_finance.cash_voucher.description', 'crove_finance.journal_voucher.description']) {
+    expect(erased.erased).toContainEqual({ column: 'ludy_kernel.activity.summary', rows: 1 });
+    for (const column of ['ludy_kernel.task_comment.body', 'crove_finance.journal_entry.description', 'crove_finance.cash_voucher.description', 'crove_finance.journal_voucher.description']) {
       expect(erased.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
     }
     await erase('0987654321');
     const summaries = (
-      await admin((c) => c.query<{ id: string; summary: string }>('SELECT id, summary FROM crove_kernel.activity WHERE id = ANY($1)', [[seeded.byEmail, seeded.byPhone, seeded.longer]]))
+      await admin((c) => c.query<{ id: string; summary: string }>('SELECT id, summary FROM ludy_kernel.activity WHERE id = ANY($1)', [[seeded.byEmail, seeded.byPhone, seeded.longer]]))
     ).rows;
     const summary = (id: string) => summaries.find((r) => r.id === id)?.summary;
     expect(summary(seeded.byEmail)).toBe('Đã gửi hợp đồng cho [đã xóa] hôm nay');
@@ -835,12 +835,12 @@ suite('finding a person in the org (#923)', () => {
       'crove_finance.cash_voucher.description',
       'crove_finance.journal_entry.description',
       'crove_finance.journal_voucher.description',
-      'crove_kernel.task_comment.body',
+      'ludy_kernel.task_comment.body',
     ]);
     const audits = (
       await admin((c) =>
         c.query<{ detail: unknown }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
           [org.orgId],
         ),
       )
@@ -857,16 +857,16 @@ suite('finding a person in the org (#923)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', 'Mã đối chiếu 23456789 của khách') RETURNING id`,
+            `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', 'Mã đối chiếu 23456789 của khách') RETURNING id`,
             [org.orgId, person],
           )
         ).rows[0]?.id as string,
     );
-    expect((await find('23456789')).matches.filter((m) => m.column === 'crove_kernel.activity.summary').map((m) => m.rowId)).toEqual([line]);
+    expect((await find('23456789')).matches.filter((m) => m.column === 'ludy_kernel.activity.summary').map((m) => m.rowId)).toEqual([line]);
     const result = await erase('23456789');
-    expect(result.erased.map((e) => e.column)).not.toContain('crove_kernel.activity.summary');
-    expect(result.kept).toContainEqual({ column: 'crove_kernel.activity.summary', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
-    const summary = (await admin((c) => c.query<{ summary: string }>('SELECT summary FROM crove_kernel.activity WHERE id = $1', [line]))).rows[0]?.summary;
+    expect(result.erased.map((e) => e.column)).not.toContain('ludy_kernel.activity.summary');
+    expect(result.kept).toContainEqual({ column: 'ludy_kernel.activity.summary', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
+    const summary = (await admin((c) => c.query<{ summary: string }>('SELECT summary FROM ludy_kernel.activity WHERE id = $1', [line]))).rows[0]?.summary;
     expect(summary).toBe('Mã đối chiếu 23456789 của khách');
   });
 
@@ -880,7 +880,7 @@ suite('finding a person in the org (#923)', () => {
       const task = async (title: string, description: string | null, closed = false) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.task (org_id, title, description, source, created_by_type, status, tainted)
+            `INSERT INTO ludy_kernel.task (org_id, title, description, source, created_by_type, status, tainted)
              VALUES ($1, $2, $3, 'human', 'user', $4, $5) RETURNING id`,
             [org.orgId, title, description, closed ? 'done' : 'todo', closed],
           )
@@ -888,7 +888,7 @@ suite('finding a person in the org (#923)', () => {
       const byTitle = await task(`Gọi lại cho ${email}`, null);
       const byDescription = await task('Liên hệ khách', 'Số của chị Hà: 0976 543 210, gọi sau 9 giờ', true);
       const short = await task('Đối chiếu mã 34567890', null);
-      const entity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id;
+      const entity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id;
       await c.query('BEGIN');
       // A statement line as the bank wrote it, inserted without the import's checks, which this test is not about.
       await c.query("SET LOCAL session_replication_role = 'replica'");
@@ -913,24 +913,24 @@ suite('finding a person in the org (#923)', () => {
       return { byTitle, byDescription, short };
     });
 
-    expect(columns(await find(email))).toEqual(['crove_finance.bank_line.description', 'crove_finance.journal_line.memo', 'crove_kernel.task.title']);
-    expect((await find('0976543210')).matches.filter((m) => m.column === 'crove_kernel.task.description').map((m) => m.rowId)).toEqual([seeded.byDescription]);
+    expect(columns(await find(email))).toEqual(['crove_finance.bank_line.description', 'crove_finance.journal_line.memo', 'ludy_kernel.task.title']);
+    expect((await find('0976543210')).matches.filter((m) => m.column === 'ludy_kernel.task.description').map((m) => m.rowId)).toEqual([seeded.byDescription]);
 
     const byEmail = await erase(email);
-    expect(byEmail.erased).toContainEqual({ column: 'crove_kernel.task.title', rows: 1 });
+    expect(byEmail.erased).toContainEqual({ column: 'ludy_kernel.task.title', rows: 1 });
     for (const column of ['crove_finance.bank_line.description', 'crove_finance.journal_line.memo']) {
       expect(byEmail.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
     }
     const byPhone = await erase('+84 976 543 210');
-    expect(byPhone.erased).toContainEqual({ column: 'crove_kernel.task.description', rows: 1 });
+    expect(byPhone.erased).toContainEqual({ column: 'ludy_kernel.task.description', rows: 1 });
     const shortNumber = await erase('34567890');
-    expect(shortNumber.erased.map((e) => e.column)).not.toContain('crove_kernel.task.title');
-    expect(shortNumber.kept).toContainEqual({ column: 'crove_kernel.task.title', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
+    expect(shortNumber.erased.map((e) => e.column)).not.toContain('ludy_kernel.task.title');
+    expect(shortNumber.kept).toContainEqual({ column: 'ludy_kernel.task.title', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
 
     const tasks = (
       await admin((c) =>
         c.query<{ id: string; title: string; description: string | null; status: string; tainted: boolean }>(
-          'SELECT id, title, description, status, tainted FROM crove_kernel.task WHERE id = ANY($1)',
+          'SELECT id, title, description, status, tainted FROM ludy_kernel.task WHERE id = ANY($1)',
           [[seeded.byTitle, seeded.byDescription, seeded.short]],
         ),
       )
@@ -945,7 +945,7 @@ suite('finding a person in the org (#923)', () => {
   // Only the erase command reaches the redaction: an owner's own context, never a member's or a raw tenant call.
   it('redacts activity lines only in an owner context (#1948)', async () => {
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const call = async (user: string) => {
       const c = new pg.Client({ connectionString: app.toString() });
@@ -953,7 +953,7 @@ suite('finding a person in the org (#923)', () => {
       try {
         await c.query('BEGIN');
         await enterUser(c, user, org.orgId);
-        await c.query(`SELECT crove_kernel.personal_data_redact_activity('email', 'nobody@example.vn')`);
+        await c.query(`SELECT ludy_kernel.personal_data_redact_activity('email', 'nobody@example.vn')`);
         return 'answered';
       } catch (error) {
         return (error as Error).message;
@@ -970,15 +970,15 @@ suite('finding a person in the org (#923)', () => {
       async (c) =>
         (
           await c.query<{ role: string; allowed: boolean }>(
-            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_kernel.personal_data_redact_activity(text, text)', 'EXECUTE') AS allowed
-               FROM pg_catalog.unnest(ARRAY['crove_app', 'crove_tenant', 'crove_worker']) AS r`,
+            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'ludy_kernel.personal_data_redact_activity(text, text)', 'EXECUTE') AS allowed
+               FROM pg_catalog.unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_worker']) AS r`,
           )
         ).rows,
     );
     expect(grants).toEqual([
-      { role: 'crove_app', allowed: true },
-      { role: 'crove_tenant', allowed: false },
-      { role: 'crove_worker', allowed: false },
+      { role: 'ludy_app', allowed: true },
+      { role: 'ludy_tenant', allowed: false },
+      { role: 'ludy_worker', allowed: false },
     ]);
   });
 
@@ -987,11 +987,11 @@ suite('finding a person in the org (#923)', () => {
   it("clears MISA AMIS's refusal text that quotes the person and keeps the row's state (#4015)", async () => {
     const email = 'Chi.Mai@Example.vn';
     const seed = async (orgId: string, owner: string) => {
-      const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+      const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
       const channel = randomUUID();
       const connection = randomUUID();
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
+        await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
         await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
       });
       const row = async (state: string, reason: string | null, no: string) => {
@@ -1053,14 +1053,14 @@ suite('finding a person in the org (#923)', () => {
   it("deletes the stored MISA catalogue results of a party by its tax code and leaves the rest (#4112)", async () => {
     const taxCode = '0101234564';
     const seed = async (orgId: string, owner: string) => {
-      const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+      const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
       // The test before this one may have connected the org's default entity already (one connection per entity): that connection is reused.
       let connection = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
       if (connection === undefined) {
         const channel = randomUUID();
         connection = randomUUID();
         await admin(async (c) => {
-          await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
+          await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
           await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
         });
       }
@@ -1102,18 +1102,18 @@ suite('finding a person in the org (#923)', () => {
   // A name is never a probe, so the name a catalogue entry was proposed under is erased with the party it was proposed for (#4124).
   it('deletes the name matches of an erased party, its proposal with the candidate name, and leaves another party\'s; it moves a waiting check on', async () => {
     const orgId = org.orgId;
-    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
     let connectionId = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
     if (connectionId === undefined) {
       const channel = randomUUID();
       connectionId = randomUUID();
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, org.owner]);
+        await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, org.owner]);
         await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connectionId, entity, channel]);
       });
     }
     const email = `hoa-sen-${randomUUID().slice(0, 8)}@example.vn`;
-    const party = async (name: string, mail: string | null) => String((await admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, email, source_trust) VALUES ($1, $2, $3, 'external') RETURNING id", [orgId, name, mail]))).rows[0]?.id);
+    const party = async (name: string, mail: string | null) => String((await admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, email, source_trust) VALUES ($1, $2, $3, 'external') RETURNING id", [orgId, name, mail]))).rows[0]?.id);
     const erasedParty = await party('Hộ kinh doanh Hoa Sen', email);
     const keptParty = await party('Hộ kinh doanh Hoa Mai', `hoa-mai-${randomUUID().slice(0, 8)}@example.vn`);
     await admin(async (c) => {
@@ -1147,7 +1147,7 @@ suite('finding a person in the org (#923)', () => {
   // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.
   it("clears MISA AMIS's refusal text only in an owner context (#4015)", async () => {
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const call = async (user: string) => {
       const c = new pg.Client({ connectionString: app.toString() });
@@ -1172,29 +1172,29 @@ suite('finding a person in the org (#923)', () => {
         (
           await c.query<{ role: string; allowed: boolean }>(
             `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)', 'EXECUTE') AS allowed
-               FROM pg_catalog.unnest(ARRAY['crove_app', 'crove_tenant', 'crove_worker']) AS r`,
+               FROM pg_catalog.unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_worker']) AS r`,
           )
         ).rows,
     );
     expect(grants).toEqual([
-      { role: 'crove_app', allowed: true },
-      { role: 'crove_tenant', allowed: false },
-      { role: 'crove_worker', allowed: false },
+      { role: 'ludy_app', allowed: true },
+      { role: 'ludy_tenant', allowed: false },
+      { role: 'ludy_worker', allowed: false },
     ]);
   });
 
-  // On a shared database the migration login that owns the definer is a MEMBER of crove_tenant (non-superuser, ADMIN OPTION, docs/runbooks/shared-database.md), so the push guard treats it as a tenant (the finding
+  // On a shared database the migration login that owns the definer is a MEMBER of ludy_tenant (non-superuser, ADMIN OPTION, docs/runbooks/shared-database.md), so the push guard treats it as a tenant (the finding
   // B1 of the security review of #4015). The suite runs as a superuser, which the guard exempts, so this test gives the definer such an owner for one transaction (rolled back) and runs the erasure through it.
-  it("clears MISA AMIS's refusal text when the definer's owner is a non-superuser member of crove_tenant, as on a shared database (#4015)", async () => {
+  it("clears MISA AMIS's refusal text when the definer's owner is a non-superuser member of ludy_tenant, as on a shared database (#4015)", async () => {
     const email = 'Shared.Db@Example.vn';
-    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
+    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
     // The org has one live MISA connection per entity (channel_connection_live_uq): reuse the one an earlier test made, or make it.
     const existing = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [org.orgId, entity]))).rows[0]?.id;
     const connection = existing ?? randomUUID();
     if (!existing) {
       const channel = randomUUID();
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
+        await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
         await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
       });
     }
@@ -1219,20 +1219,20 @@ suite('finding a person in the org (#923)', () => {
       await c.query('BEGIN');
       // The shared-database role set-up: a login that is no superuser, created the crove_* roles and so holds ADMIN OPTION on them, and owns what it creates.
       await c.query(`CREATE ROLE ${migrationLogin} NOLOGIN`);
-      await c.query(`GRANT crove_tenant TO ${migrationLogin} WITH ADMIN OPTION`);
+      await c.query(`GRANT ludy_tenant TO ${migrationLogin} WITH ADMIN OPTION`);
       await c.query(`GRANT CREATE ON SCHEMA crove_finance TO ${migrationLogin}`);
       await c.query(`ALTER FUNCTION crove_finance.personal_data_clear_misa_amis_push_reason(text, text) OWNER TO ${migrationLogin}`);
       // ... and, as on that database, it owns the table too (what the migration login creates it owns).
       await c.query(`ALTER TABLE crove_finance.misa_amis_push OWNER TO ${migrationLogin}`);
       const owner = (
         await c.query<{ owner: string; member: boolean; superuser: boolean }>(
-          `SELECT pg_catalog.pg_get_userbyid(p.proowner) AS owner, pg_catalog.pg_has_role(p.proowner, 'crove_tenant', 'MEMBER') AS member, r.rolsuper AS superuser
+          `SELECT pg_catalog.pg_get_userbyid(p.proowner) AS owner, pg_catalog.pg_has_role(p.proowner, 'ludy_tenant', 'MEMBER') AS member, r.rolsuper AS superuser
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
             WHERE p.oid = 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)'::regprocedure`,
         )
       ).rows[0];
       expect(owner).toEqual({ owner: migrationLogin, member: true, superuser: false });
-      await c.query('SET LOCAL ROLE crove_app');
+      await c.query('SET LOCAL ROLE ludy_app');
       await enterUser(c, org.owner, org.orgId);
       const cleared = await c.query<{ rows: number }>(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', $1) AS rows`, [email.toLowerCase()]);
       expect(cleared.rows[0]?.rows).toBe(1);

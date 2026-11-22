@@ -142,7 +142,7 @@ const zChannel = z.strictObject({
 async function resolveMedia(ctx: CommandContext, list: z.infer<typeof zMedia>, kept: ReadonlySet<string> = new Set()): Promise<PostMedia[]> {
   if (list.length === 0) return [];
   const files = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'generation', 'content_type', 'size_bytes', 'source', 'duration_ms', 'image_width', 'image_height'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -212,7 +212,7 @@ function requireUser(ctx: CommandContext): string {
 // The org's live connections among ids, with their provider; every id must be one.
 async function liveConnections(ctx: CommandContext, ids: readonly string[]): Promise<Map<string, string>> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['id', 'provider'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...ids])
@@ -454,7 +454,7 @@ export const postImport = defineCommand({
     );
     const connectionIds = [...new Set(input.posts.flatMap((row) => row.connectionIds))];
     const providers = new Map(
-      (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute()).map((c) => [c.id, c.provider]),
+      (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute()).map((c) => [c.id, c.provider]),
     );
     const labels = await importLabels(
       ctx,
@@ -1518,7 +1518,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
   );
   const mediaRows = await ctx.trx
     .selectFrom('crove_social.post_media as m')
-    .innerJoin('crove_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
+    .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
     .select(['m.post_id', 'm.file_id', 'm.alt_text', 'f.generation', 'f.content_type', 'f.size_bytes', 'f.duration_ms', 'f.image_width', 'f.image_height'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.post_id', 'in', postIds)
@@ -1538,7 +1538,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
   const names = new Map<string, string>(
     pdfIds.size === 0
       ? []
-      : (await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', [...pdfIds]).execute()).map((r) => [r.id, r.filename] as const),
+      : (await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', [...pdfIds]).execute()).map((r) => [r.id, r.filename] as const),
   );
   const labels = await labelsOfPosts(ctx.trx, ctx.orgId, postIds);
   const openComments = await openCommentsOf(ctx.trx, ctx.orgId, scope, postIds);
@@ -1737,14 +1737,14 @@ export const postReviewDiff = defineQuery({
       ),
     ];
     const mimes = new Map(
-      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
+      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
     );
-    // Names while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names while they are members (ludy_kernel.member_profiles answers only members of the org).
     const people = [...new Set(decisions.map((d) => d.decided_by))];
     const names = new Map<string, string>();
     if (people.length > 0) {
       const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
       for (const r of rows) names.set(r.user_id, r.display_name ?? r.email);
     }
     return {
@@ -1816,7 +1816,7 @@ export const postPreReview = defineQuery({
     const names = new Map(
       (
         await ctx.trx
-          .selectFrom('crove_kernel.channel_connection')
+          .selectFrom('ludy_kernel.channel_connection')
           .select(['id', 'display_name'])
           .where('org_id', '=', ctx.orgId)
           .where(
@@ -2126,7 +2126,7 @@ export const mediaFile = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ storageKey: string; generation: string | null; sha256: string; contentType: string; filename: string }> => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file as f')
+      .selectFrom('ludy_kernel.file as f')
       .select(['f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 'f.filename'])
       .where('f.org_id', '=', ctx.orgId)
       .where('f.id', '=', input.fileId)

@@ -98,7 +98,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     return withClient(appUrl, async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(user, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(user, org.orgId)]);
         return await fn(c);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -137,8 +137,8 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     at: new Date(Date.now() - 600_000 + tick * 1000).toISOString(),
   });
   const ingest = (events: ConversationEvent[]) => worker.execute('kernel.conversation.ingest', { connectionId: org.connectionId, events }, { actor: SYSTEM, orgId: org.orgId });
-  const threadOf = async (external: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [org.orgId, external]))[0] as { id: string }).id;
-  const intentOf = async (id: string) => (await rows<{ intent: string | null; intent_set_by: string | null; intent_set_at: Date | null }>('SELECT intent, intent_set_by, intent_set_at FROM crove_kernel.conversation WHERE org_id = $1 AND id = $2', [org.orgId, id]))[0];
+  const threadOf = async (external: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [org.orgId, external]))[0] as { id: string }).id;
+  const intentOf = async (id: string) => (await rows<{ intent: string | null; intent_set_by: string | null; intent_set_at: Date | null }>('SELECT intent, intent_set_by, intent_set_at FROM ludy_kernel.conversation WHERE org_id = $1 AND id = $2', [org.orgId, id]))[0];
   const list = async (who: Account, input: Record<string, unknown> = {}) => (await rpc('conversations/list', who, input)).body as ConversationListed;
   const setIntent = (who: Account, id: string, intent: ConversationIntent | null) => rpc('conversations/setIntent', who, { conversationId: id, intent });
   const suggest = (who: Account, ids: string[], app: keyof typeof apps = 'on') => rpc('conversations/suggestIntents', who, { conversationIds: ids }, { app });
@@ -151,9 +151,9 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appUrl = urlFor('crove_app', 'test-app-pw');
-    workerUrl = urlFor('crove_worker', 'test-worker-pw');
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appUrl = urlFor('ludy_app', 'test-app-pw');
+    workerUrl = urlFor('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     db = createDb(pool);
@@ -176,9 +176,9 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     const created = await rpc('org/create', owner, { name: 'Cửa hàng Hoa Nắng', idempotencyKey: randomUUID() }, { slug: null });
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId), connectionId: randomUUID() };
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, desk.userId, lan.userId, viewer.userId]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [org.orgId, desk.userId, owner.userId]);
-    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [org.orgId, org.connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, desk.userId, lan.userId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [org.orgId, desk.userId, owner.userId]);
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [org.orgId, org.connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
   });
 
   afterAll(async () => {
@@ -207,7 +207,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
       expect((await setIntent(owner, a1, null)).body).toEqual({ conversationId: a1, intent: null });
       expect(await intentOf(a1)).toEqual({ intent: null, intent_set_by: null, intent_set_at: null });
       // The audit rows hold the label, never the customer's words or name.
-      const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.set_intent'", [org.orgId]));
+      const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.set_intent'", [org.orgId]));
       expect(audit).toContain('complaint');
       for (const typed of ['chậm quá', 'Khách a1']) expect(audit).not.toContain(typed);
       // A label survives the customer writing again (a thread resolved and reopened keeps what the person decided).
@@ -239,31 +239,31 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
       const g1 = await threadOf('g1');
       // A member names themselves, with the time: allowed. Naming another member, or nobody, or leaving the time out: refused.
       await asMember(lan.userId, async (c) => {
-        await c.query("UPDATE crove_kernel.conversation SET intent = 'question', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [lan.userId, g1]);
-        await expect(c.query("UPDATE crove_kernel.conversation SET intent = 'spam', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [desk.userId, g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
+        await c.query("UPDATE ludy_kernel.conversation SET intent = 'question', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [lan.userId, g1]);
+        await expect(c.query("UPDATE ludy_kernel.conversation SET intent = 'spam', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [desk.userId, g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
       });
       await asMember(lan.userId, async (c) => {
-        await expect(c.query("UPDATE crove_kernel.conversation SET intent = 'spam', intent_set_by = NULL, intent_set_at = now() WHERE id = $1", [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
+        await expect(c.query("UPDATE ludy_kernel.conversation SET intent = 'spam', intent_set_by = NULL, intent_set_at = now() WHERE id = $1", [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
       });
       await asMember(lan.userId, async (c) => {
-        await expect(c.query("UPDATE crove_kernel.conversation SET intent = 'spam', intent_set_by = $1 WHERE id = $2", [lan.userId, g1])).rejects.toMatchObject({ code: '23514' });
+        await expect(c.query("UPDATE ludy_kernel.conversation SET intent = 'spam', intent_set_by = $1 WHERE id = $2", [lan.userId, g1])).rejects.toMatchObject({ code: '23514' });
       });
       // A cleared label names nobody.
-      await rows("UPDATE crove_kernel.conversation SET intent = 'question', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [lan.userId, g1]);
+      await rows("UPDATE ludy_kernel.conversation SET intent = 'question', intent_set_by = $1, intent_set_at = now() WHERE id = $2", [lan.userId, g1]);
       await asMember(lan.userId, async (c) => {
-        await expect(c.query('UPDATE crove_kernel.conversation SET intent = NULL, intent_set_at = NULL WHERE id = $1', [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
+        await expect(c.query('UPDATE ludy_kernel.conversation SET intent = NULL, intent_set_at = NULL WHERE id = $1', [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
       });
       // The system, in the org's own context, labels nothing.
       await withClient(workerUrl, async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
-          await expect(c.query("UPDATE crove_kernel.conversation SET intent = 'spam', intent_set_by = NULL, intent_set_at = now() WHERE id = $1", [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
+          await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [org.orgId]);
+          await expect(c.query("UPDATE ludy_kernel.conversation SET intent = 'spam', intent_set_by = NULL, intent_set_at = now() WHERE id = $1", [g1])).rejects.toThrow(/INTENT_FORBIDDEN/);
           // ... though it writes the rest of the thread as ever.
           await c.query('ROLLBACK');
           await c.query('BEGIN');
-          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
-          expect((await c.query("UPDATE crove_kernel.conversation SET updated_at = now() WHERE id = $1", [g1])).rowCount).toBe(1);
+          await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [org.orgId]);
+          expect((await c.query("UPDATE ludy_kernel.conversation SET updated_at = now() WHERE id = $1", [g1])).rowCount).toBe(1);
         } finally {
           await c.query('ROLLBACK').catch(() => {});
         }
@@ -272,13 +272,13 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
       await asMember(lan.userId, async (c) => {
         await expect(
           c.query(
-            "INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, intent, intent_set_by, intent_set_at) VALUES ($1, $2, 'comment_thread', 'born-labelled', 'spam', $3, now())",
+            "INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, intent, intent_set_by, intent_set_at) VALUES ($1, $2, 'comment_thread', 'born-labelled', 'spam', $3, now())",
             [org.orgId, org.connectionId, lan.userId],
           ),
         ).rejects.toThrow(/INTENT_FORBIDDEN/);
       });
       // The label is one of the five, in the database as in the contract.
-      await expect(rows("UPDATE crove_kernel.conversation SET intent = 'greeting', intent_set_at = now() WHERE id = $1", [g1])).rejects.toMatchObject({ code: '23514' });
+      await expect(rows("UPDATE ludy_kernel.conversation SET intent = 'greeting', intent_set_at = now() WHERE id = $1", [g1])).rejects.toMatchObject({ code: '23514' });
       expect([...CONVERSATION_INTENTS]).toEqual(['question', 'order_or_price', 'complaint', 'invoice_request', 'spam']);
     });
   });
@@ -287,7 +287,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     it('is read from what the member may read, never stored, and not read twice for the same message', async () => {
       await ingest([event('direct', 's1', 'Hàng giao chậm quá, shop xử lý giúp'), event('comment_thread', 's2', 'Giá áo này bao nhiêu vậy'), event('direct', 's3', 'Xuất hóa đơn công ty giúp mình')]);
       const [s1, s2, s3] = [await threadOf('s1'), await threadOf('s2'), await threadOf('s3')];
-      const before = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
+      const before = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [org.orgId]);
       const asked = askedIntents.length;
       // The model answers for the conversations in the order they were listed to it (the member's own order).
       answerIntents({ n: 1, intent: 'complaint' }, { n: 2, intent: 'question' }, { n: 3, intent: 'invoice_request' });
@@ -310,7 +310,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
       for (const hidden of ['Khách s1', s1, 'Kênh thử', org.slug]) expect(call?.prompt).not.toContain(hidden);
       // Nothing was stored: no label, and no audit row for the read.
       for (const id of [s1, s2, s3]) expect((await intentOf(id))?.intent).toBeNull();
-      expect(await rows('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId])).toEqual(before);
+      expect(await rows('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [org.orgId])).toEqual(before);
       // The same messages again: answered from what the model said a moment ago, with no new call.
       const second = await suggest(desk, [s3, s1]);
       expect(second.body).toEqual({ ai: 'used', suggestions: [{ conversationId: s3, intent: 'invoice_request' }, { conversationId: s1, intent: 'complaint' }] });
@@ -367,7 +367,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
 
   describe('the org’s switch for AI on its customers’ conversations', () => {
     it('keeps every word of a customer and every name of a contact from the model while it is off, answers off, and still lists the contacts by phone', async () => {
-      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Đặng Thu Hà', '0398 765 432'), ($1, 'person', 'Đặng Thị Hà', NULL), ($1, 'person', 'Hà Đặng Văn', NULL)", [org.orgId]);
+      await rows("INSERT INTO ludy_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Đặng Thu Hà', '0398 765 432'), ($1, 'person', 'Đặng Thị Hà', NULL), ($1, 'person', 'Hà Đặng Văn', NULL)", [org.orgId]);
       await ingest([event('direct', 'sw1', 'Cho mình hỏi giá, số mình 0398.765.432', 'Hà Đặng')]);
       const sw1 = await threadOf('sw1');
       const [intentCalls, rankCalls] = [askedIntents.length, askedRanks.length];
@@ -393,10 +393,10 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
   describe('the likely contacts of a customer', () => {
     it('puts the contact with the phone the customer wrote first, then the contacts with a similar name, ranked by the model, and links nothing', async () => {
       const party = (name: string, phone: string | null) =>
-        rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', $2, $3) RETURNING id", [org.orgId, name, phone]).then((r) => (r[0] as { id: string }).id);
+        rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', $2, $3) RETURNING id", [org.orgId, name, phone]).then((r) => (r[0] as { id: string }).id);
       const [thi, van, binh, mai] = [await party('Nguyễn Thị Hoa', '0912 345 678'), await party('Nguyễn Văn Hoa', null), await party('Trần Văn Bình', '+84 987 654 321'), await party('Lê Thị Mai', '0901 111 222')];
       // A contact merged into another is hidden by the contact list and the search, and is not offered here either, by phone or by name.
-      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone, duplicate_of) VALUES ($1, 'person', 'Trần Văn Bình (bản cũ)', '0987 654 321', $2), ($1, 'person', 'Hoa Nguyễn cũ', NULL, $3)", [org.orgId, binh, thi]);
+      await rows("INSERT INTO ludy_kernel.party (org_id, kind, name, phone, duplicate_of) VALUES ($1, 'person', 'Trần Văn Bình (bản cũ)', '0987 654 321', $2), ($1, 'person', 'Hoa Nguyễn cũ', NULL, $3)", [org.orgId, binh, thi]);
       await ingest([event('direct', 'c1', 'Chào shop, mình là Hoa. Số mình 0987.654.321, STK 1234567890123 nhé', 'Hoa Nguyen')]);
       const c1 = await threadOf('c1');
       const asked = askedRanks.length;
@@ -423,7 +423,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
       expect(prompt).toContain('Nguyễn Thị Hoa');
       for (const hidden of ['0987', '1234567890123', 'Chào shop']) expect(prompt).not.toContain(hidden);
       // Nothing is linked: that is a person's click.
-      expect((await rows<{ party_id: string | null }>('SELECT party_id FROM crove_kernel.conversation WHERE id = $1', [c1]))[0]?.party_id).toBeNull();
+      expect((await rows<{ party_id: string | null }>('SELECT party_id FROM ludy_kernel.conversation WHERE id = $1', [c1]))[0]?.party_id).toBeNull();
       // The model failing leaves the deterministic order, and says so.
       rankAnswers.push(new Error('endpoint down'));
       const failed = (await matches(owner, c1)).body as ConversationContactMatched;
@@ -439,7 +439,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     });
 
     it('asks the model nothing for one name or none, needs two shared words of a long name, and is closed to a viewer and to a thread the member cannot read', async () => {
-      const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'person', $2) RETURNING id", [org.orgId, name]).then((r) => (r[0] as { id: string }).id);
+      const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', $2) RETURNING id", [org.orgId, name]).then((r) => (r[0] as { id: string }).id);
       const [lanParty] = [await party('Phạm Quốc Khánh')];
       await party('Phạm Văn Long');
       await ingest([event('direct', 'n1', 'Hỏi giá', 'Phạm Quốc Khánh'), event('direct', 'n2', 'Hỏi giá', 'Phạm Gia Bảo'), event('comment_thread', 'n3', 'Hỏi giá', 'Khánh')]);

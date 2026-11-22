@@ -110,7 +110,7 @@ suite('audit rows naming a proposal on PostgreSQL (#1695)', () => {
         await sql`INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, proposal_id)
                   VALUES (${ctx.orgId}::uuid, 'user', ${ctx.actor.userId}::uuid, ${OWN}, gen_random_uuid(), 'ok', repeat('0', 64), ${input.proposalId}::uuid)`.execute(ctx.trx);
         await ctx.trx.executeQuery(CompiledQuery.raw(PURCHASED, [ctx.orgId, input.proposalId, randomUUID()]));
-        await ctx.trx.updateTable('crove_kernel.proposal').set({ status: 'executed' }).where('org_id', '=', ctx.orgId).where('id', '=', input.proposalId).execute();
+        await ctx.trx.updateTable('ludy_kernel.proposal').set({ status: 'executed' }).where('org_id', '=', ctx.orgId).where('id', '=', input.proposalId).execute();
       }
       return {};
     },

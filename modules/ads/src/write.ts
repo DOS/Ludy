@@ -95,7 +95,7 @@ export async function refuseOpenRequest(ctx: Pick<CommandContext, 'trx' | 'orgId
   // The org's lock, held to the end of the request, which inserts the proposal: two identical requests at once queue here, so
   // the second sees the first's.
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
-  let query = ctx.trx.selectFrom('crove_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('command', '=', command).where('status', '=', 'pending');
+  let query = ctx.trx.selectFrom('ludy_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('command', '=', command).where('status', '=', 'pending');
   if (match) query = query.where(sql<boolean>`payload @> ${JSON.stringify(match)}::jsonb`);
   if (await query.limit(1).executeTakeFirst()) {
     throw new DomainError('ADS_REQUEST_OPEN', 409, 'Đã có một đề xuất giống thế đang chờ duyệt trong Hộp thư');
@@ -539,7 +539,7 @@ export const adsProposalChange = defineQuery({
   input: z.strictObject({ id: zId }),
   access: MANAGERS,
   handler: async (ctx, input) => {
-    const row = await ctx.trx.selectFrom('crove_kernel.proposal').select(['kind', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.proposal').select(['kind', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const change = row ? changeOf(row.kind, row.payload) : null;
     // The provider of a plan's ad account, for the kernel to say whether this deployment can launch on it (#3675); the app never sees it.
     const account = change?.change === 'campaign_launch' ? await ctx.trx.selectFrom('crove_ads.ad_account').select('provider').where('org_id', '=', ctx.orgId).where('id', '=', change.adAccountId).executeTakeFirst() : undefined;
@@ -564,7 +564,7 @@ export const adsWriteState = defineQuery({
       ORDER BY c.scope, c.ad_account_id, c.period, c.id DESC`.execute(ctx.trx);
     const caps: AdsCapView[] = rows.map((r) => ({ scope: r.scope, adAccountId: r.ad_account_id, period: r.period, amount: r.amount, currency: r.currency, setBy: r.set_by, setAt: new Date(r.set_at).toISOString() }));
     const waiting = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'kind', 'payload', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'pending')

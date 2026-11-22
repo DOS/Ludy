@@ -63,13 +63,13 @@ suite('the summary and the action items of a meeting (#2580)', () => {
   }
   async function seedPosition(who: string, title: string): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
     return id;
   }
   // A member of its own, so a test's seats do not leak into another's.
   async function newMember(key: string): Promise<void> {
     users[key] = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'results', subject: key, email: `${key}@results.test`, name: null });
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
   }
   type Results = { isRecorder: boolean; draft: { summary: string; decisions: string[]; tainted: boolean } | null; published: { summary: string; decisions: string[] } | null; items: Array<{ id: string; stage: string; status: string; title: string; clean: boolean; tainted: boolean; flags: string[]; taskId: string | null; positions: Array<{ id: string }> }> };
   const results = (who: string, meetingId: string) => query<Results>(who, 'meetings.result.get', { meetingId });
@@ -84,9 +84,9 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -98,7 +98,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
       users[key] = await upsertIdentity(createDb(pool), { issuer: 'results', subject: key, email: `${key}@results.test`, name: null });
     }
     orgId = (await createOrg(runtime, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Results')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.other, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.other, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -183,7 +183,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('other', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('ACTION_ITEM_NOT_FOUND');
     const accepted = await exec<{ taskId: string }>('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách A', due: '2026-11-13', positionId: seat });
     const task = await sqlAdmin<{ title: string; description: string | null; assignee_position_id: string; source_ref: { type: string; id: string }; tainted: boolean; due: Date | null }>(
-      `SELECT title, description, assignee_position_id, source_ref, tainted, due FROM crove_kernel.task WHERE org_id = $1 AND id = $2`,
+      `SELECT title, description, assignee_position_id, source_ref, tainted, due FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`,
       [orgId, accepted.taskId],
     );
     expect(task.rows[0]).toMatchObject({ title: 'Gửi báo giá cho khách A', description: null, assignee_position_id: seat, source_ref: { type: 'meetings.action_item', id: itemId } });
@@ -192,7 +192,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const after = (await results('attendee', meetingId)).items[0];
     expect(after).toMatchObject({ status: 'accepted', taskId: accepted.taskId });
     // No task text holds anything of the transcript: only what the person confirmed. Exactly one task came of the item.
-    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
+    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
     expect(tasks.rows[0]?.n).toBe('1');
   });
 
@@ -202,12 +202,12 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
     await taint(itemId);
     const kept = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách', due: null, positionId: seat });
-    const row = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, kept.taskId]);
+    const row = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, kept.taskId]);
     expect(row.rows[0]?.tainted).toBe(true);
     const { itemId: second } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
     await taint(second);
     const changed = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId: second, confirmed: true, title: 'Gửi báo giá, bản sửa', due: null, positionId: seat });
-    const row2 = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, changed.taskId]);
+    const row2 = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, changed.taskId]);
     expect(row2.rows[0]?.tainted).toBe(false);
   });
 
@@ -249,7 +249,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(['ok', 'NO_CLEAN_ITEMS']).toContain(code(clean));
     expect(['ok', 'ACTION_ITEM_ACCEPTED']).toContain(code(single));
     expect([code(clean), code(single)]).toContain('ok');
-    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
+    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
     expect(tasks.rows[0]?.n).toBe('1');
   });
 

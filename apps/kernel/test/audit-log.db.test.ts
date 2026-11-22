@@ -43,7 +43,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'admin' | 'member' | 'viewer', string> = { admin: await person('admin', 'Quản trị'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -67,7 +67,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
       ids.push(id);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, proposal_id, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, proposal_id, detail)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [orgId, id, r.at, r.actorType ?? 'user', r.actorId ?? null, r.command, randomUUID(), r.outcome ?? 'ok', r.targetType ?? null, r.targetId ?? null, 'a'.repeat(64), r.proposalId ?? null, JSON.stringify(r.detail ?? {})],
         ),
@@ -92,9 +92,9 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -123,7 +123,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
       await expect(rt.execute('kernel.audit.export', {}, { actor: asUser(who), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     }
     // A former member keeps their rows, without a name.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
     expect((await list(o, o.owner, { command: 'kernel.org.set_address' })).items[0]).toMatchObject({ actorId: o.admin, actorName: null });
   });
 
@@ -207,7 +207,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
     const total = AUDIT_PAGE_SIZE + 20;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
          SELECT $1, timestamptz '2026-10-02 03:00:00.123Z' + make_interval(secs => g / 1000000.0), 'system', 'kernel.test.micro', gen_random_uuid(), 'ok', repeat('a', 64), '{}'
          FROM generate_series(1, $2::int) g`,
         [o.orgId, total],
@@ -267,7 +267,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
     expect(lines[1]).toContain(`"'=HYPERLINK(""http://x"")"`);
     expect(lines[1]).toContain('"reason=a, ""b"""');
     const { rows } = await admin((c) =>
-      c.query("SELECT actor_id, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.audit.export'", [o.orgId]),
+      c.query("SELECT actor_id, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.audit.export'", [o.orgId]),
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ actor_id: o.admin, outcome: 'ok', detail: { rows: 1, filter: { ...SEEDED, command: 'kernel.' } } });
@@ -277,7 +277,7 @@ suite('audit log for owners and admins on PostgreSQL (#672)', () => {
     const o = await org();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
          SELECT $1, timestamptz '2026-10-01 00:00Z' + make_interval(mins => g), 'system', 'kernel.test.bulk', gen_random_uuid(), 'ok', repeat('a', 64), '{}'
          FROM generate_series(1, $2::int) g`,
         [o.orgId, AUDIT_EXPORT_LIMIT + 1],

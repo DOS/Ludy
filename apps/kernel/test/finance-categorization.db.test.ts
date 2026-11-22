@@ -182,17 +182,17 @@ suite('learned account rules with provenance (#1399)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -251,7 +251,7 @@ suite('learned account rules with provenance (#1399)', () => {
     // In the audited command that recorded the invoice.
     const audit = await admin(async (c) =>
       (await c.query<{ detail: { learned_rules: Array<{ lineNo: number; account: string; created: boolean }> } }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND outcome = 'ok' AND detail ? 'learned_rules'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND outcome = 'ok' AND detail ? 'learned_rules'`,
         [org.orgId],
       )).rows,
     );
@@ -351,7 +351,7 @@ suite('learned account rules with provenance (#1399)', () => {
     expect(await rpc('accountRules/remove', owner, { id: ads?.id })).toMatchObject({ status: 404, body: { code: 'RULE_NOT_FOUND' } });
     const audit = await admin(async (c) =>
       (await c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.categorization_rule.remove' AND outcome = 'ok'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.categorization_rule.remove' AND outcome = 'ok'`,
         [org.orgId],
       )).rows,
     );
@@ -375,7 +375,7 @@ suite('learned account rules with provenance (#1399)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SET LOCAL ROLE crove_tenant');
+      await client.query('SET LOCAL ROLE ludy_tenant');
       await expect(client.query(`UPDATE crove_finance.categorization_rule SET match_text = 'x y'`)).rejects.toThrow(/permission denied/);
     } finally {
       await client.query('ROLLBACK').catch(() => {});

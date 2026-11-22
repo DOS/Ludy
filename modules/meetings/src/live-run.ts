@@ -105,7 +105,7 @@ export async function startWindow(ctx: CommandContext, meetingId: string, afterS
   if ((next[0]?.n ?? 0) === 0) return null;
   const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: LIVE_NOTES_FEATURE, subjectType: 'meeting', subjectId: meetingId });
   const agent = await ctx.trx
-    .selectFrom('crove_kernel.agent')
+    .selectFrom('ludy_kernel.agent')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', 'member_vy')
@@ -266,7 +266,7 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
   let since: Date | null = null;
   if (draft) {
     const run = draft.source_run_id
-      ? await ctx.trx.selectFrom('crove_kernel.ai_run').select('started_at').where('org_id', '=', ctx.orgId).where('id', '=', draft.source_run_id).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_kernel.ai_run').select('started_at').where('org_id', '=', ctx.orgId).where('id', '=', draft.source_run_id).executeTakeFirst()
       : undefined;
     since = new Date(run ? run.started_at : draft.updated_at);
   }

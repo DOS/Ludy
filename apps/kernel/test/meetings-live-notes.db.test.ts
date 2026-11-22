@@ -126,7 +126,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
           wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId: 'k1-live-notes-test' }, subkey),
         ]);
         await c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, 'application/octet-stream', $6, 'meeting_audio')`,
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, 'application/octet-stream', $6, 'meeting_audio')`,
           [orgId, fileId, sha, storageKey, `meeting-${meetingId}-live-${seq}.bin`, ciphertext.length],
         );
         await c.query(`INSERT INTO crove_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 15)`, [orgId, randomUUID(), meetingId, seq, fileId, ciphertext.length]);
@@ -134,7 +134,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     }
   }
 
-  const agentOf = async (who: string) => (await sql<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]])).rows[0]?.id as string;
+  const agentOf = async (who: string) => (await sql<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]])).rows[0]?.id as string;
   const start = (who: string, meetingId: string) => app.execute<{ runId: string }>('meetings.live.start', { meetingId }, { actor: asUser(who), orgId });
   const tick = (who: string, meetingId: string) => app.execute<LiveTicked>('meetings.live.tick', { meetingId }, { actor: asUser(who), orgId });
   const status = (who: string, meetingId: string) => app.query<LiveStatus>('meetings.live.status', { meetingId }, { actor: asUser(who), orgId });
@@ -153,15 +153,15 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const build = (db: ReturnType<typeof createDb>) =>
       new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -177,7 +177,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'live-notes', subject: key, email: `${key}@live-notes.test`, name: null });
     }
     orgId = (await createOrg(app, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'LiveNotes')).orgId;
-    await sql(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.other, users.reader]);
+    await sql(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.other, users.reader]);
   }, 300_000);
 
   afterAll(async () => {
@@ -193,7 +193,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const plain = await seedMeeting('recorder', { liveNotes: false });
     expect(await refuses(start('recorder', plain))).toBe('LIVE_NOTES_NOT_ENABLED');
     expect(await refuses(app.execute('meetings.live.notes_start', { meetingId: plain }, { actor: asUser('recorder'), orgId }))).toBe('LIVE_NOTES_NOT_ENABLED');
-    expect(await sql(`SELECT 1 FROM crove_kernel.ai_run WHERE org_id = $1 AND feature IN ('meetings.live_notes', 'meetings.live_summary')`, [orgId])).toHaveProperty('rowCount', 0);
+    expect(await sql(`SELECT 1 FROM ludy_kernel.ai_run WHERE org_id = $1 AND feature IN ('meetings.live_notes', 'meetings.live_summary')`, [orgId])).toHaveProperty('rowCount', 0);
 
     const live = await seedMeeting('recorder');
     setLiveNotesEnabled(false);
@@ -234,7 +234,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect([...measured[seq]!.subarray(0, HEADER.length)], `piece ${seq} starts with the header`).toEqual([...HEADER]);
       expect(measured[seq]!.length, `piece ${seq} is the header and its own bytes`).toBe(HEADER.length + clusterOf(seq).length);
     }
-    const usage = await sql<{ amount: string }>(`SELECT amount::text FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'meetings.transcribe' ORDER BY created_at DESC LIMIT 3`, [orgId]);
+    const usage = await sql<{ amount: string }>(`SELECT amount::text FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'meetings.transcribe' ORDER BY created_at DESC LIMIT 3`, [orgId]);
     expect(usage.rows.length).toBeGreaterThan(0);
 
     expect(await tick('recorder', meetingId)).toMatchObject({ copiedRunId: second, lines: 1, state: 'waiting', runId: null });
@@ -326,7 +326,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
   it('a spent budget or a kill switch stops the notes with its code and leaves the recording and its pieces alone', async () => {
     const meetingId = await seedMeeting('recorder', { pieces: 3 });
     const { runId } = await start('recorder', meetingId);
-    await sql(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]);
+    await sql(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]);
     const before = providerCalls;
     expect(await runWindow('recorder', meetingId, runId)).toBe('failed');
     // Nothing was sent to the provider: the context is refused at its entry.
@@ -336,20 +336,20 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     // The tick starts no new window after a failed one, and says why.
     expect(await tick('recorder', meetingId)).toMatchObject({ state: 'stopped', runId: null, errorCode: 'AI_STOPPED' });
     expect(await refuses(start('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
-    await sql(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]);
+    await sql(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]);
 
     // A hard-stop budget the next piece would cross: refused before the provider call, the run ends with its code.
     const second = await seedMeeting('recorder', { pieces: 2 });
     const run2 = (await start('recorder', second)).runId;
     await sql(
-      `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', crove_kernel.ai_budget_spent($1::uuid, 'module', 'meetings') + 0.0001::numeric, true, $2)`,
+      `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'meetings') + 0.0001::numeric, true, $2)`,
       [orgId, users.owner],
     );
     const calls = providerCalls;
     expect(await runWindow('recorder', second, run2)).toBe('failed');
     expect(providerCalls).toBe(calls);
     expect(await status('recorder', second)).toMatchObject({ state: 'stopped', errorCode: 'AI_BUDGET_EXHAUSTED' });
-    await sql(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+    await sql(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
     // The recording is untouched all along: the meeting reads, and every piece is still stored.
     expect(await app.query('meetings.meeting.get', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ id: meetingId });
     expect(await count('SELECT 1 FROM crove_meetings.live_chunk WHERE meeting_id = $1', [meetingId])).toBe(3);
@@ -362,7 +362,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const file = randomUUID();
     await sql(`DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'`, [meetingId]);
     await sql(`DELETE FROM crove_meetings.live_chunk WHERE meeting_id = $1`, [meetingId]);
-    await sql(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.webm', 'audio/webm', 10, 'meeting_audio')`, [orgId, file, 'e'.repeat(64), `org/${orgId}/${'e'.repeat(64)}`]);
+    await sql(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.webm', 'audio/webm', 10, 'meeting_audio')`, [orgId, file, 'e'.repeat(64), `org/${orgId}/${'e'.repeat(64)}`]);
     await sql(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 45)`, [orgId, randomUUID(), meetingId, file]);
     const calls = providerCalls;
     expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
@@ -429,14 +429,14 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       const items = await sql<{ title: string; stage: string; status: string; tainted: boolean; source_run_id: string; task_id: string | null }>(`SELECT title, stage, status, tainted, source_run_id, task_id FROM crove_meetings.action_item WHERE meeting_id = $1`, [meetingId]);
       expect(items.rows).toEqual([{ title: 'Gửi báo giá', stage: 'draft', status: 'suggested', tainted: true, source_run_id: done.runId, task_id: null }]);
       // Nothing becomes a task without the recorder's click.
-      expect(await count('SELECT 1 FROM crove_kernel.task WHERE org_id = $1 AND source_ref IS NOT NULL', [orgId])).toBe(0);
+      expect(await count('SELECT 1 FROM ludy_kernel.task WHERE org_id = $1 AND source_ref IS NOT NULL', [orgId])).toBe(0);
 
       // Nothing new since: no run, no model call, no spend.
       expect(await route('recorder', meetingId)).toMatchObject({ state: 'nothing', runId: null });
       expect(prompts).toHaveLength(1);
 
       // A new line the ticks copied while the model was still working (written after the run started, before its notes were copied): the next refresh must read it, not skip it.
-      await seedLines(meetingId, [[2, 20, 'Khách đồng ý']], `(SELECT started_at + interval '1 millisecond' FROM crove_kernel.ai_run WHERE id = '${done.runId}')`);
+      await seedLines(meetingId, [[2, 20, 'Khách đồng ý']], `(SELECT started_at + interval '1 millisecond' FROM ludy_kernel.ai_run WHERE id = '${done.runId}')`);
       expect((await route('recorder', meetingId)).state).toBe('ready');
       expect(prompts).toHaveLength(2);
       // The earlier suggestions are replaced by the new ones, not piled up next to them.
@@ -478,9 +478,9 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     it('a spent budget or a kill switch ends the notes run with its code and leaves the preview as it was', async () => {
       const meetingId = await seedMeeting('recorder', { pieces: 0 });
       await seedLines(meetingId, [[0, 0, NEW_LINE]]);
-      await sql(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]);
+      await sql(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]);
       expect(await refuses(route('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
-      await sql(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]);
+      await sql(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]);
       expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(1);
       expect(await count('SELECT 1 FROM crove_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(0);
     });

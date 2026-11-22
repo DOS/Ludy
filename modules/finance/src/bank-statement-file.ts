@@ -135,10 +135,10 @@ export const bankStatementStage = defineQuery({
 // of the same file never wait on each other in a circle.
 async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: StagedSummary; rows: BankStatementRow[] } | null> {
   if (lock) {
-    await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileId).forUpdate().executeTakeFirst();
   }
   let query = ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select(['result', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)

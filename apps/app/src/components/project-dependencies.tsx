@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Project task dependencies editor & list (issue #2601, isolated from crove_kernel.task.parent_task_id).
+// Project task dependencies editor & list (issue #2601, isolated from ludy_kernel.task.parent_task_id).
 import type { ProjectDependencyEdge } from '@ludy/kernel-contract';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useRef, useState, type FormEvent } from 'react';

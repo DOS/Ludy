@@ -157,7 +157,7 @@ export const reviewChecklistSet = defineCommand({
     const connectionIds = [...new Set(items.flatMap((i) => (i.connectionId === null ? [] : [i.connectionId])))].sort();
     if (connectionIds.length > 0) {
       // The org's channels, of any status: a disconnected channel may keep its items until it is removed.
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute();
       if (found.length !== connectionIds.length) {
         const known = new Set(found.map((c) => c.id));
         throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không thuộc tổ chức này', { connectionIds: connectionIds.filter((id) => !known.has(id)) });

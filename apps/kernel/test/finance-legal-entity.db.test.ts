@@ -21,6 +21,7 @@ import { findPeriodBalanceDifferences } from '../src/period-balance.ts';
 import { GENESIS_SHA256, LocalArchiveStore, archiveKey, batchSha256, chainSha256, verifyArchive, type ArchiveBatch } from '../src/worm.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -58,6 +59,7 @@ suite('finance books per legal entity (#1280)', () => {
   let db: Db;
   let worker: Db;
   let before = '';
+  let upgraded = false;
   let archiveDir = '';
   let store: LocalArchiveStore;
   let orgId = '';
@@ -68,7 +70,7 @@ suite('finance books per legal entity (#1280)', () => {
   let rewriteMs = 0;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await client.connect();
     try {
       return await fn(client);
@@ -84,7 +86,7 @@ suite('finance books per legal entity (#1280)', () => {
     return url.toString();
   };
 
-  // Runs fn as crove_app in the context of userId, in one transaction that rolls back unless commit is set.
+  // Runs fn as ludy_app in the context of userId, in one transaction that rolls back unless commit is set.
   async function asUser<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
     const c = await pool.connect();
     try {
@@ -147,25 +149,25 @@ suite('finance books per legal entity (#1280)', () => {
     }
     await migrate({ adminUrl, dir: before });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    pool = createPreCutoverPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
+    workerPool = createPreCutoverPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
     worker = createDb(workerPool);
     // The database is still before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
-    // crove_kernel.command_input_hash does not exist yet: this runtime writes the plain hash (#1741).
+    // ludy_kernel.command_input_hash does not exist yet: this runtime writes the plain hash (#1741).
     // No context token key: the database starts at a version before enter_user_context (#1822).
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash: 'sha256' }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@le-books.test', name: null });
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@le-books.test', name: null });
     ({ orgId } = await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Sổ theo pháp nhân'));
     await admin(async (a) => {
-      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
+        await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
       // The member keeps the branch's books only (an entity-scoped assignment narrows enter_context's le_scope).
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
@@ -183,7 +185,7 @@ suite('finance books per legal entity (#1280)', () => {
     );
     await admin(async (a) => {
       await a.query('SET session_replication_role = replica');
-      await a.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
+      await a.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
       await a.query(`UPDATE crove_finance.journal_entry SET created_at = created_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
     });
     archiveDir = mkdtempSync(join(tmpdir(), 'crove-le-archive-'));
@@ -194,9 +196,9 @@ suite('finance books per legal entity (#1280)', () => {
     const to = new Date(Date.now() - 60 * 60_000).toISOString();
     const rows = (
       await sql<{ ref: string; row_sha256: string }>`
-        SELECT ref, row_sha256 FROM crove_kernel.archive_row_hashes(${epoch}::timestamptz, ${to}::timestamptz)
+        SELECT ref, row_sha256 FROM ludy_kernel.archive_row_hashes(${epoch}::timestamptz, ${to}::timestamptz)
         UNION ALL
-        SELECT ref, row_sha256 FROM crove_kernel.archive_number_hashes(${epoch}::timestamptz, ${to}::timestamptz)`.execute(worker)
+        SELECT ref, row_sha256 FROM ludy_kernel.archive_number_hashes(${epoch}::timestamptz, ${to}::timestamptz)`.execute(worker)
     ).rows
       .map((r): [string, string] => [r.ref, r.row_sha256])
       .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
@@ -214,12 +216,20 @@ suite('finance books per legal entity (#1280)', () => {
       chainSha256: chainSha256(GENESIS_SHA256, 1, epoch, to, hash),
     };
     await store.put(archiveKey(1), new TextEncoder().encode(JSON.stringify(batch)));
-    await sql`SELECT crove_kernel.archive_record(1, ${epoch}::timestamptz, ${to}::timestamptz, ${rows.length}::int, ${hash}, ${batch.chainSha256}, ${archiveKey(1)})`.execute(worker);
+    await sql`SELECT ludy_kernel.archive_record(1, ${epoch}::timestamptz, ${to}::timestamptz, ${rows.length}::int, ${hash}, ${batch.chainSha256}, ${archiveKey(1)})`.execute(worker);
 
     const started = performance.now();
     const applied = await migrate({ adminUrl, dir: MIGRATIONS });
     rewriteMs = performance.now() - started;
     expect(applied.some((v) => v.startsWith(THIS_VERSION))).toBe(true);
+    upgraded = true;
+    await pool.end();
+    await workerPool.end();
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
+    db = createDb(pool);
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 1 });
+    worker = createDb(workerPool);
   }, 300_000);
 
   afterAll(async () => {
@@ -249,7 +259,7 @@ suite('finance books per legal entity (#1280)', () => {
         const { rows } = await a.query<{ notnull: boolean; restrictive: boolean; fk: boolean; always: boolean }>(
           `SELECT a.attnotnull AS notnull,
                   EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = $1::regclass AND p.polname = 'le_scope' AND NOT p.polpermissive) AS restrictive,
-                  EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f' AND c.confrelid = 'crove_kernel.legal_entity'::regclass) AS fk,
+                  EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f' AND c.confrelid = 'ludy_kernel.legal_entity'::regclass) AS fk,
                   EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = $1::regclass AND t.tgname = 'b_legal_entity' AND t.tgenabled = 'A') AS always
            FROM pg_attribute a WHERE a.attrelid = $1::regclass AND a.attname = 'legal_entity_id'`,
           [table],
@@ -371,7 +381,7 @@ suite('finance books per legal entity (#1280)', () => {
     // naming the branch and a default-entity purchase document as its source loses its entity and is refused.
     const document = await admin(async (a) => {
       await a.query('BEGIN');
-      const party = (await a.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id`, [orgId])).rows[0]?.id;
+      const party = (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id`, [orgId])).rows[0]?.id;
       const doc = (
         await a.query<{ id: string }>(
           `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total)

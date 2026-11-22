@@ -105,7 +105,7 @@ test('1-step Evernote (.enex) and Todoist (.csv) importers with dry-run preview,
     const dbNotes = sql<{ title: string; visibility: string; tainted: boolean }>(
       `SELECT n.title, n.visibility, n.tainted
          FROM crove_notes.note n
-         JOIN crove_kernel.tenant t ON t.org_id = n.org_id
+         JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
         WHERE t.slug = :'slug'
         ORDER BY n.created_at ASC`,
       { slug },
@@ -153,7 +153,7 @@ test('1-step Evernote (.enex) and Todoist (.csv) importers with dry-run preview,
     const dbTodos = sql<{ title: string; priority: number; tainted: boolean; tags: string[] }>(
       `SELECT td.title, td.priority, td.tainted, td.tags
          FROM crove_notes.todo td
-         JOIN crove_kernel.tenant t ON t.org_id = td.org_id
+         JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
         WHERE t.slug = :'slug'
         ORDER BY td.priority ASC`,
       { slug },
@@ -172,9 +172,9 @@ test('1-step Evernote (.enex) and Todoist (.csv) importers with dry-run preview,
       await otherPage.goto('/');
       await signInNewUser(otherPage, otherEmail);
       exec(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          SELECT t.org_id, u.id, 'member'
-           FROM crove_kernel.tenant t, crove_kernel.user_account u
+           FROM ludy_kernel.tenant t, ludy_kernel.user_account u
           WHERE t.slug = :'slug' AND u.email = :'otherEmail'`,
         { slug, otherEmail },
       );

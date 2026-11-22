@@ -142,14 +142,14 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
 
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     adminPool = new pg.Pool({ connectionString: adminUrl, max: 2 });
@@ -361,7 +361,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
 
     // Nothing was created in DB yet (transient proposals).
     const beforeTasks = await sqlAdmin<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM crove_kernel.task WHERE org_id = $1`,
+      `SELECT COUNT(*)::text AS count FROM ludy_kernel.task WHERE org_id = $1`,
       [org.orgId],
     );
     expect(beforeTasks.rows[0]?.count).toBe('0');
@@ -405,9 +405,9 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     expect(confirmData.createdCount).toBe(1);
     expect(confirmData.linkedCount).toBe(0);
 
-    // Verify tainted: true + source_ref in crove_kernel.task and board membership.
+    // Verify tainted: true + source_ref in ludy_kernel.task and board membership.
     const taskRows = await sqlAdmin<{ id: string; tainted: boolean; source_ref: { type: string; id: string }; description: string | null }>(
-      `SELECT id, tainted, source_ref, description FROM crove_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+      `SELECT id, tainted, source_ref, description FROM ludy_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
       [org.orgId, confirmData.taskIds],
     );
     expect(taskRows.rows).toHaveLength(1);
@@ -420,7 +420,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
 
     // Audit rows never leak recorder notes or task titles, and .start masks projectId for private/attendees meetings.
     const startAudits = await sqlAdmin<{ detail: Record<string, unknown> }>(
-      `SELECT detail FROM crove_kernel.audit_event
+      `SELECT detail FROM ludy_kernel.audit_event
         WHERE org_id = $1 AND command = 'projects.tasks_from_source.start' AND outcome = 'ok'`,
       [org.orgId],
     );
@@ -432,7 +432,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     const allAuditBlob = JSON.stringify(
       (
         await sqlAdmin<{ detail: unknown }>(
-          `SELECT detail FROM crove_kernel.audit_event
+          `SELECT detail FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command IN ('projects.tasks_from_source.start', 'projects.tasks_from_source.confirm', 'kernel.task.create_from_source')`,
           [org.orgId],
         )
@@ -539,12 +539,12 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     expect(deletedMidRun.errorCode).toBe('MEETING_NOT_FOUND');
     expect(deletedMidRun.proposals).toEqual([]);
     const runRows = await sqlAdmin<{ status: string; error: string | null }>(
-      `SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`,
+      `SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2`,
       [org.orgId, deletedMidRun.runId],
     );
     expect(runRows.rows[0]).toEqual({ status: 'failed', error: 'MEETING_NOT_FOUND' });
     const resultRows = await sqlAdmin<{ status: string; body: string | null }>(
-      `SELECT status, body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`,
+      `SELECT status, body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`,
       [org.orgId, deletedMidRun.runId],
     );
     expect(resultRows.rows[0]).toEqual({ status: 'failed', body: null });
@@ -560,12 +560,12 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
 
     // Only Alice gets desk.agent (required for direct/email conversation access).
     await sqlAdmin(
-      `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)`,
+      `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)`,
       [org.orgId, alice.userId, owner.userId],
     );
     const connectionId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by)
+      `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by)
        VALUES ($1, $2, 'sandbox', $3, 'Kênh OA', $4)`,
       [org.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId],
     );
@@ -596,7 +596,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     ]);
 
     const threads = await sqlAdmin<{ id: string; external_thread_id: string }>(
-      `SELECT id, external_thread_id FROM crove_kernel.conversation WHERE org_id = $1`,
+      `SELECT id, external_thread_id FROM ludy_kernel.conversation WHERE org_id = $1`,
       [org.orgId],
     );
     const directId = threads.rows.find((r) => r.external_thread_id === 'dm-1')!.id;
@@ -698,7 +698,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
 
     const dmTask = (
       await sqlAdmin<{ tainted: boolean; source_ref: { type: string; id: string } }>(
-        `SELECT tainted, source_ref FROM crove_kernel.task WHERE org_id = $1 AND id = $2`,
+        `SELECT tainted, source_ref FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`,
         [org.orgId, confirmedDm.taskIds[0]],
       )
     ).rows[0]!;
@@ -729,7 +729,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     const convAudits = JSON.stringify(
       (
         await sqlAdmin<{ detail: unknown }>(
-          `SELECT detail FROM crove_kernel.audit_event
+          `SELECT detail FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command IN ('projects.tasks_from_source.start', 'projects.tasks_from_source.confirm', 'kernel.task.create_from_source')`,
           [org.orgId],
         )
@@ -741,7 +741,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     // Kill switch + AI budget stop Vy cleanly while manual project tasks continue working.
     const ksId = (
       await sqlAdmin<{ id: string }>(
-        `INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'projects', $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'projects', $2) RETURNING id`,
         [org.orgId, owner.userId],
       )
     ).rows[0]!.id;
@@ -768,13 +768,13 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
       });
       expect(manual.taskId).toBeTruthy();
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.kill_switch WHERE id = $1`, [ksId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.kill_switch WHERE id = $1`, [ksId]);
     }
 
     // Budget cap exhausted stops propose while reporting resetOn.
     await sqlAdmin(
-      `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
-       VALUES ($1, 'module', 'projects', crove_kernel.ai_budget_spent($1::uuid, 'module', 'projects'), true, $2)`,
+      `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
+       VALUES ($1, 'module', 'projects', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'projects'), true, $2)`,
       [org.orgId, owner.userId],
     );
     try {
@@ -791,7 +791,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
         }),
       ).rejects.toMatchObject({ code: 'AI_BUDGET_EXHAUSTED' });
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
     }
 
     // Disabling projects module blocks status, propose, and confirm with MODULE_OFF.
@@ -829,7 +829,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
     // Ingest a historical conversation on 2026-11-10 saying "ngày mai".
     const connectionId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by)
+      `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by)
        VALUES ($1, $2, 'sandbox', $3, 'Kênh lịch sử', $4)`,
       [org.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId],
     );
@@ -873,7 +873,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
       { actor: SYSTEM, orgId: org.orgId },
     );
     const histConvRows = await sqlAdmin<{ external_thread_id: string; id: string }>(
-      `SELECT external_thread_id, id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ('hist-1', 'hist-2')`,
+      `SELECT external_thread_id, id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ('hist-1', 'hist-2')`,
       [org.orgId],
     );
     const histConvId = histConvRows.rows.find((r) => r.external_thread_id === 'hist-1')!.id;

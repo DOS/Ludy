@@ -391,10 +391,10 @@ export const hrToday = defineQuery({
       return [];
     }
 
-    // Read `apps_off` directly on `crove_kernel.tenant` (readable under both `crove_app` and `crove_tenant`),
+    // Read `apps_off` directly on `ludy_kernel.tenant` (readable under both `ludy_app` and `ludy_tenant`),
     // failing closed if the tenant row is unreadable, inactive, or has disabled `'hr'`.
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['status', 'apps_off'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirst();

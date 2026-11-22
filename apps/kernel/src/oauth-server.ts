@@ -11,7 +11,7 @@
 //     per-line scopes), each of which a person must tick on the consent page and a company grant alone can hold; any other resource is `invalid_target`, any other scope `invalid_scope`;
 //   - public clients only (no client secret, `token_endpoint_auth_method: none`), authorization code with PKCE, refresh token;
 //   - access tokens are JWTs (RFC 9068), ES256, 10 minutes, audience exactly the resource, with the grant and org of the live agent_grant
-//     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (crove_kernel.mcp_grant_verify);
+//     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (ludy_kernel.mcp_grant_verify);
 //   - a code lives 60 seconds, a refresh token 30 days and rotates (a reused one destroys the grant's tokens), the authorization server's own
 //     session 15 minutes, an interaction 10 minutes;
 //   - the consent page is the SPA's, on this origin (OAUTH_SERVER=on refuses another APP_URL).
@@ -196,7 +196,7 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       const grantId = (token as { grantId?: string } | undefined)?.grantId;
       if (accountAccess && grantId) {
         const { rows } = await run((db) =>
-          sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(g.grant_id) AS email FROM crove_kernel.mcp_grant_for_oauth(${grantId}::text) g`.execute(db),
+          sql<{ email: string | null }>`SELECT ludy_kernel.mcp_grant_account_email(g.grant_id) AS email FROM ludy_kernel.mcp_grant_for_oauth(${grantId}::text) g`.execute(db),
         );
         if (rows[0]) {
           try {
@@ -214,12 +214,12 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       const grantId = (token as { grantId?: string }).grantId;
       if (!grantId) throw new errors.InvalidGrant('no grant');
       const { rows } = await run((db) =>
-        sql<{ grant_id: string; org_id: string }>`SELECT grant_id, org_id FROM crove_kernel.mcp_grant_for_oauth(${grantId}::text)`.execute(db),
+        sql<{ grant_id: string; org_id: string }>`SELECT grant_id, org_id FROM ludy_kernel.mcp_grant_for_oauth(${grantId}::text)`.execute(db),
       );
       const row = rows[0];
       if (!row) throw new errors.InvalidGrant('the grant is no longer valid');
       if (accountAccess) {
-        const { rows: owner } = await run((db) => sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(${row.grant_id}::uuid) AS email`.execute(db));
+        const { rows: owner } = await run((db) => sql<{ email: string | null }>`SELECT ludy_kernel.mcp_grant_account_email(${row.grant_id}::uuid) AS email`.execute(db));
         try {
           accountAccess(owner[0]?.email);
         } catch {

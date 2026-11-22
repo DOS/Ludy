@@ -194,7 +194,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'roadmap-app-pw', crove_worker: 'roadmap-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'roadmap-app-pw', ludy_worker: 'roadmap-worker-pw' });
 
     const login = (u: string, pw: string) => {
       const url = new URL(adminUrl);
@@ -203,8 +203,8 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       return url.toString();
     };
 
-    const appUrl = login('crove_app', 'roadmap-app-pw');
-    const workerUrl = login('crove_worker', 'roadmap-worker-pw');
+    const appUrl = login('ludy_app', 'roadmap-app-pw');
+    const workerUrl = login('ludy_worker', 'roadmap-worker-pw');
     appPool = createPool({ connectionString: appUrl, max: 6 });
     workerPool = createPool({ connectionString: workerUrl, max: 3 });
 
@@ -311,11 +311,11 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
         [orgId, adminUserId, memberUserId, viewerUserId],
       );
       const { rows: posRows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id) VALUES ($1, 'Product Lead', 'kernel', 'member', $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id) VALUES ($1, 'Product Lead', 'kernel', 'member', $2) RETURNING id`,
         [orgId, memberUserId],
       );
       memberPosId = posRows[0]!.id;
@@ -486,7 +486,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     const drainMails = async () => {
       const queued = await admin(async (c) => {
         const { rows } = await c.query<{ id: string }>(
-          `SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at ASC`,
+          `SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at ASC`,
           [orgId],
         );
         return rows;
@@ -511,8 +511,8 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     const suppressedEmail = 'suppressed-voter@example.test';
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.mail_suppression (org_id, to_hash, scope, reason)
-         VALUES ($1, crove_kernel.mail_address_hash($2), 'all', 'hard_bounce')`,
+        `INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason)
+         VALUES ($1, ludy_kernel.mail_address_hash($2), 'all', 'hard_bounce')`,
         [orgId, suppressedEmail],
       );
     });
@@ -555,13 +555,13 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       );
       expect(otpRows[0]!.otp_sha256).toBeNull();
       const { rows: mailRows } = await c.query<{ payload: Record<string, unknown> }>(
-        `SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at DESC LIMIT 1`,
         [orgId],
       );
       expect(JSON.stringify(mailRows[0]!.payload)).not.toContain(voter1);
     });
 
-    // Security check: crove_app/crove_tenant has zero direct SQL access to MACHINERY tables roadmap_otp & roadmap_subscriber.
+    // Security check: ludy_app/ludy_tenant has zero direct SQL access to MACHINERY tables roadmap_otp & roadmap_subscriber.
     const appClient = await appPool!.connect();
     try {
       await expect(appClient.query('SELECT count(*) FROM crove_projects.roadmap_otp')).rejects.toThrow();
@@ -772,7 +772,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     );
     await admin(async (c) => {
       const { rows } = await c.query<{ tainted: boolean; source_ref: { type: string; id: string } }>(
-        `SELECT tainted, source_ref FROM crove_kernel.task WHERE org_id = $1 AND id = $2`,
+        `SELECT tainted, source_ref FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`,
         [orgId, converted.taskId],
       );
       expect(rows[0]!.tainted).toBe(true);
@@ -917,7 +917,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     expect(pdplOtpReq.status).toBe(200);
     await admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at DESC LIMIT 1`,
         [orgId],
       );
       for (const r of rows) {
@@ -1021,7 +1021,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       { actor: asOwner(), orgId: otherOrgId, idempotencyKey: randomUUID() },
     );
     const otherOrgSlug = await admin(async (c) => {
-      const { rows } = await c.query<{ slug: string }>(`SELECT slug FROM crove_kernel.tenant WHERE org_id = $1`, [otherOrgId]);
+      const { rows } = await c.query<{ slug: string }>(`SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1`, [otherOrgId]);
       return rows[0]!.slug;
     });
     const purgeOtpRes = await postJson(
@@ -1035,10 +1035,10 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       const dayMs = 24 * 60 * 60 * 1000;
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [otherOrgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [otherOrgId]);
       await c.query('COMMIT');
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'),
                 ($1, $6, 'system', NULL, 'kernel.org.export.record', $7, 'ok', $5, '{"format":"crove.org-export.v2","file_count":0}')`,
         [

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Shared case table for crove_kernel.text_detect and crove_kernel.text_redact_spans (#4001, Slice 1):
+// Shared case table for ludy_kernel.text_detect and ludy_kernel.text_redact_spans (#4001, Slice 1):
 // covers real values across all five structured kinds and near-misses that must stay undetected.
 import { enterpriseCheckDigit } from '@ludy/l10n-vn';
 

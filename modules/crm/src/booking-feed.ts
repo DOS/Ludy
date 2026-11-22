@@ -82,7 +82,7 @@ export const bookingFeedRevokeForMember = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới thực hiện được việc này');
     const event = await ctx.trx
-      .selectFrom('crove_kernel.outbox_event')
+      .selectFrom('ludy_kernel.outbox_event')
       .select(['type', 'payload', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.eventId)

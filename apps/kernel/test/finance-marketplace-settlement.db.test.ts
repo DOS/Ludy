@@ -164,9 +164,9 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -180,7 +180,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     otherOrgId = (await createOrg(rt, asUser(other), `Công ty Khác ${randomUUID().slice(0, 6)}`)).orgId;
     member = await identity('member');
     viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
   });
 
   afterAll(async () => {
@@ -258,14 +258,14 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string; table: string; op: string }>(
         `SELECT r::text AS role, t::text AS "table", p::text AS op
-         FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant']) r, unnest(ARRAY['crove_finance.channel_settlement', 'crove_finance.channel_settlement_line']) t,
+         FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant']) r, unnest(ARRAY['crove_finance.channel_settlement', 'crove_finance.channel_settlement_line']) t,
               unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) p WHERE has_table_privilege(r, t, p)`,
       ),
     );
     expect(rows).toEqual([]);
     const { rows: columns } = await admin((c) =>
       c.query<{ role: string; col: string }>(
-        `SELECT r::text AS role, a.attname::text AS col FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant']) r, pg_attribute a
+        `SELECT r::text AS role, a.attname::text AS col FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant']) r, pg_attribute a
          WHERE a.attrelid IN ('crove_finance.channel_settlement'::regclass, 'crove_finance.channel_settlement_line'::regclass) AND a.attnum > 0 AND NOT a.attisdropped
            AND has_column_privilege(r, a.attrelid, a.attname, 'UPDATE')`,
       ),

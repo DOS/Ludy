@@ -65,7 +65,7 @@ const MASKS = /(?:^|\.)(?:auditValue|keyedHash|hashText|sha256|count|Boolean|is[
 const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/agents.ts': {
     'proposal_command <- info.name': 'the name of the command a proposal runs',
-    'title <- before.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
+    'title <- before.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
     // `reason` is also the name of crove_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015); none of these facts carries it.
     'reason <- reason': 'why a run did not start, a code of the run-start result (a closed set)',
     "reason <- ' '": "why a proposal was not created or approved, a code written out at the call (a closed set)",
@@ -804,7 +804,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     // Built in a loop and passed by name: each write is checked.
     const loop = (rhs: string) =>
       [
-        "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'kind']).executeTakeFirstOrThrow();",
+        "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'kind']).executeTakeFirstOrThrow();",
         'const previous: Record<string, unknown> = {};',
         `for (const field of changed) previous[field] = ${rhs};`,
         'ctx.audit({ partyId: before.id, previous });',
@@ -831,7 +831,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
       'previous: previous.tax_code is a classified column and its value is not auditValue(...)',
     ]);
     // A whole row, spread or passed by name.
-    const row = "const before = await ctx.trx.selectFrom('crove_kernel.party').selectAll().executeTakeFirstOrThrow();";
+    const row = "const before = await ctx.trx.selectFrom('ludy_kernel.party').selectAll().executeTakeFirstOrThrow();";
     expect(check(`${row}\nctx.audit({ ...before });`)).toHaveLength(1);
     expect(check(`${row}\nctx.audit({ previous: before });`)).toHaveLength(1);
     expect(check(`${row}\nctx.audit(before);`)).toHaveLength(1);
@@ -840,7 +840,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
       'code: the value reads the classified column tax_code outside auditValue(...)',
     ]);
     // A query's result carries the columns it selects or returns.
-    const picked = "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'p.tax_code as code']).executeTakeFirstOrThrow();";
+    const picked = "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'p.tax_code as code']).executeTakeFirstOrThrow();";
     expect(check(`${picked}\nctx.audit({ previous: before });`)).toEqual(['previous: before holds the classified column tax_code from the database']);
     expect(check("const done = await ctx.trx.updateTable('t').set({ a: 1 }).returning('id').execute();\nctx.audit({ done });")).toEqual([]);
     // A spread of a call: a function of the file has what it returns read as facts; another's result cannot be read.
@@ -953,7 +953,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     const untracedFacts = 'facts: the facts are a name the scan cannot trace; write them out';
     const unfollowed = 'facts: facts is written by a destructuring assignment or a for...of the scan cannot follow; assign it plainly';
     // A query's column read by the alias it was selected as.
-    const aliased = "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'tax_code as code']).executeTakeFirstOrThrow();";
+    const aliased = "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'tax_code as code']).executeTakeFirstOrThrow();";
     expect(check(`${aliased}\nctx.audit({ previous: before.code });`)).toEqual(['previous: the value reads the classified column tax_code as code outside auditValue(...)']);
     expect(check(`${aliased}\nctx.audit({ partyId: before.id });`)).toEqual([]);
     // What a name is given after its declaration: an assignment, a merge, Object.assign, a declaration with no value.

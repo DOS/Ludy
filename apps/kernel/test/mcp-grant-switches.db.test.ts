@@ -25,10 +25,10 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   const setApp = (module: string, enabled: boolean) => h.runtime.execute('kernel.org.set_app', { module, enabled }, { actor: owner(), orgId: h.orgId, idempotencyKey: randomUUID() });
   // A switch of scope `agent` naming a grant: the table accepts it (a uuid), though no command makes one for a grant today.
   async function stopGrant(grantId: string): Promise<string> {
-    const r = await h.q<{ id: string }>(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, reason, engaged_by) VALUES ($1, 'agent', $2, 'test', $3) RETURNING id`, [h.orgId, grantId, h.owner]);
+    const r = await h.q<{ id: string }>(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, reason, engaged_by) VALUES ($1, 'agent', $2, 'test', $3) RETURNING id`, [h.orgId, grantId, h.owner]);
     return r.rows[0]?.id as string;
   }
-  const releaseRow = (id: string) => h.q(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND id = $3`, [h.orgId, h.owner, id]);
+  const releaseRow = (id: string) => h.q(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND id = $3`, [h.orgId, h.owner, id]);
 
   interface Entry {
     label: string;
@@ -40,7 +40,7 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   }
   const rows = async (table: string) => (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [h.orgId])).rows[0]?.n ?? 0;
   const entries: Entry[] = [
-    { label: 'the kernel R1 twin (Hộp thư)', module: 'kernel', scope: ENGAGE_SCOPE, command: 'kernel.mcp.party_create', input: () => ({ kind: 'person', name: `Khách ${counter++}` }), count: () => rows('crove_kernel.party') },
+    { label: 'the kernel R1 twin (Hộp thư)', module: 'kernel', scope: ENGAGE_SCOPE, command: 'kernel.mcp.party_create', input: () => ({ kind: 'person', name: `Khách ${counter++}` }), count: () => rows('ludy_kernel.party') },
     { label: 'the CRM R1 twin', module: 'crm', scope: ENGAGE_SCOPE, command: 'crm.mcp.deal_create', input: () => ({ partyId: party, title: `Cơ hội ${counter++}`, amount: '1000000', expectedClose: null }), count: () => rows('crove_crm.deal') },
     { label: 'the Ads draft', module: 'ads', scope: ADS_SCOPE, command: 'ads.mcp.campaign_draft_save', input: () => ({ adAccountId: adAccount, plan: { name: `Nháp ${counter++}`, objective: 'traffic', dailyBudget: '200000' } }), count: () => rows('crove_ads.ad_campaign_draft') },
     { label: 'the Social draft', module: 'social', scope: SOCIAL_SCOPE, command: 'social.mcp.draft_create', input: () => ({ body: `Bài ${counter++}`, channels: [{ connectionId: socialChannel }] }), count: () => rows('crove_social.post') },
@@ -52,13 +52,13 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   beforeAll(async () => {
     if (!ADMIN) return;
     h = await startHarness('mcp_switches');
-    party = (await h.q<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, source_trust) VALUES ($1, 'person', 'Khách có sẵn', 'user') RETURNING id`, [h.orgId])).rows[0]?.id as string;
+    party = (await h.q<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name, source_trust) VALUES ($1, 'person', 'Khách có sẵn', 'user') RETURNING id`, [h.orgId])).rows[0]?.id as string;
     const connection = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [h.orgId, connection, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [h.orgId, connection, h.owner]);
     adAccount = randomUUID();
     await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [h.orgId, adAccount, connection]);
     socialChannel = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', 'acct-social-1', 'Trang', $3)`, [h.orgId, socialChannel, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', 'acct-social-1', 'Trang', $3)`, [h.orgId, socialChannel, h.owner]);
   }, 300_000);
 
   afterAll(async () => {
@@ -81,7 +81,7 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
         await call(e, g);
         expect(await e.count()).toBe(before + 2);
       } finally {
-        await h.q(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [h.orgId, h.owner]);
+        await h.q(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [h.orgId, h.owner]);
       }
       expect(other).toBeTruthy();
     });
@@ -117,7 +117,7 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
     });
   }
 
-  const pending = async (command: string) => (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2 AND status = 'pending'`, [h.orgId, command])).rows[0]?.n ?? 0;
+  const pending = async (command: string) => (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2 AND status = 'pending'`, [h.orgId, command])).rows[0]?.n ?? 0;
 
   it('lets a proposal through again once the switches are released', async () => {
     const g = await h.grant([ADS_SCOPE]);

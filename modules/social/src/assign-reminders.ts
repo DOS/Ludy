@@ -61,7 +61,7 @@ export const postRemindDue = defineCommand({
     const assignee = post.assignee_user_id;
     // A member now, with an account that is not disabled (member_emails leaves the others out, #1115). The scan leaves
     // them out too, so nothing is marked and a returning member's reminder still comes.
-    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_emails(${[assignee]}::uuid[])`.execute(ctx.trx);
+    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_emails(${[assignee]}::uuid[])`.execute(ctx.trx);
     if (active.length === 0) return { stage: null };
     // Marked whatever follows, so the scan moves past it.
     await ctx.trx

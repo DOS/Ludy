@@ -202,16 +202,16 @@ suite('kernel invariants on PostgreSQL', () => {
     await ingest(orgA, users.owner, new TextEncoder().encode('<a>org-a</a>'));
     const visible = await db.transaction().execute(async (trx) => {
       await sql`SELECT crove_kernel.enter_user_context(${orgB}::uuid, ${contextToken(users.outsider, orgB)}::text)`.execute(trx);
-      return trx.selectFrom('crove_kernel.file').select('org_id').execute();
+      return trx.selectFrom('ludy_kernel.file').select('org_id').execute();
     });
     expect(visible.every((r) => r.org_id === orgB)).toBe(true);
-    const noContext = await db.selectFrom('crove_kernel.file').select('id').execute();
+    const noContext = await db.selectFrom('ludy_kernel.file').select('id').execute();
     expect(noContext).toHaveLength(0);
     await expect(
       db.transaction().execute(async (trx) => {
         await sql`SELECT crove_kernel.enter_user_context(${orgB}::uuid, ${contextToken(users.outsider, orgB)}::text)`.execute(trx);
         await trx
-          .insertInto('crove_kernel.party')
+          .insertInto('ludy_kernel.party')
           .values({ org_id: orgA, name: 'smuggled' })
           .execute();
       }),

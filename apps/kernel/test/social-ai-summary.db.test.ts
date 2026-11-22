@@ -26,6 +26,7 @@ import { socialDrafter } from '../src/kernel.ts';
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -106,7 +107,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
   async function connection(orgId: string, provider: string, by: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         provider,
@@ -152,9 +153,9 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -182,13 +183,13 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
     });
     channels = { fb: await connection(org.orgId, 'facebook_page', owner.userId, 'Trang Bánh Mai 24h'), zalo: await connection(org.orgId, 'zalo_oa', owner.userId, 'Zalo Bí Mật') };
     // The member may use the Facebook page only (#1081).
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.fb, owner.userId]),
+      c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.fb, owner.userId]),
     );
     // The last 30 days: on the page, a post that reports reach and one that does not (an older capture), and one with
     // impressions only; on Zalo, views only. 10 days before the window, one post on the page.
@@ -271,7 +272,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     await published(orgId, fb, 'Ba', '2026-08-20T03:00:00Z', { reach: 30, reactions: 2 });
     await exec(orgId, owner.userId, 'social.goal.set', { connectionId: null, targets: { posts: 3, reach: 1000 }, timeZone: HCM });
     const link = await exec<{ token: string }>(orgId, owner.userId, 'social.report_link.create', { ...SEPTEMBER, title: 'Tháng 9' });
-    const previous = readFileSync(join(MIGRATIONS, '20261029110000_crove_social_campaign_report.sql'), 'utf8');
+    const previous = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261029110000_crove_social_campaign_report.sql'), 'utf8'));
     const strip = (value: unknown): unknown =>
       Array.isArray(value) ? value.map(strip) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'rateBases').map(([k, v]) => [k, strip(v)])) : value;
     const pages = await admin(async (c) => {

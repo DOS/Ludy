@@ -86,7 +86,7 @@ const zPostEvent = z.object({ post_id: zId });
 const zVariantEvent = z.object({ post_id: zId, variant_id: zId });
 
 async function deciders(ctx: CommandContext): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin']).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin']).execute();
   return rows.map((r) => r.user_id);
 }
 
@@ -243,7 +243,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       if (!e.success) return null;
       const hold = await ctx.trx.selectFrom('crove_social.publish_hold').select('reason').where('org_id', '=', ctx.orgId).where('id', '=', e.data.hold_id).executeTakeFirst();
       if (!hold) return null;
-      const team = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).execute();
+      const team = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).execute();
       const released = type === 'social.publishing.released';
       return {
         ...base,
@@ -261,7 +261,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       // Filled again since, or the warning turned off: nothing to tell.
       const q = await ctx.trx.selectFrom('crove_social.queue').select(['channel_connection_id', 'low_days', 'low_alerted_at']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.queue_id).executeTakeFirst();
       if (!q || q.low_days === null || q.low_alerted_at === null) return null;
-      const team = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin', 'member']).execute();
+      const team = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin', 'member']).execute();
       return {
         kind: 'queue_low',
         users: team.map((m) => m.user_id),
@@ -432,16 +432,16 @@ async function mailNotifications(ctx: CommandContext, plan: Plan, created: reado
   const to = created.filter((c) => !offSet.has(c.user_id));
   if (to.length === 0) return 0;
   const { rows: people } = await sql<{ user_id: string; email: string | null }>`
-    SELECT user_id, email FROM crove_kernel.member_emails(${to.map((c) => c.user_id)}::uuid[])`.execute(ctx.trx);
+    SELECT user_id, email FROM ludy_kernel.member_emails(${to.map((c) => c.user_id)}::uuid[])`.execute(ctx.trx);
   const emails = new Map(people.filter((p) => p.email).map((p) => [p.user_id, p.email as string]));
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirst();
   if (!org) return 0;
   const post = plan.postId
     ? await ctx.trx.selectFrom('crove_social.post').select(['title', 'body', 'time_zone']).where('org_id', '=', ctx.orgId).where('id', '=', plan.postId).executeTakeFirst()
     : undefined;
   const postText = post ? oneLine([...(post.title?.trim() || post.body || '')].slice(0, 400).join(''), 200) || null : null;
   const channel = plan.connectionId
-    ? ((await ctx.trx.selectFrom('crove_kernel.channel_connection').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', plan.connectionId).executeTakeFirst())?.display_name ?? null)
+    ? ((await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', plan.connectionId).executeTakeFirst())?.display_name ?? null)
     : null;
   const path = notificationPath(org.slug, plan.kind, plan.postId, plan.connectionId);
   const subject = subjectOf(plan.kind, plan.detail, postText, channel);
@@ -481,7 +481,7 @@ async function mailNotifications(ctx: CommandContext, plan: Plan, created: reado
 // Writes the notifications of one outbox event, mails and lists the pushes (what the two dispatch commands below share). `only` limits it to one event type.
 async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string): Promise<{ sent: number; mailed: number; push: string[] }> {
   const event = await ctx.trx
-    .selectFrom('crove_kernel.outbox_event')
+    .selectFrom('ludy_kernel.outbox_event')
     .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', eventId)
@@ -494,7 +494,7 @@ async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string
   if (wanted.length === 0) return { sent: 0, mailed: 0, push: [] };
   // Members now, who have not turned this kind off.
   const { rows } = await sql<{ user_id: string }>`
-    SELECT m.user_id FROM crove_kernel.tenant_member m
+    SELECT m.user_id FROM ludy_kernel.tenant_member m
     WHERE m.org_id = ${ctx.orgId} AND m.user_id = ANY(${wanted}::uuid[])
       AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${plan.kind})`.execute(ctx.trx);
   if (rows.length === 0) return { sent: 0, mailed: 0, push: [] };
@@ -625,7 +625,7 @@ export const notificationList = defineQuery({
              left(coalesce(nullif(p.title, ''), p.body), 140) AS post_text, c.display_name AS channel
       FROM crove_social.notification n
       LEFT JOIN crove_social.post p ON p.org_id = n.org_id AND p.id = n.post_id
-      LEFT JOIN crove_kernel.channel_connection c ON c.org_id = n.org_id AND c.id = n.connection_id
+      LEFT JOIN ludy_kernel.channel_connection c ON c.org_id = n.org_id AND c.id = n.connection_id
       WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND ${STILL_WAITING} AND ${seen}
       ORDER BY n.created_at DESC, n.id DESC
       LIMIT ${NOTIFICATION_LIST_LIMIT}`.execute(ctx.trx);
@@ -639,7 +639,7 @@ export const notificationList = defineQuery({
     const names = new Map<string, string>();
     if (ids.length > 0) {
       const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
       for (const r of people) names.set(r.user_id, r.display_name ?? r.email);
     }
     return {

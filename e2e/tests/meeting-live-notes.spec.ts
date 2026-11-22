@@ -17,17 +17,17 @@ test('a meeting the recorder opted into shows the live pane to the recorder only
   await other.goto('/');
   await signInNewUser(other, otherEmail);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: otherEmail },
   );
   exec(
     `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, live_notes)
      SELECT t.org_id, gen_random_uuid(), 'Họp ghi chú trực tiếp', 'vi', now(), u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365, true
-       FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+       FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: recorderEmail },
   );
-  const [{ id: meetingId }] = sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug }) as [{ id: string }];
+  const [{ id: meetingId }] = sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug }) as [{ id: string }];
   await page.goto(`/o/${slug}/meetings/${meetingId}`);
   const pane = page.getByTestId('live-pane');
   await expect(pane).toBeVisible();

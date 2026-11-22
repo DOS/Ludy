@@ -64,10 +64,10 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, other, viewer] = [await person('admin'), await person('member'), await person('other'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const stageNamed = async (name: string) => ((await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {})).find((s) => s.name === name) as PipelineStage);
     const newDeal = (user: string, partyId: string, over: Record<string, unknown> = {}) =>
       exec<Deal>(user, 'crm.deal.create', { partyId, title: SECRET_TITLE, amount: '15000000', expectedClose: null, ...over });
@@ -83,7 +83,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     const stepsOf = async (dealId: string) => (await steps()).filter((s) => s.deal_id === dealId);
     const list = (user: string, scope: 'mine' | 'all' = 'mine') => query<NextStepPage>(user, 'crm.next_step.list', { scope });
     const done = (user: string, nextStepIds: string[]) => exec<NextStepChanged>(user, 'crm.next_step.done', { nextStepIds });
-    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
+    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
     // A quote of the deal as a person makes it, then sent as the database owner makes a send (Q2's step): `sentDaysAgo` days ago, valid until `validIn` days from today.
     const sentQuote = async (dealId: string, sentDaysAgo: number, validIn: number, number = `BG-2026-${Math.floor(Math.random() * 9000) + 1000}`) => {
       const draft = await exec<{ id: string }>(member, 'crm.quote.save', { dealId, lines: [{ kind: 'item', description: 'Dòng bí mật 777', unit: 'cái', quantity: '2', unitPrice: '123456', vatRate: '10%' }] });
@@ -107,17 +107,17 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };

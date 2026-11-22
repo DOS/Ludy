@@ -188,9 +188,9 @@ suite('invalidation stream on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     const db = createDb(pool);
@@ -259,7 +259,7 @@ suite('invalidation stream on PostgreSQL', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source, generation)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source, generation)
            VALUES ($1, $2, $3, $4, 'x.xml', 'application/xml', 1, 'upload', $5)`,
           [a.orgId, id, 'a'.repeat(64), `org/${a.orgId}/${'a'.repeat(64)}`, `content:${'a'.repeat(64)}`],
         );
@@ -288,7 +288,7 @@ suite('invalidation stream on PostgreSQL', () => {
 
   it('caps the unexpired tickets of one user', async () => {
     const b = orgs.get('ownerB') as { slug: string; orgId: string };
-    await admin((c) => c.query('DELETE FROM crove_kernel.stream_ticket'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.stream_ticket'));
     const statuses: number[] = [];
     for (let i = 0; i < 11; i++) statuses.push((await ticket('ownerB', b.slug)).status);
     expect(statuses.slice(0, 10)).toEqual(Array(10).fill(200));
@@ -297,7 +297,7 @@ suite('invalidation stream on PostgreSQL', () => {
 
   it('tells an expired token apart from the per-user limit when issuing (issue #281)', async () => {
     const b = orgs.get('ownerB') as { slug: string; orgId: string };
-    await admin((c) => c.query('DELETE FROM crove_kernel.stream_ticket'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.stream_ticket'));
     const store = createDbTicketStore(pool, { perUser: 1 });
     const binding = {
       userId: userIds.get('ownerB') as string,
@@ -313,12 +313,12 @@ suite('invalidation stream on PostgreSQL', () => {
     expect(await store.issue(newTicket().hash, binding)).toBe('limit');
     // Expired wins over the limit: the client must sign in again, not wait.
     expect(await store.issue(newTicket().hash, { ...binding, tokenExp: Math.floor(Date.now() / 1000) - 1 })).toBe('expired');
-    await admin((c) => c.query('DELETE FROM crove_kernel.stream_ticket'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.stream_ticket'));
   });
 
   it("probes the LISTEN connection and drops it when its own NOTIFY stops coming back (issue #281)", async () => {
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     let deaf = false;
     const clients: pg.Client[] = [];
@@ -355,7 +355,7 @@ suite('invalidation stream on PostgreSQL', () => {
       expect(payloads.filter((p) => p.startsWith('probe '))).toEqual([]);
       const id = randomUUID();
       const a = orgs.get('ownerA') as { slug: string; orgId: string };
-      await admin((c) => c.query(`SELECT pg_notify('crove_stream', $1)`, [`${a.orgId} file ${id}`]));
+      await admin((c) => c.query(`SELECT pg_notify('ludy_stream', $1)`, [`${a.orgId} file ${id}`]));
       await waitFor(() => payloads.includes(`${a.orgId} file ${id}`), 2_000);
       // The connection goes deaf: the next probe is not answered, it is dropped, and a new one comes back.
       deaf = true;

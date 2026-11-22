@@ -32,7 +32,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
     await expect(page.getByLabel('Hết hạn sau')).toHaveValue('14');
     const policy = sql<{ escalate: number; expire: number }>(
       `SELECT p.escalate_after_days AS escalate, p.expire_after_days AS expire
-         FROM crove_kernel.proposal_policy p JOIN crove_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_kernel.proposal_policy p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(policy).toEqual([{ escalate: 7, expire: 14 }]);
@@ -58,8 +58,8 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
 
   await test.step('the proposal expires after 15 days of waiting', async () => {
     exec(
-      `UPDATE crove_kernel.proposal p SET created_at = now() - interval '15 days', status = 'expired', decided_at = now()
-         FROM crove_kernel.tenant t WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending'`,
+      `UPDATE ludy_kernel.proposal p SET created_at = now() - interval '15 days', status = 'expired', decided_at = now()
+         FROM ludy_kernel.tenant t WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending'`,
       { slug },
     );
   });
@@ -90,7 +90,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
   await test.step('two proposals in the database: the expired one and the one asked for again', async () => {
     const rows = sql<{ status: string; again: boolean }>(
       `SELECT p.status, p.resubmitted_from IS NOT NULL AS again
-         FROM crove_kernel.proposal p JOIN crove_kernel.tenant t ON t.org_id = p.org_id
+         FROM ludy_kernel.proposal p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id
         WHERE t.slug = :'slug' ORDER BY p.created_at`,
       { slug },
     );

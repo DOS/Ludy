@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // No agent can touch the switches of running ads (ADR-0043, issue #2294, the Platform PO's condition on W0a): a live agent run,
-// entered as the worker enters one (crove_kernel.enter_agent_context with a run that is live), cannot turn writing on or off for
+// entered as the worker enters one (ludy_kernel.enter_agent_context with a run that is live), cannot turn writing on or off for
 // the org or an ad account, cannot block or unblock launches, and cannot add a spend cap, all refused by the database, not by a
 // command's role check (the SQL is run directly in the agent's context); and none of the commands of running ads runs for it.
 // The agent is installed from a template and given a run the way apps/kernel/test/invariant/agents.db.test.ts does it. The open
@@ -51,15 +51,15 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     }
   }
 
-  // Runs SQL as crove_worker inside the agent's context, always rolled back.
+  // Runs SQL as ludy_worker inside the agent's context, always rolled back.
   async function inAgentContext<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: workerUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]);
+      await c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]);
       // The context is the agent's: the actor the database sees is not a user.
-      expect((await c.query<{ actor: string }>('SELECT crove_kernel.ctx_actor_type() AS actor')).rows[0]?.actor).toBe('agent');
+      expect((await c.query<{ actor: string }>('SELECT ludy_kernel.ctx_actor_type() AS actor')).rows[0]?.actor).toBe('agent');
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => undefined);
@@ -67,14 +67,14 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     }
   }
 
-  // Runs SQL as crove_app inside the owner's own context, committed: the way a proposal's effect will open the switches.
+  // Runs SQL as ludy_app inside the owner's own context, committed: the way a proposal's effect will open the switches.
   async function asOwnerSql(sqlText: string, params: unknown[] = []): Promise<void> {
     const c = new pg.Client({ connectionString: appUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
       const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
       await c.query(sqlText, params);
       await c.query('COMMIT');
     } finally {
@@ -92,15 +92,15 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    workerUrl = login('crove_worker', 'test-worker-pw');
-    appUrl = login('crove_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     const runtimeFor = (url: string): { db: Db; runtime: Runtime } => {
       const pool = createPool({ connectionString: url, max: 4 });
       pools.push(pool);
@@ -123,7 +123,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     await admin(async (c) => {
       const connection = randomUUID();
       await c.query(
-        `INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'sandbox-agent-test', 'Agent test', $3)`,
+        `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'sandbox-agent-test', 'Agent test', $3)`,
         [orgId, connection, owner],
       );
       await c.query(
@@ -223,7 +223,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     ] as Array<[string, unknown]>) {
       await expect(worker.execute(name, input, { actor: agent, orgId }), name).rejects.toMatchObject({ status: 403 });
     }
-    const denied = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'ads.%' AND actor_type = 'agent' AND outcome = 'denied'`, [orgId])).rows[0]?.n);
+    const denied = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'ads.%' AND actor_type = 'agent' AND outcome = 'denied'`, [orgId])).rows[0]?.n);
     expect(Number(denied)).toBeGreaterThanOrEqual(1);
   });
 });

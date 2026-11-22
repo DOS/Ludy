@@ -54,12 +54,12 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
     return url.toString();
   };
 
-  // One transaction as crove_app in userId's context; committed when commit is set, else rolled back.
+  // One transaction as ludy_app in userId's context; committed when commit is set, else rolled back.
   async function asApp<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
     const c = await appPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const result = await fn(c);
       await c.query(commit ? 'COMMIT' : 'ROLLBACK');
       return result;
@@ -108,10 +108,10 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = new pg.Pool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    workerPool = new pg.Pool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
-    kyselyPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = new pg.Pool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    workerPool = new pg.Pool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 1 });
+    kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const db = createDb(kyselyPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -121,12 +121,12 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@le-books2.test', name: null });
     ({ orgId } = await createOrg(runtime, asUser(owner), 'Sổ hai pháp nhân'));
     await admin(async (a) => {
-      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id`, [orgId, owner])
+        await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
@@ -213,14 +213,14 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
     const move = (table: string) => `UPDATE ${table} SET legal_entity_id = '${branch}' WHERE org_id = '${orgId}' AND legal_entity_id = '${defaultEntity}'`;
     // Each role in turn: refused (no privilege, append-only, or LEGAL_ENTITY_IMMUTABLE), never applied.
     const attempts: Array<{ who: string; run: (sql: string) => Promise<unknown> }> = [
-      { who: 'crove_app (owner context)', run: (q) => asApp(owner, (c) => c.query(q)) },
+      { who: 'ludy_app (owner context)', run: (q) => asApp(owner, (c) => c.query(q)) },
       {
-        who: 'crove_worker (system context)',
+        who: 'ludy_worker (system context)',
         run: async (q) => {
           const c = await workerPool.connect();
           try {
             await c.query('BEGIN');
-            await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+            await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
             return await c.query(q);
           } finally {
             await c.query('ROLLBACK');
@@ -228,13 +228,13 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
           }
         },
       },
-      ...['crove_tenant', 'crove_definer_tenant'].map((role) => ({
+      ...['ludy_tenant', 'ludy_definer_tenant'].map((role) => ({
         who: `${role} (owner context)`,
         run: (q: string) =>
           admin(async (a) => {
             await a.query('BEGIN');
             try {
-              await a.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+              await a.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
               await a.query(`SET LOCAL ROLE ${role}`);
               return await a.query(q);
             } finally {
@@ -335,18 +335,18 @@ suite('finance books per legal entity, part 2a (#1280)', () => {
     // A member seeing two entities, none of them the default, must choose.
     const third = await admin(
       async (a) =>
-        (await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]
+        (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]
           ?.id as string,
     );
     await admin((a) =>
-      a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, third, owner]),
+      a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, third, owner]),
     );
     await expect(runtime.query('finance.period.lock_state', {}, { actor: asUser(member), orgId })).rejects.toMatchObject({ code: 'LEGAL_ENTITY_REQUIRED', status: 422 });
   });
 
   it('requires every parent of a row to be of its entity, and keeps sales invoices and bank lines unique per entity', async () => {
     await admin(async (a) => {
-      const party = (await a.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách hàng') RETURNING id`, [orgId])).rows[0]?.id;
+      const party = (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách hàng') RETURNING id`, [orgId])).rows[0]?.id;
       // A sales invoice number per entity: the same series and number in both entities.
       const sale = async (entity: string) => {
         await a.query('BEGIN');

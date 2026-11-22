@@ -111,9 +111,9 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -124,7 +124,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
     setSummaryEnabled(true);
     for (const [key, display] of Object.entries(NAMES)) users[key] = await upsertIdentity(createDb(pool), { issuer: 'speaker-suggest', subject: key, email: `${key}@speaker-suggest.test`, name: display });
     orgId = (await createOrg(runtime, asUser('owner'), 'Người nói')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.lan, users.nameless, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.lan, users.nameless, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -168,7 +168,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
     expect(await name('recorder', meetingId, 'Người nói 1', 'Hoàng Văn Ghi')).toMatchObject({ lines: 2 });
     expect(await labels(meetingId)).toEqual(['0.000|draft|Hoàng Văn Ghi|corrected', '10.000|draft|Trần Thị Lan|corrected', '20.000|draft|Hoàng Văn Ghi|corrected']);
     // The audit names the meeting, the run and a count, never a name.
-    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.speaker.name' AND target_id = $2`, [orgId, meetingId]);
+    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.speaker.name' AND target_id = $2`, [orgId, meetingId]);
     // Two accepted clicks and the refused one in between.
     expect(audit.rows).toHaveLength(3);
     expect(JSON.stringify(audit.rows)).not.toMatch(/Lan|Ghi|Người nói/);

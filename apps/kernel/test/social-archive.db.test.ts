@@ -49,7 +49,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
   async function channel(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -59,7 +59,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     const people = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const roles = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, roles[key as keyof typeof roles]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, roles[key as keyof typeof roles]]));
     }
     return { orgId, owner, ...people, conn: await channel(orgId, owner, 'Kênh thử') };
   }
@@ -84,7 +84,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
   const row = (o: Org, postId: string) =>
     admin(async (c) => (await c.query<{ archived_at: Date | null; archived_by: string | null; evergreen_days: number | null; recurrence: unknown }>('SELECT archived_at, archived_by, evergreen_days, recurrence FROM crove_social.post WHERE org_id = $1 AND id = $2', [o.orgId, postId])).rows[0]);
   const audits = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>("SELECT target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
+    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>("SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
   const sorted = (ids: readonly string[]) => [...ids].sort();
   // The post as the screens show it, without what archiving itself sets.
   const shown = (p: PostView) => {
@@ -101,16 +101,16 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -433,7 +433,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     expect(await remindersDue()).toContain(reviewing);
     await expect(worker.execute('social.review.remind', { postId: reviewing }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     expect(await remindersDue()).not.toContain(reviewing);
-    const told = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.review.remind%'", [o.orgId])).rows[0]?.n);
+    const told = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.review.remind%'", [o.orgId])).rows[0]?.n);
     expect(Number(told)).toBe(0);
     const marked = (await audits(o, 'social.review.remind')).at(-1)?.detail;
     expect(marked).toMatchObject({ post_id: reviewing, archived: true });
@@ -476,7 +476,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE org_id = $1 AND id = ANY($3::uuid[])', [o.orgId, o.owner, [byPolicy, byToggle, byClient]]));
 
     const event = await admin(
-      async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
+      async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
     );
     const settled = await worker.execute<{ settled: string[] }>('social.review.client_settle', { eventId: event as string }, { actor: system, orgId: o.orgId });
     expect(settled.settled).toHaveLength(1);
@@ -630,7 +630,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     const sha = (id: string) => createHash('sha256').update(id).digest('hex');
     const image = randomUUID();
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 1000, 'social', $6)", [
+      c.query("INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 1000, 'social', $6)", [
         o.orgId,
         image,
         sha(image),
@@ -710,7 +710,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
       await c.query("UPDATE crove_social.post_variant SET review_since = now() - interval '3 days' WHERE org_id = $1 AND post_id = $2", [o.orgId, reviewing]);
     });
     const remindersDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.review_reminders_due(1000)')).rows.map((r) => r.post_id));
-    const told = async () => Number(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.reminder'", [o.orgId])).rows[0]?.n));
+    const told = async () => Number(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.reminder'", [o.orgId])).rows[0]?.n));
     await archive(o, o.member, reviewing);
     // Archived: marked as reminded without telling anyone.
     await expect(worker.execute('social.review.remind', { postId: reviewing }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });

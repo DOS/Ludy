@@ -78,16 +78,16 @@ export async function vyReason(ctx: { trx: QueryContext['trx']; orgId: string })
   let reason: AskStatus['reason'] = null;
   if (!isSummaryEnabled()) reason = 'off';
   else {
-    const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+    const allowed = await sql<{ ok: boolean }>`SELECT ludy_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
     if (allowed.rows[0]?.ok !== true) reason = 'forbidden';
     else {
       const stopped = await sql<{ stopped: boolean }>`
-        SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-          SELECT 1 FROM crove_kernel.kill_switch k
+        SELECT ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
+          SELECT 1 FROM ludy_kernel.kill_switch k
           WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${MODULE}))) AS stopped`.execute(ctx.trx);
       if (stopped.rows[0]?.stopped === true) reason = 'paused';
       else {
-        const spent = await sql<{ spent: boolean }>`SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, NULL::uuid) AS spent`.execute(ctx.trx);
+        const spent = await sql<{ spent: boolean }>`SELECT ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, NULL::uuid) AS spent`.execute(ctx.trx);
         if (spent.rows[0]?.spent === true) reason = 'budget';
       }
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // System worker commands backing ADR-0034 mail_data hydration and edge normalization helpers for Crove eSign Slice 1b (#3324).
 // Public unauthenticated HTTP mutations run via runtime.orgless() + crove_sign.public_* SECURITY DEFINER SQL procedures
-// because crove_app is deliberately blocked from calling crove_kernel.enter_system_context.
+// because ludy_app is deliberately blocked from calling ludy_kernel.enter_system_context.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { tableWrite, zId, type SignPageDimension } from '@ludy/kernel-contract';
@@ -358,7 +358,7 @@ export const signerDelegatedMailData = defineCommand({
     assertSystem(ctx);
     const [tenant, signer] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['slug'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirst(),

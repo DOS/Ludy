@@ -83,7 +83,7 @@ suite('the recorder\'s Vy title route (#3947)', () => {
     }
     return meetingId;
   }
-  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
+  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -94,9 +94,9 @@ suite('the recorder\'s Vy title route (#3947)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -108,7 +108,7 @@ suite('the recorder\'s Vy title route (#3947)', () => {
     for (const key of ['owner', 'recorder', 'attendee', 'viewer', 'foreign', 'nouse']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'title-route', subject: key, email: `${key}@title-route.test`, name: key === 'recorder' ? 'Hà' : null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Gợi ý tên chạy')).orgId;
     await createOrg(runtime, asUser('foreign'), 'Org khác');
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
   }, 300_000);
 
   afterAll(async () => {
@@ -134,7 +134,7 @@ suite('the recorder\'s Vy title route (#3947)', () => {
     expect(lastPrompt?.user).toMatch(/<subject-[0-9a-f]+>/);
     expect(await titleOf(meetingId)).toBe('Họp tuần');
     expect(await runs(meetingId)).toEqual([{ status: 'ready', error_code: null, subject_type: 'meeting', subject_id: meetingId, feature: 'meetings.title' }]);
-    const stored = await sqlAdmin<{ body: string }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);
+    const stored = await sqlAdmin<{ body: string }>(`SELECT body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);
     expect(JSON.parse(stored.rows[0]?.body ?? 'null')).toEqual({ v: 1, titles: 2, dropped: 0 });
     // No log line holds the transcript or a candidate.
     expect(logged.join('\n')).not.toContain('quán');
@@ -165,12 +165,12 @@ suite('the recorder\'s Vy title route (#3947)', () => {
 
   it('refuses before the call when the budget is spent: a fixed code, no model call', async () => {
     const meetingId = await seedMeeting('recorder');
-    await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', 0, 80, true, $2)`, [orgId, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', 0, 80, true, $2)`, [orgId, users.owner]);
     try {
       expect(await ask('recorder', meetingId)).toEqual({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED', titles: [], dropped: 0 });
       expect(modelCalls).toBe(0);
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1 AND scope = 'org' AND target = '*'`, [orgId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1 AND scope = 'org' AND target = '*'`, [orgId]);
     }
   });
 

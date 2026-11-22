@@ -49,13 +49,13 @@ suite('unanswered comment counts for a screen of posts (#3298)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const limited = await person('limited');
-    await admin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, limited]);
+    await admin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, limited]);
     const [connectionId, otherId] = [randomUUID(), randomUUID()];
     for (const [id, name] of [[connectionId, 'Kênh chính'], [otherId, 'Kênh khác']] as const) {
-      await admin("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, $4, $5)", [orgId, id, `acct-${randomUUID().slice(0, 8)}`, name, owner]);
+      await admin("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, $4, $5)", [orgId, id, `acct-${randomUUID().slice(0, 8)}`, name, owner]);
     }
     // The member is limited to the other channel: this channel's threads are not theirs.
-    await admin('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, otherId, owner]);
+    await admin('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, otherId, owner]);
     return { orgId, owner, limited, connectionId, otherId };
   }
   let tick = 0;
@@ -71,7 +71,7 @@ suite('unanswered comment counts for a screen of posts (#3298)', () => {
   });
   const direct = (threadId: string): ConversationEvent => ({ kind: 'direct', threadId, messageId: `m-${threadId}-${tick++}`, direction: 'in', contact: { id: `u-${threadId}`, name: 'Khách' }, text: 'Nhắn riêng', at: new Date(Date.now() - 600_000 + tick * 1000).toISOString() });
   const ingest = (o: Org, events: ConversationEvent[], connectionId = o.connectionId) => worker.execute('kernel.conversation.ingest', { connectionId, events }, { actor: SYSTEM, orgId: o.orgId });
-  const threadOf = async (o: Org, external: string) => ((await admin<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
+  const threadOf = async (o: Org, external: string) => ((await admin<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
   const counts = (o: Org, user: string, posts: Array<{ connectionId: string; externalPostId: string }>) =>
     rt.query<ConversationPostCounted>('kernel.conversation.post_counts', { posts }, { actor: asUser(user), orgId: o.orgId });
   const byPost = (r: ConversationPostCounted) => Object.fromEntries(r.counts.map((c) => [c.externalPostId, c.unanswered]));
@@ -85,9 +85,9 @@ suite('unanswered comment counts for a screen of posts (#3298)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPool({ connectionString: urlFor('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: urlFor('crove_worker', 'test-worker-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    pool = createPool({ connectionString: urlFor('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: urlFor('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);

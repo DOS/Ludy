@@ -7,7 +7,7 @@ import type { RetrySafety } from '@ludy/channel';
 
 export type { RetrySafety };
 
-// crove_kernel.external_call state for this step's key; 'none' when no row exists yet.
+// ludy_kernel.external_call state for this step's key; 'none' when no row exists yet.
 export type CallState = 'none' | 'started' | 'succeeded' | 'failed' | 'ambiguous';
 
 export type NextAction =

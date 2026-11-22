@@ -2,7 +2,7 @@
 // PostgreSQL 17 integration tests for eSign Slice 4e (#3821):
 // manual AI-off upsert & item completion, metered tainted Vy proposals vs confirmed separation,
 // Renewals list & Home kernel.today surfacing, hr_contract restrictive RLS + query confidentiality,
-// MODULE_OFF gating, and crove_kernel.org_purge cleanup.
+// MODULE_OFF gating, and ludy_kernel.org_purge cleanup.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -252,7 +252,7 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -260,8 +260,8 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -726,7 +726,7 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     const tenantClient = await pool.connect();
     try {
       await tenantClient.query('BEGIN');
-      await tenantClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [otherMember.userId, org.orgId]);
+      await tenantClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [otherMember.userId, org.orgId]);
       const rlsRows = await tenantClient.query(
         'SELECT id FROM crove_sign.envelope_obligation WHERE org_id = $1 AND envelope_id = $2',
         [org.orgId, hrEnvId],
@@ -795,9 +795,9 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [purgeOrg.orgId]);
+      await c.query("UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [purgeOrg.orgId]);
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'::jsonb),
                 ($1, $6, 'system', NULL, 'kernel.org.export.record', $7, 'ok', $5, '{"format":"crove.org-export.v2","file_count":1}'::jsonb)`,
         [

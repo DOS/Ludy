@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The apps an org's owner or admin turned off for their own company (ADR-0053, issue #3313; slice a of #3307). The
-// choice is stored as the list of apps that are OFF (crove_kernel.tenant.apps_off, empty by default), so every app is on
+// choice is stored as the list of apps that are OFF (ludy_kernel.tenant.apps_off, empty by default), so every app is on
 // with no setup and a module shipped later is on until someone turns it off. kernel can not be switched off. Only
 // kernel.org.set_app writes it (an owner or admin, R2, audited with the module, its new state and the new version);
 // the tenant_apps_guard and tenant_apps_requires_audit triggers refuse any other write. Nothing enforces the choice
@@ -38,7 +38,7 @@ export type OrgApps = z.infer<typeof zOrgApps>;
 // reads it). For kernel code that must leave an off app out (the coworkers' wake-ups, the Inbox list); the deployment's
 // own list is ctx.installed, and a command or query into an off app is refused by the runtime itself.
 export async function offAppsOf(trx: Transaction<Database>, orgId: string): Promise<readonly string[]> {
-  const tenant = await trx.selectFrom('crove_kernel.tenant').select('apps_off').where('org_id', '=', orgId).executeTakeFirst();
+  const tenant = await trx.selectFrom('ludy_kernel.tenant').select('apps_off').where('org_id', '=', orgId).executeTakeFirst();
   return tenant?.apps_off ?? [];
 }
 
@@ -63,7 +63,7 @@ export function setAppCommand(options: { shipped?: readonly string[]; busy?: Rea
       }
       // The tenant row first, so two switches meet on it and each version is used once.
       const before = await ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['apps_off', 'apps_version'])
         .where('org_id', '=', ctx.orgId)
         .forUpdate()
@@ -83,7 +83,7 @@ export function setAppCommand(options: { shipped?: readonly string[]; busy?: Rea
       if (changed) {
         const next = input.enabled ? before.apps_off.filter((m) => m !== input.module) : [...before.apps_off, input.module].sort();
         version += 1;
-        await ctx.trx.updateTable('crove_kernel.tenant').set({ apps_off: next, apps_version: version }).where('org_id', '=', ctx.orgId).execute();
+        await ctx.trx.updateTable('ludy_kernel.tenant').set({ apps_off: next, apps_version: version }).where('org_id', '=', ctx.orgId).execute();
         await ctx.activity('kernel.tenant', ctx.orgId, 'org.app_changed', input.enabled ? `Bật ứng dụng ${input.module}` : `Tắt ứng dụng ${input.module}`);
         await ctx.emit('kernel.org.apps_changed', { module: input.module, enabled: input.enabled, version });
       }
@@ -102,7 +102,7 @@ export function orgAppsQuery(options: OrgAppsOptions) {
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx) => {
       const tenant = await ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['apps_off', 'apps_version'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();

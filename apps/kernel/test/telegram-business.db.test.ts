@@ -85,7 +85,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
-  const waiting = async () => (await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).length;
+  const waiting = async () => (await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).length;
   const derived = () => vault.deriveKeys(TELEGRAM_HOOK_KEY_INFO).map((k) => k.key);
   const secretOf = (hook: string) => telegramHookSecret(derived()[0] as Buffer, hook);
   const post = (hook: string, body: string) => app.request(`${BASE}/${hook}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': secretOf(hook) }, body });
@@ -122,13 +122,13 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
   const deleted = (o: { chat: number; ids: number[]; connectionId?: string }) =>
     JSON.stringify({ update_id: updateId++, deleted_business_messages: { business_connection_id: o.connectionId ?? CONN, chat: { id: o.chat, type: 'private', first_name: 'Khách' }, message_ids: o.ids } });
   const threadRow = async (o: Org, externalThreadId: string) =>
-    (await rows<{ id: string; last_seq: number; status: string; reply_window_until: Date | null; last_inbound_at: Date | null }>('SELECT id, last_seq, status, reply_window_until, last_inbound_at FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, externalThreadId]))[0];
+    (await rows<{ id: string; last_seq: number; status: string; reply_window_until: Date | null; last_inbound_at: Date | null }>('SELECT id, last_seq, status, reply_window_until, last_inbound_at FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, externalThreadId]))[0];
   const messagesOf = (o: Org, thread: string) =>
     rows<{ body: string; direction: string; external_message_id: string; platform_removed_at: Date | null }>(
-      'SELECT m.body, m.direction, m.external_message_id, m.platform_removed_at FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = $1 AND c.external_thread_id = $2 ORDER BY m.seq',
+      'SELECT m.body, m.direction, m.external_message_id, m.platform_removed_at FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = $1 AND c.external_thread_id = $2 ORDER BY m.seq',
       [o.orgId, thread],
     );
-  const accountsOf = async (o: Org) => (await rows<{ chat_business: Array<{ id: string; userId: string; name: string | null; username: string | null; canReply: boolean; enabled: boolean; approved: boolean }> }>('SELECT chat_business FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId]))[0]?.chat_business ?? [];
+  const accountsOf = async (o: Org) => (await rows<{ chat_business: Array<{ id: string; userId: string; name: string | null; username: string | null; canReply: boolean; enabled: boolean; approved: boolean }> }>('SELECT chat_business FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId]))[0]?.chat_business ?? [];
 
   function telegram(answers: Record<string, { status?: number; body: unknown }[]> = {}) {
     const calls: Array<{ method: string; token: string; json: Record<string, unknown> }> = [];
@@ -159,7 +159,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId, connectionId, action: 'chat', on: true })).toBe('on');
     // The webhook asks for the four business updates beside the messages.
     expect(t.calls[0]?.json.allowed_updates).toEqual(['message', 'business_connection', 'business_message', 'edited_business_message', 'deleted_business_messages']);
-    const [row] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]);
+    const [row] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]);
     return { ...o, hook: (row as { chat_hook: string }).chat_hook };
   }
 
@@ -172,9 +172,9 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -185,7 +185,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, telegramWebhook: { keys: derived } });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     pools.push(workerPool);
@@ -210,7 +210,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect(await waiting()).toBe(1);
     // It is state, not a message: nothing is stored in a thread, and the connection now lists the account, which nobody has allowed yet.
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
     expect(await accountsOf(a)).toEqual([{ id: CONN, userId: String(OWNER_TG), name: 'Lan Trần', username: 'lan_tran', canReply: true, enabled: true, approved: false }]);
     // The screen's list names the account and what the bot may do, with a fingerprint to name it by, and never the platform's ids.
     const list = await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(a));
@@ -229,8 +229,8 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     ref = (shown as Array<{ ref: string }>)[0]?.ref as string;
     // Neither the audit log nor an event holds the business connection id, the account's id, its name or its @username.
     for (const needle of [CONN, 'Lan Trần', 'lan_tran']) {
-      expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
-      expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
     }
     // Telegram repeats the same update: answered, not parked again.
     expect((await post(a.hook, body)).status).toBe(200);
@@ -246,15 +246,15 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     // The account is known and enabled but nobody allowed it: any Premium user could have connected the bot, so nothing of it is stored.
     expect((await post(a.hook, business('Tin của tài khoản chưa được cho phép', { chat: 2003, messageId: 1 }))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
     // The other org's hook with this org's business connection id is no connection of that org either.
     expect((await post(b.hook, business('Gửi qua hook của tổ chức khác', { chat: 2002, messageId: 2 }))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
     // Only an owner or admin chooses: a member and a viewer are refused, an account the connection does not hold is not found, and only a Telegram connection has accounts.
     for (const role of ['member', 'viewer'] as const) {
       const personId = (await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'test', subject: randomUUID(), email: `${role}-${randomUUID().slice(0, 8)}@telegram-business.test`, name: null })) as string;
-      await rows('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [a.orgId, personId, role]);
+      await rows('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [a.orgId, personId, role]);
       await expect(api.execute('kernel.channel.telegram_business_allow', { connectionId: a.connectionId, ref, allow: true }, { actor: { type: 'user', userId: personId, aal: 'aal1' }, orgId: a.orgId })).rejects.toMatchObject({ status: 403 });
     }
     await expect(api.execute('kernel.channel.telegram_business_allow', { connectionId: a.connectionId, ref: '0'.repeat(12), allow: true }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_NOT_FOUND', status: 404 });
@@ -263,8 +263,8 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     // The owner allows it; the audit row holds the choice and the fingerprint, nothing of the account.
     expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: a.connectionId, ref, allow: true }, asOwner(a))).toEqual({ approved: true });
     expect((await accountsOf(a))[0]).toMatchObject({ id: CONN, approved: true });
-    expect((await rows("SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE '%business_allow%'")).length).toBeGreaterThan(0);
-    for (const needle of [CONN, 'Lan Trần', 'lan_tran']) expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+    expect((await rows("SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE '%business_allow%'")).length).toBeGreaterThan(0);
+    for (const needle of [CONN, 'Lan Trần', 'lan_tran']) expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
     // A later update of the same account (a rights change) keeps what the owner decided.
     expect((await post(a.hook, connection({ canReply: true }))).status).toBe(200);
     await intake();
@@ -304,7 +304,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const job = { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' as const };
     expect(await runConversationJob(deps, job)).toBe('accepted');
     expect(t.calls).toEqual([{ method: 'sendMessage', token: TOKEN_A, json: { chat_id: '2101', business_connection_id: CONN, text: 'Dạ áo này 250k ạ' } }]);
-    expect(await rows('SELECT send_state, external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: `b:2101:${CONN}:8800` }]);
+    expect(await rows('SELECT send_state, external_message_id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: `b:2101:${CONN}:8800` }]);
     expect(await runConversationJob(deps, job)).toBe('settled');
     expect(t.calls).toHaveLength(1);
     // Telegram tells the bot about the message it sent for the account: the same id, so nothing is added.
@@ -322,7 +322,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const key = `b:2201:${CONN}`;
     expect((await messagesOf(a, key)).map((m) => [m.direction, m.body])).toEqual([['in', 'Có size M không shop?'], ['out', 'Dạ mình còn size M ạ']]);
     // The thread's customer is the chat's other party, whoever wrote the first message.
-    expect(await rows("SELECT i.external_user_id FROM crove_kernel.conversation c JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE c.org_id = $1 AND c.external_thread_id = $2", [a.orgId, key])).toEqual([{ external_user_id: '2201' }]);
+    expect(await rows("SELECT i.external_user_id FROM ludy_kernel.conversation c JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE c.org_id = $1 AND c.external_thread_id = $2", [a.orgId, key])).toEqual([{ external_user_id: '2201' }]);
     // An edit of the customer's message changes the stored body; an edit of the owner's own message is not news.
     expect((await post(a.hook, business('Có size L không shop?', { chat: 2201, messageId: 1, field: 'edited_business_message' }))).status).toBe(200);
     expect((await post(a.hook, business('Dạ còn size M và L', { chat: 2201, messageId: 3, own: true, field: 'edited_business_message' }))).status).toBe(200);
@@ -368,7 +368,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
 
   it('refuses a reply once the 24 hours are over, and a connection that is read-only shows so', async () => {
     const thread = (await threadRow(a, `b:2301:${CONN}`)) as { id: string; last_seq: number };
-    await rows("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [a.orgId, thread.id]);
+    await rows("UPDATE ludy_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [a.orgId, thread.id]);
     await expect(api.execute('kernel.conversation.reply', { conversationId: thread.id, body: 'Quá muộn rồi', lastSeenSeq: thread.last_seq }, asOwner(a))).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
     const detail = await api.query<{ reply: { allowed: boolean; reason: string | null } }>('kernel.conversation.get', { conversationId: thread.id }, asOwner(a));
     expect(detail.reply).toEqual({ allowed: false, reason: 'window_closed' });
@@ -399,7 +399,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     await allow(false);
     expect(await runConversationJob(deps, { orgId: a.orgId, messageId: queued.messageId, connectionId: a.connectionId, action: 'reply' })).toBe('settled');
     expect(t.calls).toHaveLength(0);
-    expect(await rows('SELECT send_state, send_error_code FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, queued.messageId])).toEqual([{ send_state: 'failed', send_error_code: 'BUSINESS_ACCOUNT_STOPPED' }]);
+    expect(await rows('SELECT send_state, send_error_code FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, queued.messageId])).toEqual([{ send_state: 'failed', send_error_code: 'BUSINESS_ACCOUNT_STOPPED' }]);
     // The same for a new reply, a retry of that one, a draft and what the screen is told.
     expect(await detail(thread.id)).toEqual({ allowed: false, reason: 'business_stopped' });
     await expect(api.execute('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ còn ạ', lastSeenSeq: thread.last_seq + 1 }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_STOPPED', status: 409 });
@@ -426,7 +426,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     await allow(true);
     await state({ canReply: false });
     await expect(api.execute('kernel.conversation.draft_request', { conversationId: waitingThread.id }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_READ_ONLY' });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [a.orgId, waitingThread.id])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [a.orgId, waitingThread.id])).toHaveLength(0);
     await state({});
     // A business thread that holds no customer message (the owner wrote first) has no window to answer in: Telegram answers only chats with a message in the last 24 hours.
     expect((await post(a.hook, business('Chào anh, em là chủ shop', { chat: 2502, messageId: 1, own: true }))).status).toBe(200);
@@ -447,14 +447,14 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const { messageId } = await api.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ em nhận rồi ạ', lastSeenSeq: thread.last_seq }, asOwner(a));
     expect(await runConversationJob(deps, { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' })).toBe('accepted');
     // The message keeps the whole id (it is how the echo of the reply is told to be the same message); the call row keeps the platform's own message id only.
-    expect(await rows('SELECT external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ external_message_id: `b:8827361:${CONN}:9100` }]);
-    expect(await rows('SELECT external_ref FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2', [a.orgId, `conversation.reply:${messageId}:%`])).toEqual([{ external_ref: '9100' }]);
+    expect(await rows('SELECT external_message_id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ external_message_id: `b:8827361:${CONN}:9100` }]);
+    expect(await rows('SELECT external_ref FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE $2', [a.orgId, `conversation.reply:${messageId}:%`])).toEqual([{ external_ref: '9100' }]);
     await api.execute('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: { type: 'user', userId: a.ownerId, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowSec() }, orgId: a.orgId, idempotencyKey: randomUUID() });
     expect(await threadRow(a, `b:8827361:${CONN}`)).toBeUndefined();
     // Nothing the org holds names the customer's chat or the business connection any more: not the call rows, the audit log nor the events.
     // (Other customers' messages through the same business connection keep naming it, so the messages are checked for the erased chat only.)
     for (const [table, column] of [['external_call', 'external_ref'], ['audit_event', 'detail::text'], ['outbox_event', 'payload::text'], ['conversation_message', 'external_message_id']] as const) {
-      for (const needle of table === 'conversation_message' ? ['8827361'] : ['8827361', CONN]) expect({ table, needle, found: (await rows(`SELECT 1 FROM crove_kernel.${table} WHERE org_id = $1 AND ${column} LIKE $2`, [a.orgId, `%${needle}%`])).length }).toEqual({ table, needle, found: 0 });
+      for (const needle of table === 'conversation_message' ? ['8827361'] : ['8827361', CONN]) expect({ table, needle, found: (await rows(`SELECT 1 FROM ludy_kernel.${table} WHERE org_id = $1 AND ${column} LIKE $2`, [a.orgId, `%${needle}%`])).length }).toEqual({ table, needle, found: 0 });
     }
   });
 
@@ -467,7 +467,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     // A business connection with a thread that is a bot chat's is refused too, and a thread of a connection whose id merely ends with this one's is not this one's.
     expect(await ingest([event('2601', '3')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
     expect(await ingest([event(`b:2601:X:${CONN}`, '5')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ($2, '2601')", [a.orgId, `b:2601:${CONN}`])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ($2, '2601')", [a.orgId, `b:2601:${CONN}`])).toHaveLength(0);
     // The right pair is taken (the account is on and allowed by now).
     expect(await ingest([event(`b:2601:${CONN}`, '4')], CONN)).toMatchObject({ stored: 1, ignored: 0 });
   });
@@ -539,12 +539,12 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const erased = await api.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: { type: 'user', userId: a.ownerId, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowSec() }, orgId: a.orgId, idempotencyKey: randomUUID() });
     expect(erased).toEqual({ threads: 1, messages: 1 });
     expect(await threadRow(a, key)).toBeUndefined();
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '2401'", [a.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '2401'", [a.orgId])).toHaveLength(0);
     // A notice that deletes a message of the erased customer is dated at the earliest instant: it does not make the customer's thread or identity again.
     expect((await post(a.hook, deleted({ chat: 2401, ids: [1, 2] }))).status).toBe(200);
     await intake();
     expect(await threadRow(a, key)).toBeUndefined();
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '2401'", [a.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '2401'", [a.orgId])).toHaveLength(0);
     // Nor does a new message of theirs dated before the erasure; one written after it is a new customer's first message (the tombstone only holds back what is older).
     expect((await post(a.hook, business('Tin cũ gửi lại', { chat: 2401, messageId: 3, date: nowSec() - 3600 }))).status).toBe(200);
     await intake();

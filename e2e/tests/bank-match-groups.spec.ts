@@ -99,7 +99,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
   await test.step('the books hold the voucher, tied to the line and the proposal', async () => {
     const rows = sql<{ voucher_type: string; number: number; amount: string; has_line: boolean; has_proposal: boolean }>(
       `SELECT v.voucher_type, v.number, v.amount::text, (v.bank_line_id IS NOT NULL) AS has_line, (v.proposal_id IS NOT NULL) AS has_proposal
-         FROM crove_finance.cash_voucher v JOIN crove_kernel.tenant t ON t.org_id = v.org_id WHERE t.slug = :'slug'`,
+         FROM crove_finance.cash_voucher v JOIN ludy_kernel.tenant t ON t.org_id = v.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(rows).toHaveLength(1);

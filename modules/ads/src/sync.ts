@@ -46,7 +46,7 @@ export const adsSyncTarget = defineQuery({
   handler: async (ctx, input): Promise<AdsSyncTarget | null> => {
     const row = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.provider', 'a.currency', 'a.time_zone', 'a.backfill_from', 'a.settled_through', 'a.next_run_at', 'c.status', 'c.updated_at'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.channel_connection_id', '=', input.connectionId)
@@ -91,7 +91,7 @@ export const adsSyncRecord = defineCommand({
     assertSystem(ctx);
     const account = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.legal_entity_id', 'a.currency', 'a.backfill_from', 'a.settled_through', 'a.external_account_id', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)

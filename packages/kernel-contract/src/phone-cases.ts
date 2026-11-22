@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The one table of phone key cases (CRM plan 4.5, #2228): [what is stored, its key]. The unit test runs phoneKey() over it
-// and the database test runs crove_kernel.phone_key() over the same table, so the TypeScript function and its SQL twin
+// and the database test runs ludy_kernel.phone_key() over the same table, so the TypeScript function and its SQL twin
 // agree on every row.
 export const PHONE_KEY_CASES: ReadonlyArray<readonly [string, string | null]> = [
   ['0912345678', '0912345678'],

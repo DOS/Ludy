@@ -55,7 +55,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   // on record is the platform's own notice for that one recording and says nothing of any other audio. The import's own request passes: its recording row was claimed by this member for this meeting.
   const { rows: made } = await sql<{ imported: boolean; claimed: boolean }>`
     SELECT m.consent_method = 'platform_notice' AS imported,
-           EXISTS (SELECT 1 FROM crove_kernel.meeting_platform_recording r
+           EXISTS (SELECT 1 FROM ludy_kernel.meeting_platform_recording r
                    WHERE r.org_id = m.org_id AND r.meeting_id = m.id AND r.user_id = ${userId}::uuid AND r.status = 'claimed') AS claimed
     FROM crove_meetings.meeting m WHERE m.org_id = ${ctx.orgId}::uuid AND m.id = ${meetingId}::uuid`.execute(ctx.trx);
   if (made[0]?.imported === true && made[0].claimed !== true) {
@@ -96,7 +96,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
 
   const fileId = randomUUID();
   await ctx.trx
-    .insertInto('crove_kernel.file')
+    .insertInto('ludy_kernel.file')
     .values({
       org_id: ctx.orgId,
       id: fileId,
@@ -127,7 +127,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   }
   // A recording imported from a meeting platform (C1, #3173) is done once its media is recorded: the definer moves a claimed recording of this meeting and member to imported, and does nothing
   // for a meeting that is no import.
-  await sql`SELECT crove_kernel.meeting_platform_recording_imported(${meetingId}::uuid)`.execute(ctx.trx);
+  await sql`SELECT ludy_kernel.meeting_platform_recording_imported(${meetingId}::uuid)`.execute(ctx.trx);
   // Every recording that reaches the server ends its meeting's recording, whether it came as an upload or was joined from live pieces (#3205): ended_at is set
   // once (the first media wins), the start plus what was recorded and never later than now. That is also what takes the meeting out of the app's recording chip.
   await sql`

@@ -131,15 +131,15 @@ suite('Marketplace column check (#4036)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
     const register = (target: ReturnType<typeof createDb>, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' as const } : {}) }).register({
@@ -149,7 +149,7 @@ suite('Marketplace column check (#4036)', () => {
     const runtime = register(db, true);
     api = runtime;
     worker = register(createDb(workerPool));
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
     app = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false } });
@@ -162,7 +162,7 @@ suite('Marketplace column check (#4036)', () => {
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Báo cáo sàn', idempotencyKey: randomUUID() }, null);
     slug = String(created.body?.slug);
     orgId = String(created.body?.orgId);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherOrgId = String(other.body?.orgId);
   }, 120_000);
@@ -181,11 +181,11 @@ suite('Marketplace column check (#4036)', () => {
   async function fileOf(org: string, run: { method: string; result: unknown } | null, contentType = XLSX, size = 1000): Promise<string> {
     const id = randomUUID();
     const sha256 = randomBytes(32).toString('hex');
-    await rows('INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, sha256, `org/${org}/${sha256}`, 'bao-cao.xlsx', contentType, size, 'upload']);
-    if (run) await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, $3, 'failed', $4::jsonb, '[]')", [org, id, run.method, run.result === null ? null : JSON.stringify(run.result)]);
+    await rows('INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, sha256, `org/${org}/${sha256}`, 'bao-cao.xlsx', contentType, size, 'upload']);
+    if (run) await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, $3, 'failed', $4::jsonb, '[]')", [org, id, run.method, run.result === null ? null : JSON.stringify(run.result)]);
     return id;
   }
-  const events = async (fileId: string) => (await rows<{ payload: { file_id?: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_column_check.requested' AND payload ->> 'file_id' = $2 ORDER BY id", [orgId, fileId])).map((r) => r.payload);
+  const events = async (fileId: string) => (await rows<{ payload: { file_id?: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_column_check.requested' AND payload ->> 'file_id' = $2 ORDER BY id", [orgId, fileId])).map((r) => r.payload);
   const checkRow = async (fileId: string) => (await rows<{ state: string; failure: string | null; refusal: string | null; platform: string | null; assignments: unknown; sheet: unknown; preview: unknown; requested_by: string | null; finished_at: Date | null }>('SELECT state, failure, refusal, platform, assignments, sheet, preview, requested_by, finished_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0];
   const requestedAt = async (fileId: string) => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0]!.requested_at).toISOString();
   const record = async (fileId: string, result: unknown, at?: string) => worker.execute('finance.marketplace.columns_record', { fileId, requestedAt: at ?? (await requestedAt(fileId)), result }, { actor: SYSTEM, orgId });
@@ -267,7 +267,7 @@ suite('Marketplace column check (#4036)', () => {
     // A record again for the same request is not recorded twice (the check is no longer waiting).
     expect(await record(fileId, { state: 'failed', failure: 'unavailable' }, await requestedAt(fileId))).toMatchObject({ recorded: false });
     // The audit row holds counts and codes: no header, no sample, no line, no email.
-    const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.marketplace.columns%'", [orgId]));
+    const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.marketplace.columns%'", [orgId]));
     expect(audit).not.toContain(BUYER_EMAIL);
     expect(audit).not.toContain('Số hiệu đơn');
     expect(audit).not.toContain('Bút');
@@ -325,8 +325,8 @@ suite('Marketplace column check (#4036)', () => {
     admin(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
-        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+        await c.query('SET LOCAL ROLE ludy_tenant');
         await c.query(statement, values);
         return 'ok';
       } catch (error) {
@@ -339,7 +339,7 @@ suite('Marketplace column check (#4036)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       await c.query(statement);
       return 'ok';
     } catch (error) {
@@ -373,8 +373,8 @@ suite('Marketplace column check (#4036)', () => {
       const seen = await admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query(`INSERT INTO crove_finance.marketplace_column_check (org_id, file_id, state, finished_at, refusal, sheet, preview) VALUES ($1, $2, 'done', now(), 'no_header', '{"headerRow":1,"columns":[]}'::jsonb, '{"lines":[],"total":0,"skipped":0}'::jsonb)`, [orgId, fresh]);
           const { rows: made } = await c.query<{ state: string; failure: string | null; refusal: string | null; sheet: unknown; preview: unknown; finished_at: Date | null }>('SELECT state, failure, refusal, sheet, preview, finished_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fresh]);
           return made[0];

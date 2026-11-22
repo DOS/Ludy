@@ -73,7 +73,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -87,10 +87,10 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, other, viewer] = [await person('admin'), await person('member'), await person('other'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const stageNamed = async (name: string) => ((await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {})).find((s) => s.name === name) as PipelineStage);
     const newDeal = (user: string, partyId: string, over: Record<string, unknown> = {}) =>
       exec<Deal>(user, 'crm.deal.create', { partyId, title: SECRET_TITLE, amount: '15000000', expectedClose: null, ...over });
@@ -110,7 +110,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     const list = (user: string, scope: 'mine' | 'all' = 'mine') => query<NextStepPage>(user, 'crm.next_step.list', { scope });
     const done = (user: string, nextStepIds: string[]) => exec<NextStepChanged>(user, 'crm.next_step.done', { nextStepIds });
     const snooze = (user: string, nextStepIds: string[], days: number) => exec<NextStepChanged>(user, 'crm.next_step.snooze', { nextStepIds, days });
-    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
+    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
     return { orgId, owner, admin: adm, member, other, viewer, exec, query, party, stageNamed, newDeal, age, changedOn, raise, steps, stepsOf, list, done, snooze, auditOf };
   }
 
@@ -123,17 +123,17 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
@@ -345,7 +345,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const first = (await o.list(o.member, 'all')).items[0];
       expect(first).toMatchObject({ amount: '15000000.00', currency: 'VND', stageName: 'Mới', partyName: 'Công ty G', reason: 'no_activity' });
       // A member who is removed leaves the step unowned (their deal too): owners and admins read it as theirs.
-      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]);
+      await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]);
       expect((await stepOf(theirs)).assignee_user_id).toBeNull();
       expect(await ids(o.admin, 'mine')).toEqual([nobody.id, theirs.id].sort());
     });
@@ -427,7 +427,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       // Who marked a step done cannot be wiped by a statement of a login; only the foreign key's own action, when that member is removed, clears it.
       await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_next_step SET resolved_by = NULL WHERE id = $1', [second.id]))).rejects.toMatchObject({ code: '42501' });
       expect((await o.steps()).find((s) => s.id === second.id)?.resolved_by).toBe(o.member);
-      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]);
+      await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]);
       expect((await o.steps()).find((s) => s.id === second.id)).toMatchObject({ status: 'done', resolved_by: null });
     });
 
@@ -448,7 +448,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
         await c.connect();
         try {
           await c.query('BEGIN');
-          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
           return await fn(c);
         } finally {
           await c.query('ROLLBACK').catch(() => {});
@@ -559,7 +559,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
         const starts = new Date(Math.max(Date.now() - 60_000, new Date(`${today}T00:00:01+07:00`).getTime()));
         const ends = new Date(Date.now() + 600_000);
         await rows('INSERT INTO crove_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [o.orgId, type, `t-${type.slice(0, 8)}`, title, host]);
-        await rows("INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [o.orgId, event, host, starts, ends]);
+        await rows("INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [o.orgId, event, host, starts, ends]);
         const id = randomUUID();
         await rows(
           "INSERT INTO crove_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', 'Khách Lê Thị Hoa', 'hoa@khach.test', 'Asia/Ho_Chi_Minh')",

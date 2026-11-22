@@ -89,14 +89,14 @@ test('post an invoice of a locked month in the first open month, keeping its inv
       `SELECT d.invoice_date::text AS invoice_date, j.entry_date::text AS entry_date
        FROM crove_finance.purchase_document d
        JOIN crove_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
-       JOIN crove_kernel.tenant t ON t.org_id = d.org_id
+       JOIN ludy_kernel.tenant t ON t.org_id = d.org_id
        WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(posted).toEqual([{ invoice_date: INVOICE_DATE, entry_date: FIRST_OPEN_DAY }]);
     const audits = sql<{ command: string; posting_date: string }>(
       `SELECT a.command, a.detail->>'posting_date' AS posting_date
-       FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+       FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
        WHERE t.slug = :'slug' AND a.outcome = 'ok' AND a.command IN ('kernel.proposal.approve', 'finance.purchase.record') ORDER BY a.command`,
       { slug },
     );

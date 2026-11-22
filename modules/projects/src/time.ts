@@ -267,7 +267,7 @@ async function validateProjectTask(trx: Trx, orgId: string, projectId: string, t
   const { rows } = await sql<{ id: string; title: string }>`
     SELECT t.id, t.title
       FROM crove_projects.project_task pt
-      JOIN crove_kernel.task t
+      JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id
        AND t.id = pt.task_id
      WHERE pt.org_id = ${orgId}::uuid
@@ -297,7 +297,7 @@ async function fetchTimeEntryById(trx: Trx, orgId: string, entryId: string, lock
       te.created_at,
       te.updated_at
     FROM crove_projects.time_entry te
-    LEFT JOIN crove_kernel.task t
+    LEFT JOIN ludy_kernel.task t
       ON t.org_id = te.org_id
      AND t.id = te.task_id
     WHERE te.org_id = ${orgId}::uuid
@@ -325,7 +325,7 @@ async function fetchActiveTimerRow(trx: Trx, orgId: string, userId: string, lock
       te.created_at,
       te.updated_at
     FROM crove_projects.time_entry te
-    LEFT JOIN crove_kernel.task t
+    LEFT JOIN ludy_kernel.task t
       ON t.org_id = te.org_id
      AND t.id = te.task_id
     WHERE te.org_id = ${orgId}::uuid
@@ -1066,7 +1066,7 @@ function buildSummaryFilterSql(
   const parts = [
     sql`te.org_id = ${orgId}::uuid`,
     sql`te.project_id = ${projectId}::uuid`,
-    sql`(te.task_id IS NULL OR EXISTS (SELECT 1 FROM crove_kernel.task t WHERE t.org_id = te.org_id AND t.id = te.task_id))`,
+    sql`(te.task_id IS NULL OR EXISTS (SELECT 1 FROM ludy_kernel.task t WHERE t.org_id = te.org_id AND t.id = te.task_id))`,
   ];
   if (filter.taskId !== undefined) {
     parts.push(sql`te.task_id = ${filter.taskId}::uuid`);
@@ -1176,7 +1176,7 @@ export const projectTimeSummary = defineQuery({
             0
           )::text AS billable_amount
         FROM crove_projects.time_entry te
-        LEFT JOIN crove_kernel.task t
+        LEFT JOIN ludy_kernel.task t
           ON t.org_id = te.org_id
          AND t.id = te.task_id
         WHERE ${whereClause}
@@ -1200,7 +1200,7 @@ export const projectTimeSummary = defineQuery({
           te.created_at,
           te.updated_at
         FROM crove_projects.time_entry te
-        LEFT JOIN crove_kernel.task t
+        LEFT JOIN ludy_kernel.task t
           ON t.org_id = te.org_id
          AND t.id = te.task_id
         WHERE ${whereClause}
@@ -1365,7 +1365,7 @@ export const projectTimeExportCsv = defineQuery({
         te.created_at,
         te.updated_at
       FROM crove_projects.time_entry te
-      LEFT JOIN crove_kernel.task t
+      LEFT JOIN ludy_kernel.task t
         ON t.org_id = te.org_id
        AND t.id = te.task_id
       WHERE ${whereClause}
@@ -1459,7 +1459,7 @@ export async function queryProjectWeeklyTimeSummary(
         te.task_id IS NULL
         OR EXISTS (
           SELECT 1
-          FROM crove_kernel.task t
+          FROM ludy_kernel.task t
           WHERE t.org_id = te.org_id
             AND t.id = te.task_id
         )

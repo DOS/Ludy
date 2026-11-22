@@ -99,10 +99,10 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
 
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -149,7 +149,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     orgId = createdOrg.orgId;
     orgSlug = createdOrg.slug;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
       [orgId, users.recorder, users.attendee, users.other, users.viewer],
     );
@@ -333,14 +333,14 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
 
     // Audit records both the sensitive read of meetings.result.get and the note creation, without leaking raw text.
     const resultAudit = await sqlAdmin<{ command: string; target_id: string | null }>(
-      `SELECT command, target_id FROM crove_kernel.audit_event
+      `SELECT command, target_id FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'meetings.result.get' AND target_id = $2`,
       [orgId, meetingId],
     );
     expect(resultAudit.rows.length).toBeGreaterThanOrEqual(2);
 
     const auditRows = await sqlAdmin<{ command: string; outcome: string; detail: Record<string, unknown> }>(
-      `SELECT command, outcome, detail FROM crove_kernel.audit_event
+      `SELECT command, outcome, detail FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'notes.note.from_meeting_summary' ORDER BY occurred_at, id`,
       [orgId],
     );
@@ -349,7 +349,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     expect(JSON.stringify(auditRows.rows)).not.toContain(DECISION_1);
 
     const outboxRows = await sqlAdmin<{ id: string; payload: Record<string, unknown> }>(
-      `SELECT id, payload FROM crove_kernel.outbox_event
+      `SELECT id, payload FROM ludy_kernel.outbox_event
        WHERE org_id = $1 AND payload ->> 'noteId' = ANY($2::text[])`,
       [orgId, [fromDraft.noteId, fromPublished.noteId]],
     );
@@ -394,7 +394,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     expect(detail.tainted).toBe(false);
 
     const updateAudit = await sqlAdmin<{ detail: { changed?: string[] } }>(
-      `SELECT detail FROM crove_kernel.audit_event
+      `SELECT detail FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'notes.note.update' ORDER BY occurred_at DESC, id DESC LIMIT 1`,
       [orgId],
     );

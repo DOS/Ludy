@@ -220,7 +220,7 @@ async function loadAdminItem(trx: Trx, orgId: string, itemId: string): Promise<R
       i.created_at,
       i.updated_at
     FROM crove_projects.roadmap_item i
-    LEFT JOIN crove_kernel.task t
+    LEFT JOIN ludy_kernel.task t
       ON t.org_id = i.org_id AND t.id = i.linked_task_id
     LEFT JOIN crove_projects.project_task pt
       ON pt.org_id = i.org_id AND pt.task_id = i.linked_task_id
@@ -274,7 +274,7 @@ export const roadmapBoards = defineQuery({
   handler: async (ctx: QueryContext): Promise<RoadmapBoardListResult> => {
     userOf(ctx.actor);
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select('slug')
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
@@ -330,8 +330,8 @@ export const roadmapBoards = defineQuery({
        LIMIT 200`.execute(ctx.trx);
 
     const seatsRows = await ctx.trx
-      .selectFrom('crove_kernel.position as p')
-      .innerJoin('crove_kernel.tenant_member as m', (join) =>
+      .selectFrom('ludy_kernel.position as p')
+      .innerJoin('ludy_kernel.tenant_member as m', (join) =>
         join.onRef('m.org_id', '=', 'p.org_id').onRef('m.user_id', '=', 'p.holder_user_id'),
       )
       .select(['p.id as position_id', 'p.title', 'p.holder_user_id', 'm.role as holder_role'])
@@ -430,7 +430,7 @@ export const roadmapBoardGet = defineQuery({
         i.created_at,
         i.updated_at
       FROM crove_projects.roadmap_item i
-      LEFT JOIN crove_kernel.task t
+      LEFT JOIN ludy_kernel.task t
         ON t.org_id = i.org_id AND t.id = i.linked_task_id
       LEFT JOIN crove_projects.project_task pt
         ON pt.org_id = i.org_id AND pt.task_id = i.linked_task_id
@@ -955,7 +955,7 @@ export const roadmapItemConvertToTask = defineCommand({
       throw new DomainError('ROADMAP_PROJECT_REQUIRED', 422, 'Hãy chọn một dự án công khai của tổ chức để tạo công việc');
     }
 
-    // Preview project without row lock before kernel.task.create_from_roadmap (which locks crove_kernel.position),
+    // Preview project without row lock before kernel.task.create_from_roadmap (which locks ludy_kernel.position),
     // then lock crove_projects.project FOR SHARE afterwards to maintain canonical position -> project lock order.
     const preview = await assertPublicProjectAllowed(ctx.trx, ctx.orgId, targetProjectId, false);
     assertNotArchived(preview);
@@ -1047,7 +1047,7 @@ export const roadmapItemSyncStage = defineCommand({
         throw new DomainError('ROADMAP_NO_LINKED_TASK', 409, 'Mục này chưa liên kết với công việc nội bộ');
       }
       const task = await ctx.trx
-        .selectFrom('crove_kernel.task')
+        .selectFrom('ludy_kernel.task')
         .select('status')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.linked_task_id)

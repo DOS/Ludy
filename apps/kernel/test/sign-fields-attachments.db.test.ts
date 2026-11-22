@@ -221,7 +221,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -229,8 +229,8 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -643,14 +643,14 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     const dbFileCheck = await withAdmin(async (c) => {
       const fRow = (
         await c.query<{ source: string; created_by: string | null }>(
-          'SELECT source, created_by FROM crove_kernel.file WHERE org_id = $1 AND id = $2',
+          'SELECT source, created_by FROM ludy_kernel.file WHERE org_id = $1 AND id = $2',
           [org.orgId, uploadedMeta.fileId],
         )
       ).rows[0];
       const outboxIngested = Number(
         (
           await c.query<{ n: string }>(
-            "SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'",
+            "SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'",
             [org.orgId],
           )
         ).rows[0]!.n,
@@ -658,7 +658,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
       const extractions = Number(
         (
           await c.query<{ n: string }>(
-            'SELECT count(*)::text AS n FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2',
+            'SELECT count(*)::text AS n FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2',
             [org.orgId, uploadedMeta.fileId],
           )
         ).rows[0]!.n,
@@ -1029,7 +1029,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     await tenantClient.connect();
     try {
       await tenantClient.query('BEGIN');
-      await tenantClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [
+      await tenantClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [
         owner.userId,
         org.orgId,
       ]);

@@ -29,7 +29,7 @@ export async function gateCallsOf(trx: Trx, orgId: string, variants: readonly Ga
   if (variants.length === 0) return out;
   const keys = new Map(variants.map((v) => [gateKey(v), v.id]));
   const { rows } = await sql<CommentCall>`
-    SELECT key, state, external_ref, error_code, started_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid AND key = ANY(${[...keys.keys()]}::text[])`.execute(trx);
   for (const row of rows) {
     const id = keys.get(row.key);
@@ -78,10 +78,10 @@ export const gateBegin = defineCommand({
     if (!wantsGate(v)) return { action: 'none', reason: 'no_gate' };
     if (v.status !== 'published' || !v.external_post_id) return { action: 'none', reason: 'not_published' };
     const callKey = gateKey(v);
-    const made = await ctx.trx.selectFrom('crove_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
+    const made = await ctx.trx.selectFrom('ludy_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     if (made) return { action: 'none', reason: 'done' };
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: GATE_STEP, retry_safety: 'never', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, connectionId: v.channel_connection_id, callKey, externalId: v.external_post_id, settings: settingsOf(v) };
@@ -119,7 +119,7 @@ export const gateRecord = defineCommand({
         ? { state, external_ref: r.externalId, finished_at: ctx.now }
         : { state, error_kind: r.kind === 'unknown' ? 'unknown' : r.kind === 'blocked' ? (r.code === 'CHANNEL_NOT_ACTIVE' ? 'token_expired' : 'permission') : r.error, error_code: errorCode, ...(state === 'failed' ? { finished_at: ctx.now } : {}) };
     const updated = await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ ...values, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)

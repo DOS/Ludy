@@ -281,7 +281,7 @@ export async function launchesOfDrafts(ctx: Db, draftIds: readonly string[]): Pr
   // One row per launch, reduced in SQL (the ledger gets a row per read and has no prune yet): the newest settled one. The key holds the launch id after `ads.state:` (10 characters).
   const launchOfKey = sql<string>`substring(key from 11 for 36)`;
   const reads = await ctx.trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select([launchOfKey.as('launch_id'), 'state', 'finished_at'])
     .distinctOn(launchOfKey)
     .where('org_id', '=', ctx.orgId)

@@ -275,7 +275,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('rows in the database', async () => {
     const [org] = sql<{ org_id: string; user_id: string }>(
       `SELECT t.org_id, u.id AS user_id
-         FROM crove_kernel.tenant t JOIN crove_kernel.user_account u ON u.id = t.created_by
+         FROM ludy_kernel.tenant t JOIN ludy_kernel.user_account u ON u.id = t.created_by
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
@@ -283,7 +283,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     const vars = { org: org.org_id, user: org.user_id };
 
     const vendors = sql<{ id: string; name: string; tax_code: string }>(
-      `SELECT id, name, tax_code FROM crove_kernel.party WHERE org_id = :'org'`,
+      `SELECT id, name, tax_code FROM ludy_kernel.party WHERE org_id = :'org'`,
       vars,
     );
     expect(vendors).toEqual([{ id: expect.any(String), name: SELLER, tax_code: SELLER_TAX_CODE }]);
@@ -326,7 +326,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     const audit = sql<{ command: string; outcome: string; actor_type: string; by_user: boolean }>(
       `SELECT command, outcome, actor_type, coalesce(actor_id = :'user'::uuid, false) AS by_user
-         FROM crove_kernel.audit_event WHERE org_id = :'org' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' ORDER BY occurred_at, id`,
       vars,
     );
     expect(audit).toEqual(
@@ -342,7 +342,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The denied attempt was aal1; the approval ran with the fresh second factor (policy P11).
     const approvals = sql<{ outcome: string; code: string | null; aal: string; mfa: boolean }>(
       `SELECT outcome, detail->>'code' AS code, detail->>'aal' AS aal, detail->>'mfaAt' IS NOT NULL AS mfa
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' ORDER BY occurred_at, id`,
       vars,
     );
     expect(approvals).toEqual([
@@ -410,7 +410,7 @@ test('reject a proposal with a reason through the dialog', async ({ page }) => {
   await test.step('the proposal is rejected with the reason typed', async () => {
     const rows = sql<{ status: string; decision_note: string | null }>(
       `SELECT p.status, p.decision_note
-         FROM crove_kernel.proposal p JOIN crove_kernel.tenant t ON t.org_id = p.org_id
+         FROM ludy_kernel.proposal p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id
         WHERE t.slug = :'slug'`,
       { slug },
     );

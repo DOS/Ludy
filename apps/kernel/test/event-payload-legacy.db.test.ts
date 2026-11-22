@@ -57,7 +57,7 @@ suite("the outbox guard's one-release allowance for the previous release (#1970)
     for (const [type, payload, path] of legacy) {
       expect(eventPayloadProblem(payload, type)).toBe(`${path}: a string that is neither an id nor a code`);
       const sqlProblem = await withClient(adminUrl, async (c) =>
-        (await c.query<{ p: string | null }>('SELECT crove_kernel.event_payload_problem($1, $2::jsonb) AS p', [type, JSON.stringify(payload)])).rows[0]?.p,
+        (await c.query<{ p: string | null }>('SELECT ludy_kernel.event_payload_problem($1, $2::jsonb) AS p', [type, JSON.stringify(payload)])).rows[0]?.p,
       );
       expect(sqlProblem, type).toBeNull();
     }

@@ -68,11 +68,11 @@ export async function periodLockState(ctx: QueryContext, legalEntityId?: string)
     .where('legal_entity_id', '=', entity)
     .executeTakeFirst();
   const lockedThrough = row?.locked_through ?? null;
-  // Who locked or unlocked last, by name while they are a member (crove_kernel.member_profiles answers only members).
+  // Who locked or unlocked last, by name while they are a member (ludy_kernel.member_profiles answers only members).
   let updatedBy: string | null = null;
   if (row?.updated_by) {
     const { rows } = await sql<{ email: string; display_name: string | null }>`
-      SELECT email, display_name FROM crove_kernel.member_profiles(${[row.updated_by]}::uuid[])`.execute(ctx.trx);
+      SELECT email, display_name FROM ludy_kernel.member_profiles(${[row.updated_by]}::uuid[])`.execute(ctx.trx);
     updatedBy = rows[0] ? (rows[0].display_name ?? rows[0].email) : null;
   }
   return {

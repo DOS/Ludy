@@ -43,17 +43,17 @@ suite('the cash-flow forecast (#4391)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Dự báo ${randomUUID().slice(0, 6)}`);
     const viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
-    const entity = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    const entity = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string);
     return { orgId, owner, viewer, entity };
   }
   const forecast = (o: Org, input: Record<string, unknown> = {}, user = o.owner) => rt.query<CashForecast>('finance.cash_forecast', input, { actor: asUser(user), orgId: o.orgId });
   const party = async (o: Org, name: string) => {
     const id = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, id, name]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, id, name]));
     return id;
   };
-  const secondEntity = (o: Org) => admin(async (c) => (await c.query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string);
+  const secondEntity = (o: Org) => admin(async (c) => (await c.query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string);
 
   // One journal entry of two or more lines, as the commands write one (a document without its entry is refused at commit, an entry must balance).
   async function entry(o: Org, date: string, lines: Array<{ account: string; debit?: string; credit?: string; party?: string | null }>, entity: string = o.entity, document: { number: string; direction: 'sale' | 'purchase'; party: string; total: string; invoiceDate?: string } | null = null): Promise<string | null> {
@@ -105,9 +105,9 @@ suite('the cash-flow forecast (#4391)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -330,7 +330,7 @@ suite('the cash-flow forecast (#4391)', () => {
   it('lists the tax due dates of the entity as markers with no amount once the org has set its VAT filing period', async () => {
     const o = await org();
     expect((await forecast(o)).taxMarkers).toEqual([]);
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1", [o.orgId]));
     const f = await forecast(o);
     expect(f.taxMarkers.length).toBeGreaterThan(0);
     expect(f.taxMarkers[0]).toMatchObject({ obligation: 'vat_return' });
@@ -346,8 +346,8 @@ suite('the cash-flow forecast (#4391)', () => {
     const branch = await secondEntity(o);
     const limited = await identity('limited');
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
-      await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+      await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
     });
     await cash(o, day(-10), '1000000');
     await cash(o, day(-10), '7000000', branch);
@@ -365,7 +365,7 @@ suite('the cash-flow forecast (#4391)', () => {
       for (let i = 0; i <= CASH_FORECAST_PARTIES_MAX; i++) {
         const p = randomUUID();
         const e = randomUUID();
-        await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, p, `Khách ${i}`]);
+        await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, p, `Khách ${i}`]);
         await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'bulk', 'finance.journal_voucher', $4, $5)", [o.orgId, e, day(-5), randomUUID(), o.entity]);
         await c.query(
           "INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)",
@@ -389,7 +389,7 @@ suite('the cash-flow forecast (#4391)', () => {
     const count = () =>
       admin(async (c) => {
         const r = await c.query<{ n: string }>(
-          `SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1) + (SELECT count(*) FROM crove_finance.purchase_document WHERE org_id = $1) + (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1) AS n`,
+          `SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1) + (SELECT count(*) FROM crove_finance.purchase_document WHERE org_id = $1) + (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1) AS n`,
           [o.orgId],
         );
         return Number(r.rows[0]?.n);

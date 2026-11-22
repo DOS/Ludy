@@ -1,5 +1,5 @@
 // Archived media library files (issue #1302): members take failed crops and rejected designs out of the library and its
-// pickers, up to MEDIA_ARCHIVE_MAX at once, and bring them back. crove_kernel.file never changes, so the mark lives in
+// pickers, up to MEDIA_ARCHIVE_MAX at once, and bring them back. ludy_kernel.file never changes, so the mark lives in
 // crove_social.media_archive, one per file. An archived file stays stored: posts that already use it keep it, and the
 // library lists it again on restore. Members and above, on files they may use (#1081: a member limited to some
 // channels neither archives nor restores another channel's own media). What an archived file may no longer do is in
@@ -30,7 +30,7 @@ function requireUser(ctx: CommandContext): string {
 async function lockLibraryFiles(ctx: CommandContext, fileIds: readonly string[]): Promise<void> {
   const scope = await channelScope(ctx);
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.file as f')
+    .selectFrom('ludy_kernel.file as f')
     .select(['f.id', mediaHidden(scope).as('hidden')])
     .where('f.org_id', '=', ctx.orgId)
     .where('f.id', 'in', [...fileIds])

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // HTTP edge helpers for isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
 // streaming <= 25 MiB byte cap, magic-byte MIME classification, active-content disposition gating, strict sandbox CSP,
-// and BlobStore put/rollback without ever touching crove_kernel.file.
+// and BlobStore put/rollback without ever touching ludy_kernel.file.
 import { randomUUID } from 'node:crypto';
 import {
   NOTE_ATTACHMENT_FILENAME_MAX,

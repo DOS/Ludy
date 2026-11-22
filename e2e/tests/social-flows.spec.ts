@@ -136,11 +136,11 @@ test('a channel that needs two approvals waits for a second admin, then is appro
   const reviewerPage = await reviewerContext.newPage();
   await signInNewUser(reviewerPage, reviewer);
   await expect
-    .poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
+    .poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
     .toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'admin' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'admin' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: reviewer },
   );
@@ -178,7 +178,7 @@ test('retries a failed channel and settles the channels Crove could not account 
   const setVariant = (channel: string, values: string) =>
     exec(
       `UPDATE crove_social.post_variant v SET ${values}, updated_at = now()
-         FROM crove_kernel.channel_connection c
+         FROM ludy_kernel.channel_connection c
         WHERE v.post_id = :'post' AND c.org_id = v.org_id AND c.id = v.channel_connection_id AND c.display_name = :'channel'`,
       { post: postId, channel },
     );
@@ -218,7 +218,7 @@ test('retries a failed channel and settles the channels Crove could not account 
 
   const rows = sql<{ display_name: string; status: string }>(
     `SELECT c.display_name, v.status FROM crove_social.post_variant v
-       JOIN crove_kernel.channel_connection c ON c.org_id = v.org_id AND c.id = v.channel_connection_id
+       JOIN ludy_kernel.channel_connection c ON c.org_id = v.org_id AND c.id = v.channel_connection_id
       WHERE v.post_id = :'post'`,
     { post: postId },
   );
@@ -427,7 +427,7 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
   await expect(page).toHaveURL(/\/social$/);
   const [post] = sql<{ id: string; media: { name: string; alt: string | null }[]; labels: string[]; comments: string[] }>(
     `SELECT p.id,
-            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM crove_social.post_media m JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
+            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM crove_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
             (SELECT json_agg(l.name ORDER BY l.name) FROM crove_social.post_label pl JOIN crove_social.label l ON l.org_id = pl.org_id AND l.id = pl.label_id WHERE pl.org_id = p.org_id AND pl.post_id = p.id) AS labels,
             (SELECT json_agg(v.settings->>'firstComment') FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft') AS comments
        FROM crove_social.post p WHERE p.body = :'body'`,
@@ -515,7 +515,7 @@ test('shows the latest metrics of a published channel on the post and in the rep
   await expect(panel.locator('[data-slot="card"]').filter({ hasText: 'Bài nổi bật trong khoảng này' })).toContainText(body);
   exec(
     `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers)
-     SELECT c.org_id, c.id, d.day, d.n FROM crove_kernel.channel_connection c,
+     SELECT c.org_id, c.id, d.day, d.n FROM ludy_kernel.channel_connection c,
        (VALUES ((now() AT TIME ZONE 'UTC')::date - 3, 1000), ((now() AT TIME ZONE 'UTC')::date, 1080)) AS d(day, n)
      WHERE c.display_name = :'channel'`,
     { channel },
@@ -785,7 +785,7 @@ test('crops a post image to a frame, and the server reads the new size (#636)', 
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const media = sql<{ image_width: number; image_height: number; content_type: string }>(
-    `SELECT f.image_width, f.image_height, f.content_type FROM crove_social.post_media m JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
+    `SELECT f.image_width, f.image_height, f.content_type FROM crove_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
     { post: postIdOf(page) },
   );
   expect(media).toEqual([{ image_width: 1080, image_height: 1080, content_type: 'image/png' }]);
@@ -883,11 +883,11 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   const reviewerPage = await reviewerContext.newPage();
   await signInNewUser(reviewerPage, reviewer);
   await expect
-    .poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
+    .poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
     .toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'admin' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'admin' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: reviewer },
   );
@@ -900,7 +900,7 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   await expect(reviewerColumn('Đã duyệt').getByTestId('board-card')).toHaveCount(1);
   expect(statuses()).toEqual(['approved']);
   const decided = sql<{ email: string; decision: string }>(
-    `SELECT u.email, a.decision FROM crove_social.post_approval a JOIN crove_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
+    `SELECT u.email, a.decision FROM crove_social.post_approval a JOIN ludy_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
     { post: postId },
   );
   expect(decided).toEqual([{ email: reviewer.toLowerCase(), decision: 'approved' }]);
@@ -1025,7 +1025,7 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await text.fill('Phở bò rẻ nhất phố: 45.000đ');
   await card.getByRole('button', { name: 'Cập nhật lên kênh' }).click();
   await expect(card.getByText('Bài có từ bị cấm: «rẻ nhất»')).toBeVisible();
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE key LIKE :'key'`, { key: `social.publish:${variantId}:%:edit%` })).toEqual([{ n: '0' }]);
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.external_call WHERE key LIKE :'key'`, { key: `social.publish:${variantId}:%:edit%` })).toEqual([{ n: '0' }]);
   expect(sql<{ edit_state: string | null }>(`SELECT edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ edit_state: null }]);
 
   // The corrected text goes to the channel; the page follows until the platform confirms it.
@@ -1035,7 +1035,7 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect
     .poll(() => sql<{ revision: number; body: string | null; edit_state: string | null }>(`SELECT revision, body, edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId }), { timeout: 45_000 })
     .toEqual([{ revision: 2, body: 'Phở bò giá 45.000đ', edit_state: null }]);
-  expect(sql<{ state: string }>(`SELECT state FROM crove_kernel.external_call WHERE key = :'key'`, { key: `social.publish:${variantId}:1:1:edit` })).toEqual([{ state: 'succeeded' }]);
+  expect(sql<{ state: string }>(`SELECT state FROM ludy_kernel.external_call WHERE key = :'key'`, { key: `social.publish:${variantId}:1:1:edit` })).toEqual([{ state: 'succeeded' }]);
   await expect(card.getByText('Đang cập nhật nội dung đã sửa lên kênh')).toHaveCount(0, { timeout: 15_000 });
   await expect(card.getByText('Phở bò giá 45.000đ').first()).toBeVisible();
 
@@ -1044,10 +1044,10 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   const memberContext = await browser.newContext({ baseURL: new URL(postUrl).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
   const memberPage = await memberContext.newPage();
   await signInNewUser(memberPage, writer);
-  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
+  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: writer },
   );
@@ -1247,7 +1247,7 @@ test('makes a client report link without the best posts and the audience, which 
   exec(
     `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
      SELECT c.org_id, c.id, (now() AT TIME ZONE 'UTC')::date, 100, '{"age": [{"key": "18-24", "count": 60}], "gender": [], "cities": [{"key": "Hanoi, Hanoi", "count": 40}], "countries": []}'::jsonb
-       FROM crove_kernel.channel_connection c WHERE c.display_name = :'channel'
+       FROM ludy_kernel.channel_connection c WHERE c.display_name = :'channel'
      ON CONFLICT DO NOTHING`,
     { channel },
   );

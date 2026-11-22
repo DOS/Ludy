@@ -121,7 +121,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(invited.status).toBe(200);
     const accepted = await rpc('invites/accept', name, { token: String(invited.body.acceptPath).split('#')[1] }, null);
     expect(accepted.status).toBe(200);
-    userIds.set(name, (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email]))[0]!.id);
+    userIds.set(name, (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email]))[0]!.id);
   }
 
   async function createMeeting(name: string, body: Record<string, unknown> = {}, org = slug) {
@@ -145,7 +145,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
 
   async function withWorker<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
@@ -177,18 +177,18 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, pw: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = pw;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 8 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 8 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     const db = createDb(pool);
     workerDb = createDb(workerPool);
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     const registry = { commands: [...kernelCommands, ...financeCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry).register({ commands: [orgPurgeCommand({ store })] });
@@ -198,7 +198,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(created.status).toBe(200);
     slug = String(created.body.slug);
     orgId = String(created.body.orgId);
-    userIds.set('owner', (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email]))[0]!.id);
+    userIds.set('owner', (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email]))[0]!.id);
     await joinOrg('recorder', 'member');
     await joinOrg('attendee', 'member');
     await joinOrg('otherMember', 'member');
@@ -222,7 +222,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [userIds.get(name), orgId]);
+        await client.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [userIds.get(name), orgId]);
         await fn((statement) => client.query(statement));
       } finally {
         await client.query('ROLLBACK').catch(() => undefined);
@@ -236,11 +236,11 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       ['text retention', 'meeting_text_retention_days = 730', 'meeting_text_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
       ['consent policy', "meeting_consent_policy = 'strict'", 'meeting_consent_policy', /MEETING_CONSENT_POLICY_FORBIDDEN/],
     ];
-    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM crove_kernel.tenant WHERE org_id = $1";
+    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM ludy_kernel.tenant WHERE org_id = $1";
     const before = (await rows<{ a: number; v: number; t: number; c: string }>(state, [orgId]))[0];
     expect(before, 'this test runs first, on the defaults its values are chosen against').toEqual({ a: 30, v: 7, t: 365, c: 'standard' });
     for (const [label, set, column, refusal] of guarded) {
-      const statement = `UPDATE crove_kernel.tenant SET ${set} WHERE org_id = '${orgId}' RETURNING ${column} AS changed`;
+      const statement = `UPDATE ludy_kernel.tenant SET ${set} WHERE org_id = '${orgId}' RETURNING ${column} AS changed`;
       for (const member of ['recorder', 'otherMember']) {
         await asContext(member, async (run) => {
           await expect(run(statement), `${label}, ${member}`).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(refusal) });
@@ -294,7 +294,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await rpc('meetings/settings/set', 'owner', { audioRetentionDays: 30, videoRetentionDays: 7, textRetentionDays: 365 });
 
     // The audit row holds the periods and no title.
-    const audits = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.settings.set' AND outcome = 'ok' ORDER BY occurred_at", [orgId]);
+    const audits = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.settings.set' AND outcome = 'ok' ORDER BY occurred_at", [orgId]);
     expect(audits.length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(audits)).not.toContain('Họp tuần');
   });
@@ -302,7 +302,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
   it('keeps the recorder and every login role from writing the retention dates or the settings directly', async () => {
     const grants = await rows<{ role: string; col: string }>(
       `SELECT r.rolname AS role, c AS col FROM pg_roles r, unnest(ARRAY['audio_retention_date', 'text_retention_date']) c
-        WHERE r.rolname IN ('crove_tenant', 'crove_app', 'crove_worker') AND has_column_privilege(r.oid, 'crove_meetings.meeting', c, 'UPDATE')`,
+        WHERE r.rolname IN ('ludy_tenant', 'ludy_app', 'ludy_worker') AND has_column_privilege(r.oid, 'crove_meetings.meeting', c, 'UPDATE')`,
     );
     expect(grants).toEqual([]);
     // The tenant row's guard refuses a change of a setting from any context but an owner's or admin's: here the worker's system context of the org, which
@@ -310,8 +310,8 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const refused = await withWorker(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
-        await c.query('UPDATE crove_kernel.tenant SET meeting_text_retention_days = 90 WHERE org_id = $1', [orgId]);
+        await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
+        await c.query('UPDATE ludy_kernel.tenant SET meeting_text_retention_days = 90 WHERE org_id = $1', [orgId]);
         return 'changed';
       } catch (error) {
         return (error as Error).message;
@@ -325,8 +325,8 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const policyRefused = await withWorker(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
-        await c.query("UPDATE crove_kernel.tenant SET meeting_consent_policy = 'strict' WHERE org_id = $1", [orgId]);
+        await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
+        await c.query("UPDATE ludy_kernel.tenant SET meeting_consent_policy = 'strict' WHERE org_id = $1", [orgId]);
         return 'changed';
       } catch (error) {
         return (error as Error).message;
@@ -344,7 +344,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const video = await upload('recorder', meetingId, 'video', 'v');
     expect(Buffer.from(await (await play('attendee', meetingId, 'audio')).arrayBuffer()).equals(audio)).toBe(true);
     const audioFile = (await rows<{ file_id: string }>('SELECT file_id FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!.file_id;
-    const audioKey = (await rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.file WHERE id = $1', [audioFile]))[0]!.storage_key;
+    const audioKey = (await rows<{ storage_key: string }>('SELECT storage_key FROM ludy_kernel.file WHERE id = $1', [audioFile]))[0]!.storage_key;
     expect(store.storage.has(audioKey)).toBe(true);
 
     // Not due: nothing happens.
@@ -374,11 +374,11 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = $2', [meetingId, 'audio'])).toBe(0);
 
     // The object and the file row are still there until the sweep: ciphertext no key opens.
-    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [audioFile])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_kernel.file WHERE id = $1', [audioFile])).toBe(1);
     const swept = await sweep();
     expect(swept.failed).toBe(0);
     expect(store.storage.has(audioKey)).toBe(false);
-    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [audioFile])).toBe(0);
+    expect(await count('SELECT 1 FROM ludy_kernel.file WHERE id = $1', [audioFile])).toBe(0);
 
     // Run twice, nothing more to do.
     expect((await retention()).shredded.audio).toBe(0);
@@ -390,7 +390,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await play('recorder', meetingId, 'video')).status).toBe(404);
     expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).toBe(0);
     await sweep();
-    expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
+    expect(await count("SELECT 1 FROM ludy_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
     expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [meetingId])).toBe(1);
   });
 
@@ -423,7 +423,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       expect(await left(mixed, 'published')).toBe(3);
       expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = ANY($1)', [[old, young, mixed]])).toBe(3);
       // The audit row names the meeting by id with a kind and a count, never the text.
-      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
       expect(audit).toHaveLength(1);
       expect(JSON.stringify(audit)).toContain('draft');
       expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
@@ -463,7 +463,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       expect(await left(mixed, 'draft')).toBe(1);
       expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = ANY($1)', [[old, young, mixed]])).toBe(3);
       // The audit row counts the rows and holds no text.
-      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
       expect(audit).toHaveLength(1);
       expect(JSON.stringify(audit)).toContain('"rows":2');
       expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
@@ -514,7 +514,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const meetingId = await createMeeting('recorder', { title: 'Chỉ worker' });
       for (const call of ['SELECT * FROM crove_meetings.meeting_drafts_due(10)', 'SELECT crove_meetings.meeting_draft_purge(gen_random_uuid(), gen_random_uuid())']) {
         const asApp = await admin(async (c) => {
-          await c.query('SET ROLE crove_app');
+          await c.query('SET ROLE ludy_app');
           return c.query(call).then(() => 'ran').catch((e: Error) => e.message);
         });
         expect(asApp, call).toMatch(/permission denied/);
@@ -524,7 +524,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const mismatched = await withWorker(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
           return await c.query('SELECT crove_meetings.meeting_draft_purge(gen_random_uuid(), $1)', [meetingId]).then(() => 'ran').catch((e: Error) => e.message);
         } finally {
           await c.query('ROLLBACK');
@@ -534,7 +534,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const scan = await withWorker(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
           return await c.query('SELECT * FROM crove_meetings.meeting_drafts_due(10)').then(() => 'ran').catch((e: Error) => e.message);
         } finally {
           await c.query('ROLLBACK');
@@ -548,7 +548,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       expect(created.status).toBe(200);
       const otherSlug = String(created.body.slug);
       const otherOrg = String(created.body.orgId);
-      userIds.set('purgeOwner2', (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('purgeOwner2')?.email]))[0]!.id);
+      userIds.set('purgeOwner2', (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('purgeOwner2')?.email]))[0]!.id);
       const mine = await createMeeting('recorder', { title: 'Của tôi' });
       const theirs = await createMeeting('purgeOwner2', { title: 'Của họ' }, otherSlug);
       await seedDrafts(mine, 40, 'nháp của tôi');
@@ -600,7 +600,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const meetingId = await createMeeting('recorder', { title: 'Text ends', keepVideo: true, readerUserIds: [userIds.get('attendee')] });
     await upload('recorder', meetingId, 'audio', 'a');
     await upload('recorder', meetingId, 'video', 'v');
-    const fileRows = await rows<{ storage_key: string }>("SELECT storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`]);
+    const fileRows = await rows<{ storage_key: string }>("SELECT storage_key FROM ludy_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`]);
     expect(fileRows).toHaveLength(2);
     const tables = ['meeting', 'meeting_reader', 'audio_segment', 'meeting_video', 'media_key'];
     const left = async () => (await Promise.all(tables.map((t) => count(`SELECT 1 FROM crove_meetings.${t} WHERE ${t === 'meeting' ? 'id' : 'meeting_id'} = $1`, [meetingId])))).reduce((a, b) => a + b, 0);
@@ -614,9 +614,9 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await play('recorder', meetingId, 'audio')).status).toBeGreaterThanOrEqual(400);
     await sweep();
     for (const f of fileRows) expect(store.storage.has(f.storage_key)).toBe(false);
-    expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
+    expect(await count("SELECT 1 FROM ludy_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
     // The audit trail names the meeting by id, with a count and a kind, never its title.
-    const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, meetingId]);
+    const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, meetingId]);
     expect(audit).toHaveLength(1);
     expect(JSON.stringify(audit)).not.toContain('Text ends');
   });
@@ -662,12 +662,12 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     // The segment the meeting names is replaced by another file while the key stays: the stream notices the file changed and stops.
     const replaced = await long('Replaced while playing');
     const other = randomUUID();
-    await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'swap.opus', 'audio/ogg', 10, $3, $4, 'meeting_audio', $5)", [orgId, other, 'b'.repeat(64), `org/${orgId}/${'b'.repeat(64)}`, userIds.get('recorder')]);
+    await rows("INSERT INTO ludy_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'swap.opus', 'audio/ogg', 10, $3, $4, 'meeting_audio', $5)", [orgId, other, 'b'.repeat(64), `org/${orgId}/${'b'.repeat(64)}`, userIds.get('recorder')]);
     await rows('UPDATE crove_meetings.audio_segment SET file_id = $1 WHERE meeting_id = $2', [other, replaced.meetingId]);
     const swapped = await drain(replaced.res);
     expect(swapped.failed).toBe(true);
     expect(swapped.received).toBeLessThan(replaced.size);
-    await rows('DELETE FROM crove_kernel.file WHERE id = $1', [other]).catch(() => undefined);
+    await rows('DELETE FROM ludy_kernel.file WHERE id = $1', [other]).catch(() => undefined);
   });
 
   it('is final from the day a period ends, before the nightly job has run', async () => {
@@ -703,7 +703,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
 
   it('lets only the worker login run the retention definers, in the system context of the org they act on', async () => {
     const asApp = await admin(async (c) => {
-      await c.query('SET ROLE crove_app');
+      await c.query('SET ROLE ludy_app');
       try {
         await c.query('SELECT * FROM crove_meetings.meetings_due(10)');
         return 'ran';
@@ -714,7 +714,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(asApp).toMatch(/permission denied/);
     for (const call of ['SELECT * FROM crove_meetings.meetings_orphan_media(10)', 'SELECT * FROM crove_meetings.meetings_deleted_since(now())', "SELECT crove_meetings.meeting_text_purge(gen_random_uuid(), gen_random_uuid())"]) {
       const out = await admin(async (c) => {
-        await c.query('SET ROLE crove_app');
+        await c.query('SET ROLE ludy_app');
         return c.query(call).then(() => 'ran').catch((e: Error) => e.message);
       });
       expect(out, call).toMatch(/permission denied/);
@@ -726,7 +726,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const inOrg = await withWorker(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
           return await c.query(call).then(() => 'ran').catch((e: Error) => e.message);
         } finally {
           await c.query('ROLLBACK');
@@ -738,7 +738,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const scanInOrg = await withWorker(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+        await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
         return await c.query('SELECT * FROM crove_meetings.meetings_due(10)').then(() => 'ran').catch((e: Error) => e.message);
       } finally {
         await c.query('ROLLBACK');
@@ -760,16 +760,16 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
   it('removes nothing but orphan meeting media, and leaves an object another file row names', async () => {
     const meetingId = await createMeeting('recorder', { title: 'Orphan test' });
     await upload('recorder', meetingId, 'audio', 'a');
-    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.ogg`]))[0]!;
+    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM ludy_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.ogg`]))[0]!;
     // A live segment is never an orphan, and the discard refuses it.
     await sweep();
     expect(store.storage.has(live.storage_key)).toBe(true);
     await expect(worker.execute('meetings.media.discard', { fileId: live.id }, { actor: SYSTEM, orgId })).resolves.toEqual({ discarded: false });
     // A document is no meeting media: the discard cannot delete it.
     const doc = randomUUID();
-    await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'inv.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [orgId, doc, 'a'.repeat(64), `org/${orgId}/${'a'.repeat(64)}`, userIds.get('owner')]);
+    await rows("INSERT INTO ludy_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'inv.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [orgId, doc, 'a'.repeat(64), `org/${orgId}/${'a'.repeat(64)}`, userIds.get('owner')]);
     await expect(worker.execute('meetings.media.discard', { fileId: doc }, { actor: SYSTEM, orgId })).resolves.toEqual({ discarded: false });
-    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [doc])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_kernel.file WHERE id = $1', [doc])).toBe(1);
 
     // An orphan whose object cannot be deleted keeps its row for the next sweep.
     await rows('DELETE FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]);
@@ -777,10 +777,10 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const failed = await sweep();
     store.deleteFails = false;
     expect(failed.failed).toBeGreaterThanOrEqual(1);
-    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [live.id])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_kernel.file WHERE id = $1', [live.id])).toBe(1);
     expect((await sweep()).deleted).toBeGreaterThanOrEqual(1);
     expect(store.storage.has(live.storage_key)).toBe(false);
-    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [live.id])).toBe(0);
+    expect(await count('SELECT 1 FROM ludy_kernel.file WHERE id = $1', [live.id])).toBe(0);
   });
 
   it('removes the object and the file row of a meeting a person deletes, and writes its shred reference once; a restore then the replay leaves it unreadable', async () => {
@@ -797,7 +797,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const segments = await q('crove_meetings.audio_segment', 'meeting_id');
       const videos = await q('crove_meetings.meeting_video', 'meeting_id');
       const fileIds = [...segments, ...videos].map((r) => r.file_id as string);
-      const files = (await c.query('SELECT * FROM crove_kernel.file WHERE id = ANY($1::uuid[])', [fileIds])).rows;
+      const files = (await c.query('SELECT * FROM ludy_kernel.file WHERE id = ANY($1::uuid[])', [fileIds])).rows;
       return { meeting, readers: await q('crove_meetings.meeting_reader', 'meeting_id'), segments, videos, keys: await q('crove_meetings.media_key', 'meeting_id'), files };
     });
     const keys = snapshot.files.map((f) => f.storage_key as string);
@@ -809,7 +809,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     // The ciphertext objects and the file rows go with the sweep ("as the store allows").
     expect((await sweep()).deleted).toBe(2);
     for (const key of keys) expect(store.storage.has(key)).toBe(false);
-    expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
+    expect(await count("SELECT 1 FROM ludy_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
 
     // The reference goes to the archive store, once, with ids and a time only.
     const since = new Date(Date.now() - 3_600_000);
@@ -833,7 +833,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
           await c.query(`INSERT INTO ${table} (${cols.map((x) => `"${x}"`).join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')})`, cols.map((x) => row[x]));
         }
       };
-      await insert('crove_kernel.file', snapshot.files);
+      await insert('ludy_kernel.file', snapshot.files);
       await insert('crove_meetings.meeting', snapshot.meeting);
       await insert('crove_meetings.meeting_reader', snapshot.readers);
       await insert('crove_meetings.audio_segment', snapshot.segments);
@@ -921,7 +921,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(created.status).toBe(200);
     const purgeSlug = String(created.body.slug);
     const purgeOrgId = String(created.body.orgId);
-    userIds.set('purgeOwner', (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('purgeOwner')?.email]))[0]!.id);
+    userIds.set('purgeOwner', (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('purgeOwner')?.email]))[0]!.id);
     const shared = await createMeeting('purgeOwner', { title: 'Shared with all', visibility: 'org', keepVideo: true }, purgeSlug);
     const hidden = await createMeeting('purgeOwner', { title: 'Attendees only' }, purgeSlug);
     await upload('purgeOwner', shared, 'audio', 'a', purgeSlug);
@@ -931,7 +931,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(keysBefore.length).toBe(3);
     // An ordinary document of the same org (a row only, no bytes needed): the export must still list it.
     const docId = randomUUID();
-    await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'contract.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [purgeOrgId, docId, 'c'.repeat(64), `org/${purgeOrgId}/${'c'.repeat(64)}`, userIds.get('purgeOwner')]);
+    await rows("INSERT INTO ludy_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'contract.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [purgeOrgId, docId, 'c'.repeat(64), `org/${purgeOrgId}/${'c'.repeat(64)}`, userIds.get('purgeOwner')]);
 
     // Links (L1, #2587): one on the shared meeting and one on the attendees-only one (a deal each, which has no foreign key).
     const sharedLink = randomUUID();
@@ -955,7 +955,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(exportedFiles.filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
     // The filter is on the source alone: the ordinary document is the one file row exported.
     expect(exportedFiles.map((f) => f.id)).toEqual([docId]);
-    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId]))[0]!.n).toBe('3');
+    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId]))[0]!.n).toBe('3');
 
     // A meeting deleted before the purge leaves a shred reference that outlives the org (it is under Object Lock).
     expect((await rpc('meetings/delete', 'purgeOwner', { meetingId: hidden }, purgeSlug)).status).toBe(200);
@@ -966,14 +966,14 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [purgeOrgId]);
+      await c.query("UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [purgeOrgId]);
       await c.query('COMMIT');
       for (const [command, actorType, actorId, daysAgo, detail] of [
         ['kernel.org.offboard', 'user', userIds.get('purgeOwner'), 36, {}],
         ['kernel.org.export.record', 'system', null, 31, { format: 'crove.org-export.v2' }],
       ] as const) {
         await c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, $2, $3, $4, $5, $6, 'ok', $7, $8)`,
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, $2, $3, $4, $5, $6, 'ok', $7, $8)`,
           [purgeOrgId, new Date(Date.now() - daysAgo * 86_400_000), actorType, actorId, command, randomUUID(), '0'.repeat(64), JSON.stringify(detail)],
         );
       }
@@ -982,7 +982,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     for (const t of ['meeting', 'meeting_reader', 'meeting_link', 'audio_segment', 'meeting_video', 'media_key']) {
       expect(await count(`SELECT 1 FROM crove_meetings.${t} WHERE org_id = $1`, [purgeOrgId]), t).toBe(0);
     }
-    expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId])).toBe(0);
+    expect(await count("SELECT 1 FROM ludy_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId])).toBe(0);
     expect([...store.storage.keys()].filter((k) => k.startsWith(`org/${purgeOrgId}/`))).toEqual([]);
     // The replay over that reference skips the purged org: nothing to do, no failure, no alert; the retention and the sweep do not fail on it either.
     const alerts: string[] = [];

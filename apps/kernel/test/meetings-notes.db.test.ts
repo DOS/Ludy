@@ -94,9 +94,9 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -107,7 +107,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     setSummaryEnabled(true);
     for (const key of ['owner', 'recorder', 'attendee', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'notes', subject: key, email: `${key}@notes.test`, name: key === 'recorder' ? 'Hà' : null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Ghi chú')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.attendee, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.attendee, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -145,7 +145,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     expect(await refuses(exec('owner', 'meetings.notes.save', { meetingId, body: 'của chủ' }))).toBe('MEETING_NOT_FOUND');
     expect((await noteRows(meetingId)).map((r) => r.body)).toEqual([NOTES]);
     // An attendee's note of the same meeting is never made: they cannot write the table (the command refused above), and the audit row names the meeting and a length, not the text.
-    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.notes.save' AND outcome = 'ok'`, [orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.notes.save' AND outcome = 'ok'`, [orgId]);
     expect(JSON.stringify(audit.rows)).not.toContain('Nam gửi');
   });
 
@@ -197,7 +197,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     expect((await noteRows(clean)).map((r) => r.body)).toEqual(['ghi chú không nhắc ai']);
     expect((await find()).meetingText).toEqual([]);
     // The audit row holds counts, never the value or the text.
-    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
+    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
     expect(audit).not.toContain(email);
     expect(audit).not.toContain('nhắc');
   });
@@ -270,7 +270,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     setSummaryEnabled(false);
     expect(await refuses(runNotesEnhance(deps('{}'), orgId, asUser('recorder'), meetingId))).toBe('SUMMARY_OFF');
     expect(modelCalls).toBe(0);
-    const runs = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);
+    const runs = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);
     expect(runs.rows[0]?.n).toBe('0');
   });
 

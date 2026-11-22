@@ -142,9 +142,9 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -200,7 +200,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
 
     const notesExchangeAudit = await admin(async (c) =>
       (await c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.extension.exchanged' AND outcome = 'ok'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.extension.exchanged' AND outcome = 'ok'`,
         [orgId],
       )).rows,
     );
@@ -272,7 +272,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
     // Audit rows must record extensionToken and taint, never raw URL or clipped text.
     const auditRows = await admin(async (c) =>
       (await c.query<{ command: string; detail: Record<string, unknown> }>(
-        `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('notes.note.clip', 'notes.todo.quick_capture')`,
+        `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('notes.note.clip', 'notes.todo.quick_capture')`,
         [orgId],
       )).rows,
     );

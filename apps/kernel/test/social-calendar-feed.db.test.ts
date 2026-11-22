@@ -48,12 +48,12 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Cửa hàng ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
-    for (const [role, user] of Object.entries(roles)) await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+    for (const [role, user] of Object.entries(roles)) await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     const conn = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, conn, 'sandbox', `acct-${conn.slice(0, 8)}`, 'Kênh thử', owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, conn, 'sandbox', `acct-${conn.slice(0, 8)}`, 'Kênh thử', owner]),
     );
-    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.slug as string);
+    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.slug as string);
     return { orgId, owner, conn, slug, ...roles };
   }
 
@@ -82,9 +82,9 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -182,7 +182,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.token_sha256);
     expect(stored).toMatch(/^[0-9a-f]{64}$/);
     // The audit keeps no token.
-    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.calendar_feed.%'", [o.orgId])).rows));
+    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.calendar_feed.%'", [o.orgId])).rows));
     expect(audit).toContain('social.calendar_feed.create');
     expect(audit).not.toContain(first.token);
     expect(audit).not.toContain(second.token);
@@ -195,7 +195,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
 
     // A closed org's feed opens nothing either.
     const third = await exec<{ token: string }>(o, o.owner, 'social.calendar_feed.create');
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
     expect(await calendarFeed(rt, third.token)).toBeNull();
   });
 
@@ -232,17 +232,17 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
         )
       ).rows.map((r) => r.grantee),
     );
-    expect(grants).toEqual(['crove_app']);
+    expect(grants).toEqual(['ludy_app']);
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
     expect(columns).toEqual(['revoked_at', 'revoked_by']);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     const w = new pg.Client({ connectionString: worker.toString() });
     await w.connect();

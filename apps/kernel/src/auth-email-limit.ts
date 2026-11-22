@@ -8,7 +8,7 @@
 //   - per client address: at most AUTH_EMAIL_CLIENT_LIMIT_PER_HOUR in any rolling hour (IPv6 counts per /64,
 //     since one host usually holds a whole /64), and
 //   - per recipient: at most one every AUTH_EMAIL_ADDRESS_INTERVAL_SECONDS.
-// The count lives in PostgreSQL (crove_kernel.auth_email_reserve), so it holds across API instances and restarts.
+// The count lives in PostgreSQL (ludy_kernel.auth_email_reserve), so it holds across API instances and restarts.
 // Keys are SHA-256 hashes; neither the address nor the email is stored. A request Supabase Auth answers with 4xx or
 // 5xx sent no email, so its slot is released; one it did not answer in time keeps it (it may still have sent).
 import { createHash } from 'node:crypto';
@@ -128,7 +128,7 @@ export function createDbEmailLimiter(pool: pg.Pool, limits: EmailLimits): EmailL
   return {
     async reserve({ client, target }) {
       const { rows } = await pool.query<{ reserved_id: string | null; rule: EmailRule | null; retry_after_seconds: number | null }>(
-        'SELECT reserved_id::text, rule, retry_after_seconds FROM crove_kernel.auth_email_reserve($1, $2, $3, $4)',
+        'SELECT reserved_id::text, rule, retry_after_seconds FROM ludy_kernel.auth_email_reserve($1, $2, $3, $4)',
         [hashKey(client), target === null ? null : hashKey(target), limits.perClientPerHour, limits.addressIntervalSeconds],
       );
       const row = rows[0];
@@ -136,7 +136,7 @@ export function createDbEmailLimiter(pool: pg.Pool, limits: EmailLimits): EmailL
       return { allowed: false, rule: row?.rule ?? 'auth_email_busy', retryAfterSeconds: Math.max(1, row?.retry_after_seconds ?? 1) };
     },
     async release(reservation, client) {
-      await pool.query('SELECT crove_kernel.auth_email_release($1, $2)', [reservation, hashKey(client)]);
+      await pool.query('SELECT ludy_kernel.auth_email_release($1, $2)', [reservation, hashKey(client)]);
     },
   };
 }

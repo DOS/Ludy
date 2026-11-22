@@ -95,7 +95,7 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
   const pdfOf = (number: string) => new TextEncoder().encode(`%PDF-1.4 hoa don ${number} ${randomUUID()}`);
 
   const proposals = (number: string) =>
-    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM crove_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
+    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM ludy_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -105,16 +105,16 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -123,7 +123,7 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     }
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Công ty có hóa đơn bất thường'));
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
     });
   }, 300_000);
 
@@ -181,7 +181,7 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     return rt.execute('kernel.proposal.approve', { id, revision: detail.revision, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId });
   };
   const checksOf = (id: string) =>
-    admin(async (c) => (await c.query<{ checks: Array<{ id: string; status: string; code: string; params?: Record<string, string> }> }>(`SELECT payload -> 'checks' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.checks ?? []);
+    admin(async (c) => (await c.query<{ checks: Array<{ id: string; status: string; code: string; params?: Record<string, string> }> }>(`SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.checks ?? []);
   const anomalies = async (id: string) => (await checksOf(id)).filter((c) => c.id.startsWith('anomaly'));
 
   it('raises nothing for the first invoices of a vendor, while its history builds up', async () => {
@@ -220,7 +220,7 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
   it('reads an invoice whose bank account is longer than the proposal keeps, with no flag and no account stored', async () => {
     const id = await propose('8716', withBank(`${BANK}; ${'9'.repeat(300)}`));
     expect(await anomalies(id)).toEqual([]);
-    const stored = await admin(async (c) => (await c.query<{ account: string | null }>(`SELECT payload #>> '{seller,bankAccount}' AS account FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.account ?? null);
+    const stored = await admin(async (c) => (await c.query<{ account: string | null }>(`SELECT payload #>> '{seller,bankAccount}' AS account FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.account ?? null);
     expect(stored).toBeNull();
   });
 

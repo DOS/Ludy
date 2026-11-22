@@ -51,10 +51,10 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await comments.getByTestId('conversation-send').click();
   await expect(comments.getByTestId('conversation-status')).toHaveText('Đang chờ');
   await expect
-    .poll(() => sql<{ send_state: string }>(`SELECT m.send_state FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.send_state, { timeout: 30_000 })
+    .poll(() => sql<{ send_state: string }>(`SELECT m.send_state FROM ludy_kernel.conversation_message m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.send_state, { timeout: 30_000 })
     .toBe('sent');
   // One call row for it, made once.
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.step = 'reply'`, { slug })[0]?.n).toBe('1');
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.external_call c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.step = 'reply'`, { slug })[0]?.n).toBe('1');
 
   // Hide the customer's comment (the worker asks the sandbox), then an internal note.
   await comments.getByTestId('conversation-hide').first().click();
@@ -91,7 +91,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await panel.getByLabel('Tên liên hệ mới').fill('Chị Mai Hương');
   await panel.getByRole('button', { name: 'Tạo và gắn' }).click();
   await expect(panel.getByTestId('contact-name')).toHaveText('Chị Mai Hương');
-  expect(sql<{ name: string }>(`SELECT p.name FROM crove_kernel.conversation c JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
+  expect(sql<{ name: string }>(`SELECT p.name FROM ludy_kernel.conversation c JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
   // The intent (CV3, #2306): the stack has no model, so there is no suggestion; a person applies a label, and the list shows it and filters by it.
   await expect(page.getByTestId('intent-suggested')).toHaveCount(0);
   await page.getByTestId('intent-select').selectOption('complaint');
@@ -116,7 +116,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await retention.selectOption('12');
   // A shorter retention asks first: it deletes the older threads tonight.
   await page.getByTestId('conversation-retention-yes').click();
-  await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
+  await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM ludy_kernel.conversation_setting s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
   await page.reload();
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
   await page.goto(inboxUrl);
@@ -169,7 +169,7 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   await expect(comments.getByTestId('conversation-item')).toHaveCount(1, { timeout: 30_000 });
 
   // The org's saved reply, with the placeholder, answering the words "còn hàng".
-  exec(`INSERT INTO crove_kernel.saved_reply (org_id, title, body, keywords) SELECT t.org_id, 'Chào khách', 'Chào {tên}, shop còn hàng ạ.', ARRAY['còn hàng'] FROM crove_kernel.tenant t WHERE t.slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.saved_reply (org_id, title, body, keywords) SELECT t.org_id, 'Chào khách', 'Chào {tên}, shop còn hàng ạ.', ARRAY['còn hàng'] FROM ludy_kernel.tenant t WHERE t.slug = :'slug'`, { slug });
 
   // The Inbox: link the customer to a contact so the thread has a name, then pick the saved reply.
   await page.goto(`/o/${slug}/social/inbox?kind=comment_thread`);
@@ -191,7 +191,7 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   await page.getByTestId('conversation-send').click();
   // The screen shows the kernel's own Vietnamese message for this code.
   await expect(page.getByText('Câu trả lời còn chỗ trống {tên} chưa điền')).toBeVisible();
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.conversation_message m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
   await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
 });
 

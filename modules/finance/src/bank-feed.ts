@@ -83,7 +83,7 @@ export const bankFeedMap = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ feedAccountId: string }> => {
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -209,7 +209,7 @@ export const bankFeedAccounts = defineQuery({
   handler: async (ctx): Promise<BankFeedAccountView[]> => {
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from', 'a.cursor', 'a.last_pull_outcome', 'a.last_pull_outcome_at', 'a.last_pull_item'])
       .where('a.org_id', '=', ctx.orgId)
       .orderBy('c.display_name')
@@ -240,7 +240,7 @@ export const bankFeedConnections = defineQuery({
   access: MANAGERS,
   handler: async (ctx): Promise<BankFeedConnectionView[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'display_name', 'status', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', 'like', 'bank\\_%')
@@ -299,7 +299,7 @@ export const bankFeedConnection = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ status: string; updatedAt: string } | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -317,7 +317,7 @@ export const bankFeedRecordAccounts = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ listed: number; removed: number }> => {
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -352,7 +352,7 @@ export const bankFeedRecordOutcome = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ recorded: number }> => {
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -396,7 +396,7 @@ export const bankFeedRecordPull = defineCommand({
     // The account and entity are the mapping's, never the job's input.
     const mapped = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.bank_account', 'a.legal_entity_id', 'a.cursor', 'a.feed_from', 'c.provider', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.feedAccountId)
@@ -449,12 +449,12 @@ export const bankFeedHookSet = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  // The answer holds the key in plaintext, so it must never be stored for a replay (crove_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
+  // The answer holds the key in plaintext, so it must never be stored for a replay (ludy_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
   noIdempotency: true,
   handler: async (ctx, input): Promise<BankFeedHookCreated> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của nguồn giao dịch');
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)

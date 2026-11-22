@@ -50,11 +50,11 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   // The minute of the day it is now in a zone, and the day there.
   const localNow = async (zone: string) =>
     (await sqlAdmin<{ minute: number; day: string }>(`SELECT (date_part('hour', now() AT TIME ZONE $1) * 60 + date_part('minute', now() AT TIME ZONE $1))::int AS minute, (now() AT TIME ZONE $1)::date::text AS day`, [zone])).rows[0]!;
-  const notices = async (who: string) => (await sqlAdmin<{ dedupe_key: string; detail: Record<string, string>; subject_id: string | null; kind: string }>(`SELECT dedupe_key, detail, subject_id, kind FROM crove_kernel.notification WHERE org_id = $1 AND user_id = $2 AND kind = $3 ORDER BY created_at`, [orgId, users[who], MORNING_KIND])).rows;
-  const mails = async () => (await sqlAdmin<{ to_address: string; subject: string | null; source: string; source_id: string | null; payload: Record<string, unknown>; status: string }>(`SELECT to_address, subject, source, source_id, payload, status FROM crove_kernel.mail_message WHERE org_id = $1 AND template_key = 'meetings.morning' ORDER BY created_at`, [orgId])).rows;
+  const notices = async (who: string) => (await sqlAdmin<{ dedupe_key: string; detail: Record<string, string>; subject_id: string | null; kind: string }>(`SELECT dedupe_key, detail, subject_id, kind FROM ludy_kernel.notification WHERE org_id = $1 AND user_id = $2 AND kind = $3 ORDER BY created_at`, [orgId, users[who], MORNING_KIND])).rows;
+  const mails = async () => (await sqlAdmin<{ to_address: string; subject: string | null; source: string; source_id: string | null; payload: Record<string, unknown>; status: string }>(`SELECT to_address, subject, source, source_id, payload, status FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = 'meetings.morning' ORDER BY created_at`, [orgId])).rows;
   async function connect(who: string): Promise<string> {
     const id = crypto.randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', $4, $5, '{}', true)`, [orgId, id, users[who], `${who}@calendar.test`, who]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', $4, $5, '{}', true)`, [orgId, id, users[who], `${who}@calendar.test`, who]);
     connections[who] = id;
     return id;
   }
@@ -75,15 +75,15 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
@@ -91,8 +91,8 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd', 'racer']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Buổi Sáng')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd, users.racer]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd, users.racer]]);
   }, 300_000);
 
   afterAll(async () => {
@@ -144,7 +144,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect(sent[0]).toMatchObject({ to_address: 'lan@morning.test', source: 'meetings.morning', source_id: null, status: 'queued' });
     expect(sent[0]?.payload).toEqual({ lang: 'vi', org: 'Công ty Buổi Sáng', count: 2, path: expect.stringMatching(/^\/o\/[a-z0-9-]+\/meetings$/) });
     // No title, no name, no time: not in the notice, the mail, or the audit rows of the command.
-    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
+    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(audit)]) expect(text).not.toMatch(/Họp kín|Á Châu|hợp đồng|thứ hai/u);
     // The same day again: nothing new, by the sweep or by a dispatch of the same row.
     expect(await sweep()).toMatchObject({ found: 0, sent: 0 });
@@ -166,7 +166,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     await connect('muted');
     await eventNow('muted');
     await set('muted', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
-    await sqlAdmin(`INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)`, [orgId, users.muted, MORNING_KIND]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)`, [orgId, users.muted, MORNING_KIND]);
     // odd: a zone name the database does not know, stored by hand: the sweep skips it and goes on.
     await connect('odd');
     await eventNow('odd');
@@ -205,7 +205,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect((await rows('gone')).rowCount).toBe(0);
     expect((await rows('owner')).rowCount).toBe(1);
     // They come back (an invite accepted, here the row put back by hand): the old switch is not on.
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.gone]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.gone]);
     expect(await get('gone')).toMatchObject({ enabled: false });
   });
 
@@ -226,7 +226,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   it('counts an event once when two connections of the same member cache it, and counts a different one beside it', async () => {
     const first = await connect('twin');
     const second = crypto.randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'twin-two@calendar.test', 'twin two', '{}', true)`, [orgId, second, users.twin]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'twin-two@calendar.test', 'twin two', '{}', true)`, [orgId, second, users.twin]);
     // One meeting both calendars hold (same provider event id and start), and one only the second holds.
     await sqlAdmin(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
@@ -266,7 +266,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     try {
       await holder.query('BEGIN');
       // The removal is under way: the membership row is deleted but not committed (the trigger has dropped the setting, which was never there).
-      await holder.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer]);
+      await holder.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer]);
       let settled = false;
       const saving = refuses(set('racer', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' })).then((code) => {
         settled = true;

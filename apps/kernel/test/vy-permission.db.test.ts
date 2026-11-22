@@ -43,8 +43,8 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
-      const out = await c.query<{ held: boolean; vy: boolean }>('SELECT crove_kernel.ctx_has_permission($1) AS held, crove_kernel.ctx_vy_use() AS vy', [permission]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      const out = await c.query<{ held: boolean; vy: boolean }>('SELECT ludy_kernel.ctx_has_permission($1) AS held, ludy_kernel.ctx_vy_use() AS vy', [permission]);
       return out.rows[0] as { held: boolean; vy: boolean };
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -63,9 +63,9 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', crove_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -76,7 +76,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       users[key] = await upsertIdentity(db, { issuer: 'vy-use', subject: key, email: `${key}@vy-use.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser(users.owner), 'Vy quyền')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.admin, users.member, users.viewer]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.admin, users.member, users.viewer]));
   }, 300_000);
 
   afterAll(async () => {
@@ -118,7 +118,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       const c = new pg.Client({ connectionString: adminUrl });
       await c.connect();
       try {
-        const out = await c.query<{ set_by_owner: boolean }>(`SELECT set_by_owner FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.member]);
+        const out = await c.query<{ set_by_owner: boolean }>(`SELECT set_by_owner FROM ludy_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.member]);
         return out.rows.map((r) => r.set_by_owner);
       } finally {
         await c.end();
@@ -151,7 +151,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
   it('gives a viewer a preset that grants only vy.use, and refuses one that grants a real permission', async () => {
     // The grant and the invite both call role_assignment_check; the roles are checked by key here, whatever modules this deployment runs.
     const check = (roleKey: string, legalEntityId: string | null = null) =>
-      admin((c) => c.query('SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid)', [orgId, users.viewer, 'viewer', roleKey, legalEntityId]));
+      admin((c) => c.query('SELECT ludy_kernel.role_assignment_check($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid)', [orgId, users.viewer, 'viewer', roleKey, legalEntityId]));
     await expect(check('finance.chief_accountant')).rejects.toThrow(/ROLE_PRIVILEGED_FOR_VIEWER/);
     for (const roleKey of ['crm.sales', 'desk.agent', 'hr.manager', 'finance.accountant', 'finance.viewer']) {
       // desk.agent also grants kernel.conversation.direct.read, a real permission: refused too.
@@ -159,7 +159,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       else await expect(check(roleKey), `${roleKey} for a viewer`).resolves.toBeDefined();
     }
     // A viewer holding a department role through the table works with Vy and holds nothing else.
-    await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'crm.sales', $3)`, [orgId, users.viewer, users.owner]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'crm.sales', $3)`, [orgId, users.viewer, users.owner]));
     expect(await asked(users.viewer, 'vy.use'), 'a viewer with a department role').toEqual({ held: true, vy: true });
     expect((await asked(users.viewer, 'finance.period.unlock')).held).toBe(false);
   });
@@ -176,23 +176,23 @@ suite('vy.use (ADR-0049 decision 10)', () => {
         try {
           await c.query('BEGIN');
           await enter(c);
-          return (await c.query<{ ok: boolean }>('SELECT crove_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use'])).rows[0]?.ok;
+          return (await c.query<{ ok: boolean }>('SELECT ludy_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use'])).rows[0]?.ok;
         } finally {
           await c.query('ROLLBACK').catch(() => {});
           await c.end();
         }
       };
-      const asUserCtx = (userId: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
-      const asSystem = (c: pg.Client) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      const asUserCtx = (userId: string) => (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      const asSystem = (c: pg.Client) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       const workerUrl = (() => {
         const url = new URL(adminUrl);
-        url.username = 'crove_worker';
+        url.username = 'ludy_worker';
         url.password = 'test-worker-pw';
         return url.toString();
       })();
       for (const [about, expected] of [[users.member, false], [users.viewer, true], [users.owner, true]] as const) {
         const answers = {
-          superuser: (await admin((c) => c.query<{ ok: boolean }>('SELECT crove_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use']))).rows[0]?.ok,
+          superuser: (await admin((c) => c.query<{ ok: boolean }>('SELECT ludy_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use']))).rows[0]?.ok,
           system: await askAs(asSystem, workerUrl, about),
           owner: await askAs(asUserCtx(users.owner), appUrl, about),
           admin: await askAs(asUserCtx(users.admin), appUrl, about),
@@ -206,11 +206,11 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
         await expect(askAs(asUserCtx(who), appUrl, about), 'a member asking about someone else').rejects.toMatchObject({ code: '42501' });
       }
-      // The same after SET ROLE crove_tenant, where current_user is the role and session_user the login: the guard still applies, and the
+      // The same after SET ROLE ludy_tenant, where current_user is the role and session_user the login: the guard still applies, and the
       // controls answer as before (the person themselves, an owner about anyone).
       const switched = (who: string) => async (c: pg.Client) => {
         await asUserCtx(who)(c);
-        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query('SET LOCAL ROLE ludy_tenant');
       };
       expect(await askAs(switched(users.member), appUrl, users.member), 'a role-switched member about themselves').toBe(false);
       expect(await askAs(switched(users.owner), appUrl, users.member), 'a role-switched owner about a denied member').toBe(false);
@@ -218,6 +218,22 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       expect(await askAs(switched(users.owner), appUrl, users.viewer), 'a role-switched owner about a granted viewer').toBe(true);
       for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
         await expect(askAs(switched(who), appUrl, about), 'a role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
+      }
+      // Legacy crove_app + SET LOCAL ROLE crove_tenant stays guarded during the #3970 -> #3972 rollout window.
+      const legacyAppUrl = (() => {
+        const url = new URL(adminUrl);
+        url.username = 'crove_app';
+        url.password = 'test-app-pw';
+        return url.toString();
+      })();
+      const switchedLegacy = (who: string) => async (c: pg.Client) => {
+        await asUserCtx(who)(c);
+        await c.query('SET LOCAL ROLE crove_tenant');
+      };
+      expect(await askAs(switchedLegacy(users.member), legacyAppUrl, users.member), 'legacy role-switched member about themselves').toBe(false);
+      expect(await askAs(switchedLegacy(users.owner), legacyAppUrl, users.member), 'legacy role-switched owner about a denied member').toBe(false);
+      for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
+        await expect(askAs(switchedLegacy(who), legacyAppUrl, about), 'legacy role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
       }
       await expect(askAs(async () => {}, appUrl, users.member), 'no context').rejects.toMatchObject({ code: '42501' });
     } finally {

@@ -50,7 +50,7 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-// Errors raised by crove_kernel.invite_for_user (invite_accept, invite_peek). The invitee holds the token, so the
+// Errors raised by ludy_kernel.invite_for_user (invite_accept, invite_peek). The invitee holds the token, so the
 // outcome is theirs to know; anyone signed in with another email learns only that the invite is not for them.
 // AUTH_GRANTS_MISSING (55000, db mode without auth.users.email_confirmed_at or its grant) is mapped by the runtime
 // (503).
@@ -88,7 +88,7 @@ const INVITE_ERRORS: Record<string, DomainError> = {
   ),
 };
 
-// The JSON DETAIL of INVITE_RATE_LIMITED (crove_kernel.invite_mail_gate, #185): which limit refused. The refusal for
+// The JSON DETAIL of INVITE_RATE_LIMITED (ludy_kernel.invite_mail_gate, #185): which limit refused. The refusal for
 // a recipient says only that this address got too many invites, which the inviter chose to send; it is the same
 // whether or not the address has an account, and it tells nothing about who else invited it or when.
 const RATE_LIMIT_MESSAGES: Record<string, string> = {
@@ -156,7 +156,7 @@ interface LockedRoles {
 // so the two never deadlock.
 async function lockRoles(ctx: CommandContext, userId: string): Promise<LockedRoles> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where((eb) => eb.or([eb('role', '=', 'owner'), eb('user_id', '=', userId)]))
@@ -188,7 +188,7 @@ interface PendingInvite {
 // the pending invites other than this email's, the number left once they are replaced.
 async function pendingRefusals(ctx: CommandContext, email: string, locked: LockedRoles, lock: boolean): Promise<PendingInvite[]> {
   const query = ctx.trx
-    .selectFrom('crove_kernel.member_invite')
+    .selectFrom('ludy_kernel.member_invite')
     .select(['id', 'invited_by', 'expires_at'])
     .where('org_id', '=', ctx.orgId)
     .where('email', '=', email)
@@ -208,7 +208,7 @@ async function pendingRefusals(ctx: CommandContext, email: string, locked: Locke
     );
   }
   const pending = await ctx.trx
-    .selectFrom('crove_kernel.member_invite')
+    .selectFrom('ludy_kernel.member_invite')
     .select(sql<number>`pg_catalog.count(*)::int`.as('n'))
     .where('org_id', '=', ctx.orgId)
     .where('status', '=', 'pending')
@@ -227,8 +227,8 @@ async function pendingRefusals(ctx: CommandContext, email: string, locked: Locke
 // idempotency key (a stored response would keep it); the API offers none. A new invite for the same email replaces
 // the pending one, which is also how an inviter gets a fresh link. limits.perRecipientPerDay caps the invites one
 // address gets from all orgs together (default DEFAULT_INVITE_LIMITS). The limits that key on an address count its
-// inbox (crove_kernel.invite_cap_key: no +tag, no dots at Gmail, #270); the invite itself stays bound to the email
-// as given. The invite mail gets its crove_kernel.mail_message row here (#538): as suppressed when the org has
+// inbox (ludy_kernel.invite_cap_key: no +tag, no dots at Gmail, #270); the invite itself stays bound to the email
+// as given. The invite mail gets its ludy_kernel.mail_message row here (#538): as suppressed when the org has
 // stopped mail to the address; otherwise as sending, and the API, which holds the token, reads it back
 // (kernel.mail.direct.get), sends the mail and records the outcome. The answer stays the one #35 defined, the same
 // for every address. mail.messageIdDomain is the right-hand side of its Message-ID.
@@ -259,7 +259,7 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
           throw new DomainError('ROLE_SCOPE_NOT_FOR_ADMINS', 422, 'Chủ sở hữu và quản trị viên luôn xem được mọi pháp nhân, nên không giới hạn theo pháp nhân được');
         }
         const found = await ctx.trx
-          .selectFrom('crove_kernel.legal_entity')
+          .selectFrom('ludy_kernel.legal_entity')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', legalEntityIds)
@@ -276,7 +276,7 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
         if (legalEntityIds) {
           throw new DomainError('INVITE_ROLE_WITH_ENTITIES', 422, 'Lời mời giới hạn theo pháp nhân đã có vai trò Kế toán thuê ngoài, không kèm thêm vai trò khác được');
         }
-        const catalog = await ctx.trx.selectFrom('crove_kernel.role').select(['module', 'scope']).where('key', '=', roleKey).executeTakeFirst();
+        const catalog = await ctx.trx.selectFrom('ludy_kernel.role').select(['module', 'scope']).where('key', '=', roleKey).executeTakeFirst();
         if (!catalog) throw new DomainError('ROLE_NOT_FOUND', 422, 'Không có vai trò này');
         if (catalog.scope !== 'org') throw new DomainError('ROLE_SCOPE_REQUIRED', 422, 'Vai trò này cần chọn một pháp nhân; hãy dùng lời mời giới hạn theo pháp nhân');
         if (catalog.module !== 'kernel' && !ctx.installed(catalog.module)) {
@@ -288,8 +288,8 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
       // Members of this org are visible to the inviter anyway (kernel.org.get), so this reveals nothing new. Their
       // emails come through the definer (plan §3.6, #169), never a join on user_account.
       const { rows: member } = await sql<{ user_id: string }>`
-        SELECT p.user_id FROM crove_kernel.member_profiles(
-          ARRAY(SELECT m.user_id FROM crove_kernel.tenant_member m WHERE m.org_id = ${ctx.orgId}::uuid)) p
+        SELECT p.user_id FROM ludy_kernel.member_profiles(
+          ARRAY(SELECT m.user_id FROM ludy_kernel.tenant_member m WHERE m.org_id = ${ctx.orgId}::uuid)) p
         WHERE pg_catalog.lower(pg_catalog.btrim(p.email)) = ${email}
         LIMIT 1`.execute(ctx.trx);
       if (member.length > 0) throw new DomainError('ALREADY_MEMBER', 409, 'Người này đã là thành viên của tổ chức');
@@ -300,12 +300,12 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
       // instead of waiting for the locks (and holding up other invites of the address meanwhile, #270).
       const limitArgs = sql`${email}, ${MAX_INVITES_PER_DAY}::int, ${MAX_INVITES_PER_EMAIL_PER_DAY}::int, ${limits.perRecipientPerDay}::int`;
       await pendingRefusals(ctx, email, locked, false);
-      await inviteMailCheck(ctx, sql`SELECT crove_kernel.invite_mail_precheck(${limitArgs})`);
+      await inviteMailCheck(ctx, sql`SELECT ludy_kernel.invite_mail_precheck(${limitArgs})`);
 
       // A lock per org and one per inbox (#185), taken before the pending invite is read: invites of one org, and
       // invites of one inbox from any org, run one at a time from here on, so the counts below are exact under
       // concurrency and the replacement always sees the previous invite. A wait past 3 seconds is 429 invite_busy.
-      await inviteMailCheck(ctx, sql`SELECT crove_kernel.invite_mail_lock(${email})`);
+      await inviteMailCheck(ctx, sql`SELECT ludy_kernel.invite_mail_lock(${email})`);
 
       // The same refusals under the locks, which decide; the pending invite this one replaces is locked after the
       // membership rows.
@@ -314,7 +314,7 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
         previous.length === 0
           ? []
           : await ctx.trx
-              .updateTable('crove_kernel.member_invite')
+              .updateTable('ludy_kernel.member_invite')
               .set({ status: 'revoked', revoked_at: ctx.now, revoked_by: actorId })
               .where('org_id', '=', ctx.orgId)
               .where(
@@ -325,14 +325,14 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
               .where('status', '=', 'pending')
               .returning('id')
               .execute();
-      await inviteMailCheck(ctx, sql`SELECT crove_kernel.invite_mail_gate(${limitArgs})`);
+      await inviteMailCheck(ctx, sql`SELECT ludy_kernel.invite_mail_gate(${limitArgs})`);
 
       const token = newInviteToken();
       const expiresAt = new Date(ctx.now.getTime() + INVITE_TTL_MS);
       let invite: { id: string };
       try {
         invite = await ctx.trx
-          .insertInto('crove_kernel.member_invite')
+          .insertInto('ludy_kernel.member_invite')
           .values({
             org_id: ctx.orgId,
             email,
@@ -402,7 +402,7 @@ export const revokeInvite = defineCommand({
     const locked = await lockRoles(ctx, ctx.actor.userId);
     if (locked.role !== 'owner' && locked.role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Vai trò của bạn không được thu hồi lời mời');
     const invite = await ctx.trx
-      .selectFrom('crove_kernel.member_invite')
+      .selectFrom('ludy_kernel.member_invite')
       .select(['id', 'email', 'status', 'invited_by', 'expires_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.inviteId)
@@ -416,7 +416,7 @@ export const revokeInvite = defineCommand({
       });
     }
     await ctx.trx
-      .updateTable('crove_kernel.member_invite')
+      .updateTable('ludy_kernel.member_invite')
       .set({ status: 'revoked', revoked_at: ctx.now, revoked_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', invite.id)
@@ -448,7 +448,7 @@ export const acceptInvite = defineCommand({
   bootstrap: async (trx, actor, input, _idempotencyKey, env) =>
     withInviteErrors(async () => {
       const { rows } = await sql<{ org_id: string | null }>`
-        SELECT crove_kernel.invite_accept(${actor.userId}::uuid, ${input.token}, ${upstreamAuth(env.sessionMode)}) AS org_id`.execute(trx);
+        SELECT ludy_kernel.invite_accept(${actor.userId}::uuid, ${input.token}, ${upstreamAuth(env.sessionMode)}) AS org_id`.execute(trx);
       const orgId = rows[0]?.org_id;
       if (!orgId) throw new DomainError('INTERNAL', 500, 'Không chấp nhận được lời mời');
       return orgId;
@@ -457,7 +457,7 @@ export const acceptInvite = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới chấp nhận được lời mời');
     const userId = ctx.actor.userId;
     const invite = await ctx.trx
-      .selectFrom('crove_kernel.member_invite')
+      .selectFrom('ludy_kernel.member_invite')
       .select(['id', 'email', 'role', 'invited_by', 'accepted_at', 'legal_entity_ids', 'role_key'])
       .where('org_id', '=', ctx.orgId)
       .where('token_sha256', '=', inviteTokenHash(input.token))
@@ -465,13 +465,13 @@ export const acceptInvite = defineCommand({
       .where('accepted_by', '=', userId)
       .executeTakeFirstOrThrow();
     const membership = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select(['role', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
       .executeTakeFirstOrThrow();
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['org_id', 'slug', 'name'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
@@ -480,12 +480,12 @@ export const acceptInvite = defineCommand({
     // base role alone.
     let roleApplied = false;
     if (invite.role_key) {
-      const catalog = await ctx.trx.selectFrom('crove_kernel.role').select('module').where('key', '=', invite.role_key).executeTakeFirst();
+      const catalog = await ctx.trx.selectFrom('ludy_kernel.role').select('module').where('key', '=', invite.role_key).executeTakeFirst();
       if (!catalog || (catalog.module !== 'kernel' && !ctx.installed(catalog.module))) {
         throw new DomainError('INVITE_ROLE_STALE', 409, 'Lời mời này không còn dùng được vì vai trò kèm theo đã thay đổi; hãy nhờ chủ sở hữu mời lại');
       }
       const granted = await ctx.trx
-        .selectFrom('crove_kernel.role_assignment')
+        .selectFrom('ludy_kernel.role_assignment')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', userId)
@@ -551,8 +551,8 @@ export async function previewInvite(db: Db, userId: string, token: string, optio
       invited_by_email: string;
       invited_by_name: string | null;
       expires_at: Date;
-    }>`SELECT p.org_name, p.role, crove_kernel.invite_role_key(${userId}::uuid, ${token}, ${options.upstream}) AS role_key, p.invited_by_email, p.invited_by_name, p.expires_at
-      FROM crove_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream}) p`.execute(db);
+    }>`SELECT p.org_name, p.role, ludy_kernel.invite_role_key(${userId}::uuid, ${token}, ${options.upstream}) AS role_key, p.invited_by_email, p.invited_by_name, p.expires_at
+      FROM ludy_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream}) p`.execute(db);
     const row = rows[0];
     if (!row) throw new DomainError('INVITE_NOT_FOUND', 404, 'Không tìm thấy lời mời, hãy kiểm tra lại liên kết');
     return {
@@ -572,7 +572,7 @@ export const invitesList = defineQuery({
   access: ADMINS,
   handler: async (ctx) => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.member_invite')
+      .selectFrom('ludy_kernel.member_invite')
       .select(['id', 'email', 'role', 'status', 'expires_at', 'created_at', 'invited_by', 'legal_entity_ids', 'role_key'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'pending')
@@ -585,7 +585,7 @@ export const invitesList = defineQuery({
     const mails = new Map<string, DirectMail['status']>();
     if (rows.length > 0) {
       const sent = await ctx.trx
-        .selectFrom('crove_kernel.mail_message')
+        .selectFrom('ludy_kernel.mail_message')
         .select(['source_id', 'status'])
         .distinctOn('source_id')
         .where('org_id', '=', ctx.orgId)

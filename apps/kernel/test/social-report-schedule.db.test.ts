@@ -54,7 +54,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Agency ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
     return { orgId, owner, member };
   }
   const exec = <O>(o: { orgId: string }, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
@@ -62,7 +62,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
 
   async function connection(orgId: string, owner: string) {
     const id = randomUUID();
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Trang', owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Trang', owner]));
     return id;
   }
   async function published(o: { orgId: string; owner: string }, conn: string, at: string, metrics: Record<string, number>) {
@@ -91,15 +91,15 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -173,7 +173,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     for (let i = 0; i < 5; i++) {
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status)
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status)
            VALUES ($1, 'transactional', 'social.report_schedule.run', 'social.report', $2, $3, $4, 'queued')`,
           [other.orgId, i % 2 ? 're.port_user+bao.cao@gmail.com' : 'report_user@gmail.com', 'a'.repeat(63) + String(i), `<cap-${i}-${randomUUID()}@test>`],
         ),
@@ -182,7 +182,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const { scheduleId } = await exec<{ scheduleId: string }>(o, o.owner, 'social.report_schedule.save', { ...weekly, recipients: ['re.port_user@gmail.com', 'cap-other@example.vn'] });
     await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
-    const mails = await admin(async (c) => (await c.query<{ to_address: string; status: string; error_code: string | null; payload: { orgName?: string } }>("SELECT to_address, status, error_code, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY to_address", [o.orgId])).rows);
+    const mails = await admin(async (c) => (await c.query<{ to_address: string; status: string; error_code: string | null; payload: { orgName?: string } }>("SELECT to_address, status, error_code, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY to_address", [o.orgId])).rows);
     expect(mails.map((m) => [m.to_address, m.status, m.error_code])).toEqual([
       ['cap-other@example.vn', 'queued', null],
       ['re.port_user@gmail.com', 'suppressed', 'recipient_daily_cap'],
@@ -194,7 +194,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const send = (address: string, status: string, age: string) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status, created_at)
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, template_key, to_address, to_hash, message_id_header, status, created_at)
            VALUES ($1, 'transactional', 'social.report_schedule.run', 'social.report', $2, $3, $4, $5, now() - $6::interval)`,
           [other.orgId, address, 'b'.repeat(63) + String(Math.floor(Math.random() * 10)), `<edge-${randomUUID()}@test>`, status, age],
         ),
@@ -205,11 +205,11 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const edge = await exec<{ scheduleId: string }>(third, third.owner, 'social.report_schedule.save', { ...weekly, recipients: ['edge@example.vn'] });
     await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [edge.scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
-    const fifth = await admin(async (c) => (await c.query<{ status: string }>("SELECT status FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [third.orgId])).rows);
+    const fifth = await admin(async (c) => (await c.query<{ status: string }>("SELECT status FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [third.orgId])).rows);
     expect(fifth.map((m) => m.status)).toEqual(['queued']);
     // Only the worker's system context may ask the gate.
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: app.toString() });
     await c.connect();
@@ -262,7 +262,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const page = (await reportView(rt, { token: tokens[0] })) as ReportPage;
     expect(page).toMatchObject({ title: 'Báo cáo tuần', posts: 1, totals: { reach: 1200 } });
     // The token is in the mail only: nowhere in the queue's rows.
-    const stored = await admin(async (c) => (await c.query<{ row: string }>("SELECT row_to_json(m)::text AS row FROM crove_kernel.mail_message m WHERE source = 'social.report_schedule.run'")).rows.map((r) => r.row).join(' '));
+    const stored = await admin(async (c) => (await c.query<{ row: string }>("SELECT row_to_json(m)::text AS row FROM ludy_kernel.mail_message m WHERE source = 'social.report_schedule.run'")).rows.map((r) => r.row).join(' '));
     expect(stored).not.toContain(tokens[0]);
     // The links a schedule makes are not the org's manual links.
     const linkOf = (token: string | undefined) => admin(async (c) => (await c.query<{ revoked_at: Date | null }>('SELECT revoked_at FROM crove_social.report_link WHERE token_sha256 = encode(sha256(convert_to($1, \'UTF8\')), \'hex\')', [token])).rows[0]);
@@ -312,7 +312,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = '2026-10-19T01:00:00Z' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
     // The mail's data: the label's post alone, no totals (not chosen), the note; no goals under a label.
-    const payload = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [o.orgId])).rows[0]?.payload);
+    const payload = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [o.orgId])).rows[0]?.payload);
     expect(payload).toMatchObject({ posts: 1, note: 'Chào anh chị <b>' });
     for (const key of ['reach', 'impressions', 'engagement', 'goals']) expect(payload).not.toHaveProperty(key);
 
@@ -362,7 +362,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const privileges = await admin(async (c) =>
       (
         await c.query<{ col: string; ok: boolean }>(
-          `SELECT col, pg_catalog.has_column_privilege('crove_tenant', 'crove_social.report_schedule', col, 'UPDATE') AND pg_catalog.has_column_privilege('crove_tenant', 'crove_social.report_schedule', col, 'INSERT') AS ok
+          `SELECT col, pg_catalog.has_column_privilege('ludy_tenant', 'crove_social.report_schedule', col, 'UPDATE') AND pg_catalog.has_column_privilege('ludy_tenant', 'crove_social.report_schedule', col, 'INSERT') AS ok
              FROM unnest(ARRAY['sections', 'top_count', 'note', 'label_id', 'include_audience']) col ORDER BY 1`,
         )
       ).rows,
@@ -394,6 +394,6 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
           (r) => r.grantee,
         ),
     );
-    expect(grants).toEqual(['crove_worker']);
+    expect(grants).toEqual(['ludy_worker']);
   });
 });

@@ -53,7 +53,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const { orgId } = await createOrg(rt, asUser(owner.id), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, p] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, p.id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, p.id, role]));
     }
     return { orgId, owner: owner.id, admin: roles.admin.id, member: roles.member.id, viewer: roles.viewer.id, memberEmail: roles.member.email };
   }
@@ -61,7 +61,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -110,10 +110,10 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -230,7 +230,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
   it('audits every export with its counts only', async () => {
     const audits = await admin(
       async (c) =>
-        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export' AND outcome = 'ok' ORDER BY occurred_at, id", [a.orgId]))
+        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export' AND outcome = 'ok' ORDER BY occurred_at, id", [a.orgId]))
           .rows,
     );
     expect(audits.length).toBeGreaterThanOrEqual(8);
@@ -287,7 +287,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     // The first 500 by time: the last one left out is the 501st.
     expect(file.csv).toContain('Bài 500,');
     expect(file.csv).not.toContain('Bài 501,');
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export'", [big.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export'", [big.orgId])).rows);
     expect(audit.map((x) => x.detail)).toEqual([expect.objectContaining({ rows: 500, truncated: true })]);
   }, 180_000);
 });

@@ -46,10 +46,10 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const other = await person('other');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
     );
     const party = (name: string) =>
-      admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
+      admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const stages = () => exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
@@ -69,9 +69,9 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -134,7 +134,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     await expect(o.exec(o.owner, 'crm.deal.update', edit)).rejects.toMatchObject({ code: 'STALE_VERSION', status: 409 });
     await expect(o.exec(o.viewer, 'crm.deal.update', { ...edit, version: 2 })).rejects.toMatchObject({ status: 403 });
 
-    const { rows } = await admin((c) => c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.deal.update' AND outcome = 'ok' AND target_id = $2", [o.orgId, deal.id]));
+    const { rows } = await admin((c) => c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.deal.update' AND outcome = 'ok' AND target_id = $2", [o.orgId, deal.id]));
     expect(rows).toHaveLength(1);
     const text = JSON.stringify(rows[0].detail);
     expect(text).toContain('title');
@@ -250,9 +250,9 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     await expect(o.query(o.owner, 'crm.deal.get', { dealId: theirs.id })).rejects.toMatchObject({ code: 'DEAL_NOT_FOUND', status: 404 });
     expect((await o.query<Deal[]>(o.owner, 'crm.party.deals', { partyId: party }))).toEqual([]);
 
-    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 ORDER BY occurred_at, id", [o.orgId, party]));
+    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 ORDER BY occurred_at, id", [o.orgId, party]));
     expect(timeline.rows.map((r) => r.kind)).toEqual(['deal.created', 'deal.created', 'deal.deleted', 'deal.deleted']);
-    const text = JSON.stringify(timeline.rows) + JSON.stringify((await admin((c) => c.query('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE $2', [o.orgId, 'crm.deal.%']))).rows);
+    const text = JSON.stringify(timeline.rows) + JSON.stringify((await admin((c) => c.query('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE $2', [o.orgId, 'crm.deal.%']))).rows);
     expect(text).not.toContain('Bí mật');
     expect(text).not.toContain('777000');
   });
@@ -281,7 +281,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const abc = await o.party('Công ty ABC');
     await o.party('Cửa hàng 100%_vàng');
     await p.party('Công ty ABC của org khác');
-    await admin((c) => c.query("UPDATE crove_kernel.party SET tax_code = '0123456780' WHERE org_id = $1 AND id = $2", [o.orgId, abc]));
+    await admin((c) => c.query("UPDATE ludy_kernel.party SET tax_code = '0123456780' WHERE org_id = $1 AND id = $2", [o.orgId, abc]));
     const find = (q: string) => o.query<{ id: string; name: string; taxCode: string | null }[]>(o.viewer, 'crm.party.search', { q });
     expect((await find('abc')).map((r) => r.id)).toEqual([abc]);
     expect((await find('0123456')).map((r) => r.name)).toEqual(['Công ty ABC']);
@@ -335,19 +335,19 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const final = await o.party('Công ty ABC Việt Nam');
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
-      await c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, keep, final]);
+      await c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, keep, final]);
     });
     expect((await o.query<Deal>(o.viewer, 'crm.deal.get', { dealId: deal.id })).partyDuplicateOf).toEqual({ id: final, name: 'Công ty ABC Việt Nam' });
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
-      await c.query('UPDATE crove_kernel.party SET duplicate_of = NULL WHERE org_id = $1 AND id = $2', [o.orgId, keep]);
+      await c.query('UPDATE ludy_kernel.party SET duplicate_of = NULL WHERE org_id = $1 AND id = $2', [o.orgId, keep]);
     });
 
     // The person's click is the existing update: the deal moves to the kept party, the hint goes, and the audit row holds ids only.
     await expect(o.exec(o.viewer, 'crm.deal.update', { dealId: deal.id, version: deal.version, partyId: keep, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId })).rejects.toMatchObject({ status: 403 });
     const moved = await o.exec<Deal>(o.member, 'crm.deal.update', { dealId: deal.id, version: deal.version, partyId: keep, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId });
     expect(moved).toMatchObject({ partyId: keep, partyName: 'Công ty ABC', partyDuplicateOf: null });
-    const audit = await admin((c) => c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.deal.update' AND outcome = 'ok' AND target_id = $2", [o.orgId, deal.id]));
+    const audit = await admin((c) => c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.deal.update' AND outcome = 'ok' AND target_id = $2", [o.orgId, deal.id]));
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0].detail).toMatchObject({ dealId: deal.id, partyId: keep });
     expect(JSON.stringify(audit.rows[0].detail)).not.toMatch(/Gói kế toán|Công ty/);
@@ -372,10 +372,10 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(o.other, party);
     expect(deal.ownerUserId).toBe(o.other);
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
     expect(await o.query<Deal>(o.owner, 'crm.deal.get', { dealId: deal.id })).toMatchObject({ ownerUserId: null });
     // A party that has a deal cannot be deleted from under it.
-    await expect(admin((c) => c.query('DELETE FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, party]))).rejects.toMatchObject({ code: '23503' });
+    await expect(admin((c) => c.query('DELETE FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, party]))).rejects.toMatchObject({ code: '23503' });
   });
 
   it('refuses a caller that is not a person', async () => {

@@ -169,7 +169,7 @@ suite('late purchase invoice in an open month (#478)', () => {
       async (c) =>
         (
           await c.query<{ outcome: string; detail: Record<string, unknown> }>(
-            `SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
+            `SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
             [org.orgId, command],
           )
         ).rows,
@@ -187,17 +187,17 @@ suite('late purchase invoice in an open month (#478)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -299,7 +299,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     expect(approvals).toEqual([expect.objectContaining({ detail: expect.objectContaining({ posting_date: day(OPEN, 1) }) })]);
     const records = (await auditsOf('finance.purchase.record')).filter((a) => a.outcome === 'ok' && a.detail.posting_date !== undefined);
     expect(records).toEqual([expect.objectContaining({ detail: expect.objectContaining({ invoice_date: day(LOCKED, 20), posting_date: day(OPEN, 1) }) })]);
-    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, documentId])).rows);
+    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, documentId])).rows);
     expect(activity).toEqual([{ summary: expect.stringContaining(`vào ngày ${dmy(day(OPEN, 1))} (tháng của hóa đơn đã khóa sổ)`) }]);
 
     // The ledger counts it in the open month, not in the locked one.
@@ -570,7 +570,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     const records = (await auditsOf('finance.purchase.record')).filter((a) => a.outcome === 'ok' && a.detail.late_reason === 'opening');
     expect(records).toEqual([expect.objectContaining({ detail: expect.objectContaining({ invoice_date: day(OPEN, 5), posting_date: day(OPEN, 15) }) })]);
     const activity = await admin(
-      async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, approved.body.documentId])).rows,
+      async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, approved.body.documentId])).rows,
     );
     expect(activity).toEqual([{ summary: expect.stringContaining(`vào ngày ${dmy(day(OPEN, 15))} (ngày hóa đơn không sau ngày số dư đầu kỳ)`) }]);
 

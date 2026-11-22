@@ -59,7 +59,7 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
       app.execute<ImportPreview>('crm.import.stage', { filename: 'lien-he.csv', rows: [{ kind: null, name, taxCode: null, email: null, phone: null, address: null }] }, { actor: asUser(as), orgId });
     const member = async () => {
       const user = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'sweep', subject: `member-${randomUUID()}`, email: `member-${randomUUID().slice(0, 8)}@sweep.test`, name: null });
-      await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, user]));
+      await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, user]));
       return user;
     };
     const rows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM crove_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
@@ -77,10 +77,10 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registered = (db: Db) => new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] });
-    app = registered(createDb(login('crove_app', 'test-app-pw')));
-    workerDb = createDb(login('crove_worker', 'test-worker-pw'));
+    app = registered(createDb(login('ludy_app', 'test-app-pw')));
+    workerDb = createDb(login('ludy_worker', 'test-worker-pw'));
     worker = registered(workerDb);
   }, 300_000);
 
@@ -108,23 +108,23 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
 
   it('refuses every other login, and the worker from inside an org', async () => {
     const o = await org();
-    const asApp = login('crove_app', 'test-app-pw');
+    const asApp = login('ludy_app', 'test-app-pw');
     await expect(asApp.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501' });
     // No tenant or app role holds EXECUTE on it, and the worker login does.
     const grants = await admin((c) =>
-      c.query<{ role: string; ok: boolean }>("SELECT r AS role, has_function_privilege(r, 'crove_crm.import_expired(timestamptz, integer)', 'EXECUTE') AS ok FROM unnest(ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant']) AS r"),
+      c.query<{ role: string; ok: boolean }>("SELECT r AS role, has_function_privilege(r, 'crove_crm.import_expired(timestamptz, integer)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant']) AS r"),
     );
-    expect(new Map(grants.rows.map((g) => [g.role, g.ok]))).toEqual(new Map([['crove_tenant', false], ['crove_app', false], ['crove_worker', true], ['crove_definer_tenant', false]]));
+    expect(new Map(grants.rows.map((g) => [g.role, g.ok]))).toEqual(new Map([['ludy_tenant', false], ['ludy_app', false], ['ludy_worker', true], ['ludy_definer_tenant', false]]));
     // Nor can the command be run by a person: refused by its access rule, not by some other failure.
     await expect(app.execute('crm.import.expire', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
   });
 
   it('refuses the worker login from inside an org context', async () => {
     const o = await org();
-    const client = await login('crove_worker', 'test-worker-pw').connect();
+    const client = await login('ludy_worker', 'test-worker-pw').connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       await expect(client.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501', message: 'CRM_WORKER_ONLY' });
     } finally {
       await client.query('ROLLBACK');
@@ -181,7 +181,7 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
     // A second pass finds nothing.
     expect(await worker.execute('crm.import.expire', {}, { actor: SYSTEM, orgId: a.orgId })).toEqual({ batches: 0, rows: 0 });
     // The audit row holds counts only.
-    const audit = await admin((c) => c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.expire' AND outcome = 'ok' ORDER BY occurred_at", [a.orgId]));
+    const audit = await admin((c) => c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.expire' AND outcome = 'ok' ORDER BY occurred_at", [a.orgId]));
     expect(JSON.stringify(audit.rows)).not.toContain('Cũ');
   });
 

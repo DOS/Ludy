@@ -14,7 +14,7 @@ import { kernelManifest } from './manifest.ts';
 import { seesEveryEntity } from './file-status.ts';
 import { normalizeAddress } from './org-address.ts';
 
-const PARTY = kernelManifest.tables.crove_kernel.party;
+const PARTY = kernelManifest.tables.ludy_kernel.party;
 
 export const PARTY_NAME_MAX_LENGTH = 300;
 const EMAIL_MAX_LENGTH = 254;
@@ -107,10 +107,10 @@ export const PARTY_KIND_HOLDERS = [
   ['crove_crm.sales_order', 'party_id'],
   // A marketplace platform's party (#2516): the entries that name it as the counterparty of 131 must keep reading an organization.
   ['crove_finance.marketplace_party', 'party_id'],
-  ['crove_kernel.conversation_identity', 'party_id'],
-  ['crove_kernel.conversation', 'party_id'],
-  ['crove_kernel.party', 'company_id'],
-  ['crove_kernel.party', 'duplicate_of'],
+  ['ludy_kernel.conversation_identity', 'party_id'],
+  ['ludy_kernel.conversation', 'party_id'],
+  ['ludy_kernel.party', 'company_id'],
+  ['ludy_kernel.party', 'duplicate_of'],
 ] as const;
 
 async function partyPointedAt(ctx: CommandContext, partyId: string): Promise<boolean> {
@@ -140,7 +140,7 @@ export const updateParty = defineCommand({
 
     // Locked: two edits of one party wait for each other, and the second sees the first one's version.
     const before = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'kind', 'name', 'tax_code', 'address', 'email', 'phone', 'version', 'company_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.partyId)
@@ -155,7 +155,7 @@ export const updateParty = defineCommand({
     }
     if (before.tax_code === null && taxCode !== null) {
       const other = await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', '=', taxCode)
@@ -181,7 +181,7 @@ export const updateParty = defineCommand({
     const changed = (Object.keys(next) as Array<keyof typeof next>).filter((key) => before[key] !== next[key]);
     if (changed.length === 0) return { partyId: before.id, version: before.version };
     const updated = await ctx.trx
-      .updateTable('crove_kernel.party')
+      .updateTable('ludy_kernel.party')
       .set({ ...next, source_trust: 'user', version: before.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', before.id)
@@ -229,14 +229,14 @@ export const createParty = defineCommand({
 export async function createPartyAs(ctx: CommandContext, input: z.infer<typeof zPartyCreate>, trust: 'user' | 'external'): Promise<{ partyId: string; version: number }> {
   const { name, address, email, phone, taxCode } = normalizedFields(input);
   if (taxCode) {
-    const other = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
+    const other = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
     if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về ${other.name}`, { partyId: other.id, name: other.name });
   }
   // The id is given here and the row inserted without RETURNING: once party carries its legal-entity policy (#1538) a
   // RETURNING check could not see the link the party_link_new trigger adds in the same statement (#1280).
   const created = { id: randomUUID(), version: 1 };
   await ctx.trx
-    .insertInto('crove_kernel.party')
+    .insertInto('ludy_kernel.party')
     .values({ id: created.id, org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: trust, created_at: ctx.now, updated_at: ctx.now })
     .execute()
     .catch((error: unknown) => {
@@ -281,7 +281,7 @@ export const markDuplicate = defineCommand({
     if (partyId === keepId) throw new DomainError('SAME_PARTY', 422, 'Hãy chọn hai đối tác khác nhau');
     // Both rows locked, in id order, so two marks of the same pair wait for each other instead of deadlocking.
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'kind', 'name', 'duplicate_of', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', [partyId, keepId])
@@ -299,7 +299,7 @@ export const markDuplicate = defineCommand({
       throw new DomainError('PARTY_IS_DUPLICATE', 422, `${keep.name} đã được gộp vào đối tác khác; hãy gộp vào đối tác được giữ lại`, { keepId: keep.duplicate_of });
     }
     const merged = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('duplicate_of', '=', partyId)
@@ -310,7 +310,7 @@ export const markDuplicate = defineCommand({
     // leave "the company" a person, or the person their own company.
     if (party.kind === 'organization' && keep.kind === 'person') {
       const works = await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('company_id', '=', partyId)
@@ -319,7 +319,7 @@ export const markDuplicate = defineCommand({
       if (works) throw new DomainError('PARTY_MERGE_KIND', 422, `${party.name} có người liên hệ làm việc; chỉ gộp được vào một công ty khác, không gộp vào một người`);
     }
     await ctx.trx
-      .updateTable('crove_kernel.party')
+      .updateTable('ludy_kernel.party')
       .set({ duplicate_of: keepId, version: party.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)
@@ -338,7 +338,7 @@ export const unmarkDuplicate = defineCommand({
   access: MANAGERS,
   handler: async (ctx, { partyId }) => {
     const party = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'name', 'duplicate_of', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)
@@ -347,13 +347,13 @@ export const unmarkDuplicate = defineCommand({
     if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác');
     if (party.duplicate_of === null) return { partyId };
     const keep = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select('name')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', party.duplicate_of)
       .executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_kernel.party')
+      .updateTable('ludy_kernel.party')
       .set({ duplicate_of: null, version: party.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)
@@ -380,7 +380,7 @@ export const setPartyCompany = defineCommand({
     // The person and the company, locked in id order, so two links of the same pair wait for each other instead of deadlocking. A company of another org is not
     // visible to this one (row-level security): it reads as not found.
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'kind', 'duplicate_of', 'company_id', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', companyId === null ? [partyId] : [partyId, companyId])
@@ -407,7 +407,7 @@ export const setPartyCompany = defineCommand({
     }
     if (person.company_id === companyId) return { partyId, version: person.version };
     const updated = await ctx.trx
-      .updateTable('crove_kernel.party')
+      .updateTable('ludy_kernel.party')
       .set({ company_id: companyId, version: person.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)
@@ -418,7 +418,7 @@ export const setPartyCompany = defineCommand({
     if (companyId !== null) await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
     if (person.company_id !== null) {
       // The company the person worked at may have been merged since: the departure is on the company kept, where the counts and the lists put the person.
-      const left = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'duplicate_of']).where('org_id', '=', ctx.orgId).where('id', '=', person.company_id).executeTakeFirst();
+      const left = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'duplicate_of']).where('org_id', '=', ctx.orgId).where('id', '=', person.company_id).executeTakeFirst();
       await ctx.activity('kernel.party', left?.duplicate_of ?? person.company_id, 'party.person_unlinked', 'Một người liên hệ không còn làm việc tại đây');
     }
     return { partyId, version: updated.version };
@@ -542,9 +542,9 @@ export const duplicateHintsQuery = defineQuery({
   access: ['owner', 'admin', 'member'],
   handler: async (ctx) => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'name', 'tax_code', 'phone', 'created_at'])
-      .select(sql<string>`crove_kernel.search_fold(name)`.as('folded'))
+      .select(sql<string>`ludy_kernel.search_fold(name)`.as('folded'))
       .where('org_id', '=', ctx.orgId)
       .where('duplicate_of', 'is', null)
       .orderBy('updated_at', 'desc')
@@ -556,16 +556,16 @@ export const duplicateHintsQuery = defineQuery({
   },
 });
 
-// Links of a party to legal entities (#1280 part 3b, crove_kernel.record_le): a member limited to some entities sees a
+// Links of a party to legal entities (#1280 part 3b, ludy_kernel.record_le): a member limited to some entities sees a
 // party only when it is linked to one of them. Owners and admins link and unlink (they see every party and entity); the
 // database lets only a writer with every entity in scope write links.
 const zPartyEntity = z.strictObject({ partyId: zId, legalEntityId: zId });
 
 async function partyAndEntity(ctx: CommandContext, input: z.infer<typeof zPartyEntity>) {
-  const party = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
+  const party = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác');
   const entity = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'name'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.legalEntityId)
@@ -584,7 +584,7 @@ export const linkPartyEntity = defineCommand({
   handler: async (ctx, input) => {
     const { party, entity } = await partyAndEntity(ctx, input);
     const added = await ctx.trx
-      .insertInto('crove_kernel.record_le')
+      .insertInto('ludy_kernel.record_le')
       .values({ org_id: ctx.orgId, record_type: 'kernel.party', record_id: party.id, legal_entity_id: entity.id, created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
       .onConflict((oc) => oc.constraint('record_le_once').doNothing())
       .returning('id')
@@ -606,7 +606,7 @@ export const unlinkPartyEntity = defineCommand({
   handler: async (ctx, input) => {
     const { party, entity } = await partyAndEntity(ctx, input);
     const removed = await ctx.trx
-      .deleteFrom('crove_kernel.record_le')
+      .deleteFrom('ludy_kernel.record_le')
       .where('org_id', '=', ctx.orgId)
       .where('record_type', '=', 'kernel.party')
       .where('record_id', '=', party.id)
@@ -634,7 +634,7 @@ export const linkPartyForTaxCode = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const taxCode = normalizeTaxCode(input.taxCode);
     if (!taxCode) throw new DomainError('INVALID_TAX_CODE', 422, 'Mã số thuế không hợp lệ');
-    const found = await sql<{ party_id: string; linked: string[] }>`SELECT party_id, linked FROM crove_kernel.party_link_for_tax_code(${taxCode})`
+    const found = await sql<{ party_id: string; linked: string[] }>`SELECT party_id, linked FROM ludy_kernel.party_link_for_tax_code(${taxCode})`
       .execute(ctx.trx)
       .catch((error: unknown) => {
         if (/PARTY_LINK_REQUIRED/.test((error as { message?: string } | null)?.message ?? '')) {

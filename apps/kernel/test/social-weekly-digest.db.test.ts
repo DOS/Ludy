@@ -59,7 +59,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   let workerDb: Db;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -94,12 +94,12 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     }
     return o;
   }
-  const addMember = (o: { orgId: string }, userId: string, role: string) => admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, userId, role]));
+  const addMember = (o: { orgId: string }, userId: string, role: string) => admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, userId, role]));
 
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -158,10 +158,10 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     return p;
   }
 
-  const emailOf = async (userId: string) => (await one<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [userId]))[0]?.email as string;
+  const emailOf = async (userId: string) => (await one<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [userId]))[0]?.email as string;
   const digests = (o: Org) =>
     one<{ to_address: string; status: string; subject: string; source_id: string; payload: DigestPayload }>(
-      "SELECT to_address, status, subject, source_id::text, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.digest.week' ORDER BY to_address",
+      "SELECT to_address, status, subject, source_id::text, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.digest.week' ORDER BY to_address",
       [o.orgId],
     );
   const digestOf = async (o: Org, userId: string) => {
@@ -180,16 +180,16 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 4 });
     workerDb = createDb(workerPool);
@@ -214,7 +214,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     for (const u of [muted, mailOff, suppressed]) await addMember(o, u, 'member');
     await exec(o, muted, 'social.notification.mute', { kind: 'weekly_digest', muted: true });
     await exec(o, mailOff, 'social.notification.mail', { enabled: false });
-    await admin(async (c) => c.query("INSERT INTO crove_kernel.mail_suppression (org_id, to_hash, scope, reason) SELECT $1, crove_kernel.mail_address_hash($2), 'all', 'manual'", [o.orgId, await emailOf(suppressed)]));
+    await admin(async (c) => c.query("INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason) SELECT $1, ludy_kernel.mail_address_hash($2), 'all', 'manual'", [o.orgId, await emailOf(suppressed)]));
     const conn = await connection(o, 'Trang chính');
     const week = await weekIn(ZONE);
     await published(o, conn, 'Bài tuần trước', hours(week.last_start, 30), 12);
@@ -256,7 +256,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     const week = await weekIn(ZONE);
     await published(o, conn, 'Bài tuần trước', hours(week.last_start, 30), 5);
     await planned(o, conn, 'Bài tuần này', hours(week.this_start, 24 * 6 + 10));
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.member]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.member]));
     // The admin's mail fails to be written every time, as a constraint or trigger would refuse it.
     const refused = await emailOf(o.admin);
     await admin(async (c) => {
@@ -265,12 +265,12 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
         `CREATE OR REPLACE FUNCTION test_1115.refuse() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN IF NEW.to_address = '${refused}' THEN RAISE EXCEPTION 'refused for the test'; END IF; RETURN NEW; END $$`,
       );
       await c.query('GRANT USAGE ON SCHEMA test_1115 TO PUBLIC');
-      await c.query('CREATE TRIGGER test_1115_refuse BEFORE INSERT ON crove_kernel.mail_message FOR EACH ROW EXECUTE FUNCTION test_1115.refuse()');
+      await c.query('CREATE TRIGGER test_1115_refuse BEFORE INSERT ON ludy_kernel.mail_message FOR EACH ROW EXECUTE FUNCTION test_1115.refuse()');
     });
     try {
       await sweep();
     } finally {
-      await admin((c) => c.query('DROP TRIGGER IF EXISTS test_1115_refuse ON crove_kernel.mail_message'));
+      await admin((c) => c.query('DROP TRIGGER IF EXISTS test_1115_refuse ON ludy_kernel.mail_message'));
     }
     expect(await markers(o)).toHaveLength(1);
     expect((await digests(o)).map((m) => m.to_address)).toEqual([await emailOf(o.owner)]);
@@ -450,10 +450,10 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   it('keeps the scan for the worker login, the command for the system, and pages with a clamped limit', async () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string; ok: boolean }>(
-        "SELECT r AS role, has_function_privilege(r, 'crove_social.digest_due(uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['crove_worker', 'crove_app', 'crove_tenant', 'crove_definer_tenant']) r",
+        "SELECT r AS role, has_function_privilege(r, 'crove_social.digest_due(uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
       ),
     );
-    expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ crove_worker: true, crove_app: false, crove_tenant: false, crove_definer_tenant: false });
+    expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ ludy_worker: true, ludy_app: false, ludy_tenant: false, ludy_definer_tenant: false });
     const [acl] = await one<{ acl: string }>("SELECT proacl::text AS acl FROM pg_proc WHERE oid = 'crove_social.digest_due(uuid, int)'::regprocedure");
     // No PUBLIC entry (an ACL item with an empty grantee).
     expect(acl?.acl).not.toMatch(/[{,]=/);

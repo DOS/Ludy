@@ -74,21 +74,21 @@ export const sortableFields = (scope: keyof typeof SAVED_VIEW_SCOPES): readonly 
 // LIKE wildcards in a search are matched as themselves.
 const likeTerm = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-// Contains, ignoring case, Vietnamese marks, đ and punctuation (crove_kernel.search_fold, #673): "nguyen" finds "Nguyễn".
+// Contains, ignoring case, Vietnamese marks, đ and punctuation (ludy_kernel.search_fold, #673): "nguyen" finds "Nguyễn".
 // A term with nothing left once folded (emoji, another script) matches the raw texts as typed, case aside. A folded term
 // holds only a-z, 0-9 and single spaces, so it has no LIKE wildcard. Any of `texts` may match.
 export function textContains(texts: ReadonlyArray<Expression<unknown>>): FieldCondition {
   return (_op, value) => {
     const search = String(value);
     const folded = sql.join(
-      texts.map((t) => sql`crove_kernel.search_fold(${t}) LIKE '%' || crove_kernel.search_fold(${search}) || '%'`),
+      texts.map((t) => sql`ludy_kernel.search_fold(${t}) LIKE '%' || ludy_kernel.search_fold(${search}) || '%'`),
       sql` OR `,
     );
     const raw = sql.join(
       texts.map((t) => sql`${t} ILIKE ${likeTerm(search)}`),
       sql` OR `,
     );
-    return sql<boolean>`(CASE WHEN crove_kernel.search_fold(${search}) = '' THEN (${raw}) ELSE (${folded}) END)`;
+    return sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN (${raw}) ELSE (${folded}) END)`;
   };
 }
 
