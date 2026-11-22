@@ -109,8 +109,8 @@ export function cashForecastPrompt(facts: CashForecastFacts): string {
 
 // A month or a day of the week by name is a date the facts may not hold ("in December", "on Friday"); with the digits it keeps the note free of any date.
 const DATE_WORDS = /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|yesterday|hôm qua|ngày mai|chủ nhật|thứ hai|thứ ba|thứ tư|thứ năm|thứ sáu|thứ bảy)(?![\p{L}])/iu;
-// "May" is the month only when written with a capital after another word ("in May"); lower case is the modal verb ("the balance may fall"), which stays allowed.
-const MAY_MONTH = /(?<=[\p{L}\p{N},]\s)May(?![\p{L}])/u;
+// "May" with a capital is the month, anywhere in the sentence ("in May", "May is when ..."); lower case is the modal verb ("the balance may fall"), which stays allowed. A note holds no question, so a capital "May" is never the verb.
+const MAY_MONTH = /(?<![\p{L}])May(?![\p{L}])/u;
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 // Advice to do something with money or with a payment, in either language: telling the owner to act, to move or transfer money, to borrow, to delay or postpone, to chase, collect or contact, to prepare, to
 // cut, to avoid. A word that only describes the figures ("lowest", "thấp nhất") is not here. Matched on whole words, case folded; a hit refuses the sentence. Some Vietnamese words are advice in one use and a

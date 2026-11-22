@@ -108,6 +108,7 @@ describe('checkCashForecastSentence', () => {
     expect(en(modal)).toEqual({ kind: 'sentence', text: modal });
     // "May" written as the month is a date, whatever the sentence.
     expect(en('The lowest balance is expected in May.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('May is when the lowest balance is expected.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
   it('refuses a direct instruction to pay or transfer, and keeps a bank transfer as a noun', () => {
