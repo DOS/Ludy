@@ -1480,6 +1480,8 @@ export const SIGN_CA_RETRY_SAFETIES = ['reconcile_only'] as const;
 export type SignCaRetrySafety = (typeof SIGN_CA_RETRY_SAFETIES)[number];
 export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
 export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export type SignObligationStatus = (typeof SIGN_OBLIGATION_STATUSES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1536,6 +1538,10 @@ export type SignCaSigningRequestTable = Refine<
     sub_filter: SignCaSubFilter | null;
   }
 >;
+export type SignEnvelopeObligationTable = Refine<
+  G.SignEnvelopeObligationTable,
+  { status: Generated<SignObligationStatus> }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1587,6 +1593,7 @@ type Refined = Tables<{
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;

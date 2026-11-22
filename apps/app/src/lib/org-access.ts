@@ -5,6 +5,7 @@
 // out, as before. No browser or API imports, so it is unit tested.
 import { ORG_HEADER } from '@ludy/kernel-contract';
 import { isMfaRequired, isOrgAccessRevoked, isUnauthenticated } from './errors.ts';
+import { takeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 // The request headers for the kernel. `org` is null for org-less calls; the user's own sign-out revoke is one, so
 // an org that refuses this session cannot swallow it (the kernel picks an org that can run it, or none).
@@ -15,7 +16,8 @@ export function requestHeaders(token: string | null, org: string | null): Record
   };
 }
 
-const LEFT_KEY = 'crove-org-left';
+const LEFT_KEY = 'ludy-org-left';
+const LEGACY_LEFT_KEY = 'crove-org-left';
 
 export interface OrgLeft {
   name: string;
@@ -27,7 +29,7 @@ type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;
 // then skipped, leaving the org still works.
 export function rememberOrgLeft(storage: Storage | undefined, left: OrgLeft): void {
   try {
-    storage?.setItem(LEFT_KEY, JSON.stringify(left));
+    if (storage) writeMigratedItem(storage, LEFT_KEY, LEGACY_LEFT_KEY, JSON.stringify(left));
   } catch {
     // ignored: see above
   }
@@ -35,9 +37,9 @@ export function rememberOrgLeft(storage: Storage | undefined, left: OrgLeft): vo
 
 export function takeOrgLeft(storage: Storage | undefined): OrgLeft | null {
   try {
-    const raw = storage?.getItem(LEFT_KEY) ?? null;
+    if (!storage) return null;
+    const raw = takeMigratedItem(storage, LEFT_KEY, LEGACY_LEFT_KEY);
     if (raw === null) return null;
-    storage?.removeItem(LEFT_KEY);
     const value = JSON.parse(raw) as Partial<OrgLeft> | null;
     return value && typeof value.name === 'string' && value.name ? { name: value.name.slice(0, 200) } : null;
   } catch {

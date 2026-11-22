@@ -1,5 +1,5 @@
 // Browser push on this device (#1238): the service worker, the browser's push subscription, and the one Trusted Types
-// policy the SPA may create. The kernel's CSP enforces Trusted Types and names a single policy, crove-sw, once
+// policy the SPA may create. The kernel's CSP enforces Trusted Types and names a single policy, ludy-sw, once
 // (apps/kernel/src/http.ts); navigator.serviceWorker.register() is a script-URL sink, so the worker's URL goes through
 // that policy, created only when a member turns push on. Its createScriptURL hands back the worker's fixed URL and
 // throws for anything else; it has no createHTML or createScript, so every HTML and script sink still refuses strings.
@@ -9,11 +9,11 @@
 
 export const SW_URL = '/assets/sw.js';
 export const SW_SCOPE = '/assets/';
-export const SW_POLICY = 'crove-sw';
+export const SW_POLICY = 'ludy-sw';
 
 // The policy's only rule: the service worker's own URL, exactly.
 export function swScriptUrl(input: string): string {
-  if (input !== SW_URL) throw new TypeError('crove-sw only allows the service worker script');
+  if (input !== SW_URL) throw new TypeError('ludy-sw only allows the service worker script');
   return input;
 }
 
@@ -25,7 +25,7 @@ interface TrustedTypesFactory {
 }
 
 let policy: ScriptUrlPolicy | null = null;
-// The worker's URL as register() takes it: through crove-sw where the browser has Trusted Types, created on first use.
+// The worker's URL as register() takes it: through ludy-sw where the browser has Trusted Types, created on first use.
 function workerUrl(): string {
   const tt = (globalThis as { trustedTypes?: TrustedTypesFactory }).trustedTypes;
   if (!tt) return SW_URL;

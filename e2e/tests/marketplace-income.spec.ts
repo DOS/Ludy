@@ -2,8 +2,8 @@
 // Marketplace income reports (#2516, ADR-0045), end to end with AI off: a Shopee order report is imported so its orders are known, then an income report is dropped on the Inbox, waits there as
 // a card that shows the period, the totals and the net the file states and says nothing of the buyer, and is confirmed by a person. A second report that names orders the org does not know shows
 // its refusal in words, holds the confirm button, and is skipped. No model is called: the screen is code, and a person decides each report. The reader is checked in apps/extract and the
-// checks and guards in apps/kernel/test/finance-marketplace-income.db.test.ts. The stored settlement then shows on the Sàn screen as a settlement to post, its action disabled while the account map is
-// unconfirmed (#2516 slice F).
+// checks and guards in apps/kernel/test/finance-marketplace-income.db.test.ts. The stored settlement then shows on the Sàn screen as a settlement to post, its action waiting for the delivery day of its sales (the sales path of the account map is confirmed, #4303 S3b; the payout paths are
+// still unconfirmed, #2516 slice F).
 import { expect, test } from '@playwright/test';
 import { buildXlsx, type XlsxCell } from '../../apps/extract/test/xlsx-fixture.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
@@ -83,7 +83,8 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
     await page.goto(page.url().replace(/\/inbox$/, '/marketplace'));
     const actions = page.getByTestId('marketplace-actions');
     await expect(actions).toBeVisible();
-    await expect(actions.getByTestId('marketplace-gate')).toContainText('Chờ kế toán xác nhận bảng tài khoản sàn (#2520)');
+    // Only a settlement is in view and the sales path of the shipped maps is confirmed (#4303 S3b), so nothing is locked and the gate line does not show.
+    await expect(actions.getByTestId('marketplace-gate')).toHaveCount(0);
     await expect(actions.getByTestId('marketplace-action-settlement')).toHaveCount(1);
     await expect(actions.getByTestId('marketplace-action-settlement')).toContainText('Shopee');
     // The orders of the income report have no delivery day yet (an order report with a completion column gives it), so the settlement waits and offers nothing to ask for.

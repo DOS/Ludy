@@ -142,9 +142,9 @@ test('an expired access token is refreshed, and sign-out revokes the refresh tok
 
   // Pretend the access token expired a minute ago; on reload auth-js must refresh before the app calls the API.
   await page.evaluate(() => {
-    const stored = JSON.parse(window.localStorage.getItem('crove-auth') ?? '{}') as { expires_at?: number };
+    const stored = JSON.parse(window.localStorage.getItem('ludy-auth') ?? '{}') as { expires_at?: number };
     stored.expires_at = Math.floor(Date.now() / 1000) - 60;
-    window.localStorage.setItem('crove-auth', JSON.stringify(stored));
+    window.localStorage.setItem('ludy-auth', JSON.stringify(stored));
   });
   const refreshed = page.waitForResponse((r) => r.url().includes('/auth/v1/token?grant_type=refresh_token'));
   await page.goto('/');

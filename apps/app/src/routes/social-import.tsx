@@ -172,7 +172,7 @@ export function SocialImportPage() {
     const url = URL.createObjectURL(new Blob([IMPORT_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = brandFileName('crove-mau-nhap-bai.csv');
+    a.download = brandFileName('ludy-mau-nhap-bai.csv');
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };

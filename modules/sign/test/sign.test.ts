@@ -364,6 +364,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'ca_connection',
       'ca_signing_request',
       'envelope',
+      'envelope_obligation',
       'field',
       'signer',
       'signing_event',

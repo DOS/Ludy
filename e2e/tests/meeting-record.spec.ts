@@ -17,7 +17,7 @@ async function deviceCopy(page: Page): Promise<{ chunkCount: number; chunks: num
   return page.evaluate(
     () =>
       new Promise<{ chunkCount: number; chunks: number }>((resolve, reject) => {
-        const open = indexedDB.open('crove-meeting-recordings');
+        const open = indexedDB.open('ludy-meeting-recordings');
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;

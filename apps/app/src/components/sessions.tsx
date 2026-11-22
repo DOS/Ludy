@@ -35,7 +35,7 @@ function signOutHere(): void {
 }
 
 function useCurrentSessionId() {
-  return useQuery({ queryKey: ['crove', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
+  return useQuery({ queryKey: ['ludy', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
 }
 
 function ConfirmBox({ title, children, actions }: { title: string; children?: ReactNode; actions: ReactNode }) {

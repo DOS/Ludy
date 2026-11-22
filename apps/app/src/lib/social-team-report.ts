@@ -26,4 +26,4 @@ export function durationOf(seconds: number): { unit: DurationUnit; value: number
 }
 
 // The file's name, with the days picked, prefixed by the product name (BRAND_NAME, #1045).
-export const teamFilename = (from: string, to: string) => brandFileName(`crove-nhom-${from}-den-${to}.csv`);
+export const teamFilename = (from: string, to: string) => brandFileName(`ludy-nhom-${from}-den-${to}.csv`);

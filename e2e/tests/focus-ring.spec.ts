@@ -72,7 +72,7 @@ test('every control the keyboard reaches on every sidebar screen shows a focus r
 
   const problems = new Set<string>();
   for (const theme of ['light', 'dark'] as const) {
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of links) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');

@@ -282,9 +282,13 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  // eSign (#3323, #3526, #3554, #3811): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
+  // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {
     from: '(SELECT e.* FROM crove_sign.envelope e WHERE crove_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
+    omit: [],
+  },
+  'sign.envelope_obligation': {
+    from: '(SELECT o.* FROM crove_sign.envelope_obligation o WHERE crove_sign.is_exportable_envelope_id(o.org_id, o.envelope_id))',
     omit: [],
   },
   'sign.signer': {
