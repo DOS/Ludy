@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Shared test helpers (outside test/invariant/) for upgrade tests starting before 20270315070000 (#3970)
+// Shared test helpers (outside test/invariant/) for upgrade tests starting before the #3970 core cutover migration
 // and historical 2026 SQL replay tests running against post-cutover ludy_* databases.
 import pg from 'pg';
 import { createPool, type PoolOptions } from '@ludy/db';

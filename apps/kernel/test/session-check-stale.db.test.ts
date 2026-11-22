@@ -13,7 +13,9 @@ import { migrate } from '@ludy/db/migrate';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DROP_MIGRATION = '20261016120000_crove_kernel_session_check_drop_stale.sql';
-const CUTOVER_VERSION = '20270315070000';
+const CUTOVER_FILE = readdirSync(MIGRATIONS).find((n) => n.endsWith('_ludy_kernel_rebrand_core_schemas_roles_gucs.sql'));
+if (!CUTOVER_FILE) throw new Error('missing core cutover migration');
+const CUTOVER_VERSION = CUTOVER_FILE.slice(0, 14);
 
 const suite = ADMIN ? describe : describe.skip;
 

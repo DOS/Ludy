@@ -200,7 +200,7 @@ suite('ludy_jobs from committed migrations', () => {
 
   it('leaves a schema pg-boss already created at the same version in place', async () => {
     const adminUrl = await createDatabase();
-    // Before #25 the migrate role let pg-boss create crove_jobs at runtime; 20270315070000 renames it to ludy_jobs.
+    // Before #25 the migrate role let pg-boss create crove_jobs at runtime; the #3970 core cutover migration renames it to ludy_jobs.
     const legacySchema = 'crove_jobs';
     const boss = new PgBoss({ connectionString: adminUrl, schema: legacySchema, migrate: true, supervise: false, schedule: false });
     boss.on('error', () => {});
