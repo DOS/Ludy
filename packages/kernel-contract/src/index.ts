@@ -26,6 +26,7 @@ export * from './payment-reminder.ts';
 export * from './finance-month-close.ts';
 export * from './finance-cash-forecast.ts';
 export * from './finance-overview.ts';
+export * from './finance-expense-variance.ts';
 export * from './einvoice.ts';
 export * from './einvoice-notice.ts';
 export * from './supplier-bank.ts';

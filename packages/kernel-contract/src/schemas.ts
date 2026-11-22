@@ -753,6 +753,7 @@ export const zEngageProposalAbout = z.object({
     'changeKind',
     'changeState',
     'changeTo',
+    'assignee',
   ]),
   value: z.string(),
 });

@@ -482,6 +482,8 @@ export const zConversationTaskList = z.strictObject({
       assigneePositionId: zId.nullable(),
       due: z.string().nullable(),
       createdAt: z.string(),
+      // True for a task made from an AI coworker's approved ask (#4148): its title is an AI's text, and the panel marks it as the task board does.
+      tainted: z.boolean(),
     }),
   ),
 });

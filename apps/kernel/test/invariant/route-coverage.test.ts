@@ -102,6 +102,11 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug': 'public Projects roadmap read (#4398 / #4399, ADR-0057): zero-login read via narrow orgless SECURITY DEFINER resolver checking org_app_on, billing entitlement, and board.enabled = true with identical opaque 404, per-IP rate limit, no-store/no-referrer headers, and zero exposure of internal projects, tasks, or voter hashes/emails',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request': 'public Projects roadmap email OTP challenge request (#4398 / #4399, ADR-0057): zero CAPTCHA per #203; checks org_app_on, entitlement, board.enabled, and mail_suppression with opaque 404, edge IP/board/email rate limits, 2 KB body cap, DB hourly caps in roadmap_otp, and hashes 6-digit OTP via SHA-256',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': 'public Projects roadmap email OTP verification (#4398 / #4399, ADR-0057): checks org_app_on, entitlement, and board.enabled with opaque 404, per-IP rate limit, 2 KB body cap, constant-time SHA-256 match locked after 5 failed attempts, and mints short-lived HMAC-signed voter claim',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': 'public Projects roadmap idea submission (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in workspace session), enforces org_app_on + entitlement + allow_submissions opaque 404/403, per-IP rate limit, 16 KB body cap, schema check, and forces tainted = true and moderation_status = pending',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': 'public Projects roadmap vote toggle and unsubscribe POST (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in session) for voting or unsubscribe_token_sha256 match for POST unsubscribe, enforces org_app_on + entitlement + allow_voting, per-IP rate limit, 2 KB body cap, and stores only keyed voter_email_hash',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

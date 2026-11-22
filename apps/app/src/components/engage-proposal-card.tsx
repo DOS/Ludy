@@ -24,6 +24,7 @@ const KIND_KEYS = [
   'kernel_conversation_reply',
   'kernel_conversation_reply_privately',
   'kernel_conversation_hide',
+  'kernel_conversation_follow_up',
   'crm_quote_send',
   'crm_booking_move',
   'crm_booking_cancel',
@@ -37,9 +38,9 @@ const KIND_KEYS = [
   'ads_schedule_shorten',
   'ads_manage_cancel',
 ] as const;
-const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn', 'changeId'] as const;
+const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn', 'changeId', 'title', 'assigneePositionId', 'due'] as const;
 // A time the AI wrote as an ISO instant is shown in the reader's own clock beside what was written, so 09:00Z is not read as 09:00 in Vietnam.
-const TIME_KEYS = ['startsAt', 'at', 'slotAt'] as const;
+const TIME_KEYS = ['startsAt', 'at', 'slotAt', 'due'] as const;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 // The words of the `about` lines (a label outside them cannot arrive: the contract's enum is the same list) and of the states a quote and a launch can be in (a state outside them shows as it is).
 const ABOUT_KEYS = [
@@ -65,6 +66,7 @@ const ABOUT_KEYS = [
   'changeKind',
   'changeState',
   'changeTo',
+  'assignee',
 ] as const satisfies readonly EngageProposalView['about'][number]['label'][];
 // A label the contract adds and this list lacks fails the typecheck here, not on a card.
 const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (typeof ABOUT_KEYS)[number] ? true : never = true;
@@ -123,7 +125,7 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
               </dd>
             ) : (
               <dd className="break-words text-base text-foreground" data-testid={`engage-field-${f.key}`}>
-                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.value}
+                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.key === 'assigneePositionId' && f.value === 'null' ? t('engageField.rootSeat') : f.value}
               </dd>
             )}
           </div>

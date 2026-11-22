@@ -746,7 +746,7 @@ const PURGE_BATCHES_PER_ORG = 25;
 const PURGE_BATCH = 200;
 
 // The daily retention purge of the conversation core (CV6): each org that holds a thread past its retention (an owner's choice of
-// 6, 12 or 24 months, or none; the deployment default is 24) gets the purge command in its own system context, in batches. A failing
+// 6, 12 or 24 months, or none; the deployment default is 24), an erase tombstone older than 30 days, or an identity no thread or message names any more (#4381) gets the purge command in its own system context, in batches. A failing
 // org is logged by name of the error and left for the next run, so one org cannot hold the others behind it. Returns the threads
 // deleted. Nothing a customer wrote is read or logged: only counts.
 export async function purgeExpiredConversations(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {

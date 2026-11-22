@@ -6,7 +6,7 @@
 // The payload is the original's own strict input (N6 of the #3858 review): a key it does not declare is refused before a proposal is made, and the card shows exactly what will be sent.
 import { zApprovedCall } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
-import { conversationHide, conversationReply, conversationReplyPrivately } from './conversations.ts';
+import { conversationFollowUp, conversationHide, conversationReply, conversationReplyPrivately } from './conversations.ts';
 
 // Only an approved proposal reaches the handler (the runtime's proposal state gate); the approver is a person, never an agent or a grant.
 export function requireApprover(ctx: Pick<CommandContext, 'actor' | 'proposalId'>): void {
@@ -64,4 +64,24 @@ export const conversationHideApproved = defineCommand({
   },
 });
 
-export const conversationProposalCommands = [conversationReplyApproved, conversationReplyPrivatelyApproved, conversationHideApproved];
+// A team task linked to a thread (#4148). The task is an event (an outbox row) and wakes the assignee's agent, which the sealed write context of a grant does not allow, so there is no R1 tool: the coworker asks,
+// and the task is made here, as the approver, outside that context. The original runs under the proposal, which makes the task tainted (the title is an AI's text); the approver reads the title, the seat and the
+// due date on the card exactly as stored.
+export const conversationFollowUpApproved = defineCommand({
+  name: 'kernel.conversation.follow_up_approved',
+  input: zApprovedCall(conversationFollowUp.input),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: 'proposal',
+  proposalKind: 'kernel.conversation_follow_up',
+  mcp: { scope: 'ludy.engage.write', mode: 'proposal' },
+  target: (input) => ({ type: 'kernel.conversation', id: input.payload.conversationId }),
+  handler: async (ctx, input) => {
+    requireApprover(ctx);
+    const created = await ctx.run<{ taskId: string }>('kernel.conversation.follow_up', input.payload);
+    ctx.audit({ approved_command: 'kernel.conversation.follow_up' });
+    return created;
+  },
+});
+
+export const conversationProposalCommands = [conversationReplyApproved, conversationReplyPrivatelyApproved, conversationHideApproved, conversationFollowUpApproved];
