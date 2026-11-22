@@ -441,13 +441,13 @@ export async function sendDraftEnvelope(
         `Field ${f.id} references page ${f.page_number}, exceeding document page count ${row.page_count}`,
       );
     }
-    if (f.field_type === 'signature') {
+    if (f.field_type === 'signature' || f.field_type === 'stamp') {
       sigCountBySigner.set(f.signer_id, (sigCountBySigner.get(f.signer_id) ?? 0) + 1);
     }
   }
   for (const s of activeRoleSigners) {
     if (s.signer_role === 'signer' && (sigCountBySigner.get(s.id) ?? 0) < 1) {
-      throw new DomainError('SIGN_SIGNATURE_FIELD_REQUIRED', 409, `Signer ${s.id} requires at least one signature field`);
+      throw new DomainError('SIGN_SIGNATURE_FIELD_REQUIRED', 409, `Signer ${s.id} requires at least one signature or stamp field`);
     }
   }
 

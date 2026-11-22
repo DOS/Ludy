@@ -232,7 +232,7 @@ describe('checkSignProposedFields', () => {
         { signerRoleKey: 'signer_1', fieldType: 'signature', pageNumber: 0, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
         { signerRoleKey: 'signer_1', fieldType: 'signature', pageNumber: 3, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
         { signerRoleKey: 'signer_1', fieldType: 'signature', pageNumber: 1.5, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
-        { signerRoleKey: 'signer_1', fieldType: 'stamp', pageNumber: 1, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
+        { signerRoleKey: 'signer_1', fieldType: 'unsupported_type', pageNumber: 1, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
         { signerRoleKey: 'intruder', fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
         { signerRoleKey: 'signer_1', fieldType: 'signature', pageNumber: 1, xNorm: Number.NaN, yNorm: 0.1, wNorm: 0.2, hNorm: 0.1, label: null, confidence: 0.9 },
         { signerRoleKey: 'signer_2', fieldType: 'initials', pageNumber: 1, xNorm: 0.2, yNorm: 0.7, wNorm: 0.15, hNorm: 0.05, label: 'Initials', confidence: 0.88 },

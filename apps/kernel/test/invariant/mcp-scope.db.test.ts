@@ -2,7 +2,7 @@
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
 // - exactly the commands WRITES and ENGAGE_WRITES run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the thirteen Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
 //   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
-//   commands that carry `mcp` are the 14 proposal-only Engage twins of E4 (#3863), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
+//   commands that carry `mcp` are the proposal-only Engage twins of E4 (#3863, #4181, #4148), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
 //   (pinned below, and in mcp-proposals.db.test.ts);
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);

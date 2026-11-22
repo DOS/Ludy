@@ -1459,6 +1459,11 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_OBLIGATION_INVALID_VALUE',
   'SIGN_OBLIGATION_ITEM_NOT_FOUND',
   'SIGN_OBLIGATION_NOT_FOUND',
+  // eSign Slice 4a stamps & saved signatures (#3817).
+  'SIGN_ORG_STAMPS_MAX',
+  'SIGN_STAMP_FILE_NOT_FOUND',
+  'SIGN_STAMP_NAME_TAKEN',
+  'SIGN_STAMP_NOT_FOUND',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

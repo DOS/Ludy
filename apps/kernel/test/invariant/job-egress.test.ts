@@ -149,7 +149,6 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
-  'kernel-notify handler': '#3803',
   'finance-misa-amis-push handler': '#3902',
 };
 
