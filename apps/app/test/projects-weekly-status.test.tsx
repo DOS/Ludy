@@ -41,16 +41,16 @@ function fixture(overrides: Partial<ProjectWeeklyStatusData> = {}): ProjectWeekl
     counts: { totalVisible: 6, doneThisWeek: 2, overdue: 1, waiting: 1, dueNextWeek: 2 },
     tasks: {
       doneThisWeek: [
-        { id: '22222222-2222-4222-8222-222222222201', title: 'Chốt bảng giá', status: 'done', due: '2026-11-12T03:00:00.000Z', commentCount: 2, latestComment: 'Đã ký duyệt.' },
+        { id: '22222222-2222-4222-8222-222222222201', title: 'Chốt bảng giá', tainted: false, status: 'done', due: '2026-11-12T03:00:00.000Z', commentCount: 2, latestComment: 'Đã ký duyệt.' },
       ],
       overdue: [
-        { id: '22222222-2222-4222-8222-222222222202', title: 'Kiểm tra hợp đồng', status: 'in_progress', due: '2026-11-08T03:00:00.000Z', commentCount: 0, latestComment: null },
+        { id: '22222222-2222-4222-8222-222222222202', title: 'Kiểm tra hợp đồng', tainted: false, status: 'in_progress', due: '2026-11-08T03:00:00.000Z', commentCount: 0, latestComment: null },
       ],
       waiting: [
-        { id: '22222222-2222-4222-8222-222222222203', title: 'Chờ khách duyệt mẫu', status: 'waiting', due: null, commentCount: 0, latestComment: null },
+        { id: '22222222-2222-4222-8222-222222222203', title: 'Chờ khách duyệt mẫu', tainted: false, status: 'waiting', due: null, commentCount: 0, latestComment: null },
       ],
       dueNextWeek: [
-        { id: '22222222-2222-4222-8222-222222222204', title: 'Họp tổng kết', status: 'todo', due: '2026-11-20T03:00:00.000Z', commentCount: 0, latestComment: null },
+        { id: '22222222-2222-4222-8222-222222222204', title: 'Họp tổng kết', tainted: false, status: 'todo', due: '2026-11-20T03:00:00.000Z', commentCount: 0, latestComment: null },
       ],
     },
     hiddenByEntityCount: 0,
@@ -137,6 +137,17 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
     expect(html).toContain('Họp tổng kết');
     expect(html).toContain('2 bình luận');
     expect(html).toContain('Có 3 việc thuộc đơn vị bạn chưa có quyền xem');
+  });
+
+  it('marks the invisible characters of a task title an AI coworker wrote, and leaves a person\'s title as typed (#4421)', () => {
+    const data = fixture();
+    data.tasks.waiting = [{ id: '22222222-2222-4222-8222-222222222203', title: 'Chờ khách\u202e duyệt\u200b mẫu', tainted: true, status: 'waiting', due: null, commentCount: 0, latestComment: null }];
+    data.tasks.dueNextWeek = [{ id: '22222222-2222-4222-8222-222222222204', title: 'Họp\u202e tổng kết', tainted: false, status: 'todo', due: null, commentCount: 0, latestComment: null }];
+    const html = renderCard({ locale: 'vi', defaultOpen: true, data });
+    expect(html).toContain('Chờ khách\u27e8U+202E\u27e9 duyệt\u27e8U+200B\u27e9 mẫu');
+    expect(html).not.toContain('\u202e duyệt');
+    // A title a person typed is shown as it is.
+    expect(html).toContain('Họp\u202e tổng kết');
   });
 
   it('keeps counts and task lists visible and explains why Vy is unavailable on off, paused, budget, refused and forbidden states', () => {

@@ -157,6 +157,7 @@ vi.mock('../src/lib/api.ts', async () => {
 const {
   ProjectAcceptanceDialogBody,
   ProjectAcceptanceSignHandoff,
+  buildDeterministicDeliverables,
   createProjectAcceptanceHandoffAttempt,
   performProjectAcceptanceSignHandoff,
 } = await import('../src/components/project-acceptance-sign-handoff.tsx');
@@ -677,5 +678,17 @@ describe('performProjectAcceptanceSignHandoff idempotency and org-switch guard',
     const signerCall = state.calls.find((c) => c.step === 'addSigner')?.args as { input: Record<string, unknown> };
     expect(signerCall.input.email).toBeUndefined();
     expect(signerCall.input.deliveryMode).toBe('link');
+  });
+});
+
+describe('the handover copy of completed task titles (#4421)', () => {
+  it('shows the invisible characters of a task title an AI coworker wrote instead of carrying them into editable text, and keeps a person\'s title as typed', () => {
+    const rows = buildDeterministicDeliverables([
+      { id: '01900000-0000-7000-8000-000000000211', title: 'Giao hàng\u202e xong\u200b', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000212', title: 'Lắp đặt\u202e', tainted: false },
+      { id: '01900000-0000-7000-8000-000000000213', title: 'Nghiệm thu' },
+    ]);
+    expect(rows.map((r) => r.text)).toEqual(['Giao hàng\u27e8U+202E\u27e9 xong\u27e8U+200B\u27e9', 'Lắp đặt\u202e', 'Nghiệm thu']);
+    expect(rows.every((r) => r.proposedByAi === false)).toBe(true);
   });
 });

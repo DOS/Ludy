@@ -381,7 +381,7 @@ export function ProjectDetailPage() {
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
   const completedTasks = tasks
     .filter((item) => item.status === 'done')
-    .map((item) => ({ id: item.id, title: item.title }));
+    .map((item) => ({ id: item.id, title: item.title, tainted: item.tainted }));
   const doneCount = completedTasks.length;
   const boardFiltered = Boolean(positionId) || applied.all.length > 0;
   const pct = projectCompletionPct(openCount, doneCount);

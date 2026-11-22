@@ -40,7 +40,7 @@ vi.mock('../src/lib/api.ts', async () => {
 const { NotificationsPage } = await import('../src/routes/notifications.tsx');
 const { NotificationPreferences } = await import('../src/routes/settings/notifications-card.tsx');
 
-type Item = { id: string; kind: string; subjectId: string | null; detail: Record<string, string>; read: boolean; createdAt: string };
+type Item = { id: string; kind: string; subjectId: string | null; detail: Record<string, string>; tainted?: boolean; read: boolean; createdAt: string };
 const approvals = (count: number, read = false): Item[] =>
   Array.from({ length: count }, (_v, i) => ({ id: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, '0')}`, kind: 'kernel.approval_waiting', subjectId: `00000000-0000-4000-9000-0000000000${String(i).padStart(2, '0')}`, detail: { title: `HĐ C26TFA-${1185 + i}` }, read, createdAt: '2026-11-18T08:00:00.000Z' }));
 const bank = (n: number): Item => ({ id: `00000000-0000-4000-a000-0000000000${n}`, kind: 'finance.bank_attention', subjectId: null, detail: { bankAccount: '1121', lines: '3' }, read: false, createdAt: '2026-11-18T07:00:00.000Z' });
@@ -190,5 +190,28 @@ describe('the notifications tab of Settings', () => {
   it('leaves out the kinds of an app the org does not run', () => {
     state.modules = ['kernel'];
     expect(render(<NotificationPreferences />, {})).not.toContain(catalog('en').notifications.kinds.finance_bank_attention);
+  });
+});
+
+describe('the title of a task an AI coworker wrote (#4421)', () => {
+  const task = (n: number, kind: 'kernel.task_assigned' | 'kernel.task_rerouted', title: string, tainted?: boolean, read = false): Item => ({
+    id: `00000000-0000-4000-e000-00000000000${n}`,
+    kind,
+    subjectId: `00000000-0000-4000-f000-00000000000${n}`,
+    detail: { title },
+    ...(tainted === undefined ? {} : { tainted }),
+    read,
+    createdAt: '2026-11-22T01:00:00.000Z',
+  });
+
+  it('marks the invisible and direction characters of a tainted title on both task notices, and leaves a person\'s title as typed', () => {
+    const html = page({ items: [task(1, 'kernel.task_assigned', 'Gửi báo\u202e giá\u200b ngay', true, true), task(2, 'kernel.task_rerouted', 'Gọi\u202e lại', true), task(3, 'kernel.task_assigned', 'Việc\u202e của người', undefined, true), task(4, 'kernel.task_assigned', 'Việc\u202e người gõ', false, true)] });
+    expect(html).toContain('Assigned to you: Gửi báo\u27e8U+202E\u27e9 giá\u27e8U+200B\u27e9 ngay');
+    expect(html).toContain('A task moved to you: Gọi\u27e8U+202E\u27e9 lại');
+    expect(html).not.toContain('Gửi báo\u202e');
+    expect(html).not.toContain('Gọi\u202e');
+    // A notice without the flag, or with it false, shows the title as it was typed.
+    expect(html).toContain('Assigned to you: Việc\u202e của người');
+    expect(html).toContain('Assigned to you: Việc\u202e người gõ');
   });
 });

@@ -12,6 +12,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { errorMessage, orpc } from '../lib/api.ts';
 import { meetingsInstalled } from './linked-meetings.tsx';
 import { projectsInstalled } from '../lib/projects.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { ErrorText } from './ui.tsx';
 
 const KIND = {
@@ -167,7 +168,7 @@ export function RecordLinkAdder({
   const alreadyLinked = new Set(existingLinks.filter((l) => l.targetType === targetType).map((l) => l.targetId));
   const options =
     targetType === 'kernel.task'
-      ? (tasks.data ?? []).filter((item) => !alreadyLinked.has(item.id)).map((item) => ({ id: item.id, label: item.title }))
+      ? (tasks.data ?? []).filter((item) => !alreadyLinked.has(item.id)).map((item) => ({ id: item.id, label: taskTitleText(item) }))
       : targetType === 'projects.project'
         ? (projects.data?.projects ?? [])
             .filter((item) => item.status !== 'archived' && !alreadyLinked.has(item.id))

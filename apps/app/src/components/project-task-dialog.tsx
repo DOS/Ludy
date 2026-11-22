@@ -35,6 +35,7 @@ import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { PROJECT_STATUSES, PROJECT_WEEKLY_STATUS_QUERY_PREFIX, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 export const refreshProjectQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
@@ -251,7 +252,7 @@ export function AttachTaskDialog({
                 return (
                   <li key={task.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
                     <div className="min-w-0 space-y-1">
-                      <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
+                      <p className="truncate text-sm font-medium text-foreground">{taskTitleText(task)}</p>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <Badge variant={taskStatusVariant(task.status)}>{tt(`status.${task.status}`)}</Badge>
                         {task.due && <span>{f.date(task.due)}</span>}

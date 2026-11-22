@@ -38,6 +38,7 @@ import {
   buildSalesInvoiceAcceptanceSearch,
 } from '../lib/project-acceptance-pdf.ts';
 import type { SignDeliveryMode, SignEnvelopeStatus } from '../lib/sign-fields.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 const RETRYABLE_ENVELOPE_STATUSES = new Set<SignEnvelopeStatus>(['voided', 'expired', 'declined']);
 const zValidEmail = z.email().max(254);
@@ -61,6 +62,8 @@ const SIGN_STATUS_BADGE_VARIANT: Record<
 export interface ProjectAcceptanceCompletedTask {
   id: string;
   title: string;
+  // The title is an AI coworker's text (#4421): the handover copy shows its invisible characters instead of carrying them into editable text.
+  tainted?: boolean;
 }
 
 export interface ProjectAcceptanceProjectSource {
@@ -179,7 +182,7 @@ export function buildDeterministicDeliverables(
   }
   return completedTasks.map((task) => ({
     localId: `task-${task.id}`,
-    text: task.title,
+    text: taskTitleText(task),
     proposedByAi: false,
   }));
 }

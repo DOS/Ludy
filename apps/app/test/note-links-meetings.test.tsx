@@ -114,3 +114,24 @@ describe('NoteLinks & RecordLinkAdder with meetings.meeting (N10)', () => {
     expect(withoutMeetings).not.toContain('meetings.meeting');
   });
 });
+
+describe('the task picker of RecordLinkAdder (#4421)', () => {
+  it('marks the invisible characters of a task title an AI coworker wrote and leaves a person\'s title as typed', () => {
+    state.client.clear();
+    state.modules = ['kernel', 'notes'];
+    state.client.setQueryData(['tasks', 'list'], [
+      { id: 't1', title: 'Gửi báo\u202e giá\u200b', tainted: true },
+      { id: 't2', title: 'Việc\u202e riêng', tainted: false },
+    ]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={state.client}>
+        <IntlProvider locale="en" timeZone="Asia/Ho_Chi_Minh" messages={catalog('en')}>
+          <RecordLinkAdder existingLinks={[]} onAdd={() => undefined} defaultOpen />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('Gửi báo\u27e8U+202E\u27e9 giá\u27e8U+200B\u27e9');
+    expect(html).not.toContain('Gửi báo\u202e');
+    expect(html).toContain('Việc\u202e riêng');
+  });
+});

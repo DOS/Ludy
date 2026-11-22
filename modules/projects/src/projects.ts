@@ -1016,12 +1016,13 @@ export const projectUnassignedTasks = defineQuery({
     const { rows } = await sql<{
       id: string;
       title: string;
+      tainted: boolean;
       status: string;
       assignee_position_id: string | null;
       due: Date | string | null;
       created_at: Date | string;
     }>`
-      SELECT t.id, t.title, t.status, t.assignee_position_id, t.due, t.created_at
+      SELECT t.id, t.title, t.tainted, t.status, t.assignee_position_id, t.due, t.created_at
         FROM crove_kernel.task t
        WHERE t.org_id = ${ctx.orgId}::uuid
          AND NOT EXISTS (
@@ -1037,6 +1038,7 @@ export const projectUnassignedTasks = defineQuery({
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
+      tainted: t.tainted,
       status: t.status as TaskStatus,
       assigneePositionId: t.assignee_position_id,
       due: t.due === null ? null : new Date(t.due).toISOString(),

@@ -422,6 +422,8 @@ export interface NotificationItem {
   subjectType: string | null;
   subjectId: string | null;
   detail: Record<string, string>;
+  // True when the title in `detail` is a task title an AI coworker wrote (#4421); left out for any other notice.
+  tainted?: boolean;
   createdAt: string;
   read: boolean;
 }
@@ -452,6 +454,7 @@ export const notificationList = defineQuery({
       subject_id: string | null;
       detail: Record<string, unknown>;
       subject_title: string | null;
+      subject_tainted: boolean | null;
       subject_filename: string | null;
       created_at: Date;
       read: boolean;
@@ -461,6 +464,9 @@ export const notificationList = defineQuery({
                WHEN 'kernel.proposal' THEN (SELECT p.title FROM crove_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id)
                WHEN 'kernel.task' THEN (SELECT t.title FROM crove_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
              END AS subject_title,
+             CASE WHEN n.subject_type = 'kernel.task'
+               THEN (SELECT t.tainted FROM crove_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
+             END AS subject_tainted,
              CASE WHEN n.subject_type = 'kernel.file'
                THEN (SELECT f.filename FROM crove_kernel.file f WHERE f.org_id = n.org_id AND f.id = n.subject_id)
              END AS subject_filename
@@ -515,6 +521,7 @@ export const notificationList = defineQuery({
             ...(resolvedTitle !== null ? { title: resolvedTitle.slice(0, 200) } : {}),
             ...(r.subject_filename !== null ? { filename: r.subject_filename.slice(0, 200) } : {}),
           },
+          ...(r.subject_tainted === true ? { tainted: true } : {}),
           createdAt: r.created_at.toISOString(),
           read: r.read,
         };

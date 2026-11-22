@@ -14,9 +14,10 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { OPEN_TASK_STATUSES, taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
-import { duplicateTaskSearch, findDuplicateTask } from '../lib/task-duplicate.ts';
+import { duplicateTaskSearch, findDuplicateTask, type DuplicateTaskHit } from '../lib/task-duplicate.ts';
 import { taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
@@ -30,6 +31,20 @@ const refresh = () => void queryClient.invalidateQueries();
 // The positions a task can be given to: the live ones, and the one it already has even if it was archived since.
 function assignable(chart: Chart | undefined, current: string | null) {
   return (chart?.positions ?? []).filter((p) => p.status !== 'archived' || p.id === current);
+}
+
+// What the hint under the title field says about the open task that already has this title, with a link to it. The title is shown as `taskTitleText` shows it: when an AI coworker wrote it, its invisible
+// and direction characters are written out (#4421).
+export function DuplicateTaskLink({ slug, duplicate }: { slug: string; duplicate: DuplicateTaskHit }) {
+  const t = useTranslations('tasks');
+  return (
+    <>
+      {t('duplicate')}{' '}
+      <Link to="/o/$slug/tasks/$id" params={{ slug, id: duplicate.id }} target="_blank" rel="noopener" className="text-link underline">
+        {t('duplicateOpen', { title: taskTitleText(duplicate) })}
+      </Link>
+    </>
+  );
 }
 
 export function NewTaskPanel({ chart, onClose }: { chart: Chart | undefined; onClose: () => void }) {
@@ -104,14 +119,7 @@ export function NewTaskPanel({ chart, onClose }: { chart: Chart | undefined; onC
         </FieldError>
       </label>
       <DuplicateHint testId="task-duplicate">
-        {duplicate && (
-          <>
-            {t('duplicate')}{' '}
-            <Link to="/o/$slug/tasks/$id" params={{ slug, id: duplicate.id }} target="_blank" rel="noopener" className="text-link underline">
-              {t('duplicateOpen', { title: duplicate.title })}
-            </Link>
-          </>
-        )}
+        {duplicate && <DuplicateTaskLink slug={slug} duplicate={duplicate} />}
       </DuplicateHint>
       <label className="block text-xs">
         <span className="text-subtle-foreground">{t('assignTo')}</span>

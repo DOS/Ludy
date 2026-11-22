@@ -425,6 +425,11 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       { actor: asUser(firstHolder), orgId },
     );
     expect(firstNotices.items).toEqual([expect.objectContaining({ kind: 'kernel.task_assigned', subjectId: taskId, detail: { title: 'Kiểm tra sổ quỹ' } })]);
+    // A task a person made carries no taint flag; once the task is an AI coworker's (tainted), the notice says so, so the screen marks the title's invisible characters (#4421).
+    expect(firstNotices.items[0]).not.toHaveProperty('tainted');
+    await admin((c) => c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, taskId]));
+    const taintedNotices = await app.query<{ items: Array<{ subjectId: string | null; tainted?: boolean }> }>('kernel.notification.list', {}, { actor: asUser(firstHolder), orgId });
+    expect(taintedNotices.items.find((n) => n.subjectId === taskId)?.tainted).toBe(true);
 
     // An owner who creates a root task is an owner recipient; the actor filter keeps the owner from being notified.
     const { taskId: rootTaskId } = await app.execute<{ taskId: string }>(
