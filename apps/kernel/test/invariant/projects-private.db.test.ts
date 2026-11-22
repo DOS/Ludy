@@ -328,6 +328,11 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
       )
     ).taskId;
+    await appRt.execute(
+      'projects.dependency.add',
+      { projectId: privateProjectId, blockerTaskId: privateTaskId, blockedTaskId: agentPrivateTaskId },
+      { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
+    );
 
     // Seed comments on both org task and private task.
     await appRt.execute(
@@ -509,7 +514,9 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
             )
           ORDER BY t.relname`,
       );
-      expect(projTables.map((r) => r.table_name)).toEqual(expect.arrayContaining(['project', 'project_member', 'project_task']));
+      expect(projTables.map((r) => r.table_name)).toEqual(
+        expect.arrayContaining(['project', 'project_member', 'project_task', 'task_dependency']),
+      );
       for (const row of projTables) {
         expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
         expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
@@ -643,15 +650,17 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         const projects = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project WHERE NOT is_template')).rows.map((r) => r.id);
         const members = (await dbClient.query<{ project_id: string }>('SELECT project_id FROM crove_projects.project_member')).rows.map((r) => r.project_id);
         const projectTasks = (await dbClient.query<{ task_id: string }>('SELECT task_id FROM crove_projects.project_task')).rows.map((r) => r.task_id);
+        const dependencies = (await dbClient.query<{ project_id: string }>('SELECT project_id FROM crove_projects.task_dependency')).rows.map((r) => r.project_id);
         const tasks = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task')).rows.map((r) => r.id);
         const comments = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task_comment')).rows.map((r) => r.id);
         const links = (await dbClient.query<{ id: string }>('SELECT id FROM crove_notes.link')).rows.map((r) => r.id);
-        return { projects, members, projectTasks, tasks, comments, links };
+        return { projects, members, projectTasks, dependencies, tasks, comments, links };
       });
 
       expect(seen.projects.includes(privateProjectId), `${c.actor.name}: project`).toBe(c.readsPrivateProject);
       expect(seen.members.includes(privateProjectId), `${c.actor.name}: project_member`).toBe(c.readsPrivateProject);
       expect(seen.projectTasks.includes(privateTaskId), `${c.actor.name}: project_task`).toBe(c.readsPrivateProject);
+      expect(seen.dependencies.includes(privateProjectId), `${c.actor.name}: task_dependency`).toBe(c.readsPrivateProject);
       expect(seen.tasks.includes(privateTaskId), `${c.actor.name}: human private task`).toBe(c.readsPrivateHumanTask);
       expect(seen.tasks.includes(agentPrivateTaskId), `${c.actor.name}: agent private task`).toBe(c.readsPrivateAgentTask);
       expect(seen.comments.includes(privateCommentId), `${c.actor.name}: private task_comment`).toBe(c.readsPrivateHumanTask);
@@ -712,6 +721,15 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       );
       expect(insPt).toMatchObject({ ok: false, code: '42501' });
       expect(await attemptSql(actor, `DELETE FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
+
+      // Cannot insert or delete dependency edges on a private project.
+      const insDep = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id, created_by) VALUES ($1, $2, $3, $4, $5)`,
+        [orgId, privateProjectId, agentPrivateTaskId, privateTaskId, targetUid],
+      );
+      expect(insDep).toMatchObject({ ok: false, code: '42501' });
+      expect(await attemptSql(actor, `DELETE FROM crove_projects.task_dependency WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
 
       // Cannot update private task or insert comment on private task.
       expect(await attemptSql(actor, `UPDATE crove_kernel.task SET title = 'Tamper' WHERE org_id = $1 AND id = $2`, [orgId, privateTaskId])).toEqual({ ok: true, rowCount: 0 });

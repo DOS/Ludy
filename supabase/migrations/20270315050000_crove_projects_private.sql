@@ -261,6 +261,14 @@ CREATE POLICY project_visibility ON crove_projects.project_task AS RESTRICTIVE F
   )
   WITH CHECK (crove_projects.project_visible(org_id, project_id));
 
+DROP POLICY IF EXISTS project_visibility ON crove_projects.task_dependency;
+CREATE POLICY project_visibility ON crove_projects.task_dependency AS RESTRICTIVE FOR ALL TO crove_tenant
+  USING (
+    (SELECT crove_projects.actor_bypasses_private_projects())
+    OR crove_projects.project_visible(org_id, project_id)
+  )
+  WITH CHECK (crove_projects.project_visible(org_id, project_id));
+
 -- migration-lint: cross-module Owner decision A2 (ADR-0056, #2604): isolate tasks linked to private projects
 DROP POLICY IF EXISTS private_project_scope ON crove_kernel.task;
 -- migration-lint: cross-module Owner decision A2 (ADR-0056, #2604): isolate tasks linked to private projects
