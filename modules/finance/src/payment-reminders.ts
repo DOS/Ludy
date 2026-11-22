@@ -131,7 +131,14 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .where('d.direction', '=', 'sale')
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
-    .$if(bounds?.entriesTo !== undefined, (q) => q.where('d.invoice_date', '<=', bounds?.entriesTo ?? ''))
+    // As of a day: the invoice is dated and its own entry is posted by then, the same boundary the balance above uses.
+    .$if(bounds?.entriesTo !== undefined, (q) =>
+      q
+        .where('d.invoice_date', '<=', bounds?.entriesTo ?? '')
+        .where(
+          sql<boolean>`exists (select 1 from crove_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${bounds?.entriesTo ?? ''})`,
+        ),
+    )
     .$if(bounds !== undefined, (q) => q.orderBy('d.invoice_date', 'desc').orderBy('d.id').limit((bounds?.documents ?? 0) + 1))
     .execute();
   if (bounds?.seen) bounds.seen.documents = invoiceRows.length;

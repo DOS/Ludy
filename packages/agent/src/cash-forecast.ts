@@ -109,6 +109,8 @@ export function cashForecastPrompt(facts: CashForecastFacts): string {
 
 // A month or a day of the week by name is a date the facts may not hold ("in December", "on Friday"); with the digits it keeps the note free of any date.
 const DATE_WORDS = /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|yesterday|hôm qua|ngày mai|chủ nhật|thứ hai|thứ ba|thứ tư|thứ năm|thứ sáu|thứ bảy)(?![\p{L}])/iu;
+// "May" is the month only when written with a capital after another word ("in May"); lower case is the modal verb ("the balance may fall"), which stays allowed.
+const MAY_MONTH = /(?<=[\p{L}\p{N},]\s)May(?![\p{L}])/u;
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 // Advice to do something with money or with a payment, in either language: telling the owner to act, to move or transfer money, to borrow, to delay or postpone, to chase, collect or contact, to prepare, to
 // cut, to avoid. A word that only describes the figures ("lowest", "thấp nhất") is not here. Matched on whole words, case folded; a hit refuses the sentence. Some Vietnamese words are advice in one use and a
@@ -118,8 +120,9 @@ const ADVICE = [
   /(?<![\p{L}])nên(?![\p{L}])(?!\s+(?:số dư|dòng tiền|tiền|khoản|các khoản|dự báo|điểm thấp|mức|việc)(?![\p{L}]))/iu,
   /(?<![\p{L}])(?:hãy|đừng|khuyên|khuyến nghị|đề nghị|đề xuất|gợi ý|cần|xem xét|cân nhắc|chuẩn bị|huy động|thương lượng|bổ sung|giảm chi|hoãn|trì hoãn|dời|lùi|cắt giảm|đòi nợ|thu hồi|đẩy nhanh|liên hệ|liên lạc|chuyển tiền|xoay|lên kế hoạch|theo dõi)(?![\p{L}])/iu,
   /(?<![\p{L}])tránh(?![\p{L}])(?!\s+khỏi)/iu,
+  /(?<![\p{L}])(?:chuyển khoản\s+(?:cho|ngay|trước|sớm)|(?:trả|thanh toán)\s+(?:ngay|trước|sớm))(?![\p{L}])/iu,
   /(?<!khoản\s)(?<![\p{L}])vay(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|borrow more|take out a loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|make sure|prepare|plan to|plan ahead|might want to|may want to|worth|line up|reach out|get in touch|follow up|accelerate|speed up|negotiate|keep an eye|monitor|move money|pay later|pay earlier)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|borrow more|take out a loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|make sure|prepare|plan to|plan ahead|might want to|may want to|worth|line up|reach out|get in touch|follow up|accelerate|speed up|negotiate|keep an eye|monitor|move money|pay later|pay earlier|pay|paying|pay now|settle|settling)(?![\p{L}])/iu,
 ];
 // A promise or a certainty about the future: "will", "sẽ", "chắc chắn", "guaranteed". A forecast is expected, never promised. A hedge is not one: "không chắc chắn", "not certain".
 const PROMISE = [
@@ -136,7 +139,7 @@ export function checkCashForecastSentence(facts: CashForecastFacts, output: { se
   if (Array.from(text).length > CASH_FORECAST_SENTENCE_MAX || sentencesIn(text) > CASH_FORECAST_SENTENCES_MAX) return { kind: 'none', code: 'TOO_LONG' };
   const read = text.normalize('NFKC');
   // No figure and no date at all (see the header): any digit, whatever it equals, and a month or day name.
-  if (/\p{Nd}/u.test(read) || DATE_WORDS.test(read)) return { kind: 'none', code: 'FIGURES' };
+  if (/\p{Nd}/u.test(read) || DATE_WORDS.test(read) || MAY_MONTH.test(read)) return { kind: 'none', code: 'FIGURES' };
   const problem = statedFiguresProblem(text, [cashForecastFactsText(facts)]);
   if (problem) return { kind: 'none', code: problem };
   if (ADVICE.some((word) => word.test(read))) return { kind: 'none', code: 'ADVICE' };

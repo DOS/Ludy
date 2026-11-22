@@ -411,7 +411,7 @@ export class InboxReader {
       generators.cashForecast ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.cash_forecast_explain', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zCashForecastOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zCashForecastOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });

@@ -104,6 +104,18 @@ describe('checkCashForecastSentence', () => {
     // "may" is a word of the language, not a month.
     const may = 'The lowest balance may come after the largest payment to a supplier.';
     expect(en(may)).toEqual({ kind: 'sentence', text: may });
+    const modal = 'The balance may fall after the largest payment to a supplier.';
+    expect(en(modal)).toEqual({ kind: 'sentence', text: modal });
+    // "May" written as the month is a date, whatever the sentence.
+    expect(en('The lowest balance is expected in May.')).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('refuses a direct instruction to pay or transfer, and keeps a bank transfer as a noun', () => {
+    expect(en('The lowest balance is expected after a payment to a supplier. Pay the supplier now.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(vi('Số dư thấp nhất dự kiến đến sau một khoản phải trả. Chuyển khoản cho nhà cung cấp.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(vi('Số dư thấp nhất dự kiến đến sau một khoản phải trả. Thanh toán ngay cho nhà cung cấp.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    const noun = 'Số dư thấp nhất dự kiến đến sau khoản phải trả lớn nhất; các khoản thu chuyển khoản về muộn hơn.';
+    expect(vi(noun)).toEqual({ kind: 'sentence', text: noun });
   });
 
   it('does not take the loans a forecast leaves out for advice to borrow', () => {

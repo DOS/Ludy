@@ -105,6 +105,8 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'purchase')
     .where('d.invoice_date', '<=', asOf)
+    // Posted by the as-of day too, the boundary the 331 balance is read at.
+    .where(sql<boolean>`exists (select 1 from crove_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${asOf})`)
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(partyIds)})`)
     .orderBy('d.invoice_date', 'desc')
