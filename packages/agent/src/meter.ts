@@ -45,6 +45,9 @@ export const AI_FEATURES = {
   'finance.overview_explain': 'finance',
   // The finance coworker's possible reason per flagged expense line on the expense variance card (#4392): code found which costs moved and who is behind them; the model is told no figure at all (a fixed kind of expense, the direction, a supplier name when it may be told, the kind of voucher, single or several) and a note is dropped when it states any number, date or name it was not given, claims certainty or is not marked as a possibility. A read; a person decides.
   'finance.expense_variance_note': 'finance',
+  // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
+  // when it holds a digit, a link, advice about money or a promise.
+  'finance.cash_forecast_explain': 'finance',
   // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
   'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder

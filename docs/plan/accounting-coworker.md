@@ -1,16 +1,11 @@
-# Accounting coworker: month close, cash flow, cost variance (2026-11-22)
+# The Accounting coworker (Ly, Ludy Kế toán): features beyond the books' own screens
 
-Owner decision, 2026-11-22 (JOY, Accounting PO popup): put three AI features of the Kế toán app in the plan and build
-them. Each one follows the same rule: code finds the facts, the finance coworker only phrases or suggests, a person
-decides. The core works with AI off; every model call goes through `metered()` in `packages/agent` under its own
-`AI_FEATURES` key; a text the model writes is checked after the call and dropped, never repaired, when it states what
-it was not given.
+One scope line per owner-approved feature, each linked to its issue. Code computes every figure, the coworker explains in words, a person decides, nothing moves money. Every model call is metered under its own `AI_FEATURES` key and the core works with AI off. Whoever merges a feature adds its line here.
 
-| Feature | Scope | Issue |
-| --- | --- | --- |
-| Month-close checklist | the items an entity still has open for a month, ordered and explained by the coworker | #4390 |
-| Cash-flow forecast | the forecast card on the Kế toán overview | #4391 |
-| Cost variance | expense lines that moved against last month and the 3-month average, with a possible reason | #4392 |
+| Feature | Scope | Issue | Plan |
+|---|---|---|---|
+| Cash-flow forecast, 30/60/90 days | A read-only card on the Tổng quan: booked cash, receipts and payments dated from the books, the lowest balance and its day; the coworker's note on the low point states no figure and no date. | [#4391](https://github.com/DOS/Ludy/issues/4391) | [cash-forecast.md](cash-forecast.md) |
+| Cost variance | A read-only card on the Tổng quan: expense lines that moved against last month and the 3-month average, flagged by code under the entity's books; the coworker's possible reason per line states no figure, date or name. | [#4392](https://github.com/DOS/Ludy/issues/4392) | the section below |
 
 ## Cost variance (#4392)
 
