@@ -2718,16 +2718,24 @@ async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
-// Identities left with no thread: nothing the org holds names them any more. `only` limits the sweep to those identities (the ones the threads just deleted named), so a customer who is at the same time
-// writing on another channel, whose identity was just made for that intake, is never swept up with a channel's erasure (#3480); without it the whole org is swept (the retention purge's tidy-up).
-async function deleteOrphanIdentities(ctx: CommandContext, only?: readonly string[]): Promise<number> {
-  if (only !== undefined && only.length === 0) return 0;
-  const scope = only === undefined ? sql`` : sql`AND i.id = ANY (${only}::uuid[])`;
+// Identities left with no thread: nothing the org holds names them any more. Two statements: the first picks the candidates and locks their rows, skipping a row another transaction holds (an intake of another
+// channel that is reusing the customer's identity right now, whose new thread this statement's snapshot may not see yet: its upsert holds the row until it commits); the second deletes them with a fresh snapshot,
+// so a thread committed in between is seen. A locked row also makes a later upsert of the same customer wait for this transaction and then make a new row, so the customer's new thread is never left with no
+// identity (#3480). A skipped identity is swept by the next run.
+async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
+  const candidates = await sql<{ id: string }>`
+    SELECT i.id FROM crove_kernel.conversation_identity i
+    WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+      -- A person who only replied in other customers' threads is still named by what they wrote there.
+      AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
+    ORDER BY i.id
+    FOR UPDATE OF i SKIP LOCKED`.execute(ctx.trx);
+  if (candidates.rows.length === 0) return 0;
   const { rows } = await sql<{ n: string }>`
     WITH gone AS (
       DELETE FROM crove_kernel.conversation_identity i
-      WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL ${scope} AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
-        -- A person who only replied in other customers' threads is still named by what they wrote there.
+      WHERE i.org_id = ${ctx.orgId}::uuid AND i.id = ANY (${candidates.rows.map((r) => r.id)}::uuid[])
+        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
         AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
       RETURNING i.id)
     SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
@@ -2842,16 +2850,8 @@ export const conversationPurgeExpired = defineCommand({
 // the identities left with no thread. Meta's data deletion callback (the worker, as the system) and a person's "delete too" choice (#3299)
 // both run it, so there is no second delete path. Idempotent: a second run finds nothing and returns zeros.
 async function eraseConnectionConversations(ctx: CommandContext, connectionId: string): Promise<{ threads: number; messages: number; identities: number }> {
-  // The people this connection's threads name (the thread's customer, and whoever wrote a message in them: a person who only replied in another customer's comment thread is named by that message), read before the
-  // threads go: only they can be left unnamed by this erase, so only they are swept. A sweep of the whole org would also delete an identity another channel's intake has just made and not yet given a thread (that
-  // thread would then open with no customer), and scans every identity of the org inside this transaction.
-  const named = await sql<{ id: string }>`
-    SELECT c.identity_id AS id FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND c.channel_connection_id = ${connectionId}::uuid AND c.identity_id IS NOT NULL
-    UNION
-    SELECT m.author_identity_id FROM crove_kernel.conversation_message m
-    WHERE m.org_id = ${ctx.orgId}::uuid AND m.channel_connection_id = ${connectionId}::uuid AND m.author_identity_id IS NOT NULL`.execute(ctx.trx);
   const erased = await deleteThreads(ctx, sql`c.channel_connection_id = ${connectionId}::uuid`);
-  const identities = await deleteOrphanIdentities(ctx, named.rows.map((r) => r.id));
+  const identities = await deleteOrphanIdentities(ctx);
   return { ...erased, identities };
 }
 

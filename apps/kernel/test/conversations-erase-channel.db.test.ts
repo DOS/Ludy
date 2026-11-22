@@ -221,14 +221,26 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       expect(await threads(o, two.connectionId)).toEqual(before.twoThreads);
     });
 
-    it('sweeps only the identities the channel\'s own threads named: one made for another channel\'s intake that has no thread yet is left alone (#3480)', async () => {
+    it('skips an identity another transaction holds (an intake of another channel reusing the customer) and still sweeps the rest, and the held one goes at the next run (#3480)', async () => {
       const o = await org();
       await thread(o, 'c-1', 'Của kênh bị xóa', 'u-gone');
-      // An identity with no thread, as another channel's intake makes it just before it gives the thread (inserted directly: that window is too short to hit from a test).
-      const orphan = randomUUID();
-      await rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', 'u-just-made', 'Khách mới')", [o.orgId, orphan]);
-      expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 1, messages: 1, identities: 1 });
-      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-just-made']);
+      // An identity with no thread, held by another transaction as an intake's upsert holds it until it commits.
+      const held = randomUUID();
+      await rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', 'u-held', 'Khách đang được nhận')", [o.orgId, held]);
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, held]);
+        // The erase does not wait for it and leaves it: one identity swept (the channel's own customer).
+        expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 1, messages: 1, identities: 1 });
+        expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-held']);
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+      }
+      // Released and still without a thread: the next erase of the channel (a retry, or the purge's own sweep) takes it.
+      expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 0, messages: 0, identities: 1 });
     });
 
     it('refuses an MCP grant, an extension token, a stale second factor and an agent in a live run, whatever the rule that does it, and changes nothing (#3480)', async () => {
