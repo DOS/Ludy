@@ -15183,6 +15183,7 @@ export const vi = {
       HR_ATTENDANCE_ALREADY_CHECKED_OUT: 'Ngày công này đã check-out hoặc đã được điều chỉnh',
       HR_ATTENDANCE_TIME_INVALID: 'Giờ check-out không thể sớm hơn giờ check-in',
       HR_ATTENDANCE_CHECKIN_REQUIRED: 'Cần có giờ check-in trừ khi trạng thái là điều chỉnh',
+      HR_ATTENDANCE_MINUTES_REQUIRED: 'Trạng thái đã chấm công hoặc nửa ngày công phải có số phút công hợp lệ',
       HR_ATTENDANCE_MISSING_CHECKOUT: 'Còn ngày công chưa check-out trong tháng, hãy điều chỉnh trước khi tổng hợp lương',
       HR_ROLLUP_HOURLY_MISSING: 'Nhân viên lương theo giờ thiếu giờ công hợp lệ',
       HR_RUN_NOT_FOUND: 'Không tìm thấy bảng lương này',

@@ -401,4 +401,90 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     expect(truncatedRollup.overtimeHours).toBe('0');
     expect(truncatedRollup.overtime).toEqual([]);
   });
+
+  it('ignores logs outside inclusive [hireDate, endedOn] employment window for both monthly and hourly rollups', () => {
+    const baseInputs = zHrPayrollInputs.parse({ daysNotEmployed: '10' });
+    // Hire 2026-09-12 -> pre-hire logs (e.g. 2026-09-10) must not count.
+    // Ended 2026-09-25 -> post-end logs (e.g. 2026-09-28) must not count.
+    const monthlyRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-09-12',
+      endedOn: '2026-09-25',
+      entries: [
+        {
+          workDate: '2026-09-10', // before hire
+          checkedInAt: new Date('2026-09-10T01:30:00Z'),
+          checkedOutAt: new Date('2026-09-10T11:30:00Z'),
+          workedMinutes: 600,
+          status: 'present',
+        },
+        {
+          workDate: '2026-09-12', // inclusive hire boundary (Sat normal day)
+          checkedInAt: new Date('2026-09-12T01:30:00Z'),
+          checkedOutAt: new Date('2026-09-12T10:30:00Z'),
+          workedMinutes: 540,
+          status: 'present',
+        },
+        {
+          workDate: '2026-09-25', // inclusive end boundary (Fri normal day)
+          checkedInAt: new Date('2026-09-25T15:00:00Z'),
+          checkedOutAt: new Date('2026-09-25T23:00:00Z'),
+          workedMinutes: 480,
+          status: 'present',
+        },
+        {
+          workDate: '2026-09-28', // after endedOn
+          checkedInAt: new Date('2026-09-28T01:30:00Z'),
+          checkedOutAt: new Date('2026-09-28T11:30:00Z'),
+          workedMinutes: 600,
+          status: 'present',
+        },
+      ],
+    });
+    // Only 2026-09-12 and 2026-09-25 count: 2 worked days, 0 overtime, 1h ordinary night (22:00-23:00 ICT on 09-25? wait 15:00Z=22:00ICT to 23:00Z=06:00ICT -> 8h)
+    expect(monthlyRollup.workedDays).toBe('2');
+    expect(monthlyRollup.overtimeHours).toBe('0');
+    expect(monthlyRollup.nightHours).toBe('8');
+    // Pre-hire & post-end logs did NOT reduce unpaidLeaveDays below 26 - (2 worked + 0 holiday in [12,25] + 10 daysNotEmployed) = 14
+    expect(monthlyRollup.unpaidLeaveDays).toBe('14');
+
+    const hourlyRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      existingInputs: zHrPayrollInputs.parse({}),
+      paidLeaveDays: '0',
+      hireDate: '2026-09-12',
+      endedOn: '2026-09-15',
+      entries: [
+        {
+          workDate: '2026-09-11', // pre-hire
+          checkedInAt: new Date('2026-09-11T01:00:00Z'),
+          checkedOutAt: new Date('2026-09-11T10:00:00Z'),
+          workedMinutes: 540,
+          status: 'present',
+        },
+        {
+          workDate: '2026-09-14', // in window (8h)
+          checkedInAt: new Date('2026-09-14T01:00:00Z'),
+          checkedOutAt: new Date('2026-09-14T09:00:00Z'),
+          workedMinutes: 480,
+          status: 'present',
+        },
+        {
+          workDate: '2026-09-16', // post-end (Sunday / weekday OT or regular)
+          checkedInAt: new Date('2026-09-16T01:00:00Z'),
+          checkedOutAt: new Date('2026-09-16T11:00:00Z'),
+          workedMinutes: 600,
+          status: 'present',
+        },
+      ],
+    });
+    expect(hourlyRollup.workedHours).toBe('8');
+    expect(hourlyRollup.overtimeHours).toBe('0');
+  });
 });

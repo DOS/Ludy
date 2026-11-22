@@ -98,6 +98,29 @@ export function entitySwitchResetState(nextEntityId: string) {
   };
 }
 
+/** Resolves submit timestamps for manager adjustment, preserving exact row instants only while unchanged. */
+export function resolveAdjustmentTimestamps(args: {
+  editingRow: Pick<HrAdminAttendanceRow, 'employeeId' | 'workDate' | 'checkedInAt' | 'checkedOutAt'> | null;
+  employeeId: string;
+  workDate: string;
+  checkedInTime: string;
+  checkedOutTime: string;
+}): { checkedInAt: string | null; checkedOutAt: string | null } {
+  const sameTarget =
+    args.editingRow !== null &&
+    args.editingRow.employeeId === args.employeeId &&
+    args.editingRow.workDate === args.workDate
+      ? args.editingRow
+      : null;
+  const isInUnchanged = sameTarget !== null && args.checkedInTime.trim() === toVnTimeInput(sameTarget.checkedInAt);
+  const checkedInAt = isInUnchanged ? sameTarget.checkedInAt : toVnIsoTimestamp(args.workDate, args.checkedInTime);
+  const checkedOutAt =
+    isInUnchanged && args.checkedOutTime.trim() === toVnTimeInput(sameTarget.checkedOutAt)
+      ? sameTarget.checkedOutAt
+      : toVnOutTimestamp(args.workDate, args.checkedInTime, args.checkedOutTime);
+  return { checkedInAt, checkedOutAt };
+}
+
 export function HrAttendancePage() {
   const { slug } = useParams({ strict: false }) as { slug?: string };
   const t = useTranslations('hrAttendance');
@@ -638,16 +661,13 @@ export function HrAttendancePage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!adjEmpId || !adjDate) return;
-              const isSameEditTarget =
-                editingRow !== null && editingRow.employeeId === adjEmpId && editingRow.workDate === adjDate;
-              const checkedInAt =
-                isSameEditTarget && adjIn.trim() === toVnTimeInput(editingRow.checkedInAt)
-                  ? editingRow.checkedInAt
-                  : toVnIsoTimestamp(adjDate, adjIn);
-              const checkedOutAt =
-                isSameEditTarget && adjOut.trim() === toVnTimeInput(editingRow.checkedOutAt)
-                  ? editingRow.checkedOutAt
-                  : toVnOutTimestamp(adjDate, adjIn, adjOut);
+              const { checkedInAt, checkedOutAt } = resolveAdjustmentTimestamps({
+                editingRow,
+                employeeId: adjEmpId,
+                workDate: adjDate,
+                checkedInTime: adjIn,
+                checkedOutTime: adjOut,
+              });
               saveAdjust.mutate({
                 employeeId: adjEmpId,
                 workDate: adjDate,

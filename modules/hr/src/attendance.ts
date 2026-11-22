@@ -226,6 +226,10 @@ function dayKindForDate(workDate: string): HrOvertimeDayKind {
   return 'normal_day';
 }
 
+function isWithinEmploymentWindow(workDate: string, hireDate?: string | null, endedOn?: string | null): boolean {
+  return (!hireDate || workDate >= hireDate) && (!endedOn || workDate <= endedOn);
+}
+
 /** Deterministic decimal.js rollup of an employee's month attendance into payroll inputs (100% parity with CSV import). */
 export function computeEmployeeAttendanceRollup(args: {
   month: string;
@@ -250,6 +254,7 @@ export function computeEmployeeAttendanceRollup(args: {
   };
 
   for (const e of args.entries) {
+    if (!isWithinEmploymentWindow(e.workDate, args.hireDate, args.endedOn)) continue;
     if (e.status === 'missing_checkout' || e.workedMinutes === null) continue;
     const mins = Math.max(0, Math.min(1440, e.workedMinutes));
     const kind = dayKindForDate(e.workDate);
@@ -853,9 +858,16 @@ export const attendanceAdjust = defineCommand({
           ? existing && !inChanged && !outChanged && existing.worked_minutes !== null
             ? existing.worked_minutes
             : elapsedMinutes(checkedInAt, checkedOutAt)
-          : checkedInAt === null || checkedOutAt === null
-            ? null
-            : existing?.worked_minutes ?? null;
+          : existing && !inChanged && !outChanged
+            ? existing.worked_minutes
+            : null;
+    if ((parsed.status === 'present' || parsed.status === 'half_day') && workedMinutes === null) {
+      throw new DomainError(
+        'HR_ATTENDANCE_MINUTES_REQUIRED',
+        422,
+        'Trạng thái đã chấm công hoặc nửa ngày công phải có số phút công hợp lệ',
+      );
+    }
 
     const note = parsed.note !== undefined ? parsed.note : existing?.note ?? null;
 
@@ -1063,11 +1075,43 @@ export const attendanceRollupToPayroll = defineCommand({
             .orderBy('work_date', 'asc')
             .execute();
 
+    const empIds = [...people.keys()];
+    const nameByEmpId = new Map<string, string>();
+    const firstHireByEmpId = new Map<string, string>();
+    if (empIds.length > 0) {
+      const empRows = await ctx.trx
+        .selectFrom('crove_hr.payroll_employee')
+        .select(['id', 'display_name'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', 'in', empIds)
+        .execute();
+      for (const er of empRows) nameByEmpId.set(er.id, er.display_name);
+
+      const employmentRows = await ctx.trx
+        .selectFrom('crove_hr.payroll_employment')
+        .select(['employee_id', 'effective_from'])
+        .where('org_id', '=', ctx.orgId)
+        .where('employee_id', 'in', empIds)
+        .orderBy('effective_from', 'asc')
+        .execute();
+      for (const em of employmentRows) {
+        if (!firstHireByEmpId.has(em.employee_id)) {
+          firstHireByEmpId.set(em.employee_id, isoDateOnly(em.effective_from));
+        }
+      }
+    }
+
     const logsByEmp = new Map<string, AttendanceRollupEntry[]>();
     let missingCheckoutCount = 0;
     const openNonNormalDates: string[] = [];
     for (const r of logRows) {
       const workDate = isoDateOnly(r.work_date);
+      const person = people.get(r.employee_id);
+      const hireDate = firstHireByEmpId.get(r.employee_id) ?? person?.terms.effectiveFrom ?? null;
+      const endedOn = person?.endedOn ?? null;
+      if (!isWithinEmploymentWindow(workDate, hireDate, endedOn)) {
+        continue;
+      }
       if (r.status === 'missing_checkout' || r.worked_minutes === null) {
         missingCheckoutCount += 1;
         if (dayKindForDate(workDate) !== 'normal_day') {
@@ -1120,32 +1164,6 @@ export const attendanceRollupToPayroll = defineCommand({
     for (const lr of leaveRows) {
       const prev = paidLeaveByEmp.get(lr.employee_id) ?? money('0');
       paidLeaveByEmp.set(lr.employee_id, prev.plus(lr.days));
-    }
-
-    const empIds = [...people.keys()];
-    const nameByEmpId = new Map<string, string>();
-    const firstHireByEmpId = new Map<string, string>();
-    if (empIds.length > 0) {
-      const empRows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employee')
-        .select(['id', 'display_name'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', 'in', empIds)
-        .execute();
-      for (const er of empRows) nameByEmpId.set(er.id, er.display_name);
-
-      const employmentRows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employment')
-        .select(['employee_id', 'effective_from'])
-        .where('org_id', '=', ctx.orgId)
-        .where('employee_id', 'in', empIds)
-        .orderBy('effective_from', 'asc')
-        .execute();
-      for (const em of employmentRows) {
-        if (!firstHireByEmpId.has(em.employee_id)) {
-          firstHireByEmpId.set(em.employee_id, isoDateOnly(em.effective_from));
-        }
-      }
     }
 
     const updates: {

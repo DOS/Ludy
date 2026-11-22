@@ -109,6 +109,16 @@ BEGIN
     RAISE EXCEPTION 'user actor required to insert attendance_log' USING ERRCODE = '42501';
   END IF;
 
+  IF EXISTS (
+    SELECT 1
+    FROM crove_hr.payroll_employee e
+    WHERE e.org_id = NEW.org_id
+      AND e.id = NEW.employee_id
+      AND e.erased_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'attendance cannot be recorded for an erased employee' USING ERRCODE = '42501';
+  END IF;
+
   SELECT EXISTS (
     SELECT 1
     FROM ludy_kernel.tenant_member m
@@ -274,7 +284,15 @@ BEGIN
     '    WHERE m.org_id = attendance_log.org_id '
     '      AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) '
     '      AND ('
-    '        m.role IN (''owner'', ''admin'') '
+    '        ('
+    '          m.role IN (''owner'', ''admin'') '
+    '          AND EXISTS ('
+    '            SELECT 1 FROM crove_hr.payroll_employee e '
+    '            WHERE e.org_id = attendance_log.org_id '
+    '              AND e.id = attendance_log.employee_id '
+    '              AND e.erased_at IS NULL'
+    '          )'
+    '        ) '
     '        OR ('
     '          m.role <> ''viewer'' '
     '          AND crove_hr.is_active_self_employee(attendance_log.org_id, attendance_log.employee_id) '

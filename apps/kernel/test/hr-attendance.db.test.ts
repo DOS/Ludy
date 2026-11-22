@@ -659,12 +659,32 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     expect(clearedAdj.workedMinutes).toBeNull();
 
+    // Note-only edit with an unchanged null timestamp preserves stored workedMinutes when omitted
+    await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
+      employeeId: o.empBId,
+      workDate: '2026-09-14',
+      checkedInAt: '2026-09-14T01:30:00Z',
+      checkedOutAt: null,
+      workedMinutes: 480,
+      status: 'adjusted',
+      note: 'Ghi nhận 8h không có giờ ra',
+    });
+    const noteOnlyNullTs = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
+      employeeId: o.empBId,
+      workDate: '2026-09-14',
+      checkedInAt: '2026-09-14T01:30:00Z',
+      checkedOutAt: null,
+      status: 'adjusted',
+      note: 'Cập nhật ghi chú vẫn giữ 480 phút',
+    });
+    expect(noteOnlyNullTs.workedMinutes).toBe(480);
+
     // Self check-out rejects old historical dates (< yesterday)
     await expect(
       o.exec(o.memberB, 'hr.self.attendance.check_out', { workDate: '2026-09-14' }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_TIME_INVALID' });
 
-    // Adjust rejects present/half_day without checkedOutAt cleanly (422 DomainError instead of PG 23514)
+    // Adjust rejects present/half_day without checkedOutAt or with explicit null workedMinutes cleanly (422 DomainError instead of PG 23514)
     await expect(
       o.exec(o.owner, 'hr.attendance.adjust', {
         employeeId: o.empBId,
@@ -674,6 +694,16 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
         status: 'present',
       }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_TIME_INVALID' });
+    await expect(
+      o.exec(o.owner, 'hr.attendance.adjust', {
+        employeeId: o.empBId,
+        workDate: '2026-09-14',
+        checkedInAt: '2026-09-14T01:30:00Z',
+        checkedOutAt: '2026-09-14T09:30:00Z',
+        workedMinutes: null,
+        status: 'present',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_MINUTES_REQUIRED' });
 
     // Resolve empB's missing checkout via admin adjust (8h = 480m)
     await o.exec(o.owner, 'hr.attendance.adjust', {
@@ -755,10 +785,28 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       }),
     ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
 
-    // Trigger also refuses post-erasure mutation at DB level
+    // Triggers and RLS policies also refuse post-erasure mutations and direct SQL inserts (including owner/admin)
     await expect(
       withAdmin((c) =>
         c.query(`UPDATE crove_hr.attendance_log SET worked_minutes = 120 WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      runAsUserInOrg(o.owner, o.orgId, (c) =>
+        c.query(
+          `INSERT INTO crove_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status, note)
+           VALUES ($1, $2, '2014-01-12', '2014-01-12T01:30:00Z', '2014-01-12T10:30:00Z', 'manual', 540, 'present', 'Chèn trái phép sau xóa')`,
+          [o.orgId, o.empAId],
+        ),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      runAsUserInOrg(o.admin, o.orgId, (c) =>
+        c.query(
+          `INSERT INTO crove_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, check_in_method, status)
+           VALUES ($1, $2, '2014-01-13', '2014-01-13T01:30:00Z', 'web', 'missing_checkout')`,
+          [o.orgId, o.empAId],
+        ),
       ),
     ).rejects.toThrow();
 
@@ -792,5 +840,70 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       return { logs: a.rows[0]?.n, qr: q.rows[0]?.n };
     });
     expect(remaining).toEqual({ logs: 0, qr: 0 });
+  });
+
+  it('excludes attendance logs and missing_checkout rows outside [hireDate, endedOn] from payroll rollup', async () => {
+    const o = await createAttendanceOrg();
+    const targetMonth = '2026-09';
+    const empMidRes = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+      displayName: 'Phạm Giữa Tháng',
+      employment: {
+        effectiveFrom: '2026-09-12',
+        contractType: 'indefinite',
+        region: 'I',
+        payBasis: 'hourly',
+        baseWage: '8000000',
+        hourlyRate: '80000',
+      },
+    });
+    const empMidId = empMidRes.employeeId as string;
+
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: empMidId,
+      workDate: '2026-09-08', // before hireDate (2026-09-12)
+      checkedInAt: '2026-09-08T01:30:00Z',
+      checkedOutAt: '2026-09-08T11:30:00Z',
+      workedMinutes: 600,
+      status: 'present',
+    });
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: empMidId,
+      workDate: '2026-09-14', // in window (8h)
+      checkedInAt: '2026-09-14T01:30:00Z',
+      checkedOutAt: '2026-09-14T09:30:00Z',
+      workedMinutes: 480,
+      status: 'present',
+    });
+
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: targetMonth });
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empMidId, endedOn: '2026-09-20' });
+
+    // Out-of-window completed shift + Sunday missing_checkout AFTER endedOn must neither block nor inflate rollup
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: empMidId,
+      workDate: '2026-09-24',
+      checkedInAt: '2026-09-24T01:30:00Z',
+      checkedOutAt: '2026-09-24T11:30:00Z',
+      workedMinutes: 600,
+      status: 'present',
+    });
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         SELECT org_id, legal_entity_id, id, '2026-09-27', '2026-09-27T01:30:00Z', 'web', 'missing_checkout'
+         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+        [o.orgId, empMidId],
+      ),
+    );
+
+    const rolled = await o.exec<HrAttendanceRollupResult>(o.owner, 'hr.attendance.rollup_to_payroll', {
+      runId: run.runId,
+      allowIncomplete: false,
+    });
+    expect(rolled.missingCheckoutCount).toBe(0);
+    expect(rolled.updatedCount).toBe(1);
+    const midRow = rolled.rows.find((r) => r.employeeId === empMidId)!;
+    expect(midRow.workedHours).toBe('8');
+    expect(midRow.overtimeHours).toBe('0');
   });
 });

@@ -17,6 +17,7 @@ import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import {
   HrAttendancePage,
   entitySwitchResetState,
+  resolveAdjustmentTimestamps,
   shouldApplyRotatedQr,
 } from '../src/routes/hr-attendance.tsx';
 
@@ -392,5 +393,37 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
     expect(multiEntityHtml).toContain('data-testid="hr-attendance-entity"');
     expect(multiEntityHtml).toContain('Chi nhánh HCM');
     expect(multiEntityHtml).toContain('Chi nhánh HN');
+
+    // Note-only edit preserves exact instants while changing check-in recalculates overnight checkout
+    const row0830 = {
+      employeeId: 'emp-1',
+      workDate: '2026-09-10',
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+    };
+    expect(
+      resolveAdjustmentTimestamps({
+        editingRow: row0830,
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+      }),
+    ).toEqual({
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+    });
+    expect(
+      resolveAdjustmentTimestamps({
+        editingRow: row0830,
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '22:00',
+        checkedOutTime: '17:30',
+      }),
+    ).toEqual({
+      checkedInAt: '2026-09-10T15:00:00.000Z',
+      checkedOutAt: '2026-09-11T10:30:00.000Z',
+    });
   });
 });
