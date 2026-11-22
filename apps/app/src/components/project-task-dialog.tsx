@@ -101,7 +101,7 @@ export function ProjectVisibilityField({
         <Label htmlFor={id}>{t('visibility.label')}</Label>
         <NativeSelect
           id={id}
-          className="min-h-11 w-full"
+          className="w-full [&>select]:min-h-11"
           disabled={disabled}
           value={value}
           onChange={(e) => onChange(e.target.value as ProjectVisibility)}
@@ -968,7 +968,7 @@ export function ProjectSettingsDialog({
               <Label htmlFor={`settings-status-${project.id}`}>{t('modals.statusLabel')}</Label>
               <NativeSelect
                 id={`settings-status-${project.id}`}
-                className="min-h-11 w-full"
+                className="w-full [&>select]:min-h-11"
                 disabled={!project.canManage || setStatus.isPending}
                 value={project.status}
                 onChange={(e) =>
@@ -990,7 +990,7 @@ export function ProjectSettingsDialog({
               <Label htmlFor={`settings-owner-${project.id}`}>{t('modals.ownerLabel')}</Label>
               <NativeSelect
                 id={`settings-owner-${project.id}`}
-                className="min-h-11 w-full"
+                className="w-full [&>select]:min-h-11"
                 disabled={!editable || setOwner.isPending}
                 value={project.ownerUserId ?? ''}
                 onChange={(e) => {

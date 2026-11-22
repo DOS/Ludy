@@ -837,7 +837,7 @@ describe('projects SSR screens & board (#2591)', () => {
     );
     expect(orgNoticeHtml).toContain('data-visibility="org"');
     expect(orgNoticeHtml).toContain('Mọi thành viên trong tổ chức đều thấy dự án này');
-    expect(orgNoticeHtml).toContain('min-h-11');
+    expect(orgNoticeHtml).toContain('[&amp;&gt;select]:min-h-11');
 
     const privateNoticeHtml = renderToStaticMarkup(
       wrap('en', <ProjectVisibilityField id="vis-priv" value="private" onChange={() => undefined} />),

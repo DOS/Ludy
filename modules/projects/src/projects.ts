@@ -323,7 +323,13 @@ export const projectSetOwner = defineCommand({
 
     if (row.owner_user_id !== input.ownerUserId) {
       if (row.visibility === 'private') {
-        await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [input.ownerUserId], ctx.now);
+        await ensurePrivateMembers(
+          ctx.trx,
+          ctx.orgId,
+          row.id,
+          [input.ownerUserId, row.owner_user_id, userId],
+          ctx.now,
+        );
       }
       await ctx.trx
         .updateTable('crove_projects.project')
