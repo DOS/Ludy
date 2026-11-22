@@ -95,7 +95,7 @@ function extractVnPhone(text: string): string | null {
 
 function extractDisplayName(lines: readonly string[], email: string | null): string | null {
   for (const rawLine of lines.slice(0, 20)) {
-    const labelMatch = rawLine.match(/^(?:họ\s*(?:và\s*)?tên|full\s*name|họ\s*tên|name|ứng\s*viên|candidate)\s*[:\-]\s*(.+)$/i);
+    const labelMatch = rawLine.match(/^(?:họ\s*(?:và\s*)?tên|full\s*name|họ\s*tên|name|ứng\s*viên|candidate)\s*[:-]\s*(.+)$/i);
     const candidate = (labelMatch ? labelMatch[1] : rawLine)?.trim() ?? '';
     if (!candidate) continue;
     if (candidate.length < 2 || candidate.length > 80) continue;
@@ -116,7 +116,7 @@ function extractDisplayName(lines: readonly string[], email: string | null): str
 function extractYearsExperience(text: string): number | null {
   const directMatch =
     text.match(/(\d{1,2})(?:[.,]\d+)?\s*(?:\+\s*)?(?:năm\s+kinh\s+nghiệm|years?\s+(?:of\s+)?(?:work\s+)?experience|năm\s+làm\s+việc)/i) ??
-    text.match(/(?:kinh\s+nghiệm|experience)\s*[:\-]\s*(\d{1,2})\s*(?:\+\s*)?(?:năm|years?)/i);
+    text.match(/(?:kinh\s+nghiệm|experience)\s*[:-]\s*(\d{1,2})\s*(?:\+\s*)?(?:năm|years?)/i);
   if (directMatch?.[1]) {
     const parsed = Number.parseInt(directMatch[1], 10);
     if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 60) return parsed;
@@ -126,7 +126,7 @@ function extractYearsExperience(text: string): number | null {
   let maxSpan = 0;
   let earliest = Number.POSITIVE_INFINITY;
   let latest = 0;
-  const ranges = text.matchAll(/\b(20[0-2]\d|19[89]\d)\s*(?:-|–|to|đến)\s*(20[0-2]\d|present|hiện\s*tại|nay)\b/gi);
+  const ranges = text.matchAll(/\b(20[0-2]\d|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20[0-2]\d|present|hiện\s*tại|nay)\b/gi);
   for (const m of ranges) {
     const startYear = Number.parseInt(m[1] ?? '', 10);
     const endRaw = (m[2] ?? '').toLowerCase();

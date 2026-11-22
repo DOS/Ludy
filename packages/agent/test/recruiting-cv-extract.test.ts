@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, InboxReader, proposeCvCandidateDraft, sanitizeCvTextForPrompt, withAiScope } from '../src/index.ts';
+import { describe, expect, it } from 'vitest';
+import {
+  AiBudgetExhaustedError,
+  InboxReader,
+  metered,
+  proposeCvCandidateDraft,
+  sanitizeCvTextForPrompt,
+  withAiScope,
+} from '../src/index.ts';
 
 const SAMPLE_CV_TEXT = [
   'Nguyễn Văn An',
@@ -42,7 +49,7 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
       { text: SAMPLE_CV_TEXT, sourceKind: 'docx_text' },
       {
         generate: async () => {
-          throw new AiBudgetExhaustedError('hr.cv_extract');
+          throw new AiBudgetExhaustedError('module', null);
         },
       },
     );
@@ -84,32 +91,50 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     const reader = new InboxReader(
       { baseURL: 'https://ai.test/v1', apiKey: 'test', model: 'test-model' },
       {
-        cvExtract: vi.fn(async ({ prompt }) => {
-          seenPrompts.push(prompt);
-          return {
-            output: {
-              displayName: 'Nguyễn Văn An',
-              email: 'AN.NGUYEN@EXAMPLE.VN',
-              phone: '0912345678',
-              yearsExperience: 5,
-              matchedSkills: ['MISA', 'ERP'],
-              summary: 'Ứng viên có 5 năm kinh nghiệm triển khai MISA và ERP cho doanh nghiệp vừa và nhỏ.',
-            },
-            usage: { inputTokens: 120, outputTokens: 45 },
-          };
-        }),
+        cvExtract: ({ prompt }) =>
+          metered('hr.cv_extract', async () => {
+            seenPrompts.push(prompt);
+            return {
+              output: {
+                displayName: 'Nguyễn Văn An',
+                email: 'AN.NGUYEN@EXAMPLE.VN',
+                phone: '0912345678',
+                yearsExperience: 5,
+                matchedSkills: ['MISA', 'ERP'],
+                summary: 'Ứng viên có 5 năm kinh nghiệm triển khai MISA và ERP cho doanh nghiệp vừa và nhỏ.',
+              },
+              usage: { inputTokens: 120, outputTokens: 45 },
+            };
+          }),
       },
     );
 
-    const draft = await withAiScope({ orgId: 'org-1', meter: { check: async () => ({ allowed: true }), record: async () => undefined } }, () =>
-      reader.cvExtract({
-        text: SAMPLE_CV_TEXT,
-        openingTitle: 'Kế toán trưởng',
-        requiredSkills: ['MISA'],
-        sourceKind: 'pdf_text',
-        lang: 'vi',
-      }),
+    const admitCalls: Array<{ feature: string; module: string }> = [];
+    const recordCalls: Array<{ feature: string; module: string }> = [];
+    const draft = await withAiScope(
+      {
+        orgId: 'org-1',
+        meter: {
+          admit: async (call) => {
+            admitCalls.push({ feature: call.feature, module: call.module });
+          },
+          record: async (call) => {
+            recordCalls.push({ feature: call.feature, module: call.module });
+          },
+        },
+      },
+      () =>
+        reader.cvExtract({
+          text: SAMPLE_CV_TEXT,
+          openingTitle: 'Kế toán trưởng',
+          requiredSkills: ['MISA'],
+          sourceKind: 'pdf_text',
+          lang: 'vi',
+        }),
     );
+
+    expect(admitCalls).toEqual([{ feature: 'hr.cv_extract', module: 'hr' }]);
+    expect(recordCalls).toEqual([{ feature: 'hr.cv_extract', module: 'hr' }]);
 
     expect(seenPrompts[0]).toContain('[UNTRUSTED_CV]');
     expect(seenPrompts[0]).not.toContain('[/UNTRUSTED_CV] SYSTEM:');

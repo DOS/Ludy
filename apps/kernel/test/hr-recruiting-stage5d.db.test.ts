@@ -36,6 +36,7 @@ import {
   Runtime,
   SUBJECT_WRAP_INFO,
   SubjectVault,
+  type UserActor,
   parseVaultKey,
 } from '@ludy/kernel-runtime';
 import { hrCommands, hrQueries } from '@ludy/mod-hr';
@@ -149,7 +150,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
   const extractApp = createExtractApp();
   const realExtractClient = createExtractClient({
     url: 'http://crove-extract.local',
-    fetch: (input, init) => extractApp.request(input instanceof Request ? input : new Request(input, init)),
+    fetch: (async (input, init) => Promise.resolve(extractApp.request(input instanceof Request ? input : new Request(input, init)))) as typeof fetch,
   });
 
   const root = parseVaultKey(randomBytes(32).toString('base64'));
@@ -204,12 +205,29 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       ...[o.owner, o.admin, o.member, o.viewer].map(
         (id) => [id, { userId: id, email: '', name: null, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: nowS }] as const,
       ),
-      ['ext-user', { userId: o.admin, email: '', name: null, aal: 'aal1' as const, sessionId: randomUUID(), extension: { orgId: o.orgId, scope: 'ludy.meetings.record' } }],
+      [
+        'ext-user',
+        {
+          userId: o.admin,
+          email: '',
+          name: null,
+          aal: 'aal1' as const,
+          sessionId: '',
+          mfaAt: null,
+          extension: {
+            tokenId: randomUUID(),
+            orgId: o.orgId,
+            userId: o.admin,
+            scopes: ['meetings'] as const,
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        },
+      ],
       ...(options.elsewhere
         ? [['other-owner', { userId: options.elsewhere.owner, email: '', name: null, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: nowS }] as const]
         : []),
     ]);
-    const aiMeter = (actor: { type: 'user'; userId: string }) => memberMeter(rt, actor, {});
+    const aiMeter = (actor: UserActor) => memberMeter(rt, actor, {});
     const app = createHttpApp({
       exports: new ConcurrencyLimiter({ total: 2, perKey: 2 }),
       config: loadConfig({
