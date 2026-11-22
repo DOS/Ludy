@@ -17770,6 +17770,8 @@ export const en = {
       },
       followup: {
         draft: 'Open the follow-up email draft of a meeting',
+        note_start: 'Ask Vy to draft a personal-note follow-up email for a meeting',
+        note_status: 'See whether Vy can draft a personal-note follow-up email for a meeting',
         send: 'Send the follow-up email of a meeting',
       },
       link: {

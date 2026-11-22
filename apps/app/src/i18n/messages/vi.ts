@@ -17770,6 +17770,8 @@ export const vi = {
       },
       followup: {
         draft: 'Mở bản nháp thư cảm ơn sau cuộc họp',
+        note_start: 'Nhờ Vy viết ghi chú cá nhân cho thư cảm ơn sau cuộc họp',
+        note_status: 'Xem Vy có viết được ghi chú cá nhân cho thư cảm ơn sau cuộc họp không',
         send: 'Gửi thư cảm ơn sau cuộc họp',
       },
       link: {
