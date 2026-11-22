@@ -33,6 +33,8 @@ const PUBLIC: Record<string, string> = {
     "a bank feed provider's signed notice (ADR-0039, #2044): the adapter checks its signature and timestamp before anything else, it is rate limited per address, stores nothing of its body, and only asks the worker for a pull of a connection that lists an account it names",
   '/api/bank-feed/:provider/webhook/:hookKey':
     "a bank feed provider's signed notice at the address of one connection (Tingee S3 of #2045, #4203, ADR-0039): the hook key in the path is looked up by its SHA-256 before anything is stored, the per-address limit and the 16 KB cap run first, and the worker verifies the provider's signature with the connection's sealed secret",
+  '/api/marketplace/:adapter/webhook/:hookKey':
+    "a marketplace's signed push (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315) at the address of one connection: the adapter must be one the deployment runs, the per-address limit and the 16 KB cap run first, the hook key in the path is looked up by its SHA-256 before anything is stored (the org and the connection come from our own row, never the body), every answer is an empty 2xx or a 404 with a fixed code, and the worker verifies the platform's signature with the connection's sealed secret",
   '/api/webhooks/misa-amis':
     "MISA AMIS's callback with the result of a save (#3903, S4 of #3854): the body is capped and the client address limited before it is read, the HMAC of its signed `data` (the ClientID as the key, constant time) is checked before anything else is read, a refusal is a fixed code with nothing stored or logged, the organisation is found only from our own stored push row by org_refid (never from the unsigned envelope), the company code must equal the located connection's, a refid found in two organisations is refused, and a verified message is always answered 200 and only moves a row forward through finance.misa_amis.push_record",
   '/api/ads/meta/data-deletion':
@@ -130,6 +132,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     // An adapter that takes signed notices, so the bank feed route is registered and listed (ADR-0039, #2044).
     bankFeedWebhooks: { bank_sandbox: { id: 'bank_sandbox', hosts: [], verifyWebhook: () => [] } } as unknown as NonNullable<HttpDeps['bankFeedWebhooks']>,
     bankFeedHooks: { bank_tingee: { id: 'bank_tingee', hosts: [], hookTimestampFresh: () => true, verifyHook: () => 'ok' } } as unknown as NonNullable<HttpDeps['bankFeedHooks']>,
+    // A marketplace that takes signed pushes, so its route is registered and listed (#4346).
+    marketplacePush: { adapters: ['shopee'] },
     // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
     misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).
