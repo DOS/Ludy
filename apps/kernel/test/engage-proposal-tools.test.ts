@@ -88,3 +88,24 @@ describe('the Engage proposal tools (#3863)', () => {
     expect(calls).toEqual([{ name: 'kernel.conversation.reply_approved', input: { payload: args } }]);
   });
 });
+
+describe('the follow-up task tool and the seats it names (#4369)', () => {
+  it('tells the coworker where a seat id comes from, and that tool is offered to exactly the grants that are offered the follow-up', () => {
+    for (const scopes of [['ludy.read', 'ludy.engage.write'], ['ludy.read', 'ludy.engage.write', 'ludy.ads.draft']]) {
+      const tools = listed(grant(scopes));
+      const followUp = tools.find((t) => t.name === 'ludy_conversation_follow_up');
+      expect(followUp?.description).toMatch(/assigneePositionId/);
+      expect(followUp?.description).toMatch(/ludy_seats_list/);
+      expect(tools.some((t) => t.name === 'ludy_seats_list')).toBe(true);
+    }
+    // A member-bound grant is offered neither.
+    const memberTools = listed(grant(['ludy.read', 'ludy.engage.write'], 'member'));
+    expect(memberTools.some((t) => t.name === 'ludy_conversation_follow_up' || t.name === 'ludy_seats_list')).toBe(false);
+    // A grant that is not offered the follow-up is not offered the seats either.
+    for (const scopes of [['ludy.read'], ['ludy.read', 'ludy.ads.draft']]) {
+      const tools = listed(grant(scopes));
+      expect(tools.some((t) => t.name === 'ludy_conversation_follow_up')).toBe(false);
+      expect(tools.some((t) => t.name === 'ludy_seats_list')).toBe(false);
+    }
+  });
+});
