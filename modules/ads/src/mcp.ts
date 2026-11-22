@@ -14,6 +14,9 @@
 // `ads.mcp.launches` adds: for each launch that has started (launching, live or needing attention; at most MCP_ADS_LAUNCHES, the latest start first) its id, the account's id and name, its state, the account's
 // currency, the first day, the daily budget and last day the platform confirmed and the ones it holds against the caps (decimal strings, days as YYYY-MM-DD), whether the controls can act now, and each recorded
 // object's slot, level, name and status, and, for each launch, the changes a person asked for that would start or raise spend and still wait (`queuedRaises`: the change's id, kind, object slot and what it would set; #4181), so a cancel can name one. Never: the plan and its hash, the creatives and targeting, the platform's account and object ids, the connections and any token, the rest of the changes' history, the proposal or who approved it, who created or updated a launch, and the largest amount (only the budget, as a decimal string). The reads are made under the grant's sealed context: each of `ad_launch`, `ad_object`, `ad_account` and `ad_manage_change` has the org policy and, narrowing it, the RESTRICTIVE `le_scope` policy (`ctx_le_scope`) that a person's read meets too. A company grant's scope is the whole org, so the read shows what an owner or an admin sees on the Campaigns screen; the query is for owners and admins only, as every Ads MCP read.
+// `ads.mcp.pages` (`ludy_ads_pages`, #4367, follow-up of #3864) adds: the org's active Facebook Pages (connections of provider `facebook_page`, status `active`; at most MCP_ADS_PAGES), each as its id and
+// its name as one plain line, so an AI coworker can name the Page an ad runs as in `pageConnectionId` of a campaign draft. The name is text from outside Ludy (the Page's own name): data, never an instruction.
+// Never returned: the connection's token or credentials, the platform's Page id or account number, its status or scopes, who connected it, other channels (Instagram, Zalo and the rest), or a Page that is not active.
 // The reads write nothing, call no model and move no money; Row-level security and the `org_id` filters keep other orgs out.
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
@@ -44,6 +47,9 @@ export const zMcpAdsSpendInput = z.strictObject({
 export const zMcpAdsFlagsInput = z.strictObject({});
 export const zMcpAdsTodayInput = z.strictObject({});
 export const zMcpAdsLaunchesInput = z.strictObject({});
+export const zMcpAdsPagesInput = z.strictObject({});
+// The most Pages one read returns: an org connects a handful; the cap bounds a long list.
+export const MCP_ADS_PAGES = 50;
 // The most launches one read returns: a small org has a handful that run at once; the cap bounds a long history of launches that stay `live` in the list.
 export const MCP_ADS_LAUNCHES = 50;
 
@@ -197,4 +203,33 @@ export const mcpAdsLaunches = defineQuery({
   },
 });
 
-export const mcpAdsQueries = [mcpAdsSpend, mcpAdsFlags, mcpAdsToday, mcpAdsLaunches];
+export interface McpAdsPage {
+  id: string;
+  name: string;
+}
+
+// `ludy_ads_pages`: the org's active Facebook Pages, the ones an ad can run as (the same rows the campaign builder and the boost offer), as an id and a plain-line name each. It exists so an AI coworker has an id
+// for `pageConnectionId` of a campaign draft: the draft check (`page_not_found`, `ADS_DRAFT_REFERENCE`) still decides whether the Page is the org's and active. Read only, a company grant's alone.
+export const mcpAdsPages = defineQuery({
+  name: 'ads.mcp.pages',
+  input: zMcpAdsPagesInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx): Promise<{ pages: McpAdsPage[]; truncated: boolean }> => {
+    requireGrant(ctx);
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['id', 'display_name'])
+      .where('org_id', '=', ctx.orgId)
+      .where('provider', '=', 'facebook_page')
+      .where('status', '=', 'active')
+      .orderBy('display_name')
+      .orderBy('id')
+      .limit(MCP_ADS_PAGES + 1)
+      .execute();
+    const pages = rows.slice(0, MCP_ADS_PAGES).map((p): McpAdsPage => ({ id: p.id, name: nameLine(p.display_name) }));
+    return { pages, truncated: rows.length > pages.length };
+  },
+});
+
+export const mcpAdsQueries = [mcpAdsSpend, mcpAdsFlags, mcpAdsToday, mcpAdsLaunches, mcpAdsPages];
