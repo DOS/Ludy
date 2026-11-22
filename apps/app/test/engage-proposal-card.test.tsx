@@ -181,6 +181,19 @@ describe('the follow-up task card (#4148)', () => {
       expect(html).not.toContain('engageField');
     }
   });
+
+  it('says in words that the seat is archived or paused, so the approver sees it before approving (#4370)', () => {
+    const archived = { ...task, about: [...task.about, { label: 'assigneeState', value: 'archived' }] } satisfies EngageProposalView;
+    const en = render('en', 'pending', archived, 'kernel.conversation_follow_up');
+    expect(en).toContain('State of that seat');
+    expect(en).toContain('approving will fail');
+    const vi = render('vi', 'pending', archived, 'kernel.conversation_follow_up');
+    expect(vi).toContain('Trạng thái của vị trí đó');
+    expect(vi).toContain('Đã ngừng sử dụng');
+    const paused = { ...task, about: [...task.about, { label: 'assigneeState', value: 'paused' }] } satisfies EngageProposalView;
+    expect(render('en', 'pending', paused, 'kernel.conversation_follow_up')).toContain('Paused');
+    for (const html of [vi, en]) expect(html).not.toContain('engageAbout');
+  });
 });
 
 describe('the plain card a member or a viewer sees instead (L4 of #4160)', () => {

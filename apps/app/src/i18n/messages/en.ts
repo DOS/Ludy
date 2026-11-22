@@ -9251,8 +9251,11 @@ export const en = {
       changeState: 'State of the change',
       changeTo: 'What it would set',
       assignee: 'Seat that gets the task',
+      assigneeState: 'State of that seat',
     },
     engageAboutValue: {
+      seat_archived: 'Archived: approving will fail, because a task cannot be given to an archived seat',
+      seat_paused: 'Paused',
       draft: 'Draft',
       sent: 'Sent',
       accepted: 'Accepted',

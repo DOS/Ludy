@@ -254,6 +254,14 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     expect(named.find((a) => a.label === 'assignee')?.value).toBe(title);
     const none = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: null })).about as About;
     expect(none.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage']);
+    // An active seat has no state line; a paused or archived one says so (approving an archived seat fails closed, #4370).
+    for (const state of ['paused', 'archived'] as const) {
+      await h.q("UPDATE crove_kernel.position SET status = $3 WHERE org_id = $1 AND id = $2", [h.orgId, seat, state]);
+      const off = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: seat })).about as About;
+      expect(off.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage', 'assignee', 'assigneeState']);
+      expect(off.find((a) => a.label === 'assigneeState')?.value).toBe(state);
+    }
+    await h.q("UPDATE crove_kernel.position SET status = 'active' WHERE org_id = $1 AND id = $2", [h.orgId, seat]);
   });
 
   it('shows the lines to owners and admins only: a member and a viewer get no card', async () => {

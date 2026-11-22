@@ -9247,8 +9247,11 @@ export const vi = {
       changeState: 'Trạng thái của thay đổi',
       changeTo: 'Điều nó sẽ đặt',
       assignee: 'Vị trí nhận công việc',
+      assigneeState: 'Trạng thái của vị trí đó',
     },
     engageAboutValue: {
+      seat_archived: 'Đã ngừng sử dụng: duyệt sẽ không thành công, vì không giao được việc cho vị trí đã ngừng sử dụng',
+      seat_paused: 'Đang tạm dừng',
       draft: 'Nháp',
       sent: 'Đã gửi',
       accepted: 'Đã được chấp nhận',

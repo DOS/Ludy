@@ -67,6 +67,7 @@ const ABOUT_KEYS = [
   'changeState',
   'changeTo',
   'assignee',
+  'assigneeState',
 ] as const satisfies readonly EngageProposalView['about'][number]['label'][];
 // A label the contract adds and this list lacks fails the typecheck here, not on a card.
 const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (typeof ABOUT_KEYS)[number] ? true : never = true;
@@ -92,6 +93,8 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
     // A resume sets no number or day: the part of the ad it would start again, in words.
     if (a.label === 'changeTo' && isSlotKey(a.value)) return t(`engageAboutValue.slot_${a.value}`);
     if (a.label === 'changeKind' && isChangeKind(a.value)) return t(`engageAboutValue.change_${a.value}`);
+    // An archived or paused seat: its state in words, so the approver sees the task cannot be given to it.
+    if (a.label === 'assigneeState' && (a.value === 'archived' || a.value === 'paused')) return t(`engageAboutValue.seat_${a.value}`);
     return a.value;
   };
   return (

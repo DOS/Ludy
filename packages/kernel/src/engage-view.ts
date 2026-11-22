@@ -129,9 +129,11 @@ async function followUpAbout(trx: Transaction<Database>, orgId: string, p: Recor
   const out = await conversationAbout(trx, orgId, p);
   const positionId = idOf(p.assigneePositionId);
   if (!positionId) return out;
-  const { rows } = await sql<{ title: string | null }>`
-    SELECT po.title AS title FROM crove_kernel.position po WHERE po.org_id = ${orgId}::uuid AND po.id = ${positionId}::uuid LIMIT 1`.execute(trx);
+  const { rows } = await sql<{ title: string | null; status: string | null }>`
+    SELECT po.title AS title, po.status AS status FROM crove_kernel.position po WHERE po.org_id = ${orgId}::uuid AND po.id = ${positionId}::uuid LIMIT 1`.execute(trx);
   push(out, 'assignee', rows[0]?.title);
+  // A seat that is not active is said on the card (approving would fail closed with POSITION_ARCHIVED for an archived one, #4370): the state is one of the seat's own enum words, never a person's text.
+  if (rows[0]?.status === 'archived' || rows[0]?.status === 'paused') push(out, 'assigneeState', rows[0].status);
   return out;
 }
 
