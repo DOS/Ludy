@@ -846,6 +846,56 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(await payoutsOf(second.o, second.settlement)).toHaveLength(0);
       expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [second.o.orgId, asked.proposalId]))[0]?.status).toBe('pending');
     });
+
+  describe('the facts behind the coworker note on a pending proposal (#4389)', () => {
+    const factsOf = (o: Org, proposalId: string, actor: string = o.owner) =>
+      rt.query<{ kind: string; figures: Record<string, string>; lineKinds: string[]; accounts: string[]; uncertain: Array<{ key: string }> } | null>('finance.marketplace.proposal_facts', { proposalId }, { actor: asUser(actor), orgId: o.orgId });
+
+    it('reads a pending settlement and a pending payout from the stored proposals, in whole dong, with only the Uncertain points of the rows they use', async () => {
+      // A settlement not yet posted: the proposal waits.
+      const o = await org('tt133', false);
+      const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', discount: '5000' }]);
+      const asked = await askSettlement(o, settlement);
+      const sFacts = await factsOf(o, asked.proposalId);
+      expect(sFacts).toMatchObject({ kind: 'settlement', figures: { sales: '100000', sellerDiscount: '5000' }, lineKinds: [] });
+      expect(sFacts?.figures.refund).toBeUndefined();
+      expect(sFacts?.accounts).toEqual(expect.arrayContaining(['131']));
+      // A seller discount brings the voucher point; no refund and no withheld tax bring none of those.
+      expect(sFacts?.uncertain.map((p) => p.key)).toEqual(expect.arrayContaining(['receivable', 'revenue_voucher']));
+      expect(sFacts?.uncertain.map((p) => p.key)).not.toContain('sales_return');
+      expect(sFacts?.uncertain.map((p) => p.key)).not.toContain('household_tax');
+      // A payout with an incentive line: the incentive point is there, and none for compensation, withheld tax or fees.
+      const c = await company([{ sales: '100000', other: '6000' }], '106000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [{ kind: 'incentive', lineId: c.ids[0], amount: '6000' }]);
+      const pFacts = await factsOf(c.o, proposalId);
+      expect(pFacts).toMatchObject({ kind: 'payout', figures: { received: '106000', incentive: '6000' }, lineKinds: ['incentive'] });
+      expect(pFacts?.accounts).toEqual(expect.arrayContaining(['1121', '131', '711']));
+      expect(pFacts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income']);
+    });
+
+    it('reads nothing of another organization\'s proposal, and nothing of an entity outside a scoped member\'s scope', async () => {
+      const mine = await company([{ sales: '100000', other: '6000' }], '106000');
+      const { proposalId } = await askWith(mine.o, mine.settlement, mine.line, [{ kind: 'incentive', lineId: mine.ids[0], amount: '6000' }]);
+      // Another organization sees no such proposal.
+      const other = await org('tt133', false);
+      await expect(factsOf(other, proposalId)).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      await expect(factsOf(other, randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      // A member limited to another entity of the same organization is refused the same way; one limited to the proposal's own entity reads it.
+      const branch = (
+        await withAdmin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [mine.o.orgId, `Chi nhánh ${randomUUID().slice(0, 6)}`, mine.o.owner]))
+      ).rows[0]?.id as string;
+      const scopedTo = async (entityId: string) => {
+        const userId = await upsertIdentity(createDb(pool), { issuer: 'mktnote', subject: randomUUID(), email: `scoped-${randomUUID().slice(0, 8)}@mkt.test`, name: null });
+        await withAdmin(async (c) => {
+          await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [mine.o.orgId, userId]);
+          await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [mine.o.orgId, userId, entityId, mine.o.owner]);
+        });
+        return userId;
+      };
+      await expect(factsOf(mine.o, proposalId, await scopedTo(branch))).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      expect(await factsOf(mine.o, proposalId, await scopedTo(mine.o.entity))).toMatchObject({ kind: 'payout' });
+    });
+  });
   });
 
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {

@@ -198,3 +198,17 @@ export const zMarketplaceFeeNotes = z.strictObject({
   notes: z.array(z.strictObject({ legalEntityId: zId, platform: z.string().max(40), text: z.string().max(480) })).max(200),
 });
 export type MarketplaceFeeNotes = z.infer<typeof zMarketplaceFeeNotes>;
+
+// The finance coworker's note on a pending marketplace settlement or payout proposal (#4389, plan 8.6). `marketplace.proposalNote` loads the stored proposal in the caller's own context (the Inbox's visibility:
+// another org or an entity outside the caller's scope is a 404; a visible proposal that is neither a settlement nor a payout answers null) and computes every figure in code. `note` is the model's wording when `ai` is `used`, else the fixed template built
+// from the same figures (`off` no model, `busy` too frequent, `budget` the AI budget is spent, `failed` the call failed or the checks refused the text; the reason is a code in the log, never the words).
+// `uncertain` holds the Uncertain (#2520) points of the posting-map rows this proposal uses, chosen by code from a closed table whatever `ai` says. The note never changes the payload and has no action.
+export const zMarketplaceProposalNoteAsk = z.strictObject({ proposalId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type MarketplaceProposalNoteAsk = z.infer<typeof zMarketplaceProposalNoteAsk>;
+export const zMarketplaceProposalNote = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed']),
+  kind: z.enum(['settlement', 'payout']),
+  note: z.string().max(480),
+  uncertain: z.array(z.strictObject({ key: z.string().max(60), text: z.string().max(400) })).max(20),
+});
+export type MarketplaceProposalNote = z.infer<typeof zMarketplaceProposalNote>;
