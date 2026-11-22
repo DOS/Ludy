@@ -56,7 +56,7 @@ suite('the cash-flow forecast (#4391)', () => {
   const secondEntity = (o: Org) => admin(async (c) => (await c.query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string);
 
   // One journal entry of two or more lines, as the commands write one (a document without its entry is refused at commit, an entry must balance).
-  async function entry(o: Org, date: string, lines: Array<{ account: string; debit?: string; credit?: string; party?: string | null }>, entity: string = o.entity, document: { number: string; direction: 'sale' | 'purchase'; party: string; total: string } | null = null): Promise<string | null> {
+  async function entry(o: Org, date: string, lines: Array<{ account: string; debit?: string; credit?: string; party?: string | null }>, entity: string = o.entity, document: { number: string; direction: 'sale' | 'purchase'; party: string; total: string; invoiceDate?: string } | null = null): Promise<string | null> {
     return admin(async (c) => {
       await c.query('BEGIN');
       let doc: string | null = null;
@@ -65,7 +65,7 @@ suite('the cash-flow forecast (#4391)', () => {
         await c.query(
           `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
-          [o.orgId, doc, document.party, document.number, date, document.total, document.direction, entity],
+          [o.orgId, doc, document.party, document.number, document.invoiceDate ?? date, document.total, document.direction, entity],
         );
       }
       const id = randomUUID();
@@ -174,6 +174,19 @@ suite('the cash-flow forecast (#4391)', () => {
     expect(paid.openingCash).toBe('2000000');
     expect(at(paid, day(5))).toBe('2100000');
     expect(at(paid, day(90))).toBe('2400000');
+  });
+
+  it('reads as of a day: an invoice dated by then but posted after it is not in that day\'s receivables', async () => {
+    const o = await org();
+    const p = await party(o, 'Khách Bình Minh');
+    await cash(o, day(-60), '1000000');
+    // Booked: 400,000 invoiced and posted 30 days ago (due today). Invoiced 20 days ago for 600,000 but posted only 2 days ago.
+    await sale(o, p, '1', day(-30), '400000');
+    await entry(o, day(-2), [{ account: '131', debit: '600000', party: p }, { account: '511', credit: '600000' }], o.entity, { number: '2', direction: 'sale', party: p, total: '600000', invoiceDate: day(-20) });
+    // As of 5 days ago the 131 balance is 400,000, so only the first invoice may take it: it is due on day(0), not on day(10) (the late-posted one's date).
+    const f = await forecast(o, { asOf: day(-5) });
+    expect(at(f, day(-1))).toBe('1000000');
+    expect(at(f, day(0))).toBe('1400000');
   });
 
   it('lays the 331 balance over the purchase invoices, dates each 30 days after its own date and counts an overdue one today', async () => {
