@@ -15545,6 +15545,9 @@ export const vi = {
         prepare: 'Kiểm tra khoản sàn trả và dòng sao kê trước khi đề xuất ghi sổ',
         record: 'Ghi sổ khoản sàn trả (tiền nhận, phí, thuế sàn giữ lại) thành một bút toán',
       },
+      marketplace_return: {
+        decide: 'Xác nhận hàng của dòng đơn sàn bị trả lại đã về kho hay chưa',
+      },
       marketplace_fee_clearing: {
         prepare: 'Kiểm tra hóa đơn phí của sàn và số phí đang chờ trước khi đề xuất cấn trừ',
         record: 'Cấn trừ phí của sàn đang chờ hóa đơn (Nợ 331, Có 1388) thành một bút toán',

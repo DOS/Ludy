@@ -109,6 +109,7 @@ export const financeManifest = defineModule({
     { type: 'finance.bank_party_rule', table: 'bank_party_rule', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.cash_voucher', table: 'cash_voucher', legalEntityScoped: true, numbering: { docType: 'finance.cash_voucher.<voucher_type>' }, audit: 'append_only' },
     { type: 'finance.categorization_rule', table: 'categorization_rule', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.channel_order_line', table: 'channel_order_line', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.customer_collection', table: 'customer_collection', legalEntityScoped: false, audit: 'command' },
     { type: 'finance.einvoice_connection', table: 'einvoice_connection', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.einvoice_draft', table: 'einvoice_draft', legalEntityScoped: true, audit: 'command' },

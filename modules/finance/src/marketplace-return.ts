@@ -107,7 +107,7 @@ export const marketplaceReturnDecide = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
-  target: (input) => ({ type: 'finance.marketplace_order_line', id: input.orderLineId }),
+  target: (input) => ({ type: 'finance.channel_order_line', id: input.orderLineId }),
   handler: async (ctx, input): Promise<MarketplaceReturnDecided> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xác nhận được hàng trả về');
     const userId = ctx.actor.userId;

@@ -15545,6 +15545,9 @@ export const en = {
         prepare: "Check a platform's payout and its bank line before proposing its posting",
         record: "Post a platform's payout (money received, fees, tax withheld) as one journal entry",
       },
+      marketplace_return: {
+        decide: 'Say whether the goods of a returned marketplace order line are back in stock',
+      },
       marketplace_fee_clearing: {
         prepare: "Check a platform's fee invoice and the fees waiting for it before proposing the clearing",
         record: "Clear a platform's fees waiting for an invoice (Dr 331, Cr 1388) as one journal entry",
