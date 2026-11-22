@@ -107,6 +107,12 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/v1/sign/envelopes': 'external eSign REST envelope list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, per-key rate limit, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/envelopes/:id': 'external eSign REST envelope detail (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, and omits signing tokens and OTPs',
+  '/api/v1/sign/envelopes/:id/sealed': 'external eSign REST sealed PDF download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/envelopes/:id/certificate': 'external eSign REST audit certificate download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/templates': 'external eSign REST reusable template list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, and never returns direct-link capability tokens',
+  '/api/v1/sign/envelopes/from-template': 'external eSign REST draft-only envelope creation from template (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:draft scope, org_app_on + entitlement opaque 404, creates status = draft only for human review, and never auto-sends or mints signing tokens',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

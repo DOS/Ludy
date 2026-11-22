@@ -26,6 +26,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { signCommands, signQueries } from '@ludy/mod-sign';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
@@ -128,6 +129,16 @@ const SIGNALS = [
 const FINANCE_READS: readonly string[] = [
 ];
 
+// The eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
+// upcoming renewals, and reusable templates. Optional in Step 0 so Slice 5c can land while main's base invariant suite runs; never returns hr_contract or
+// meeting_minutes envelopes, signing tokens, OTPs, or signer emails/phones.
+const SIGN_READS: readonly string[] = [
+  'sign.mcp.envelopes:ludy.read',
+  'sign.mcp.envelope_get:ludy.read',
+  'sign.mcp.renewals:ludy.read',
+  'sign.mcp.templates:ludy.read',
+];
+
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
 const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
@@ -150,8 +161,8 @@ const ENGAGE_WRITES: readonly string[] = [
   'crm.mcp.next_step_snooze:ludy.engage.write',
   'ads.mcp.campaign_draft_save:ludy.ads.draft',
 ];
-const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
-const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
+const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands, ...signCommands];
+const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries, ...signQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
   it('has exactly the commands that run for a grant that WRITES and ENGAGE_WRITES name, with their scope, and each is R1, internal and for owners and admins', () => {
@@ -216,7 +227,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !SIGN_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
@@ -313,8 +324,8 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     const db = createDb(pool);
     // No session source: a grant's standing is checked whatever the deployment's session mode.
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
-      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries],
+      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands, ...signCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...signQueries],
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'mcp-scope', subject: key, email: `${key}@mcp-scope.test`, name: null });
@@ -338,7 +349,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     const about = await runtime.query<{ orgName: string; clientName: string }>('kernel.mcp.about', {}, { actor: mcp(users.ownerA, grant), orgId: orgA });
     expect(about).toMatchObject({ orgName: 'Org A', clientName: 'Test client' });
     // Every other registered query that takes an empty input is closed (rule mcp_scope), whoever the user is and whatever their role: the check precedes the role check.
-    const registered = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries].map((q) => q.name);
+    const registered = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...signQueries].map((q) => q.name);
     const closed = queries.filter((q) => registered.includes(q.name) && (q as { mcp?: unknown }).mcp === undefined && q.input.safeParse({}).success && q.stream !== true);
     expect(closed.length).toBeGreaterThan(20);
     for (const q of closed) {

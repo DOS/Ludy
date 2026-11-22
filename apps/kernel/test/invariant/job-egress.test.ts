@@ -129,6 +129,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the recordings a member chose to import to the download queue; each exists only for a click on "Nhập" through meetings.import.start, which declares the external effect
   // (meetings integrations C1, #3173). The same sweep lists suggestions and expires staged bytes; it downloads nothing.
   'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
+  // The sweep (every minute) hands queued eSign outbound webhook deliveries to sign-hook-deliver; each exists only for an endpoint an owner or admin configured through sign.webhook.create,
+  // which declares the external effect (eSign Slice 5b, #4438 / #4440).
+  'sign-hook-sweep handler': { command: 'sign.webhook.create' },
   // The push to MISA AMIS (S3b, #3902): while rows wait for MISA's answer the job queues itself again a little later, for a connection whose vouchers an owner or admin confirmed through
   // finance.misa_amis.push, which declares the external effect; the job's own send is committed to the external_call ledger by finance.misa_amis.push_begin before it is made.
   'finance-misa-amis-push handler': { command: 'finance.misa_amis.push' },
@@ -150,6 +153,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
   'finance-misa-amis-push handler': '#3902',
+  'sign-hook-sweep handler': '#4440',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
