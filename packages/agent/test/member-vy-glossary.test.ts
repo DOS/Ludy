@@ -58,10 +58,24 @@ describe('spellGlossary', () => {
     // The three letters are counted over the whole term; a longer one in lower case is rewritten.
     expect(spellGlossary('dùng vat 10%', ['VAT 10%'])).toBe('dùng vat 10%');
     expect(spellGlossary('dùng misa', ['MISA'])).toBe('dùng MISA');
-    // Trailing combining mark stays part of the word and overlapping phrases prefer the full phrase.
-    expect(spellGlossary('crove\u0338 và crove', ['Crove'])).toBe('crove\u0338 và Crove');
+    // Leading and trailing combining marks stay part of the word and overlapping phrases prefer the full phrase.
+    expect(spellGlossary('crove\u0338 và a\u0338crove và crove', ['Crove'])).toBe('crove\u0338 và a\u0338crove và Crove');
+    expect(spellGlossary('crove\u{E0100} và a\u{E0100}crove và crove', ['Crove'])).toBe('crove\u{E0100} và a\u{E0100}crove và Crove');
     expect(spellGlossary('cloud crove and crove', ['Cloud Crove', 'CROVE'])).toBe('Cloud Crove and CROVE');
     expect(spellGlossary('Cloud Crove and crove', ['CROVE', 'Cloud Crove'])).toBe('Cloud Crove and CROVE');
+  });
+
+  it('normalizes lowercase glossary terms adjacent to CJK characters in CJK mode while guarding Latin, digit and mark edges', () => {
+    expect(spellGlossary('本周讨论crove的计划。', ['Crove'], { cjk: true })).toBe('本周讨论Crove的计划。');
+    expect(spellGlossary('今週はcroveについて話し合う。', ['Crove'], { cjk: true })).toBe('今週はCroveについて話し合う。');
+    expect(spellGlossary('이번 주crove계획을 논의한다.', ['Crove'], { cjk: true })).toBe('이번 주Crove계획을 논의한다.');
+    expect(spellGlossary('本周\u{20000}crove\u{20001}的计划。', ['Crove'], { cjk: true })).toBe('本周\u{20000}Crove\u{20001}的计划。');
+    // Latin letters, digits and combining marks (including supplementary code points) still block edges; default mode keeps strict \p{L}\p{N}\p{M} edges.
+    expect(spellGlossary('本周讨论microservice的计划。', ['Crove'], { cjk: true })).toBe('本周讨论microservice的计划。');
+    expect(spellGlossary('本周讨论croveland和1crove2的计划。', ['Crove'], { cjk: true })).toBe('本周讨论croveland和1crove2的计划。');
+    expect(spellGlossary('本周讨论a\u0338crove和crove\u0338的计划。', ['Crove'], { cjk: true })).toBe('本周讨论a\u0338crove和crove\u0338的计划。');
+    expect(spellGlossary('本周讨论\u{10780}crove和crove\u{E0100}的计划。', ['Crove'], { cjk: true })).toBe('本周讨论\u{10780}crove和crove\u{E0100}的计划。');
+    expect(spellGlossary('本周讨论crove的计划。', ['Crove'])).toBe('本周讨论crove的计划。');
   });
 
   it('returns Unicode form C and the text itself when there is nothing to do', () => {
@@ -74,9 +88,13 @@ describe('spellGlossary', () => {
     const t0 = performance.now();
     const outLower = spellGlossary('a '.repeat(48_000), ['A ', 'a']);
     const outAcronym = spellGlossary('AI '.repeat(12_000), ['AI']);
+    const inLower = termsInSource('a '.repeat(48_000), ['A ', 'a']);
+    const inAcronym = termsInSource('AI '.repeat(12_000), ['AI']);
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(outLower).toBe('a '.repeat(48_000));
     expect(outAcronym).toBe('AI '.repeat(12_000));
+    expect(inLower).toEqual(['a']);
+    expect(inAcronym).toEqual(['AI']);
   });
 });
 
@@ -85,6 +103,7 @@ describe('termsInSource and writesTerm', () => {
     expect(termsInSource('Gặp CROVE và Misa Amis tuần sau', ['Crove', 'MISA AMIS', 'Ludy'])).toEqual(['Crove', 'MISA AMIS']);
     expect(termsInSource('Hợp tác với Thành', ['Thanh'])).toEqual(['Thanh']);
     expect(termsInSource('croveland', ['Crove'])).toEqual([]);
+    expect(termsInSource('a\u0338Crove', ['Crove'])).toEqual([]);
     expect(termsInSource('Có ai gửi báo cáo không?', ['AI'])).toEqual([]);
     expect(termsInSource('Có AI gửi báo cáo không?', ['AI'])).toEqual(['AI']);
     expect(termsInSource('ai làm việc này? AI đang chạy', ['AI'])).toEqual(['AI']);
@@ -92,11 +111,29 @@ describe('termsInSource and writesTerm', () => {
     expect(termsInSource('bất kỳ', ['', '   ', '\u200b'])).toEqual([]);
   });
 
+  it('excludes overlapping subterms using longest-match priority compatible with spellGlossary while keeping standalone mentions', () => {
+    expect(termsInSource('Họp về Cloud Crove hôm nay.', ['Cloud Crove', 'CROVE'])).toEqual(['Cloud Crove']);
+    expect(termsInSource('Họp về Cloud Crove hôm nay.', ['CROVE', 'Cloud Crove'])).toEqual(['Cloud Crove']);
+    expect(termsInSource('Họp về cloud crove hôm nay.', ['Cloud Crove', 'CROVE'])).toEqual(['Cloud Crove']);
+    expect(termsInSource('Họp về CLOUD CROVE hôm nay.', ['CROVE', 'Cloud Crove'])).toEqual(['Cloud Crove']);
+    expect(termsInSource('Họp về Cloud Crove và CROVE hôm nay.', ['Cloud Crove', 'CROVE'])).toEqual(['Cloud Crove', 'CROVE']);
+    expect(termsInSource('Họp về Cloud Crove và crove hôm nay.', ['CROVE', 'Cloud Crove'])).toEqual(['CROVE', 'Cloud Crove']);
+    expect(termsInSource('Đã phát hành e-Invoice hôm nay.', ['e-Invoice', 'INVOICE'])).toEqual(['e-Invoice']);
+    expect(termsInSource('Cloud Crove Cloud', ['Cloud Crove', 'Crove Cloud'])).toEqual(['Cloud Crove']);
+    expect(termsInSource('Họp về Cloud AI và ai hôm nay.', ['Cloud AI', 'AI'])).toEqual(['Cloud AI']);
+    expect(termsInSource('Họp về Cloud AI và AI hôm nay.', ['AI', 'Cloud AI'])).toEqual(['AI', 'Cloud AI']);
+    expect(termsInSource('Họp với Thành', ['Thanh', 'Thành'])).toEqual(['Thành']);
+    expect(termsInSource('Họp với Thanh', ['Thành', 'Thanh'])).toEqual(['Thanh']);
+  });
+
   it('says whether a text writes a term exactly', () => {
     expect(writesTerm('Working with MISA  AMIS today', 'MISA AMIS')).toBe(true);
     expect(writesTerm('Working with misa amis today', 'MISA AMIS')).toBe(false);
     expect(writesTerm('Crovey', 'Crove')).toBe(false);
     expect(writesTerm('Crove\u0338', 'Crove')).toBe(false);
+    expect(writesTerm('a\u0338Crove', 'Crove')).toBe(false);
+    expect(writesTerm('a\u{E0100}Crove', 'Crove')).toBe(false);
+    expect(writesTerm('Crove\u{E0100}', 'Crove')).toBe(false);
     expect(writesTerm('anything', '')).toBe(false);
     expect(writesTerm('anything', '   ')).toBe(false);
   });

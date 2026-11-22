@@ -14,6 +14,7 @@ import {
   chunkExpectedUsage,
   contactsIn,
   digitRuns,
+  hasTermWithBoundary,
   inTargetScript,
   scriptShare,
   translateSummary,
@@ -254,6 +255,23 @@ describe('Chinese, Japanese and Korean as targets (#3186)', () => {
     expect(checkSegment(seg('Họp với khách Acme hôm nay'), '今天与Acmeville开会', 'ja')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
     expect(checkSegment(seg('Họp với khách Acme hôm nay'), '今日はAcme社と会議', 'ja')).toMatchObject({ state: 'ok', codes: [] });
     expect(checkSegment(seg('Họp với khách Acme hôm nay'), '오늘 Acme 고객과 회의', 'ko')).toMatchObject({ state: 'ok', codes: [] });
+  });
+
+  it('inspects full Unicode code points in hasTermWithBoundary for surrogate pairs and combining marks', () => {
+    const blocked = /[\p{Script=Latin}\p{Nd}\p{M}]/u;
+    expect(hasTermWithBoundary('本周\u{10780}Crove的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周Crove\u{10780}的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周\u{1D7CE}Crove的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周Crove\u{1D7CE}的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周a\u{E0100}Crove的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周Crove\u{E0100}的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周a\u0338Crove的计划', 'Crove', blocked, blocked)).toBe(false);
+    expect(hasTermWithBoundary('本周\u{20000}Crove\u{20001}的计划', 'Crove', blocked, blocked)).toBe(true);
+    expect(hasTermWithBoundary('本周\u{10780}Crove和\u{20000}Crove\u{20001}的计划', 'Crove', blocked, blocked)).toBe(true);
+    // Never matches half of a surrogate pair when the needle starts or ends with a lone surrogate.
+    const hanExtB = '\u{20000}';
+    expect(hasTermWithBoundary(`本周${hanExtB}的`, hanExtB[1] as string, /^$/, /^$/)).toBe(false);
+    expect(hasTermWithBoundary(`本周${hanExtB}的`, hanExtB[0] as string, /^$/, /^$/)).toBe(false);
   });
 
   it('bounds the length of a CJK translation by a smaller factor than the pair vi and en, per target', () => {
