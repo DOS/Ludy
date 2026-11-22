@@ -152,7 +152,12 @@ export type MarketplacePushHookStatus = z.infer<typeof zMarketplacePushHookStatu
 
 // The address a seller pastes into its platform app, and the address Shopee signs: the configured public URL of the API, the adapter and the key. One function, so the card of the owner shows the very string the route
 // stores with a Shopee push (apps/kernel marketplace-push-hook.ts, #4347).
-export const marketplaceHookAddress = (publicUrl: string, adapter: string, key: string): string => `${publicUrl.replace(/\/+$/, '')}/api/marketplace/${adapter}/webhook/${key}`;
+export const marketplaceHookAddress = (publicUrl: string, adapter: string, key: string): string => {
+  // Trailing slashes are cut by a loop, not a regex: `/\/+$/` backtracks quadratically on a long run of slashes (CodeQL js/polynomial-redos).
+  let end = publicUrl.length;
+  while (end > 0 && publicUrl.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return `${publicUrl.slice(0, end)}/api/marketplace/${adapter}/webhook/${key}`;
+};
 
 // Whether the API's configured public URL can carry a push address (#4348): an https URL with a host a platform can reach (not the localhost default, not a loopback address) and no query or fragment, which the address
 // would swallow. Platforms call https only, and Shopee signs the exact string, so an address on any other URL would never get a genuine push; the card is then not offered.

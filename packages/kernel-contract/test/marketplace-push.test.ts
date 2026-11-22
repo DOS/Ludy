@@ -11,6 +11,9 @@ describe('marketplace push address', () => {
     expect(KEY).toHaveLength(MARKETPLACE_HOOK_KEY_LENGTH);
     expect(marketplaceHookAddress('https://api.example.test', 'shopee', KEY)).toBe(`https://api.example.test/api/marketplace/shopee/webhook/${KEY}`);
     expect(marketplaceHookAddress('https://api.example.test//', 'tiktok_shop', KEY)).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${KEY}`);
+    // A long run of slashes is cut in linear time (no backtracking), and a path before them is kept.
+    expect(marketplaceHookAddress(`https://api.example.test/ludy${'/'.repeat(100_000)}`, 'shopee', KEY)).toBe(`https://api.example.test/ludy/api/marketplace/shopee/webhook/${KEY}`);
+    expect(marketplaceHookAddress('/'.repeat(10), 'shopee', KEY)).toBe(`/api/marketplace/shopee/webhook/${KEY}`);
   });
 
   it('offers an address only on an https URL a platform can reach: not the localhost default, a loopback address, plain http, a query or a fragment, or nothing', () => {
