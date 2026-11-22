@@ -202,6 +202,22 @@ export const signManifest = defineModule({
         'completed_at',
         'created_at',
       ]),
+      api_key: columns(
+        [
+          'org_id',
+          'id',
+          'name',
+          'key_prefix',
+          'scopes',
+          'created_by',
+          'expires_at',
+          'revoked_at',
+          'last_used_at',
+          'created_at',
+          'updated_at',
+        ],
+        { key_sha256: 'sensitive' },
+      ),
       ca_connection: columns(
         [
           'org_id',
@@ -460,6 +476,7 @@ export const signManifest = defineModule({
   // Slice 1a uses org roles and human-only actor gates without module-specific permissions.
   permissions: [],
   entities: [
+    { type: 'sign.api_key', table: 'api_key', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_connection', table: 'ca_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_signing_request', table: 'ca_signing_request', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.envelope', table: 'envelope', legalEntityScoped: false, audit: 'command' },

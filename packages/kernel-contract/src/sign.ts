@@ -117,6 +117,7 @@ export interface SignPublicField {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  valueText?: string | null;
   options?: string[] | null;
   attachment?: SignPublicFieldAttachment | null;
 }
@@ -2773,3 +2774,117 @@ export const zSignKycConfirmInput = z.strictObject({
   idempotencyKey: zId.optional(),
 });
 export type SignKycConfirmInput = z.infer<typeof zSignKycConfirmInput>;
+
+// ---------------------------------------------------------------------------
+// Slice 5c (#4441): Read-only MCP inputs, scoped org API keys, and /api/v1/sign/*
+// ---------------------------------------------------------------------------
+
+export const SIGN_API_KEY_SCOPES = ['sign:read', 'sign:draft'] as const;
+export const zSignApiKeyScope = z.enum(SIGN_API_KEY_SCOPES);
+export type SignApiKeyScope = z.infer<typeof zSignApiKeyScope>;
+
+export const zSignApiKeyRecord = z.strictObject({
+  id: zId,
+  name: z.string(),
+  keyPrefix: z.string(),
+  scopes: z.array(zSignApiKeyScope),
+  createdBy: zId.nullable(),
+  expiresAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignApiKeyRecord = z.infer<typeof zSignApiKeyRecord>;
+
+export const zSignApiKeyListInput = z.strictObject({});
+export type SignApiKeyListInput = z.infer<typeof zSignApiKeyListInput>;
+
+export const zSignApiKeyListResult = z.strictObject({
+  items: z.array(zSignApiKeyRecord),
+});
+export type SignApiKeyListResult = z.infer<typeof zSignApiKeyListResult>;
+
+const hasNoNul = (value: string): boolean => !value.includes('\u0000');
+
+export const zSignApiKeyCreateInput = z.strictObject({
+  name: z.string().trim().min(1).max(120).refine(hasNoNul, 'NUL characters are not permitted'),
+  scopes: z.array(zSignApiKeyScope).min(1).max(2),
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+});
+export type SignApiKeyCreateInput = z.infer<typeof zSignApiKeyCreateInput>;
+
+export const zSignApiKeyCreateResult = z.strictObject({
+  apiKey: zSignApiKeyRecord,
+  secret: z.string(),
+});
+export type SignApiKeyCreateResult = z.infer<typeof zSignApiKeyCreateResult>;
+
+export const zSignApiKeyRevokeInput = z.strictObject({
+  apiKeyId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignApiKeyRevokeInput = z.infer<typeof zSignApiKeyRevokeInput>;
+
+export const zMcpSignEnvelopesInput = z.strictObject({
+  status: zSignEnvelopeStatus.optional(),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignEnvelopesInput = z.infer<typeof zMcpSignEnvelopesInput>;
+
+export const zMcpSignEnvelopeGetInput = z.strictObject({
+  envelopeId: zId,
+});
+export type McpSignEnvelopeGetInput = z.infer<typeof zMcpSignEnvelopeGetInput>;
+
+export const zMcpSignRenewalsInput = z.strictObject({
+  withinDays: z.number().int().min(1).max(365).default(90),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignRenewalsInput = z.infer<typeof zMcpSignRenewalsInput>;
+
+export const zMcpSignTemplatesInput = z.strictObject({
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignTemplatesInput = z.infer<typeof zMcpSignTemplatesInput>;
+
+export const zSignApiV1FromTemplateInput = z
+  .strictObject({
+    templateId: zId,
+    title: z.string().trim().min(1).max(300).refine(hasNoNul, 'NUL characters are not permitted').optional(),
+    subject: z
+      .string()
+      .trim()
+      .max(300)
+      .refine(hasNoNul, 'NUL characters are not permitted')
+      .nullable()
+      .optional(),
+    message: z
+      .string()
+      .trim()
+      .max(5000)
+      .refine(hasNoNul, 'NUL characters are not permitted')
+      .nullable()
+      .optional(),
+    allowDelegation: z.boolean().optional(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    recipients: z
+      .array(
+        zSignTemplateRecipientInput.refine(
+          (r) =>
+            hasNoNul(r.roleKey) &&
+            hasNoNul(r.name) &&
+            (r.email === undefined || r.email === null || hasNoNul(r.email)) &&
+            (r.phone === undefined || r.phone === null || hasNoNul(r.phone)),
+          'NUL characters are not permitted',
+        ),
+      )
+      .max(SIGN_MAX_SIGNERS),
+    textDefaults: z
+      .record(
+        z.string().min(1).max(160).refine(hasNoNul, 'NUL characters are not permitted'),
+        z.string().max(2000).refine(hasNoNul, 'NUL characters are not permitted'),
+      )
+      .optional(),
+  });
+export type SignApiV1FromTemplateInput = z.infer<typeof zSignApiV1FromTemplateInput>;

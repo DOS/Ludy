@@ -933,6 +933,12 @@ import {
   zSignVaultAskResult,
   zSignVaultSearchInput,
   zSignVaultSearchResult,
+  zSignApiKeyCreateInput,
+  zSignApiKeyCreateResult,
+  zSignApiKeyListInput,
+  zSignApiKeyListResult,
+  zSignApiKeyRecord,
+  zSignApiKeyRevokeInput,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -3901,6 +3907,11 @@ export const contract = {
       run_deterministic: oc.input(zSignKycRunDeterministicInput).output(zSignKycCheckRecord),
       analyze: oc.input(zSignKycAnalyzeInput).output(zSignKycAnalyzeResult),
       confirm: oc.input(zSignKycConfirmInput).output(zSignKycCheckRecord),
+    },
+    api_keys: {
+      list: oc.input(zSignApiKeyListInput).output(zSignApiKeyListResult),
+      create: oc.input(zSignApiKeyCreateInput).output(zSignApiKeyCreateResult),
+      revoke: oc.input(zSignApiKeyRevokeInput).output(zSignApiKeyRecord),
     },
   },
 };

@@ -91,7 +91,7 @@ const MACHINERY = new Set([
   'crove_projects.roadmap_otp',
   'crove_projects.roadmap_subscriber',
   // #4438 / #4441 (eSign Slice 5c): scoped org API keys storing SHA-256 key hashes only (key_sha256):
-  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  // reached only by definers with RLS enabled and zero login role grants. Its table landed in #4441, which removed it from PENDING_TABLES.
   'crove_sign.api_key',
   // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
   // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
@@ -136,7 +136,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_projects.project_triage_item',
   'crove_projects.roadmap_signal',
-  'crove_sign.api_key',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
