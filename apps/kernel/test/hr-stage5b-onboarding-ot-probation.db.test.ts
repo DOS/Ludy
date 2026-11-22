@@ -5,7 +5,7 @@
 //    automatic draft payroll rollup, Art. 98 commentary blocking until #2535).
 // 3. End-of-probation review (deterministic Ludy Projects completed task facts respecting private project RLS & MODULE_OFF,
 //    attendance summary, metered Ly proposal draft, human-only decision).
-// 4. PDPL erasure across all 3 Stage 5B tables and crove_kernel.org_purge cleanup.
+// 4. PDPL erasure across all 3 Stage 5B tables and ludy_kernel.org_purge cleanup.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -111,7 +111,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
 
     const { orgId } = await createOrg(rt, asUser(owner), `Cty Stage 5B ${tag}`);
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`,
       [orgId, admin, manager, staffA, staffB, viewer],
     );
@@ -138,13 +138,13 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
@@ -365,8 +365,25 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         asMfa(o.owner),
       )
     ).employeeId as string;
+    const empLegacy = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Nhân Sự Cũ',
+          employment: {
+            effectiveFrom: '2026-09-01',
+            contractType: 'indefinite',
+            region: 'I',
+            baseWage: '20800000',
+          },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
     await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
     await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empAdmin, userId: o.admin }, asMfa(o.owner));
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empLegacy, userId: o.staffB }, asMfa(o.owner));
 
     // Staff submits 3.5h weekday OT (pending_l1, Art. 98 commentary 150%) and another large request exceeding 40h warning.
     const ot1 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
@@ -499,10 +516,40 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     expect(lineAfterBonus.inputs.overtimeFromRequests).toBe(false);
     expect(otHoursOnLine(lineAfterBonus)).toBe(1);
 
+    // Pre-Stage-5B legacy draft lines (overtimeFromRequests: null with non-empty manual OT) are never wiped by
+    // recalculate, sync_overtime, or approving an OT request.
+    const legacyLine = afterUnrelatedEdit.lines.find((l) => l.employeeId === empLegacy && l.kind === 'pay')!;
+    await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+      lineId: legacyLine.id,
+      inputs: { overtime: [{ dayKind: 'normal_day', night: false, hours: '5' }] },
+    });
+    await adminPool.query(
+      `UPDATE crove_hr.payroll_line
+          SET inputs = inputs - 'overtimeFromRequests'
+        WHERE org_id = $1 AND id = $2`,
+      [o.orgId, legacyLine.id],
+    );
+    const staffBOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+      workDate: '2026-10-19',
+      hours: '2',
+      dayType: 'weekday',
+      reason: 'OT mới không được ghi đè dòng thủ công cũ',
+    });
+    const staffBFin = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: staffBOt.requestId,
+    });
+    expect(staffBFin).toMatchObject({ status: 'approved', payrollRunUpdated: false });
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+    await o.exec(o.owner, 'hr.payroll.run.sync_overtime', { runId: run.runId });
+    const afterLegacySheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const legacyAfter = afterLegacySheet.lines.find((l) => l.id === legacyLine.id)!;
+    expect(legacyAfter.inputs.overtimeFromRequests ?? null).toBeNull();
+    expect(otHoursOnLine(legacyAfter)).toBe(5);
+
     // Art. 98 overtime_multiples.* stays commentary until #2535: approval refuses under commentary, succeeds when confirmed.
     setRuleStatus('commentary');
     await expect(
-      o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: afterUnrelatedEdit.fingerprint, acceptFlags: true }, asMfa(o.owner)),
+      o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: afterLegacySheet.fingerprint, acceptFlags: true }, asMfa(o.owner)),
     ).rejects.toMatchObject({ code: 'HR_RULES_COMMENTARY', status: 422 });
 
     setRuleStatus('confirmed');
@@ -510,7 +557,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await o.exec(
         o.owner,
         'hr.payroll.run.approve',
-        { runId: run.runId, fingerprint: afterUnrelatedEdit.fingerprint, acceptFlags: true },
+        { runId: run.runId, fingerprint: afterLegacySheet.fingerprint, acceptFlags: true },
         asMfa(o.owner),
       );
     } finally {
@@ -704,7 +751,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
     const secretNote = 'Đạt yêu cầu kỹ thuật sau 2 tháng thử việc';
-    const decided = await o.exec<HrProbationDecideResult>(o.owner, 'hr.probation.decide', {
+    const decided = await o.exec<HrProbationDecideResult>(o.admin, 'hr.probation.decide', {
       employeeId: empA,
       periodStart: '2026-09-01',
       periodEnd: today,
@@ -725,7 +772,8 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       aiDraftNote: aiOnOut.draftNote,
     });
 
-    // Recorded probation reviews are immutable against direct non-erasure updates.
+    // Recorded probation reviews are immutable against direct non-erasure updates, while kernel.member.remove
+    // triggers ON DELETE SET NULL(reviewer_user_id) cleanly without hitting the write guard.
     await expect(
       (async () => {
         const c = await appPool.connect();
@@ -740,6 +788,21 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         }
       })(),
     ).rejects.toThrow(/immutable/i);
+
+    await expect(o.exec(o.owner, 'kernel.member.remove', { userId: o.admin }, asMfa(o.owner))).resolves.toMatchObject({
+      userId: o.admin,
+    });
+    const afterReviewerRemoved = (
+      await adminPool.query<{ reviewer_user_id: string | null; decision: string; review_note: string | null }>(
+        `SELECT reviewer_user_id, decision, review_note FROM crove_hr.probation_review WHERE id = $1`,
+        [decided.reviewId],
+      )
+    ).rows[0];
+    expect(afterReviewerRemoved).toEqual({
+      reviewer_user_id: null,
+      decision: 'pass',
+      review_note: secretNote,
+    });
 
     // PDPL erasure cancels pending OT requests and wipes PII/notes/snapshots across all 3 Stage 5B tables.
     const obSub = await o.exec<HrSelfOnboardingSubmitResult>(o.staffA, 'hr.self.onboarding.submit', {
@@ -809,10 +872,10 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     try {
       await pClient.query('BEGIN');
       await pClient.query('SET LOCAL session_replication_role = replica');
-      await pClient.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+      await pClient.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
       await pClient.query('COMMIT');
       await pClient.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'),
                 ($1, $6, 'system', NULL, 'kernel.org.export.record', $7, 'ok', $5, '{"format":"crove.org-export.v2","file_count":1}')`,
         [

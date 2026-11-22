@@ -1186,9 +1186,9 @@ export const projectMemberCompletedTasks = defineQuery({
         FROM crove_projects.project_task pt
         JOIN crove_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
-        JOIN crove_kernel.task t
+        JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
-        JOIN crove_kernel.position pos
+        JOIN ludy_kernel.position pos
           ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND NOT p.is_template
@@ -1217,9 +1217,9 @@ export const projectMemberCompletedTasks = defineQuery({
         FROM crove_projects.project_task pt
         JOIN crove_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
-        JOIN crove_kernel.task t
+        JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
-        JOIN crove_kernel.position pos
+        JOIN ludy_kernel.position pos
           ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND NOT p.is_template

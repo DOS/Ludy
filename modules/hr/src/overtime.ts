@@ -235,7 +235,7 @@ export const selfOvertimeSubmit = defineCommand({
         dept.manager_user_id !== callerUserId
       ) {
         const managerMember = await ctx.trx
-          .selectFrom('crove_kernel.tenant_member')
+          .selectFrom('ludy_kernel.tenant_member')
           .select('role')
           .where('org_id', '=', ctx.orgId)
           .where('user_id', '=', dept.manager_user_id)

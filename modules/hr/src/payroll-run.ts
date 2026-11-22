@@ -357,6 +357,28 @@ function sameOvertimeEntries(a: readonly PayrollOvertimeEntry[], b: readonly Pay
   });
 }
 
+function shouldSyncLineOvertimeFromRequests(
+  overtimeFromRequests: boolean | null | undefined,
+  currentOvertime: HrPayrollInputs['overtime'],
+): boolean {
+  // Legacy lines created before Stage 5B have overtimeFromRequests == null; preserve non-empty manual/imported OT.
+  return overtimeFromRequests === true || (overtimeFromRequests == null && currentOvertime.length === 0);
+}
+
+function syncOvertimePatch(
+  parsed: HrPayrollInputs,
+  approvedOt: readonly PayrollOvertimeEntry[],
+): { overtime: HrPayrollInputs['overtime']; overtimeFromRequests: boolean | null } | null {
+  if (!shouldSyncLineOvertimeFromRequests(parsed.overtimeFromRequests, parsed.overtime)) {
+    return null;
+  }
+  const nextFromRequests = approvedOt.length > 0 ? true : null;
+  if (sameOvertimeEntries(parsed.overtime, approvedOt) && parsed.overtimeFromRequests === nextFromRequests) {
+    return null;
+  }
+  return { overtime: [...approvedOt], overtimeFromRequests: nextFromRequests };
+}
+
 export async function loadApprovedOvertimeByEmployee(
   ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   employeeIds: readonly string[],
@@ -589,11 +611,9 @@ export const runRecalculate = defineCommand({
           person.terms.termMonths !== null && existing.employment_id !== person.terms.id
             ? { ...parsed, contractTermMonths: person.terms.termMonths }
             : parsed;
-        if (parsed.overtimeFromRequests !== false) {
-          const nextOtFromRequests = approvedOt.length > 0 ? true : null;
-          if (!sameOvertimeEntries(parsed.overtime, approvedOt) || parsed.overtimeFromRequests !== nextOtFromRequests) {
-            nextInputs = { ...nextInputs, overtime: [...approvedOt], overtimeFromRequests: nextOtFromRequests };
-          }
+        const patch = syncOvertimePatch(parsed, approvedOt);
+        if (patch) {
+          nextInputs = { ...nextInputs, ...patch };
         }
         const f = figuresOf(person, nextInputs, run.month, workingDays);
         await ctx.trx
@@ -1092,16 +1112,11 @@ export const runSyncOvertime = defineCommand({
     for (const row of locked) {
       if (!people.has(row.employee_id)) continue;
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
-      if (existing.overtimeFromRequests === false) continue;
-      const targetOt = overtimeByEmployee.get(line.employee_id) ?? [];
-      const nextFromRequests = targetOt.length > 0 ? true : null;
-      if (sameOvertimeEntries(existing.overtime, targetOt) && existing.overtimeFromRequests === nextFromRequests) {
-        continue;
-      }
+      const patch = syncOvertimePatch(existing, overtimeByEmployee.get(line.employee_id) ?? []);
+      if (!patch) continue;
       const merged = zHrPayrollInputs.parse({
         ...existing,
-        overtime: targetOt,
-        overtimeFromRequests: nextFromRequests,
+        ...patch,
       });
       updates.push({
         lineId: line.id,
@@ -1143,20 +1158,16 @@ export async function syncEmployeeDraftPayrollOvertime(
     .executeTakeFirst();
   if (!line) return false;
   const parsed = parseInputs(line.inputs);
-  if (parsed.overtimeFromRequests === false) return false;
+  if (!shouldSyncLineOvertimeFromRequests(parsed.overtimeFromRequests, parsed.overtime)) return false;
   const people = await peopleOf(ctx, legalEntityId, month);
   const person = people.find((p) => p.employeeId === employeeId);
   if (!person) return false;
   const overtimeByEmployee = await loadApprovedOvertimeByEmployee(ctx, [employeeId], month);
-  const targetOt = overtimeByEmployee.get(employeeId) ?? [];
-  const nextFromRequests = targetOt.length > 0 ? true : null;
-  if (sameOvertimeEntries(parsed.overtime, targetOt) && parsed.overtimeFromRequests === nextFromRequests) {
-    return false;
-  }
+  const patch = syncOvertimePatch(parsed, overtimeByEmployee.get(employeeId) ?? []);
+  if (!patch) return false;
   const merged = zHrPayrollInputs.parse({
     ...parsed,
-    overtime: targetOt,
-    overtimeFromRequests: nextFromRequests,
+    ...patch,
   });
   const f = figuresOf(person, merged, payRun.month, payRun.working_days);
   await applyBatchLineUpdates(ctx, payRun.id, [{ lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: f }]);

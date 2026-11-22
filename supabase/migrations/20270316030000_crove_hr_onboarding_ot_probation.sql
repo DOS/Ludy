@@ -9,9 +9,9 @@ CREATE OR REPLACE FUNCTION crove_hr.is_sole_owner_org(p_org_id uuid)
 RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_user uuid := crove_kernel.ctx_user_id();
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
 BEGIN
   IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
     RETURN false;
@@ -20,23 +20,23 @@ BEGIN
     RETURN false;
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM crove_kernel.tenant_member m
+    SELECT 1 FROM ludy_kernel.tenant_member m
      WHERE m.org_id = v_org AND m.user_id = v_user AND m.role = 'owner'
   ) THEN
     RETURN false;
   END IF;
   RETURN NOT EXISTS (
-    SELECT 1 FROM crove_kernel.tenant_member m
+    SELECT 1 FROM ludy_kernel.tenant_member m
      WHERE m.org_id = v_org AND m.user_id <> v_user AND m.role IN ('owner', 'admin')
   );
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.is_sole_owner_org(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_hr.is_sole_owner_org(uuid) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_hr.is_sole_owner_org(uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.is_sole_owner_org(uuid) TO ludy_tenant;
 
 -- 2. Employee self-service onboarding contact / ID / bank confirmation submissions.
 CREATE TABLE IF NOT EXISTS crove_hr.onboarding_submission (
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
-  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
   employee_id uuid NOT NULL,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
@@ -70,9 +70,9 @@ CREATE INDEX IF NOT EXISTS onboarding_submission_status_idx
 CREATE INDEX IF NOT EXISTS onboarding_submission_entity_idx
   ON crove_hr.onboarding_submission (legal_entity_id, org_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_hr.onboarding_submission');
-REVOKE ALL ON crove_hr.onboarding_submission FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT SELECT, INSERT ON crove_hr.onboarding_submission TO crove_tenant;
+SELECT ludy_kernel.apply_tenant_rls('crove_hr.onboarding_submission');
+REVOKE ALL ON crove_hr.onboarding_submission FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT SELECT, INSERT ON crove_hr.onboarding_submission TO ludy_tenant;
 GRANT UPDATE (
   status,
   address,
@@ -87,7 +87,7 @@ GRANT UPDATE (
   reviewed_by,
   reviewed_at,
   updated_at
-) ON crove_hr.onboarding_submission TO crove_tenant;
+) ON crove_hr.onboarding_submission TO ludy_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.onboarding_submission;
 CREATE TRIGGER b_legal_entity BEFORE INSERT ON crove_hr.onboarding_submission
@@ -179,7 +179,7 @@ BEGIN
 
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.onboarding_submission_update_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_hr.onboarding_submission_update_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 DROP TRIGGER IF EXISTS onboarding_submission_update_guard ON crove_hr.onboarding_submission;
 CREATE TRIGGER onboarding_submission_update_guard BEFORE UPDATE ON crove_hr.onboarding_submission
@@ -187,37 +187,37 @@ CREATE TRIGGER onboarding_submission_update_guard BEFORE UPDATE ON crove_hr.onbo
 ALTER TABLE crove_hr.onboarding_submission ENABLE ALWAYS TRIGGER onboarding_submission_update_guard;
 
 DROP POLICY IF EXISTS le_scope ON crove_hr.onboarding_submission;
-CREATE POLICY le_scope ON crove_hr.onboarding_submission AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
-  WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
+CREATE POLICY le_scope ON crove_hr.onboarding_submission AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))
+  WITH CHECK ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]));
 
 DROP POLICY IF EXISTS hr_onboarding_submission_select ON crove_hr.onboarding_submission;
 DROP POLICY IF EXISTS hr_onboarding_submission_insert ON crove_hr.onboarding_submission;
 DROP POLICY IF EXISTS hr_onboarding_submission_update ON crove_hr.onboarding_submission;
 DROP POLICY IF EXISTS hr_onboarding_submission_delete ON crove_hr.onboarding_submission;
 
-CREATE POLICY hr_onboarding_submission_select ON crove_hr.onboarding_submission AS RESTRICTIVE FOR SELECT TO crove_tenant
+CREATE POLICY hr_onboarding_submission_select ON crove_hr.onboarding_submission AS RESTRICTIVE FOR SELECT TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = onboarding_submission.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR crove_hr.is_self_employee(onboarding_submission.org_id, onboarding_submission.employee_id)
     )
   );
 
-CREATE POLICY hr_onboarding_submission_insert ON crove_hr.onboarding_submission AS RESTRICTIVE FOR INSERT TO crove_tenant
+CREATE POLICY hr_onboarding_submission_insert ON crove_hr.onboarding_submission AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = onboarding_submission.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -226,19 +226,19 @@ CREATE POLICY hr_onboarding_submission_insert ON crove_hr.onboarding_submission 
         AND onboarding_submission.reviewed_by IS NULL
         AND onboarding_submission.reviewed_at IS NULL
         AND onboarding_submission.decision_note IS NULL
-        AND (onboarding_submission.created_by IS NULL OR onboarding_submission.created_by = (SELECT crove_kernel.ctx_user_id()))
+        AND (onboarding_submission.created_by IS NULL OR onboarding_submission.created_by = (SELECT ludy_kernel.ctx_user_id()))
       )
     )
   );
 
-CREATE POLICY hr_onboarding_submission_update ON crove_hr.onboarding_submission AS RESTRICTIVE FOR UPDATE TO crove_tenant
+CREATE POLICY hr_onboarding_submission_update ON crove_hr.onboarding_submission AS RESTRICTIVE FOR UPDATE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = onboarding_submission.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -248,12 +248,12 @@ CREATE POLICY hr_onboarding_submission_update ON crove_hr.onboarding_submission 
     )
   )
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = onboarding_submission.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -266,21 +266,21 @@ CREATE POLICY hr_onboarding_submission_update ON crove_hr.onboarding_submission 
     )
   );
 
-CREATE POLICY hr_onboarding_submission_delete ON crove_hr.onboarding_submission AS RESTRICTIVE FOR DELETE TO crove_tenant
+CREATE POLICY hr_onboarding_submission_delete ON crove_hr.onboarding_submission AS RESTRICTIVE FOR DELETE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = onboarding_submission.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
 
 -- 3. Overtime requests with 2-level L1 -> final approval state machine and DB anti-self-approval guard.
 CREATE TABLE IF NOT EXISTS crove_hr.overtime_request (
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
-  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
   employee_id uuid NOT NULL,
   department_id uuid,
@@ -313,9 +313,9 @@ CREATE INDEX IF NOT EXISTS overtime_request_department_idx
 CREATE INDEX IF NOT EXISTS overtime_request_entity_idx
   ON crove_hr.overtime_request (legal_entity_id, org_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_hr.overtime_request');
-REVOKE ALL ON crove_hr.overtime_request FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT SELECT, INSERT ON crove_hr.overtime_request TO crove_tenant;
+SELECT ludy_kernel.apply_tenant_rls('crove_hr.overtime_request');
+REVOKE ALL ON crove_hr.overtime_request FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT SELECT, INSERT ON crove_hr.overtime_request TO ludy_tenant;
 GRANT UPDATE (
   status,
   l1_approver_user_id,
@@ -325,7 +325,7 @@ GRANT UPDATE (
   reason,
   decision_note,
   updated_at
-) ON crove_hr.overtime_request TO crove_tenant;
+) ON crove_hr.overtime_request TO ludy_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.overtime_request;
 CREATE TRIGGER b_legal_entity BEFORE INSERT ON crove_hr.overtime_request
@@ -404,7 +404,7 @@ BEGIN
 
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.overtime_request_update_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_hr.overtime_request_update_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 DROP TRIGGER IF EXISTS overtime_request_update_guard ON crove_hr.overtime_request;
 CREATE TRIGGER overtime_request_update_guard BEFORE UPDATE ON crove_hr.overtime_request
@@ -415,9 +415,9 @@ CREATE OR REPLACE FUNCTION crove_hr.overtime_request_employee_name(p_org_id uuid
 RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_user uuid := crove_kernel.ctx_user_id();
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
   v_role text;
   v_emp_id uuid;
   v_dept_id uuid;
@@ -431,7 +431,7 @@ BEGIN
     RETURN NULL;
   END IF;
   SELECT m.role INTO v_role
-    FROM crove_kernel.tenant_member m
+    FROM ludy_kernel.tenant_member m
    WHERE m.org_id = v_org AND m.user_id = v_user;
   IF v_role IS NULL OR v_role NOT IN ('owner', 'admin', 'member') THEN
     RETURN NULL;
@@ -444,8 +444,8 @@ BEGIN
     RETURN NULL;
   END IF;
   IF NOT (
-    '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-    OR v_le_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+    '*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
+    OR v_le_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
   ) THEN
     RETURN NULL;
   END IF;
@@ -462,27 +462,27 @@ BEGIN
    WHERE e.org_id = v_org AND e.id = v_emp_id AND e.erased_at IS NULL;
   RETURN v_name;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) TO ludy_tenant;
 
 DROP POLICY IF EXISTS le_scope ON crove_hr.overtime_request;
-CREATE POLICY le_scope ON crove_hr.overtime_request AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
-  WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
+CREATE POLICY le_scope ON crove_hr.overtime_request AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))
+  WITH CHECK ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]));
 
 DROP POLICY IF EXISTS hr_overtime_request_select ON crove_hr.overtime_request;
 DROP POLICY IF EXISTS hr_overtime_request_insert ON crove_hr.overtime_request;
 DROP POLICY IF EXISTS hr_overtime_request_update ON crove_hr.overtime_request;
 DROP POLICY IF EXISTS hr_overtime_request_delete ON crove_hr.overtime_request;
 
-CREATE POLICY hr_overtime_request_select ON crove_hr.overtime_request AS RESTRICTIVE FOR SELECT TO crove_tenant
+CREATE POLICY hr_overtime_request_select ON crove_hr.overtime_request AS RESTRICTIVE FOR SELECT TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = overtime_request.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR crove_hr.is_self_employee(overtime_request.org_id, overtime_request.employee_id)
@@ -493,14 +493,14 @@ CREATE POLICY hr_overtime_request_select ON crove_hr.overtime_request AS RESTRIC
     )
   );
 
-CREATE POLICY hr_overtime_request_insert ON crove_hr.overtime_request AS RESTRICTIVE FOR INSERT TO crove_tenant
+CREATE POLICY hr_overtime_request_insert ON crove_hr.overtime_request AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = overtime_request.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -515,19 +515,19 @@ CREATE POLICY hr_overtime_request_insert ON crove_hr.overtime_request AS RESTRIC
         AND overtime_request.final_acted_by IS NULL
         AND overtime_request.final_acted_at IS NULL
         AND overtime_request.decision_note IS NULL
-        AND (overtime_request.created_by IS NULL OR overtime_request.created_by = (SELECT crove_kernel.ctx_user_id()))
+        AND (overtime_request.created_by IS NULL OR overtime_request.created_by = (SELECT ludy_kernel.ctx_user_id()))
       )
     )
   );
 
-CREATE POLICY hr_overtime_request_update ON crove_hr.overtime_request AS RESTRICTIVE FOR UPDATE TO crove_tenant
+CREATE POLICY hr_overtime_request_update ON crove_hr.overtime_request AS RESTRICTIVE FOR UPDATE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = overtime_request.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -543,12 +543,12 @@ CREATE POLICY hr_overtime_request_update ON crove_hr.overtime_request AS RESTRIC
     )
   )
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND (
       EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
+        SELECT 1 FROM ludy_kernel.tenant_member m
          WHERE m.org_id = overtime_request.org_id
-           AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+           AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
       OR (
@@ -562,7 +562,7 @@ CREATE POLICY hr_overtime_request_update ON crove_hr.overtime_request AS RESTRIC
         AND crove_hr.is_dept_manager(overtime_request.org_id, overtime_request.department_id)
         AND NOT crove_hr.is_self_employee(overtime_request.org_id, overtime_request.employee_id)
         AND overtime_request.status IN ('pending_final', 'rejected')
-        AND overtime_request.l1_approver_user_id = (SELECT crove_kernel.ctx_user_id())
+        AND overtime_request.l1_approver_user_id = (SELECT ludy_kernel.ctx_user_id())
         AND overtime_request.l1_acted_at IS NOT NULL
         AND overtime_request.final_acted_by IS NULL
         AND overtime_request.final_acted_at IS NULL
@@ -570,21 +570,21 @@ CREATE POLICY hr_overtime_request_update ON crove_hr.overtime_request AS RESTRIC
     )
   );
 
-CREATE POLICY hr_overtime_request_delete ON crove_hr.overtime_request AS RESTRICTIVE FOR DELETE TO crove_tenant
+CREATE POLICY hr_overtime_request_delete ON crove_hr.overtime_request AS RESTRICTIVE FOR DELETE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = overtime_request.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
 
 -- 4. End-of-probation review records with deterministic Projects/attendance evidence snapshot and human decision.
 CREATE TABLE IF NOT EXISTS crove_hr.probation_review (
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
-  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
   employee_id uuid NOT NULL,
   reviewer_user_id uuid,
@@ -607,7 +607,7 @@ CREATE TABLE IF NOT EXISTS crove_hr.probation_review (
   CONSTRAINT probation_review_employee_fk FOREIGN KEY (org_id, legal_entity_id, employee_id)
     REFERENCES crove_hr.payroll_employee (org_id, legal_entity_id, id),
   CONSTRAINT probation_review_reviewer_fk FOREIGN KEY (org_id, reviewer_user_id)
-    REFERENCES crove_kernel.tenant_member (org_id, user_id)
+    REFERENCES ludy_kernel.tenant_member (org_id, user_id)
     ON DELETE SET NULL (reviewer_user_id)
 );
 
@@ -618,11 +618,10 @@ CREATE INDEX IF NOT EXISTS probation_review_reviewer_idx
 CREATE INDEX IF NOT EXISTS probation_review_entity_idx
   ON crove_hr.probation_review (legal_entity_id, org_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_hr.probation_review');
-REVOKE ALL ON crove_hr.probation_review FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT SELECT, INSERT ON crove_hr.probation_review TO crove_tenant;
+SELECT ludy_kernel.apply_tenant_rls('crove_hr.probation_review');
+REVOKE ALL ON crove_hr.probation_review FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT SELECT, INSERT ON crove_hr.probation_review TO ludy_tenant;
 GRANT UPDATE (
-  reviewer_user_id,
   probation_end_on,
   period_start,
   period_end,
@@ -636,7 +635,7 @@ GRANT UPDATE (
   ai_draft_note,
   decided_at,
   updated_at
-) ON crove_hr.probation_review TO crove_tenant;
+) ON crove_hr.probation_review TO ludy_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.probation_review;
 CREATE TRIGGER b_legal_entity BEFORE INSERT ON crove_hr.probation_review
@@ -648,7 +647,12 @@ LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF TG_OP = 'UPDATE' THEN
     -- Allow hr.payroll.employee.erase to clear PII snapshots and review notes after retention.
-    IF NEW.decision = OLD.decision
+    IF NEW.org_id = OLD.org_id
+       AND NEW.legal_entity_id = OLD.legal_entity_id
+       AND NEW.employee_id = OLD.employee_id
+       AND NEW.reviewer_user_id IS NOT DISTINCT FROM OLD.reviewer_user_id
+       AND NEW.probation_end_on IS NOT DISTINCT FROM OLD.probation_end_on
+       AND NEW.decision = OLD.decision
        AND NEW.period_start = OLD.period_start
        AND NEW.period_end = OLD.period_end
        AND NEW.completed_tasks_count = OLD.completed_tasks_count
@@ -672,6 +676,31 @@ BEGIN
       RETURN NEW;
     END IF;
 
+    -- Allow probation_review_reviewer_fk ON DELETE SET NULL when kernel.member.remove deletes a member.
+    IF OLD.reviewer_user_id IS NOT NULL
+       AND NEW.reviewer_user_id IS NULL
+       AND NEW.org_id = OLD.org_id
+       AND NEW.id = OLD.id
+       AND NEW.legal_entity_id = OLD.legal_entity_id
+       AND NEW.employee_id = OLD.employee_id
+       AND NEW.probation_end_on IS NOT DISTINCT FROM OLD.probation_end_on
+       AND NEW.period_start = OLD.period_start
+       AND NEW.period_end = OLD.period_end
+       AND NEW.completed_tasks_count = OLD.completed_tasks_count
+       AND NEW.completed_tasks_snapshot = OLD.completed_tasks_snapshot
+       AND NEW.projects_available = OLD.projects_available
+       AND NEW.attendance_snapshot = OLD.attendance_snapshot
+       AND NEW.decision = OLD.decision
+       AND NEW.extended_until IS NOT DISTINCT FROM OLD.extended_until
+       AND NEW.review_note IS NOT DISTINCT FROM OLD.review_note
+       AND NEW.ai_draft_note IS NOT DISTINCT FROM OLD.ai_draft_note
+       AND NEW.decided_at IS NOT DISTINCT FROM OLD.decided_at
+       AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
+       AND NEW.created_at = OLD.created_at
+       AND NEW.updated_at = OLD.updated_at THEN
+      RETURN NEW;
+    END IF;
+
     -- Allow no-op updated_at updates only; all recorded probation review fields are immutable.
     IF NEW.reviewer_user_id IS NOT DISTINCT FROM OLD.reviewer_user_id
        AND NEW.probation_end_on IS NOT DISTINCT FROM OLD.probation_end_on
@@ -691,12 +720,7 @@ BEGIN
     RAISE EXCEPTION 'probation review % is immutable once recorded', OLD.id USING ERRCODE = '42501';
   END IF;
 
-  IF (
-    TG_OP = 'INSERT'
-    OR NEW.decision IS DISTINCT FROM OLD.decision
-    OR NEW.review_note IS DISTINCT FROM OLD.review_note
-    OR NEW.ai_draft_note IS DISTINCT FROM OLD.ai_draft_note
-  )
+  IF TG_OP = 'INSERT'
      AND crove_hr.is_self_employee(NEW.org_id, NEW.employee_id)
      AND NOT crove_hr.is_sole_owner_org(NEW.org_id) THEN
     RAISE EXCEPTION 'cannot conduct probation review for yourself' USING ERRCODE = '42501';
@@ -704,7 +728,7 @@ BEGIN
 
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.probation_review_write_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_hr.probation_review_write_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 DROP TRIGGER IF EXISTS probation_review_write_guard ON crove_hr.probation_review;
 CREATE TRIGGER probation_review_write_guard BEFORE INSERT OR UPDATE ON crove_hr.probation_review
@@ -712,64 +736,64 @@ CREATE TRIGGER probation_review_write_guard BEFORE INSERT OR UPDATE ON crove_hr.
 ALTER TABLE crove_hr.probation_review ENABLE ALWAYS TRIGGER probation_review_write_guard;
 
 DROP POLICY IF EXISTS le_scope ON crove_hr.probation_review;
-CREATE POLICY le_scope ON crove_hr.probation_review AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
-  WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
+CREATE POLICY le_scope ON crove_hr.probation_review AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))
+  WITH CHECK ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]));
 
 DROP POLICY IF EXISTS hr_probation_review_select ON crove_hr.probation_review;
 DROP POLICY IF EXISTS hr_probation_review_insert ON crove_hr.probation_review;
 DROP POLICY IF EXISTS hr_probation_review_update ON crove_hr.probation_review;
 DROP POLICY IF EXISTS hr_probation_review_delete ON crove_hr.probation_review;
 
-CREATE POLICY hr_probation_review_select ON crove_hr.probation_review AS RESTRICTIVE FOR SELECT TO crove_tenant
+CREATE POLICY hr_probation_review_select ON crove_hr.probation_review AS RESTRICTIVE FOR SELECT TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = probation_review.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
 
-CREATE POLICY hr_probation_review_insert ON crove_hr.probation_review AS RESTRICTIVE FOR INSERT TO crove_tenant
+CREATE POLICY hr_probation_review_insert ON crove_hr.probation_review AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = probation_review.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
 
-CREATE POLICY hr_probation_review_update ON crove_hr.probation_review AS RESTRICTIVE FOR UPDATE TO crove_tenant
+CREATE POLICY hr_probation_review_update ON crove_hr.probation_review AS RESTRICTIVE FOR UPDATE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = probation_review.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   )
   WITH CHECK (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = probation_review.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
 
-CREATE POLICY hr_probation_review_delete ON crove_hr.probation_review AS RESTRICTIVE FOR DELETE TO crove_tenant
+CREATE POLICY hr_probation_review_delete ON crove_hr.probation_review AS RESTRICTIVE FOR DELETE TO ludy_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
+    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
     AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
+      SELECT 1 FROM ludy_kernel.tenant_member m
        WHERE m.org_id = probation_review.org_id
-         AND m.user_id = (SELECT crove_kernel.ctx_user_id())
+         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
          AND m.role IN ('owner', 'admin')
     )
   );
