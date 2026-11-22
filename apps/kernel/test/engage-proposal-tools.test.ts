@@ -98,6 +98,9 @@ describe('the follow-up task tool and the seats it names (#4369)', () => {
       expect(followUp?.description).toMatch(/ludy_seats_list/);
       expect(tools.some((t) => t.name === 'ludy_seats_list')).toBe(true);
     }
+    // A member-bound grant is offered neither.
+    const memberTools = listed(grant(['ludy.read', 'ludy.engage.write'], 'member'));
+    expect(memberTools.some((t) => t.name === 'ludy_conversation_follow_up' || t.name === 'ludy_seats_list')).toBe(false);
     // A grant that is not offered the follow-up is not offered the seats either.
     for (const scopes of [['ludy.read'], ['ludy.read', 'ludy.ads.draft']]) {
       const tools = listed(grant(scopes));
