@@ -277,7 +277,7 @@ export function FollowupForm({
       )}
 
       {effectiveStage === 'draft' && (
-        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm" data-testid="followup-unpublished-notice">
+        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm" data-testid="followup-unpublished-notice">
           <p className="text-xs text-foreground">{t('unpublishedNotice')}</p>
           <label className="flex cursor-pointer items-center gap-2 text-xs font-medium max-md:min-h-11" data-testid="followup-confirm-unpublished">
             <Checkbox checked={confirmUnpublished} onCheckedChange={(on) => { setConfirmUnpublished(on === true); touch(); }} />

@@ -69,7 +69,7 @@ describe('followupNoteProblem', () => {
     expect(followupNoteProblem(followupClean('Chào Lan,\n\nCảm ơn bạn đã trao đổi về lộ trình 1 và 2 tháng.\n- Ngân sách 15.000.000 đồng\n- Ngày bắt đầu 2026-12-01\n\nHẹn gặp lại.', false))).toBeNull();
     expect(followupNoteProblem(followupClean('  \u200b\u202e\u3164  ', false))).toBe('EMPTY');
     expect(followupNoteProblem('x'.repeat(FOLLOWUP_NOTE_MAX + 1))).toBe('TOO_LONG');
-    for (const link of ['Xem https://evil.test', 'Vào www.evil.test', 'Liên hệ an@ludy.vn', 'Vào 123.com', 'an [at] ludy [dot] vn']) {
+    for (const link of ['Xem https://evil.test', 'Vào www.evil.test', 'Liên hệ an@example.com', 'Vào 123.com', 'an [at] example [dot] com']) {
       expect(followupNoteProblem(followupClean(link, false)), link).toBe('LINK');
     }
     for (const phone of ['Gọi 09012345', 'Số 090 123 4567', 'Số +84 90-123-4567', 'Mã 12345678', 'Số (028) 3822 1234', 'Số 090.123.4567']) {
