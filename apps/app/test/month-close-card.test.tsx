@@ -40,11 +40,11 @@ const CHECKLIST: MonthClose = {
 const NOTE: MonthCloseNote = { ai: 'used', text: 'Lock the period last, because it stops further changes.', order: ['lock', 'bank', 'proposals', 'invoices', 'stock', 'vat'] };
 const NONE = (ai: MonthCloseNote['ai']): MonthCloseNote => ({ ai, text: null, order: [] });
 
-async function render(checklist: MonthClose | null, note: MonthCloseNote | null, locale: 'vi' | 'en'): Promise<string> {
+async function render(checklist: MonthClose | null, note: MonthCloseNote | null, locale: 'vi' | 'en', updatedAt = 1000): Promise<string> {
   cache.current.clear();
-  if (checklist) cache.current.setQueryData(['financeMonthClose', 'get'], checklist, { updatedAt: 1000 });
-  // The note is asked again whenever the items are read, so its key carries the time they were read.
-  if (note) cache.current.setQueryData(['financeMonthClose', 'explain', 1000], note);
+  if (checklist) cache.current.setQueryData(['financeMonthClose', 'get'], checklist, { updatedAt: updatedAt });
+  // The note is asked again whenever the set of open items changes, so its key carries that set (and not the time they were read: a poll that finds the same items keeps the note).
+  if (note && checklist) cache.current.setQueryData(['financeMonthClose', 'explain', checklist.items.filter((i) => i.count > 0).map((i) => i.key).join(',')], note);
   const root = createRootRoute({
     component: () => (
       <QueryClientProvider client={cache.current}>
@@ -124,6 +124,19 @@ describe('the month-close checklist card', () => {
     const vi = await render(CHECKLIST, NOTE, 'vi');
     expect(vi).toContain(`Đồng nghiệp AI ${COWORKERS.finance} gợi ý thứ tự làm`);
     expect(vi).not.toContain('trợ lý');
+  });
+
+  it('keeps the note across a poll that finds the same open items, whatever time they were read', async () => {
+    const first = await render(CHECKLIST, NOTE, 'en', 1000);
+    const later = await render(CHECKLIST, NOTE, 'en', 90_000);
+    expect(later).toBe(first);
+    expect(later).toContain('data-testid="month-close-note"');
+    expect(rowKeys(later)[0]).toBe('lock');
+  });
+
+  it('keeps an always-mounted status line, empty until the answer comes', async () => {
+    const loading = await render(null, null, 'en');
+    expect(loading).toMatch(/<p [^>]*role="status"[^>]*><\/p>/);
   });
 
   it('ignores an order that is not exactly the open items, and shows no note, no notice and no gap when there is none', async () => {

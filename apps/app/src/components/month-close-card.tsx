@@ -60,12 +60,12 @@ function Row({ item, month, slug }: { item: MonthCloseItem; month: string; slug:
   );
 }
 
-// The coworker's note and order: nothing at all unless it came back used, so with AI off the card has no gap and no notice. `version` is when the items on screen were read: the note is
-// asked again whenever they are, so it never sits beside items it was not written from (the server keeps a note by the open items, so asking again over the same ones costs no model call).
-function useNote(input: { month: string; legalEntityId?: string }, ready: boolean, version: number) {
+// The coworker's note and order: nothing at all unless it came back used, so with AI off the card has no gap and no notice. `open` names the open items on screen: the note is
+// asked again whenever that set changes, so it never sits beside items it was not written from (the server keeps a note by the open items, so asking again costs no model call either).
+function useNote(input: { month: string; legalEntityId?: string }, ready: boolean, open: string) {
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const base = orpc.financeMonthClose.explain.queryOptions({ input: { ...input, lang } });
-  const note = useQuery({ ...base, queryKey: [...base.queryKey, version], enabled: ready, staleTime: Infinity, retry: false });
+  const note = useQuery({ ...base, queryKey: [...base.queryKey, open], enabled: ready, staleTime: Infinity, retry: false });
   return note.data?.ai === 'used' && note.data.text ? { text: note.data.text, order: note.data.order as MonthCloseKey[] } : null;
 }
 
@@ -76,8 +76,9 @@ export function MonthCloseCard({ slug, today = new Date() }: { slug: string; tod
   const input = { month, ...(entity.legalEntityId ? { legalEntityId: entity.legalEntityId } : {}) };
   const live = useStreamLive();
   const checklist = useQuery({ ...orpc.financeMonthClose.get.queryOptions({ input }), enabled: entity.ready, refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
-  const note = useNote(input, entity.ready && checklist.data !== undefined, checklist.dataUpdatedAt);
   const data = checklist.data;
+  // The note is written from which items are open, so it is asked again only when that set changes: a poll that finds the same items keeps it, and the order does not jump.
+  const note = useNote(input, entity.ready && data !== undefined, data ? data.items.filter((item) => item.count > 0).map((item) => item.key).join(',') : '');
   const items = data ? orderItems(data.items, note?.order ?? []) : [];
   const openCount = items.filter((item) => item.count > 0).length;
   return (
@@ -112,24 +113,23 @@ export function MonthCloseCard({ slug, today = new Date() }: { slug: string; tod
             <CardSkeleton />
           </div>
         )}
+        {data && note && (
+          <div className="mt-3 rounded-md bg-muted/50 p-3" data-testid="month-close-note">
+            <p className="text-xs font-medium text-muted-foreground">{t('note.title')}</p>
+            <p className="mt-1 text-sm text-foreground">{note.text}</p>
+            <p className="mt-2 text-xs text-subtle-foreground">{t('note.hint')}</p>
+          </div>
+        )}
+        {/* Mounted before the answer comes, so a screen reader announces the summary when it fills in. */}
+        <p className="mt-3 text-xs text-subtle-foreground" role="status">
+          {data ? (openCount === 0 ? t('allDone') : t('summary', { open: String(openCount), total: String(items.length) })) : ''}
+        </p>
         {data && (
-          <>
-            {note && (
-              <div className="mt-3 rounded-md bg-muted/50 p-3" data-testid="month-close-note">
-                <p className="text-xs font-medium text-muted-foreground">{t('note.title')}</p>
-                <p className="mt-1 text-sm text-foreground">{note.text}</p>
-                <p className="mt-2 text-xs text-subtle-foreground">{t('note.hint')}</p>
-              </div>
-            )}
-            <p className="mt-3 text-xs text-subtle-foreground" role="status">
-              {openCount === 0 ? t('allDone') : t('summary', { open: String(openCount), total: String(items.length) })}
-            </p>
-            <ul className="mt-1">
-              {items.map((item) => (
-                <Row key={item.key} item={item} month={month} slug={slug} />
-              ))}
-            </ul>
-          </>
+          <ul className="mt-1">
+            {items.map((item) => (
+              <Row key={item.key} item={item} month={month} slug={slug} />
+            ))}
+          </ul>
         )}
       </Card>
     </section>

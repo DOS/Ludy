@@ -121,14 +121,22 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
   return work.settlements.filter((s) => inMonth(s.periodTo)).length + work.payouts.filter((p) => inMonth(p.periodTo)).length;
 }
 
-// Whether the stock close of the month still has to be run: the month is over, the entity has a stock move up to its end, and no stock close covers the month (a close of this month
-// or a later one: months close in order, so a later close covers it).
+// Whether the stock close of the month still has to be run: the month is over, no stock close covers it (a close of this month or a later one: months close in order, so a later close
+// covers it), and the entity has a stock move the close of this month would have to take in, dated from the month after the last closed month up to the end of this month. A month with
+// no move of its own after the last closed one needs no close (as the close command itself says), so it is left out: null.
 async function stockCloseOpen(ctx: QueryContext, entity: string, b: MonthBounds, today: string): Promise<boolean | null> {
   if (!monthOver(b, today)) return null;
-  const moved = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).where('move_date', '<', b.next).limit(1).executeTakeFirst();
-  if (moved === undefined) return null;
   const closed = await ctx.trx.selectFrom('crove_finance.stock_period').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).where('period_month', '>=', b.from).limit(1).executeTakeFirst();
-  return closed === undefined;
+  if (closed !== undefined) return false;
+  const { rows } = await sql<{ pending: boolean }>`
+    SELECT EXISTS (
+      SELECT 1 FROM crove_finance.stock_move m
+      WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${entity}::uuid AND m.move_date < ${b.next}::date
+        AND m.move_date >= COALESCE(
+          (SELECT pg_catalog.max(p.period_month) + INTERVAL '1 month' FROM crove_finance.stock_period p WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${entity}::uuid AND p.period_month < ${b.from}::date),
+          DATE '0001-01-01')
+    ) AS pending`.execute(ctx.trx);
+  return rows[0]?.pending === true ? true : null;
 }
 
 // Whether the return of the VAT period is not marked as filed: the latest mark of the period (or of the quarter that holds a month, for a filer who changed period) is not a filed one.

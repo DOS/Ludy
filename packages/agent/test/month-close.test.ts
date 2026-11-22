@@ -49,6 +49,27 @@ describe('checkMonthCloseNote: the note', () => {
     }
   });
 
+  it('refuses the English number words the shared check stops short of, and zero', () => {
+    for (const text of ['There are fifteen lines waiting. Do bank first.', 'Seventeen days remain.', 'Start with thirteen items.', 'Nothing: zero items.', 'About ninety lines wait.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+  });
+
+  it('refuses a look-alike letter of another script and an invisible filler, which could hide a word', () => {
+    expect(check('Start with the bаnk lines.')).toEqual({ kind: 'none', code: 'FORMAT' });
+    expect(check('Start with the ㅤ bank lines.')).toEqual({ kind: 'none', code: 'FORMAT' });
+    expect(check('The VAT return wіll wait.')).toMatchObject({ kind: 'none' });
+  });
+
+  it('keeps an ordering rationale that says what must come first ("once ... are booked", "before ... is filed")', () => {
+    expect(check('Book the bank lines first. Once they are booked the VAT return can be prepared.').kind).toBe('note');
+    expect(check('Review the proposals before the VAT return is filed.').kind).toBe('note');
+    expect(check('Sau khi các dòng sao kê được hạch toán, hãy chuẩn bị tờ khai.').kind).toBe('note');
+    // The same words as a statement that something is done are still refused.
+    expect(check('The VAT return is filed.')).toEqual({ kind: 'none', code: 'PROMISE' });
+    expect(check('Once they are booked I will file it.')).toEqual({ kind: 'none', code: 'PROMISE' });
+  });
+
   it('refuses a number hidden by an invisible character', () => {
     expect(check('Start with tw​o proposals.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
