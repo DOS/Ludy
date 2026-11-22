@@ -10807,7 +10807,7 @@ export const vi = {
         waiting: 'Đang chờ',
         dueNextWeek: 'Đến hạn tuần tới',
         hoursThisWeek: 'Giờ làm tuần này',
-        billableAmountThisWeek: 'Giờ tính phí tuần này',
+        billableAmountThisWeek: 'Tiền tính phí tuần này',
       },
       columnsTitle: 'Các cột trên bảng dự án',
       columnsOverWip: '{count}/{limit} (vượt mức)',

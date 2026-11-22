@@ -109,6 +109,14 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
+function canonicalUuid(id: string): string {
+  return id.toLowerCase();
+}
+
+function sameUuid(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 function pgErrorCode(err: unknown): string | undefined {
   if (typeof err === 'object' && err !== null && 'code' in err) {
     const code = (err as { code?: unknown }).code;
@@ -491,11 +499,11 @@ async function lockProjectsOrdered(
   orgId: string,
   projectIds: ReadonlyArray<string>,
 ): Promise<Map<string, ProjectRow>> {
-  const uniqueSorted = [...new Set(projectIds)].sort();
+  const uniqueSorted = [...new Set(projectIds.map(canonicalUuid))].sort();
   const map = new Map<string, ProjectRow>();
   for (const projectId of uniqueSorted) {
     const project = await loadTimeProject(trx, orgId, projectId, true);
-    map.set(projectId, project);
+    map.set(canonicalUuid(project.id), project);
   }
   return map;
 }
@@ -523,7 +531,7 @@ export const projectTimeStart = defineCommand({
 
     const projectIdsToLock = [input.projectId, ...(peekRunning ? [peekRunning.project_id] : [])];
     const lockedProjects = await lockProjectsOrdered(ctx.trx, ctx.orgId, projectIdsToLock);
-    const targetProject = lockedProjects.get(input.projectId)!;
+    const targetProject = lockedProjects.get(canonicalUuid(input.projectId))!;
     assertTimeProjectWritable(targetProject);
 
     if (input.taskId !== undefined && input.taskId !== null) {
@@ -536,7 +544,7 @@ export const projectTimeStart = defineCommand({
     if (existingRunning) {
       if (!input.stopExisting) {
         const runningProject =
-          lockedProjects.get(existingRunning.project_id) ??
+          lockedProjects.get(canonicalUuid(existingRunning.project_id)) ??
           (await loadProject(ctx.trx, ctx.orgId, existingRunning.project_id, false));
         throw new DomainError(
           'TIMER_ALREADY_RUNNING',
@@ -553,9 +561,9 @@ export const projectTimeStart = defineCommand({
         );
       }
 
-      let runningProject = lockedProjects.get(existingRunning.project_id);
+      let runningProject = lockedProjects.get(canonicalUuid(existingRunning.project_id));
       if (!runningProject) {
-        if (existingRunning.project_id < targetProject.id) {
+        if (canonicalUuid(existingRunning.project_id) < canonicalUuid(targetProject.id)) {
           throw new DomainError('CONFLICT', 409, 'Trạng thái đồng hồ bấm giờ vừa thay đổi đồng thời; vui lòng thử lại');
         }
         runningProject = await loadTimeProject(ctx.trx, ctx.orgId, existingRunning.project_id, true);
@@ -689,7 +697,7 @@ export const projectTimeStop = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.entryId)
         .executeTakeFirst();
-      if (!candidate || (input.projectId !== undefined && candidate.project_id !== input.projectId)) {
+      if (!candidate || (input.projectId !== undefined && !sameUuid(candidate.project_id, input.projectId))) {
         throw new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này');
       }
       if (candidate.ended_at !== null) {
@@ -718,7 +726,11 @@ export const projectTimeStop = defineCommand({
       ? await fetchTimeEntryById(ctx.trx, ctx.orgId, input.entryId, true)
       : await fetchActiveTimerRow(ctx.trx, ctx.orgId, userId, true);
 
-    if (!existing || existing.project_id !== project.id || (input.projectId !== undefined && existing.project_id !== input.projectId)) {
+    if (
+      !existing ||
+      !sameUuid(existing.project_id, project.id) ||
+      (input.projectId !== undefined && !sameUuid(existing.project_id, input.projectId))
+    ) {
       throw input.entryId !== undefined
         ? new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này')
         : new DomainError('TIME_ENTRY_NOT_RUNNING', 409, 'Hiện không có đồng hồ bấm giờ nào đang chạy');
@@ -865,7 +877,7 @@ export const projectTimeUpdate = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.entryId)
       .executeTakeFirst();
-    if (!peek || (input.projectId !== undefined && peek.project_id !== input.projectId)) {
+    if (!peek || (input.projectId !== undefined && !sameUuid(peek.project_id, input.projectId))) {
       throw new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này');
     }
 
@@ -873,7 +885,7 @@ export const projectTimeUpdate = defineCommand({
     assertTimeProjectWritable(project);
 
     const existing = await fetchTimeEntryById(ctx.trx, ctx.orgId, input.entryId, true);
-    if (!existing || existing.project_id !== project.id) {
+    if (!existing || !sameUuid(existing.project_id, project.id)) {
       throw new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này');
     }
     if (existing.task_id !== null && !existing.task_visible) {
@@ -994,7 +1006,7 @@ export const projectTimeDelete = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.entryId)
       .executeTakeFirst();
-    if (!peek || (input.projectId !== undefined && peek.project_id !== input.projectId)) {
+    if (!peek || (input.projectId !== undefined && !sameUuid(peek.project_id, input.projectId))) {
       throw new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này');
     }
 
@@ -1002,7 +1014,7 @@ export const projectTimeDelete = defineCommand({
     assertTimeProjectWritable(project);
 
     const existing = await fetchTimeEntryById(ctx.trx, ctx.orgId, input.entryId, true);
-    if (!existing || existing.project_id !== project.id) {
+    if (!existing || !sameUuid(existing.project_id, project.id)) {
       throw new DomainError('TIME_ENTRY_NOT_FOUND', 404, 'Không tìm thấy lượt ghi giờ này');
     }
     if (existing.task_id !== null && !existing.task_visible) {

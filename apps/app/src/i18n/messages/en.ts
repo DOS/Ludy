@@ -10807,7 +10807,7 @@ export const en = {
         waiting: 'Waiting',
         dueNextWeek: 'Due next week',
         hoursThisWeek: 'Hours this week',
-        billableAmountThisWeek: 'Billable this week',
+        billableAmountThisWeek: 'Billable amount this week',
       },
       columnsTitle: 'Custom board columns',
       columnsOverWip: '{count}/{limit} (over limit)',

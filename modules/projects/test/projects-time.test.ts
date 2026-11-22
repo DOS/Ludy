@@ -113,8 +113,16 @@ describe('@ludy/mod-projects time tracking helpers (#2600)', () => {
     const end60 = new Date('2026-11-22T02:00:00.000Z');
     const endOverMax = new Date('2026-12-03T01:01:00.000Z');
     expect(validateEndedAndDuration(start, end60, 60)).toBe(60);
-    expect(() => validateEndedAndDuration(start, end60, 15)).toThrow();
-    expect(() => validateEndedAndDuration(start, endOverMax, 15)).toThrow();
+    const expectCode = (fn: () => unknown, code: string) => {
+      try {
+        fn();
+        expect.unreachable(`Expected error ${code}`);
+      } catch (err) {
+        expect(err).toMatchObject({ code });
+      }
+    };
+    expectCode(() => validateEndedAndDuration(start, end60, 15), 'TIME_ENTRY_INVALID_RANGE');
+    expectCode(() => validateEndedAndDuration(start, endOverMax), 'TIME_ENTRY_DURATION_OUT_OF_RANGE');
     expect(() =>
       resolveLogTimestamps('2026-11-22T01:00:00.000Z', '2026-11-22T02:00:00.000Z', 15),
     ).toThrow();

@@ -487,20 +487,21 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
       hourlyRate: '400000',
       note: 'Giờ bí mật',
     });
-    for (const op of [
-      query(memberB.userId, org.orgId, 'projects.time.summary', { projectId: privProj }),
-      query(memberB.userId, org.orgId, 'projects.time.export_csv', { projectId: privProj }),
-      exec(memberB.userId, org.orgId, 'projects.time.start', { projectId: privProj }),
-      exec(memberB.userId, org.orgId, 'projects.time.stop', { projectId: privProj }),
-      exec(memberB.userId, org.orgId, 'projects.time.log', {
-        projectId: privProj,
-        startedAt: new Date(now - 3600_000).toISOString(),
-        durationMinutes: 15,
-      }),
-      exec(memberB.userId, org.orgId, 'projects.time.update', { projectId: privProj, entryId: privStarted.entry.id, note: 'probe' }),
-      exec(memberB.userId, org.orgId, 'projects.time.delete', { projectId: privProj, entryId: privStarted.entry.id }),
+    for (const runOp of [
+      () => query(memberB.userId, org.orgId, 'projects.time.summary', { projectId: privProj }),
+      () => query(memberB.userId, org.orgId, 'projects.time.export_csv', { projectId: privProj }),
+      () => exec(memberB.userId, org.orgId, 'projects.time.start', { projectId: privProj }),
+      () => exec(memberB.userId, org.orgId, 'projects.time.stop', { projectId: privProj }),
+      () =>
+        exec(memberB.userId, org.orgId, 'projects.time.log', {
+          projectId: privProj,
+          startedAt: new Date(now - 3600_000).toISOString(),
+          durationMinutes: 15,
+        }),
+      () => exec(memberB.userId, org.orgId, 'projects.time.update', { projectId: privProj, entryId: privStarted.entry.id, note: 'probe' }),
+      () => exec(memberB.userId, org.orgId, 'projects.time.delete', { projectId: privProj, entryId: privStarted.entry.id }),
     ]) {
-      await expect(op).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
+      await expect(runOp()).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
     }
     await expect(
       exec(memberB.userId, org.orgId, 'projects.time.update', { entryId: privStarted.entry.id, note: 'probe' }),
@@ -599,18 +600,36 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     expect(switchedOutOfArchived.stoppedEntry?.running).toBe(false);
     await exec(memberA.userId, org.orgId, 'projects.time.stop', { entryId: switchedOutOfArchived.entry.id });
 
-    // 7e. Timer owner can stop their own running timer even if its task was later moved to a hidden le_scope entity.
-    const { taskId: movableTaskId } = await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
-      projectId: projA,
-      title: 'Nhiệm vụ chuyển chi nhánh',
-      assigneePositionId: null,
+    // 7e. Timer owner can stop their own running timer even if its task is in a hidden le_scope entity.
+    let movableTaskId = '';
+    let tempLeBRoleId = '';
+    await withAdmin(async (c) => {
+      movableTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Nhiệm vụ chuyển chi nhánh', 'todo', 'human', 'user', $2) RETURNING id`,
+          [org.orgId, leB],
+        )
+      ).rows[0]!.id;
+      await c.query(
+        `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+         VALUES ($1, $2, $3, $4)`,
+        [org.orgId, projA, movableTaskId, owner.userId],
+      );
+      tempLeBRoleId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+           VALUES ($1, $2, 'external_accountant', $3, $4) RETURNING id`,
+          [org.orgId, memberB.userId, leB, owner.userId],
+        )
+      ).rows[0]!.id;
     });
     const startedOnMovable = await exec<ProjectTimeStartResult>(memberB.userId, org.orgId, 'projects.time.start', {
       projectId: projA,
       taskId: movableTaskId,
     });
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_kernel.task SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3`, [leB, org.orgId, movableTaskId]);
+      await c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND id = $2`, [org.orgId, tempLeBRoleId]);
     });
     const stoppedMovedTaskTimer = await exec<ProjectTimeStopResult>(memberB.userId, org.orgId, 'projects.time.stop', {
       projectId: projA,

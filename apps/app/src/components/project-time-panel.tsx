@@ -11,7 +11,7 @@ import {
   type ProjectTimeEntry,
   type ProjectTimeSummaryResult,
 } from '@ludy/kernel-contract';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -31,6 +31,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { PROJECT_WEEKLY_STATUS_QUERY_PREFIX } from '../lib/projects.ts';
 import {
+  createTimeEntryIdempotencyTracker,
   currentLocalDateTimeInput,
   formatDecimalHours,
   formatDecimalMoney,
@@ -131,8 +132,15 @@ function ProjectTimeEntryForm({
   const idPrefix = useId();
   const [form, setForm] = useState<EntryFormState>(() => initialFormState(editingEntry, fixedTaskId));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const idempotencyTrackerRef = useRef(createTimeEntryIdempotencyTracker());
+
+  const updateForm = (updater: (prev: EntryFormState) => EntryFormState) => {
+    idempotencyTrackerRef.current.rotate();
+    setForm(updater);
+  };
 
   useEffect(() => {
+    idempotencyTrackerRef.current.rotate();
     setForm(initialFormState(editingEntry, fixedTaskId));
     setValidationError(null);
   }, [editingEntry, fixedTaskId]);
@@ -140,6 +148,7 @@ function ProjectTimeEntryForm({
   const logTime = useMutation(
     orpc.projects.logTime.mutationOptions({
       onSuccess: () => {
+        idempotencyTrackerRef.current.rotate();
         refreshTimeQueries();
         onDone();
       },
@@ -149,6 +158,7 @@ function ProjectTimeEntryForm({
   const updateTime = useMutation(
     orpc.projects.updateTimeEntry.mutationOptions({
       onSuccess: () => {
+        idempotencyTrackerRef.current.rotate();
         refreshTimeQueries();
         onDone();
       },
@@ -201,7 +211,7 @@ function ProjectTimeEntryForm({
         billable: form.billable,
         hourlyRate: rateValue,
         note: noteValue,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: idempotencyTrackerRef.current.current(),
       });
       return;
     }
@@ -247,7 +257,7 @@ function ProjectTimeEntryForm({
         billable: form.billable,
         hourlyRate: rateValue,
         note: noteValue,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: idempotencyTrackerRef.current.current(),
       });
     } else {
       const sendEndedOnly = form.timingMode === 'endedAt' && endedIso !== undefined;
@@ -259,7 +269,7 @@ function ProjectTimeEntryForm({
         billable: form.billable,
         hourlyRate: rateValue,
         note: noteValue,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: idempotencyTrackerRef.current.current(),
       });
     }
   };
@@ -278,7 +288,7 @@ function ProjectTimeEntryForm({
           <NativeSelect
             id={`${idPrefix}-task`}
             value={form.taskId}
-            onChange={(e) => setForm((prev) => ({ ...prev, taskId: e.target.value }))}
+            onChange={(e) => updateForm((prev) => ({ ...prev, taskId: e.target.value }))}
             className="min-h-11 text-sm"
           >
             <NativeSelectOption value="">{t('projectGeneralOption')}</NativeSelectOption>
@@ -302,7 +312,7 @@ function ProjectTimeEntryForm({
             value={form.startedAt}
             onChange={(e) => {
               const nextStarted = e.target.value;
-              setForm((prev) => {
+              updateForm((prev) => {
                 if (isEditingRunning) return { ...prev, startedAt: nextStarted };
                 if (prev.timingMode === 'duration') {
                   const mins = Number(prev.durationMinutes);
@@ -332,7 +342,7 @@ function ProjectTimeEntryForm({
                 value={form.durationMinutes}
                 onChange={(e) => {
                   const nextMinutes = e.target.value;
-                  setForm((prev) => {
+                  updateForm((prev) => {
                     if (nextMinutes.trim() === '') {
                       return { ...prev, timingMode: 'duration', durationMinutes: '', endedAt: '' };
                     }
@@ -359,7 +369,7 @@ function ProjectTimeEntryForm({
                 value={form.endedAt}
                 onChange={(e) => {
                   const nextEnded = e.target.value;
-                  setForm((prev) => {
+                  updateForm((prev) => {
                     if (nextEnded.trim() === '') {
                       return { ...prev, timingMode: 'endedAt', endedAt: '', durationMinutes: '' };
                     }
@@ -385,7 +395,7 @@ function ProjectTimeEntryForm({
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-foreground">
           <Checkbox
             checked={form.billable}
-            onCheckedChange={(checked) => setForm((prev) => ({ ...prev, billable: checked === true }))}
+            onCheckedChange={(checked) => updateForm((prev) => ({ ...prev, billable: checked === true }))}
           />
           <span>{t('billableLabel')}</span>
         </label>
@@ -400,7 +410,7 @@ function ProjectTimeEntryForm({
             inputMode="decimal"
             value={form.hourlyRate}
             placeholder={t('hourlyRatePlaceholder')}
-            onChange={(e) => setForm((prev) => ({ ...prev, hourlyRate: e.target.value }))}
+            onChange={(e) => updateForm((prev) => ({ ...prev, hourlyRate: e.target.value }))}
             className="min-h-11 text-xs tabular-nums"
           />
         </div>
@@ -422,7 +432,7 @@ function ProjectTimeEntryForm({
           maxLength={PROJECT_TIME_NOTE_MAX}
           value={form.note}
           placeholder={t('notePlaceholder')}
-          onChange={(e) => setForm((prev) => ({ ...prev, note: e.target.value }))}
+          onChange={(e) => updateForm((prev) => ({ ...prev, note: e.target.value }))}
           className="text-xs"
         />
       </div>

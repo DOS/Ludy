@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProjectTimeSummaryResult } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import {
+  createTimeEntryIdempotencyTracker,
   formatDecimalHours,
   formatDecimalMoney,
   formatMinutesAsHours,
@@ -241,5 +242,22 @@ describe('projects time tracking client helpers & UI (#2600)', () => {
     expect(enHtml).toContain('Export CSV');
     expect(enHtml).toContain('1.5 h');
     expect(enHtml).toContain('500,000 VND');
+  });
+
+  it('reuses a time-entry form idempotency key across retries and rotates on edit or completion', () => {
+    let seq = 0;
+    const tracker = createTimeEntryIdempotencyTracker(() => `key-${++seq}`);
+
+    const firstAttemptKey = tracker.current();
+    expect(firstAttemptKey).toBe('key-1');
+    expect(tracker.current()).toBe('key-1');
+
+    tracker.rotate();
+    const afterEditKey = tracker.current();
+    expect(afterEditKey).toBe('key-2');
+    expect(tracker.current()).toBe('key-2');
+
+    tracker.rotate();
+    expect(tracker.current()).toBe('key-3');
   });
 });

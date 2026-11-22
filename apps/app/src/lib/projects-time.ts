@@ -108,3 +108,27 @@ export function saveTimeCsvFile(filename: string, csv: string): void {
   anchor.remove();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Keeps a stable idempotency key across failed submit retries and clears it when
+ * the draft changes or completes so the next distinct request gets a fresh key.
+ */
+export interface TimeEntryIdempotencyTracker {
+  current(): string;
+  rotate(): void;
+}
+
+export function createTimeEntryIdempotencyTracker(createKey: () => string = () => crypto.randomUUID()): TimeEntryIdempotencyTracker {
+  let activeKey: string | null = null;
+  return {
+    current(): string {
+      if (activeKey === null) {
+        activeKey = createKey();
+      }
+      return activeKey;
+    },
+    rotate(): void {
+      activeKey = null;
+    },
+  };
+}
