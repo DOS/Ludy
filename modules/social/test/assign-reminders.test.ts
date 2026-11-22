@@ -36,6 +36,8 @@ describe('due date reminders of an assigned post (#1359)', () => {
 
   it('pushes a line naming the kind, never the post text', () => {
     expect(pushLine('assignment_due', { stage: 'soon', due: '2026-10-26T18:00:00.000Z' })).toBe('Một bài được giao cho bạn sắp đến hạn');
+    expect(pushLine('failed', { late: '1', count: '14' })).toBe('14 bài đăng không thành công vì đã quá giờ hẹn');
+    expect(pushLine('failed', {})).toBe('Một bài đăng không thành công');
     expect(pushLine('assignment_due', { stage: 'overdue' })).toBe('Một bài được giao cho bạn đã quá hạn');
     expect(pushLine('assigned', {})).toBe('Bạn được giao một bài mới');
     expect(pushLine('assigned', { count: '3' })).toBe('Bạn được giao 3 bài mới');

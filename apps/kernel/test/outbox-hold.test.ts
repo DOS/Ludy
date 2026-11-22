@@ -65,6 +65,10 @@ describe('which events wait', () => {
     for (const type of Object.keys(KEEPING_EVENT_COMMANDS)) expect(heldAppOf(type), type).toBeNull();
     for (const type of NEVER_HELD_EVENTS) expect(heldAppOf(type), type).toBeNull();
     expect(heldAppOf('social.variant.remove_requested')).toBeNull();
+    // The notice of a failed planned takedown reaches the owners while Social is off (#3456), so it is not parked either.
+    expect(heldAppOf('social.variant.remove_failed')).toBeNull();
+    // The combined notice of late posts is only ever emitted while Social is on, so it keeps the app's own rule and waits if the app goes off before it is relayed.
+    expect(heldAppOf('social.publishing.late_failed')).toBe('social');
     expect(heldAppOf('kernel.conversation.reply_queued')).toBeNull();
     expect(heldAppOf('kernel.org.export_requested')).toBeNull();
     expect(heldAppOf('meetings.transcript.requested')).toBeNull();
