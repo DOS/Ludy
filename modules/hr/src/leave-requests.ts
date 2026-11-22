@@ -27,7 +27,7 @@ import {
 import { money, toMoney } from '@ludy/l10n-vn';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { MANAGERS, memberLabel, userOf } from './employees.ts';
-import { evaluateLeaveBalanceSummary, loadEmployeeForLeave, validateMonthlyLeaveBounds } from './leave.ts';
+import { erasedError, evaluateLeaveBalanceSummary, loadEmployeeForLeave, validateMonthlyLeaveBounds } from './leave.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 import { employerName, figuresOfLine, LINE_COLUMNS, type StoredLine } from './payroll-run.ts';
@@ -754,6 +754,75 @@ async function assertL1Authority(
   return role;
 }
 
+async function assertEmployeeNotErasedForLeaveRequest(
+  trx: QueryContext['trx'],
+  orgId: string,
+  role: MemberRole,
+  employeeId: string,
+  requestId: string,
+): Promise<void> {
+  if (role === 'owner' || role === 'admin') {
+    await loadEmployeeForLeave(trx, orgId, employeeId, true);
+    return;
+  }
+  // L1 department managers (role = 'member') cannot SELECT another employee's payroll_employee row under RLS;
+  // crove_hr.leave_request_employee_name verifies manager access and returns NULL iff e.erased_at IS NOT NULL.
+  const { rows } = await sql<{ name: string | null }>`
+    SELECT crove_hr.leave_request_employee_name(${orgId}::uuid, ${requestId}::uuid) AS name
+  `.execute(trx);
+  if (rows[0]?.name == null) {
+    throw erasedError();
+  }
+}
+
+async function transitionLeaveRequestGuarded(
+  trx: QueryContext['trx'],
+  opts: {
+    orgId: string;
+    callerUserId: string;
+    role: MemberRole;
+    employeeId: string;
+    departmentId: string | null;
+    requestId: string;
+    allowedStatuses: readonly ('pending_l1' | 'pending_final')[];
+    currentStatus: 'pending_l1' | 'pending_final' | 'approved' | 'rejected' | 'cancelled';
+    invalidStateMessage: string;
+    values: {
+      status: 'pending_final' | 'rejected';
+      l1_approver_user_id?: string;
+      l1_acted_at?: Date;
+      final_acted_by?: string;
+      final_acted_at?: Date;
+      decision_note?: string;
+      updated_at: Date;
+    };
+  },
+): Promise<void> {
+  await assertEmployeeNotErasedForLeaveRequest(trx, opts.orgId, opts.role, opts.employeeId, opts.requestId);
+  if (!opts.allowedStatuses.includes(opts.currentStatus as 'pending_l1' | 'pending_final')) {
+    throw invalidState(opts.invalidStateMessage);
+  }
+  const updated = await trx
+    .updateTable('crove_hr.leave_request')
+    .set(opts.values)
+    .where('org_id', '=', opts.orgId)
+    .where('id', '=', opts.requestId)
+    .where('status', 'in', [...opts.allowedStatuses])
+    .where(sql<boolean>`crove_hr.leave_request_employee_name(org_id, id) IS NOT NULL`)
+    .returning('id')
+    .executeTakeFirst();
+  if (!updated) {
+    if (opts.role !== 'owner' && opts.role !== 'admin') {
+      await assertL1Authority(trx, opts.orgId, opts.callerUserId, {
+        employee_id: opts.employeeId,
+        department_id: opts.departmentId,
+      });
+    }
+    await assertEmployeeNotErasedForLeaveRequest(trx, opts.orgId, opts.role, opts.employeeId, opts.requestId);
+    throw invalidState(opts.invalidStateMessage);
+  }
+}
+
 export const leaveRequestApproveL1 = defineCommand({
   name: 'hr.leave_request.approve_l1',
   input: zHrLeaveRequestDecide,
@@ -781,27 +850,25 @@ export const leaveRequestApproveL1 = defineCommand({
       .executeTakeFirst();
     if (!existing) throw requestNotFound();
 
-    await assertL1Authority(ctx.trx, ctx.orgId, callerUserId, existing);
-
-    if (existing.status !== 'pending_l1') {
-      throw invalidState('Đơn xin nghỉ không ở trạng thái chờ duyệt bước 1');
-    }
-
-    const updated = await ctx.trx
-      .updateTable('crove_hr.leave_request')
-      .set({
+    const role = await assertL1Authority(ctx.trx, ctx.orgId, callerUserId, existing);
+    await transitionLeaveRequestGuarded(ctx.trx, {
+      orgId: ctx.orgId,
+      callerUserId,
+      role,
+      employeeId: existing.employee_id,
+      departmentId: existing.department_id,
+      requestId: existing.id,
+      allowedStatuses: ['pending_l1'],
+      currentStatus: existing.status,
+      invalidStateMessage: 'Đơn xin nghỉ không ở trạng thái chờ duyệt bước 1',
+      values: {
         status: 'pending_final',
         l1_approver_user_id: callerUserId,
         l1_acted_at: ctx.now,
         ...(input.note !== undefined ? { decision_note: input.note } : {}),
         updated_at: ctx.now,
-      })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', existing.id)
-      .where('status', '=', 'pending_l1')
-      .returning('id')
-      .executeTakeFirst();
-    if (!updated) throw invalidState('Đơn xin nghỉ không ở trạng thái chờ duyệt bước 1');
+      },
+    });
 
     const noted = input.note !== undefined;
     ctx.audit({
@@ -870,11 +937,10 @@ export const leaveRequestApproveFinal = defineCommand({
       .executeTakeFirst();
     if (!preRead) throw requestNotFound();
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
+    const employee = await loadEmployeeForLeave(ctx.trx, ctx.orgId, preRead.employee_id, true);
     if (preRead.status !== 'pending_l1' && preRead.status !== 'pending_final') {
       throw invalidState('Chỉ duyệt chốt được đơn đang chờ duyệt');
     }
-
-    const employee = await loadEmployeeForLeave(ctx.trx, ctx.orgId, preRead.employee_id, true);
     const existing = await ctx.trx
       .selectFrom('crove_hr.leave_request')
       .select(['id', 'employee_id', 'month', 'kind', 'days', 'status'])
@@ -1017,45 +1083,45 @@ export const leaveRequestReject = defineCommand({
     let selfApproved = false;
     if (role === 'owner' || role === 'admin') {
       selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, existing.employee_id, true);
-      if (existing.status !== 'pending_l1' && existing.status !== 'pending_final') {
-        throw invalidState('Chỉ từ chối được đơn xin nghỉ đang chờ duyệt');
-      }
-      const updated = await ctx.trx
-        .updateTable('crove_hr.leave_request')
-        .set({
+      await transitionLeaveRequestGuarded(ctx.trx, {
+        orgId: ctx.orgId,
+        callerUserId,
+        role,
+        employeeId: existing.employee_id,
+        departmentId: existing.department_id,
+        requestId: existing.id,
+        allowedStatuses: ['pending_l1', 'pending_final'],
+        currentStatus: existing.status,
+        invalidStateMessage: 'Chỉ từ chối được đơn xin nghỉ đang chờ duyệt',
+        values: {
           status: 'rejected',
           final_acted_by: callerUserId,
           final_acted_at: ctx.now,
           ...(input.note !== undefined ? { decision_note: input.note } : {}),
           updated_at: ctx.now,
-        })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', existing.id)
-        .where('status', 'in', ['pending_l1', 'pending_final'])
-        .returning('id')
-        .executeTakeFirst();
-      if (!updated) throw invalidState('Chỉ từ chối được đơn xin nghỉ đang chờ duyệt');
+        },
+      });
     } else {
       await assertL1Authority(ctx.trx, ctx.orgId, callerUserId, existing);
-      if (existing.status !== 'pending_l1') {
-        throw invalidState('Quản lý bộ phận chỉ từ chối được đơn đang chờ duyệt bước 1');
-      }
       // DB hr_leave_request_update WITH CHECK requires L1 fields (and NULL final fields) when a member L1 manager rejects.
-      const updated = await ctx.trx
-        .updateTable('crove_hr.leave_request')
-        .set({
+      await transitionLeaveRequestGuarded(ctx.trx, {
+        orgId: ctx.orgId,
+        callerUserId,
+        role,
+        employeeId: existing.employee_id,
+        departmentId: existing.department_id,
+        requestId: existing.id,
+        allowedStatuses: ['pending_l1'],
+        currentStatus: existing.status,
+        invalidStateMessage: 'Quản lý bộ phận chỉ từ chối được đơn đang chờ duyệt bước 1',
+        values: {
           status: 'rejected',
           l1_approver_user_id: callerUserId,
           l1_acted_at: ctx.now,
           ...(input.note !== undefined ? { decision_note: input.note } : {}),
           updated_at: ctx.now,
-        })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', existing.id)
-        .where('status', '=', 'pending_l1')
-        .returning('id')
-        .executeTakeFirst();
-      if (!updated) throw invalidState('Quản lý bộ phận chỉ từ chối được đơn đang chờ duyệt bước 1');
+        },
+      });
     }
 
     const noted = input.note !== undefined;

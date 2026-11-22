@@ -2045,6 +2045,8 @@ export const en = {
       month: 'Pay month',
       gross: 'Gross',
       net: 'Net',
+      itemCol: 'Item',
+      amountCol: 'Amount',
       open: 'View payslip',
       close: 'Close',
       print: 'Print / Save PDF',

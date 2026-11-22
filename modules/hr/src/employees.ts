@@ -759,7 +759,7 @@ export const employeeErase = defineCommand({
   writes: [
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
   ],
@@ -786,6 +786,16 @@ export const employeeErase = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
+    // Cancel non-terminal requests first so their row locks serialize ahead of any concurrent L1 transition
+    // even when reason and decision_note start NULL, then wipe free-text PII notes across every request row.
+    const cancelledRequests = await ctx.trx
+      .updateTable('crove_hr.leave_request')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', 'in', ['pending_l1', 'pending_final'])
+      .returning('id')
+      .execute();
     await ctx.trx
       .updateTable('crove_hr.leave_request')
       .set({ reason: null, decision_note: null, updated_at: ctx.now })
@@ -795,7 +805,13 @@ export const employeeErase = defineCommand({
       .execute();
     const { rows } = await sql<{ n: number }>`SELECT crove_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
-    ctx.audit({ employeeId: input.employeeId, shreddedKeys, dependentsCleared: dependents.length, retentionEnded: until });
+    ctx.audit({
+      employeeId: input.employeeId,
+      shreddedKeys,
+      dependentsCleared: dependents.length,
+      cancelledLeaveRequests: cancelledRequests.length,
+      retentionEnded: until,
+    });
     return {
       employeeId: input.employeeId,
       shreddedKeys,
