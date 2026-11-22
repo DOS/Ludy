@@ -88,6 +88,11 @@ const {
 } = await import('../src/routes/hr-recruiting.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
+const {
+  applyInviteInterviewerChange,
+  buildInviteSelectionKey,
+  shouldAcceptInviteDraftResponse,
+} = await import('../src/components/hr-recruiting-stage5d.tsx');
 
 const ENTITY_ID = '00000000-0000-7000-8000-000000000001';
 const DEPT_ID = '00000000-0000-7000-8000-000000000011';
@@ -563,8 +568,38 @@ describe('HR recruiting UI (#3425)', () => {
     const engageVi = wrap(<EngageInvitePanel candidate={sampleCandidate} initialDraft={inviteDraftSample} />, 'vi');
     expect(engageVi).toContain('hr-engage-invite-panel');
     expect(engageVi).toContain('hr-engage-channel');
+    expect(engageVi).toContain('hr-engage-interviewer');
     expect(engageVi).toContain('hr-engage-draft-message');
     expect(engageVi).toContain('hr-engage-draft-copy');
     expect(engageVi).toContain(viMessages.hrRecruiting.engageInvite.manualNotice);
+
+    // Changing interviewer clears stale draft/message/copied; keeping same interviewer preserves manual edits.
+    const unchanged = applyInviteInterviewerChange(
+      { interviewerUserId: OWNER_USER_ID, draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      OWNER_USER_ID,
+    );
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.draft).toBe(inviteDraftSample);
+    expect(unchanged.messageText).toBe('Manual edit kept');
+    expect(unchanged.copied).toBe(true);
+
+    const switched = applyInviteInterviewerChange(
+      { interviewerUserId: OWNER_USER_ID, draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      MEMBER_USER_ID,
+    );
+    expect(switched).toEqual({
+      changed: true,
+      interviewerUserId: MEMBER_USER_ID,
+      draft: null,
+      messageText: '',
+      copied: false,
+    });
+
+    const keyA = buildInviteSelectionKey('ctx-1', 'zalo_oa', OWNER_USER_ID, 'vi');
+    const keyB = buildInviteSelectionKey('ctx-1', 'zalo_oa', MEMBER_USER_ID, 'vi');
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyA, requestSeq: 1 }, { selectionKey: keyA, requestSeq: 1 })).toBe(true);
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyB, requestSeq: 2 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyA, requestSeq: 3 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
+    expect(shouldAcceptInviteDraftResponse({ mounted: false, selectionKey: keyA, requestSeq: 1 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
   });
 });

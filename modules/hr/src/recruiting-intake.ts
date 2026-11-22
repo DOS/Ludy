@@ -241,6 +241,7 @@ export interface HrCvExtractContext {
   resultKey: string | null;
   resultSha256: string | null;
   failedCode: string | null;
+  useAi: boolean;
 }
 
 export interface HrCvPendingJobRow {
@@ -271,7 +272,7 @@ async function resolveOpeningContext(
     .where('id', '=', openingId)
     .executeTakeFirst();
   if (!opening) throw openingNotFound();
-  if (requestedEntityId !== undefined && opening.legal_entity_id !== requestedEntityId) {
+  if (requestedEntityId !== undefined && opening.legal_entity_id.toLowerCase() !== requestedEntityId.toLowerCase()) {
     throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không thuộc pháp nhân đã chọn');
   }
   const legalEntityId = await resolveEntity(ctx, opening.legal_entity_id);
@@ -303,6 +304,7 @@ export const cvExtractRequestCommand = defineCommand({
   handler: async (ctx, input): Promise<HrCvExtractContext> => {
     const resolved = await resolveOpeningContext(ctx, input.openingId, input.legalEntityId);
     const storageKey = hrCvBlobKey(ctx.orgId, input.sha256);
+    const useAi = input.useAi !== false;
 
     ctx.emit('hr.recruiting.cv_extract_queued', {
       jobId: input.jobId,
@@ -318,6 +320,7 @@ export const cvExtractRequestCommand = defineCommand({
       kind: input.kind,
       sizeBytes: input.sizeBytes,
       inputSha256: input.sha256,
+      useAi,
     });
 
     return {
@@ -327,6 +330,7 @@ export const cvExtractRequestCommand = defineCommand({
       resultKey: null,
       resultSha256: null,
       failedCode: null,
+      useAi,
     };
   },
 });
@@ -359,6 +363,7 @@ export const cvExtractContextQuery = defineQuery({
       input_sha256: string | null;
       legal_entity_id: string | null;
       opening_id: string | null;
+      use_ai: string | null;
       result_sha256: string | null;
       complete_ok: string | null;
       complete_error_code: string | null;
@@ -368,6 +373,7 @@ export const cvExtractContextQuery = defineQuery({
         detail ->> 'inputSha256' AS input_sha256,
         detail ->> 'legalEntityId' AS legal_entity_id,
         detail ->> 'openingId' AS opening_id,
+        detail ->> 'useAi' AS use_ai,
         detail ->> 'resultSha256' AS result_sha256,
         detail ->> 'ok' AS complete_ok,
         detail ->> 'errorCode' AS complete_error_code
@@ -386,10 +392,16 @@ export const cvExtractContextQuery = defineQuery({
       throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Không tìm thấy yêu cầu tách CV này');
     }
 
-    if (input.legalEntityId !== undefined && input.legalEntityId !== req.legal_entity_id) {
+    if (
+      input.legalEntityId !== undefined &&
+      (req.legal_entity_id === null || input.legalEntityId.toLowerCase() !== req.legal_entity_id.toLowerCase())
+    ) {
       throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Yêu cầu tách CV không thuộc pháp nhân đã chọn');
     }
-    if (input.openingId !== undefined && input.openingId !== req.opening_id) {
+    if (
+      input.openingId !== undefined &&
+      (req.opening_id === null || input.openingId.toLowerCase() !== req.opening_id.toLowerCase())
+    ) {
       throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không khớp yêu cầu tách CV');
     }
 
@@ -410,6 +422,7 @@ export const cvExtractContextQuery = defineQuery({
       resultKey: resultSha256 ? hrCvBlobKey(ctx.orgId, resultSha256) : null,
       resultSha256,
       failedCode,
+      useAi: req.use_ai !== 'false',
     };
   },
 });

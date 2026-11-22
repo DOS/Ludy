@@ -106,4 +106,35 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
     const overlapping = extractCvFieldsDeterministically('2020 - 2023: Kế toán viên\n2022 - 2025: Kế toán tổng hợp');
     expect(overlapping.yearsExperience).toBe(5);
   });
+
+  it('excludes education and non-employment sections when inferring experience from date ranges', () => {
+    const enCv = extractCvFieldsDeterministically(
+      ['Education', '2016 - 2020: University', 'Experience', '2022 - 2025: Engineer'].join('\n'),
+    );
+    expect(enCv.yearsExperience).toBe(3);
+
+    const viCv = extractCvFieldsDeterministically(
+      [
+        'Nguyễn Thu Hà',
+        'Học vấn',
+        '2016 - 2020: Đại học Kinh tế TP.HCM',
+        'Chứng chỉ',
+        '2020 - 2021: Kế toán trưởng',
+        'Kinh nghiệm làm việc',
+        '2020 - 2022: Trợ lý kế toán',
+        '2021 - 2025: Kế toán tổng hợp',
+        'Kỹ năng',
+        '2018 - 2025: Excel, MISA',
+      ].join('\n'),
+    );
+    expect(viCv.yearsExperience).toBe(5);
+
+    const eduOnly = extractCvFieldsDeterministically(['Học vấn', '2016 - 2020: Đại học Bách khoa'].join('\n'));
+    expect(eduOnly.yearsExperience).toBeNull();
+
+    const headerlessMixed = extractCvFieldsDeterministically(
+      ['2016 - 2020: Cử nhân Đại học Kinh tế', '2021 - 2024: Chuyên viên nhân sự'].join('\n'),
+    );
+    expect(headerlessMixed.yearsExperience).toBe(3);
+  });
 });

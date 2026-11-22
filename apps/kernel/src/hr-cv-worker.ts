@@ -46,7 +46,9 @@ export async function runHrCvExtractJob(
 
   // Per ADR-0053, never execute HR commands without runsWhenOff or write orphan blobs while HR is disabled.
   // Pending jobs recover when HR is switched back on via kernel.org.apps_changed sweep in worker.ts.
-  if (!(await deps.runtime.appOn(job.orgId, 'hr', { fresh: true }).catch(() => true))) {
+  // Transient appOn failures must reject to queue retry rather than failing open into CV processing.
+  const hrEnabled = await deps.runtime.appOn(job.orgId, 'hr', { fresh: true });
+  if (!hrEnabled) {
     return {
       jobId: job.jobId,
       ok: false,

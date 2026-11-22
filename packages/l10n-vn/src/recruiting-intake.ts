@@ -183,6 +183,81 @@ function extractDisplayName(lines: readonly string[], email: string | null): str
   return null;
 }
 
+const EMPLOYMENT_SECTION_HEADINGS = new Set([
+  'kinh nghiem',
+  'kinh nghiem lam viec',
+  'kinh nghiem cong tac',
+  'lich su lam viec',
+  'qua trinh cong tac',
+  'qua trinh lam viec',
+  'experience',
+  'work experience',
+  'professional experience',
+  'employment',
+  'employment history',
+  'work history',
+  'career history',
+]);
+
+const EXCLUDED_SECTION_HEADINGS = new Set([
+  'hoc van',
+  'trinh do',
+  'trinh do hoc van',
+  'education',
+  'academic background',
+  'academic history',
+  'dao tao',
+  'bang cap',
+  'chung chi',
+  'certification',
+  'certifications',
+  'giai thuong',
+  'awards',
+  'hoat dong',
+  'activities',
+  'du an',
+  'projects',
+  'ky nang',
+  'skills',
+  'muc tieu nghe nghiep',
+  'objective',
+  'summary',
+  'profile',
+  'nguoi tham chieu',
+  'references',
+  'so thich',
+  'hobbies',
+  'interests',
+  'lien he',
+  'contact',
+  'thong tin ca nhan',
+  'personal information',
+]);
+
+const INLINE_EDUCATION_RE =
+  /\b(?:dai hoc|cao dang|trung cap|cu nhan|thac si|tien si|tot nghiep|hoc sinh|sinh vien|university|college|bachelor|master|phd|high school|academy)\b/i;
+
+function normalizeHeadingCandidate(raw: string): string {
+  return foldDiacritics(raw)
+    .replace(/^[-*•#\s]+/, '')
+    .replace(/[:-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyExperienceSectionLine(rawLine: string): 'employment' | 'excluded' | null {
+  const whole = normalizeHeadingCandidate(rawLine);
+  if (EMPLOYMENT_SECTION_HEADINGS.has(whole)) return 'employment';
+  if (EXCLUDED_SECTION_HEADINGS.has(whole)) return 'excluded';
+  const colonIdx = rawLine.indexOf(':');
+  if (colonIdx > 0 && colonIdx <= 40) {
+    const prefix = normalizeHeadingCandidate(rawLine.slice(0, colonIdx));
+    if (EMPLOYMENT_SECTION_HEADINGS.has(prefix)) return 'employment';
+    if (EXCLUDED_SECTION_HEADINGS.has(prefix)) return 'excluded';
+  }
+  return null;
+}
+
 function extractYearsExperience(text: string): number | null {
   const directMatch =
     text.match(/(\d{1,2})(?:[.,]\d+)?\s*(?:\+\s*)?(?:năm\s+kinh\s+nghiệm|years?\s+(?:of\s+)?(?:work\s+)?experience|năm\s+làm\s+việc)/i) ??
@@ -191,16 +266,36 @@ function extractYearsExperience(text: string): number | null {
     const parsed = Number.parseInt(directMatch[1], 10);
     if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 60) return parsed;
   }
-  // Fallback heuristic: infer from year ranges inside employment history, merging overlapping spans without counting career gaps.
+  // Fallback heuristic: infer from year ranges inside employment history, excluding education and non-employment sections.
+  const lines = text.split('\n');
+  const taggedLines = lines.map((line) => ({
+    line,
+    heading: classifyExperienceSectionLine(line),
+  }));
+  const hasExplicitEmployment = taggedLines.some((item) => item.heading === 'employment');
+
   const currentYear = new Date().getUTCFullYear();
   const intervals: Array<[number, number]> = [];
-  const ranges = text.matchAll(/\b(20\d{2}|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20\d{2}|present|hiện\s*tại|nay)\b/gi);
-  for (const m of ranges) {
-    const startYear = Number.parseInt(m[1] ?? '', 10);
-    const endRaw = (m[2] ?? '').toLowerCase();
-    const endYear = /^\d{4}$/.test(endRaw) ? Number.parseInt(endRaw, 10) : currentYear;
-    if (startYear <= endYear && endYear - startYear <= 45) {
-      intervals.push([startYear, endYear]);
+  let section: 'default' | 'employment' | 'excluded' = 'default';
+  const rangePattern = /\b(20\d{2}|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20\d{2}|present|hiện\s*tại|nay)\b/gi;
+
+  for (const { line, heading } of taggedLines) {
+    if (heading === 'employment') {
+      section = 'employment';
+    } else if (heading === 'excluded') {
+      section = 'excluded';
+    }
+    if (section === 'excluded') continue;
+    if (hasExplicitEmployment && section !== 'employment') continue;
+    if (section === 'default' && INLINE_EDUCATION_RE.test(foldDiacritics(line))) continue;
+
+    for (const m of line.matchAll(rangePattern)) {
+      const startYear = Number.parseInt(m[1] ?? '', 10);
+      const endRaw = (m[2] ?? '').toLowerCase();
+      const endYear = /^\d{4}$/.test(endRaw) ? Number.parseInt(endRaw, 10) : currentYear;
+      if (startYear <= endYear && endYear - startYear <= 45) {
+        intervals.push([startYear, endYear]);
+      }
     }
   }
   if (intervals.length > 0) {

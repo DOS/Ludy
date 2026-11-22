@@ -547,6 +547,7 @@ export const zHrCvExtractRequestInput = z.strictObject({
   openingId: zId.optional(),
   sizeBytes: z.number().int().min(1).max(HR_CV_MAX_BYTES),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  useAi: z.boolean().optional(),
 });
 export type HrCvExtractRequestInput = z.infer<typeof zHrCvExtractRequestInput>;
 

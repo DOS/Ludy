@@ -30,6 +30,7 @@ const DEFAULT_CV_WAIT_MS = 1_500;
 const POLL_INTERVAL_MS = 250;
 const HR_CV_RESULT_MAX_BYTES = 2 * 1024 * 1024;
 const FINALIZED_DRAFT_TTL_MS = 10 * 60 * 1_000;
+const RATE_LIMIT_DRAFT_TTL_MS = 60 * 1_000;
 const FINALIZED_DRAFT_MAX_ENTRIES = 500;
 
 interface CachedFinalizedDraft {
@@ -179,29 +180,60 @@ async function finalizeExtractedResult(deps: {
   runInAiScope: <T>(fn: () => Promise<T>) => Promise<T>;
 }): Promise<HrCvExtractResponse> {
   const effectiveAi = deps.useAi && deps.cvAi.aiEnabled && Boolean(deps.cvAi.reader);
-  const cacheKey = `${deps.orgId}:${deps.context.jobId}:${deps.resultSha256}:${deps.context.openingId ?? ''}:${deps.lang}:${effectiveAi ? '1' : '0'}`;
+  const openingFingerprint = sha256Hex(
+    JSON.stringify([deps.context.openingTitle ?? null, [...deps.context.requiredSkills].sort()]),
+  );
+  const sharedCacheKey = `${deps.orgId}:${deps.context.jobId}:${deps.resultSha256}:${deps.context.openingId ?? ''}:${openingFingerprint}:${deps.lang}:${effectiveAi ? '1' : '0'}`;
+  const userCacheKey = `${sharedCacheKey}:${deps.actor.userId}`;
   const state = getRuntimeFinalizeCache(deps.runtime);
   const now = Date.now();
-  const cached = state.entries.get(cacheKey);
-  if (cached && cached.expiresAt > now && cached.auditRecorded) {
+  const lookupEntry = (key: string): CachedFinalizedDraft | undefined => {
+    const entry = state.entries.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now) {
+      state.entries.delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+  const cached = lookupEntry(sharedCacheKey) ?? lookupEntry(userCacheKey);
+  if (cached && cached.auditRecorded) {
     return structuredClone({
       status: 'ready',
       jobId: deps.context.jobId,
       draft: cached.draft,
     });
   }
-  if (cached && cached.expiresAt <= now) {
-    state.entries.delete(cacheKey);
-  }
 
-  const existingInflight = state.inflight.get(cacheKey);
-  if (existingInflight) {
-    return structuredClone(await existingInflight);
+  const ownInflight = state.inflight.get(userCacheKey);
+  if (ownInflight) {
+    return structuredClone(await ownInflight);
+  }
+  const sharedInflight = state.inflight.get(sharedCacheKey);
+  if (sharedInflight) {
+    const sharedRes = await sharedInflight;
+    if (!(sharedRes.status === 'ready' && sharedRes.draft.ai.reason === 'rate_limited')) {
+      return structuredClone(sharedRes);
+    }
   }
 
   const run = (async (): Promise<HrCvExtractResponse> => {
-    let entry = state.entries.get(cacheKey);
-    if (!entry || entry.expiresAt <= Date.now()) {
+    const checkNow = Date.now();
+    const existingShared = state.entries.get(sharedCacheKey);
+    const existingUser = state.entries.get(userCacheKey);
+    let entry: CachedFinalizedDraft | undefined;
+    if (existingShared && existingShared.expiresAt > checkNow) {
+      entry = existingShared;
+    } else {
+      if (existingShared) state.entries.delete(sharedCacheKey);
+      if (existingUser && existingUser.expiresAt > checkNow) {
+        entry = existingUser;
+      } else if (existingUser) {
+        state.entries.delete(userCacheKey);
+      }
+    }
+
+    if (!entry) {
       let bytes: Uint8Array;
       try {
         bytes = await readVerified(
@@ -240,14 +272,18 @@ async function finalizeExtractedResult(deps: {
       );
 
       // Persist the generated draft before auditing so a transient audit DB error retries audit without repeating AI calls.
+      // Scope per-user rate_limited fallbacks strictly to the caller and their retry window rather than sharing globally.
+      const isUserScopedFallback = draft.ai.reason === 'rate_limited';
+      const ttlMs = isUserScopedFallback ? RATE_LIMIT_DRAFT_TTL_MS : FINALIZED_DRAFT_TTL_MS;
+      const targetKey = isUserScopedFallback ? userCacheKey : sharedCacheKey;
       pruneExpiredCacheEntries(state.entries, Date.now());
       entry = {
-        expiresAt: Date.now() + FINALIZED_DRAFT_TTL_MS,
+        expiresAt: Date.now() + ttlMs,
         kind: parsed.kind,
         draft,
         auditRecorded: false,
       };
-      state.entries.set(cacheKey, entry);
+      state.entries.set(targetKey, entry);
     }
 
     if (!entry.auditRecorded) {
@@ -272,11 +308,20 @@ async function finalizeExtractedResult(deps: {
     };
   })();
 
-  state.inflight.set(cacheKey, run);
+  state.inflight.set(userCacheKey, run);
+  const ownsSharedInflight = !state.inflight.has(sharedCacheKey);
+  if (ownsSharedInflight) {
+    state.inflight.set(sharedCacheKey, run);
+  }
   try {
     return structuredClone(await run);
   } finally {
-    state.inflight.delete(cacheKey);
+    if (state.inflight.get(userCacheKey) === run) {
+      state.inflight.delete(userCacheKey);
+    }
+    if (ownsSharedInflight && state.inflight.get(sharedCacheKey) === run) {
+      state.inflight.delete(sharedCacheKey);
+    }
   }
 }
 
@@ -325,6 +370,7 @@ export async function handleHrCvExtractUpload(deps: {
       ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
       sizeBytes: upload.bytes.byteLength,
       sha256,
+      useAi: upload.useAi,
     },
     { actor, orgId: deps.orgId },
   );
@@ -346,19 +392,29 @@ export async function handleHrCvExtractUpload(deps: {
       throw new DomainError(context.failedCode, 422, 'Không đọc được nội dung tệp CV');
     }
     if (context.resultKey && context.resultSha256) {
-      return finalizeExtractedResult({
-        runtime: deps.runtime,
-        store: deps.store,
-        orgId: deps.orgId,
-        actor,
-        context,
-        resultKey: context.resultKey,
-        resultSha256: context.resultSha256,
-        lang: upload.lang,
-        useAi: upload.useAi,
-        cvAi: deps.cvAi,
-        runInAiScope: deps.runInAiScope,
-      });
+      try {
+        return await finalizeExtractedResult({
+          runtime: deps.runtime,
+          store: deps.store,
+          orgId: deps.orgId,
+          actor,
+          context,
+          resultKey: context.resultKey,
+          resultSha256: context.resultSha256,
+          lang: upload.lang,
+          useAi: upload.useAi,
+          cvAi: deps.cvAi,
+          runInAiScope: deps.runInAiScope,
+        });
+      } catch (error) {
+        if (error instanceof DomainError && error.status < 500) {
+          throw error;
+        }
+        return {
+          status: 'pending',
+          jobId,
+        };
+      }
     }
   }
 
@@ -421,7 +477,7 @@ export async function handleHrCvExtractPoll(deps: {
     resultKey: context.resultKey,
     resultSha256: context.resultSha256,
     lang: deps.lang ?? 'vi',
-    useAi: deps.useAi !== false,
+    useAi: context.useAi !== false && deps.useAi !== false,
     cvAi: deps.cvAi,
     runInAiScope: deps.runInAiScope,
   });

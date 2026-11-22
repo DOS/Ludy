@@ -4,7 +4,7 @@
 // 2. FunnelAnalyticsSection: pure SQL recruiting funnel BI metrics & source breakdown (0 LLM cost).
 // 3. EngageInvitePanel: slot-backed Vietnamese interview invite draft for Zalo OA / Facebook (human copy & manual send only).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
   HR_ENGAGE_CHANNELS,
@@ -264,6 +264,47 @@ export function FunnelAnalyticsSection({
   );
 }
 
+type InviteDraftRequestVars = {
+  candidateId: string;
+  channel: HrEngageChannel;
+  interviewerUserId: string;
+  lang: 'vi' | 'en';
+  selectionKey: string;
+  requestSeq: number;
+};
+
+export function buildInviteSelectionKey(
+  contextKey: string,
+  channel: HrEngageChannel,
+  interviewerUserId: string,
+  locale: 'vi' | 'en',
+): string {
+  return `${contextKey}|${channel}|${interviewerUserId}|${locale}`;
+}
+
+export function applyInviteInterviewerChange<T>(
+  state: { interviewerUserId: string; draft: T | null; messageText: string; copied: boolean },
+  nextInterviewerUserId: string,
+): { changed: boolean; interviewerUserId: string; draft: T | null; messageText: string; copied: boolean } {
+  if (nextInterviewerUserId === state.interviewerUserId) {
+    return { changed: false, ...state };
+  }
+  return {
+    changed: true,
+    interviewerUserId: nextInterviewerUserId,
+    draft: null,
+    messageText: '',
+    copied: false,
+  };
+}
+
+export function shouldAcceptInviteDraftResponse(
+  current: { mounted: boolean; selectionKey: string; requestSeq: number },
+  request: { selectionKey: string; requestSeq: number },
+): boolean {
+  return current.mounted && current.selectionKey === request.selectionKey && current.requestSeq === request.requestSeq;
+}
+
 export function EngageInvitePanel({
   candidate,
   initialDraft,
@@ -299,6 +340,26 @@ export function EngageInvitePanel({
     setCopied(false);
   }
 
+  const currentSelectionKey = buildInviteSelectionKey(contextKey, channel, interviewerUserId, locale);
+  const selectionKeyRef = useRef(currentSelectionKey);
+  const requestSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    selectionKeyRef.current = currentSelectionKey;
+  }, [currentSelectionKey]);
+
+  useEffect(() => {
+    requestSeqRef.current += 1;
+  }, [contextKey]);
+
   const interviewersQuery = useQuery({
     ...orpc.hr.recruiting.interviewers.list.queryOptions(),
     ...ONCE,
@@ -306,19 +367,70 @@ export function EngageInvitePanel({
   const interviewers: HrInterviewerOption[] = interviewersQuery.data ?? [];
 
   const generate = useMutation({
-    mutationFn: () =>
+    mutationFn: (vars: InviteDraftRequestVars) =>
       client.hr.recruiting.inviteDraft({
-        candidateId: candidate.id,
-        channel,
-        ...(interviewerUserId ? { interviewerUserId } : {}),
-        lang: locale,
+        candidateId: vars.candidateId,
+        channel: vars.channel,
+        ...(vars.interviewerUserId ? { interviewerUserId: vars.interviewerUserId } : {}),
+        lang: vars.lang,
       }),
-    onSuccess: (res) => {
-      setDraft(res);
-      setMessageText(res.message);
-      setCopied(false);
-    },
   });
+
+  const handleChannelChange = (nextChannel: HrEngageChannel) => {
+    setChannel(nextChannel);
+    if (nextChannel !== channel) {
+      requestSeqRef.current += 1;
+      selectionKeyRef.current = buildInviteSelectionKey(contextKey, nextChannel, interviewerUserId, locale);
+    }
+  };
+
+  const handleInterviewerChange = (nextInterviewerId: string) => {
+    const next = applyInviteInterviewerChange(
+      { interviewerUserId, draft, messageText, copied },
+      nextInterviewerId,
+    );
+    if (!next.changed) return;
+    setInterviewerUserId(next.interviewerUserId);
+    setDraft(next.draft);
+    setMessageText(next.messageText);
+    setCopied(next.copied);
+    generate.reset();
+    requestSeqRef.current += 1;
+    selectionKeyRef.current = buildInviteSelectionKey(contextKey, channel, nextInterviewerId, locale);
+  };
+
+  const handleGenerate = () => {
+    const nextSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = nextSeq;
+    selectionKeyRef.current = currentSelectionKey;
+    const vars: InviteDraftRequestVars = {
+      candidateId: candidate.id,
+      channel,
+      interviewerUserId,
+      lang: locale,
+      selectionKey: currentSelectionKey,
+      requestSeq: nextSeq,
+    };
+    generate.mutate(vars, {
+      onSuccess: (res) => {
+        if (
+          !shouldAcceptInviteDraftResponse(
+            {
+              mounted: mountedRef.current,
+              selectionKey: selectionKeyRef.current,
+              requestSeq: requestSeqRef.current,
+            },
+            vars,
+          )
+        ) {
+          return;
+        }
+        setDraft(res);
+        setMessageText(res.message);
+        setCopied(false);
+      },
+    });
+  };
 
   const handleCopy = async () => {
     if (!messageText) return;
@@ -353,7 +465,7 @@ export function EngageInvitePanel({
             id="hr-engage-channel-select"
             className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
             value={channel}
-            onChange={(e) => setChannel(e.target.value as HrEngageChannel)}
+            onChange={(e) => handleChannelChange(e.target.value as HrEngageChannel)}
             data-testid="hr-engage-channel"
           >
             {HR_ENGAGE_CHANNELS.map((ch) => (
@@ -369,7 +481,8 @@ export function EngageInvitePanel({
             id="hr-engage-interviewer"
             className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
             value={interviewerUserId}
-            onChange={(e) => setInterviewerUserId(e.target.value)}
+            onChange={(e) => handleInterviewerChange(e.target.value)}
+            data-testid="hr-engage-interviewer"
           >
             <NativeSelectOption value="">{t('interview.defaultSelfInterviewer')}</NativeSelectOption>
             {interviewers.map((m) => (
@@ -385,7 +498,7 @@ export function EngageInvitePanel({
             variant="outline"
             className="max-md:min-h-11"
             loading={generate.isPending}
-            onClick={() => generate.mutate()}
+            onClick={handleGenerate}
             data-testid="hr-engage-draft-run"
           >
             {t('engageInvite.generate')}

@@ -9,7 +9,19 @@ import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPO
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
-import { ClientError, apiErrorFromResponse, describeError, isMfaRequired, isOrgAccessRevoked, isUnauthenticated, retryWhileBusy } from './errors.ts';
+import {
+  ClientError,
+  apiErrorFromResponse,
+  describeError,
+  isMfaRequired,
+  isModuleOff,
+  isOrgAccessRevoked,
+  isServerRefusal,
+  isStepUpRequired,
+  isUnauthenticated,
+  retryWhileBusy,
+} from './errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from './org-access.ts';
 
 let currentOrg: string | null = null;
@@ -455,6 +467,25 @@ export async function uploadFiles(
   return { files: results };
 }
 
+const CV_EXTRACT_POLL_INTERVAL_MS = 800;
+const CV_EXTRACT_POLL_TIMEOUT_MS = 20_000;
+
+function isRetryableCvPollError(error: unknown): boolean {
+  if (
+    isUnauthenticated(error) ||
+    isMfaRequired(error) ||
+    isOrgAccessRevoked(error) ||
+    isStepUpRequired(error) ||
+    isModuleOff(error) ||
+    isServerRefusal(error)
+  ) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  const status = (error as { status?: unknown } | null)?.status;
+  return code === 'UPLOAD_BUSY' || (typeof status === 'number' && status >= 500) || isNetworkFailure(error);
+}
+
 export async function extractRecruitingCv(
   file: File,
   options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null } = {},
@@ -489,15 +520,29 @@ export async function extractRecruitingCv(
   if (options.lang) params.set('lang', options.lang);
   if (options.useAi === false) params.set('useAi', 'false');
   const query = params.toString();
+  const pollPath = `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`;
 
+  const deadline = Date.now() + CV_EXTRACT_POLL_TIMEOUT_MS;
+  let lastTransientError: unknown = null;
   for (let attempt = 0; attempt < 25; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const pollRes = await apiFetch(
-      `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`,
-      orgOpt,
-    );
-    payload = (await pollRes.json()) as HrCvExtractResponse;
-    if (payload.status === 'ready') return payload.draft;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CV_EXTRACT_POLL_INTERVAL_MS, remaining)));
+    try {
+      const pollRes = await apiFetch(pollPath, orgOpt);
+      lastTransientError = null;
+      payload = (await pollRes.json()) as HrCvExtractResponse;
+      if (payload.status === 'ready') return payload.draft;
+    } catch (error) {
+      if (!isRetryableCvPollError(error)) {
+        throw error;
+      }
+      lastTransientError = error;
+    }
+  }
+
+  if (lastTransientError !== null) {
+    throw lastTransientError;
   }
 
   throw new ClientError('hrRecruiting.cvExtract.timedOut', (t) => t('hrRecruiting.cvExtract.timedOut'));

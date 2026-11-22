@@ -191,4 +191,59 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     expect(grounded.matchedSkills).not.toContain('SAP');
     expect(grounded.matchedSkills).toContain('MISA');
   });
+
+  it('requires complete phone-number evidence rather than matching substrings inside longer digit runs', async () => {
+    const cvWithLongId = ['Nguyễn Văn An', 'ID: 109123456789', 'Tel: 0987 654 3210'].join('\n');
+    const rejected = await proposeCvCandidateDraft(
+      { text: cvWithLongId, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '0912345678',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(rejected.phone).toBeNull();
+
+    const rejectedLongPhone = await proposeCvCandidateDraft(
+      { text: cvWithLongId, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '0987654321',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(rejectedLongPhone.phone).toBeNull();
+
+    const cvMultiPhones = ['Nguyễn Văn An', 'SĐT: +84 912 345 678 - 0987 654 321'].join('\n');
+    const acceptedPlus84 = await proposeCvCandidateDraft(
+      { text: cvMultiPhones, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '0912345678',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(acceptedPlus84.phone).toBe('0912345678');
+  });
 });

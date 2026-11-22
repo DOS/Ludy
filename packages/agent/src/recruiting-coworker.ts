@@ -1021,13 +1021,15 @@ function isPhoneGroundedInCv(cleanedPhone: string, cvText: string): boolean {
   } else if (digits.startsWith('0') && digits.length >= 10) {
     variants.add(`84${digits.slice(1)}`);
   }
-  const chunks = cvText.replace(/[^0-9+()\-.\t ]+/g, '|').split('|');
+  const splitBoundaries = cvText
+    .replace(/\t| {2,}/g, '|')
+    .replace(/ [-–—] /g, '|')
+    .replace(/[^0-9+()\-.\t ]+/g, '|');
+  const chunks = splitBoundaries.split('|');
   for (const chunk of chunks) {
     const chunkDigits = chunk.replace(/\D/g, '');
     if (chunkDigits.length < 9) continue;
-    for (const variant of variants) {
-      if (chunkDigits.includes(variant)) return true;
-    }
+    if (variants.has(chunkDigits)) return true;
   }
   return false;
 }
