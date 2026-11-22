@@ -681,6 +681,23 @@ import {
   zProjectTemplateCreateResult,
   zProjectTemplateListInput,
   zProjectTemplateListResult,
+  zProjectTimeDeleteInput,
+  zProjectTimeDeleteResult,
+  zProjectTimeExportCsvInput,
+  zProjectTimeExportCsvResult,
+  zProjectTimeLogFields,
+  zProjectTimeMutateResult,
+  zProjectTimeStartInput,
+  zProjectTimeStartResult,
+  zProjectTimeStopInput,
+  zProjectTimeStopResult,
+  zProjectTimeSummaryInput,
+  zProjectTimeSummaryResult,
+  zProjectTimeUpdateFields,
+  validTimeLogRange,
+  validTimeUpdateRange,
+  PROJECT_TIME_LOG_RANGE_ISSUE,
+  PROJECT_TIME_UPDATE_RANGE_ISSUE,
   zProjectUpdate,
   zProjectWeeklyStatus,
   zProjectWeeklyStatusInput,
@@ -3593,6 +3610,23 @@ export const contract = {
         .input(zRoadmapItemSyncStageInput.extend({ idempotencyKey: zId }))
         .output(z.strictObject({ item: zRoadmapAdminItem })),
     },
+    startTime: oc
+      .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTimeStartResult),
+    stopTime: oc
+      .input(zProjectTimeStopInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTimeStopResult),
+    logTime: oc
+      .input(zProjectTimeLogFields.extend({ idempotencyKey: zId }).refine(validTimeLogRange, PROJECT_TIME_LOG_RANGE_ISSUE))
+      .output(zProjectTimeMutateResult),
+    updateTimeEntry: oc
+      .input(zProjectTimeUpdateFields.extend({ idempotencyKey: zId }).refine(validTimeUpdateRange, PROJECT_TIME_UPDATE_RANGE_ISSUE))
+      .output(zProjectTimeMutateResult),
+    deleteTimeEntry: oc
+      .input(zProjectTimeDeleteInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTimeDeleteResult),
+    timeSummary: oc.input(zProjectTimeSummaryInput).output(zProjectTimeSummaryResult),
+    exportTimeCsv: oc.input(zProjectTimeExportCsvInput).output(zProjectTimeExportCsvResult),
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

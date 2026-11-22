@@ -26,6 +26,7 @@ import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { taskDueDay } from '../lib/agents.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { COLUMN_COLOR_DOT_CLASS, projectWeeklyStatusQueryKey } from '../lib/projects.ts';
+import { formatDecimalHours, formatDecimalMoney } from '../lib/projects-time.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { installedModules } from '../lib/org-modules.ts';
@@ -348,6 +349,23 @@ export function ProjectWeeklyStatus({
               </div>
             ))}
           </dl>
+
+          {data.timeThisWeek && data.timeThisWeek.entryCount > 0 && (
+            <dl className="grid grid-cols-2 gap-2.5" data-testid="project-weekly-status-time">
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                <dt className="text-xs text-subtle-foreground">{t('counts.hoursThisWeek')}</dt>
+                <dd className="mt-0.5 text-base font-semibold text-foreground tabular-nums">
+                  {formatDecimalHours(data.timeThisWeek.totalHours, language)} h
+                </dd>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                <dt className="text-xs text-subtle-foreground">{t('counts.billableAmountThisWeek')}</dt>
+                <dd className="mt-0.5 text-base font-semibold text-primary tabular-nums">
+                  {formatDecimalMoney(data.timeThisWeek.billableAmount, language)} VND
+                </dd>
+              </div>
+            </dl>
+          )}
 
           {data.columns && data.columns.length > 0 && (
             <div className="space-y-1.5" data-testid="project-weekly-status-columns">

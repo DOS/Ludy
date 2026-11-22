@@ -585,6 +585,16 @@ export const zProjectWeeklyStatusColumn = z.strictObject({
 });
 export type ProjectWeeklyStatusColumn = z.infer<typeof zProjectWeeklyStatusColumn>;
 
+export const zProjectWeeklyStatusTimeSummary = z.strictObject({
+  entryCount: z.number().int().nonnegative(),
+  totalMinutes: z.number().int().nonnegative(),
+  billableMinutes: z.number().int().nonnegative(),
+  totalHours: z.string(),
+  billableHours: z.string(),
+  billableAmount: z.string().regex(/^\d{1,24}\.\d{2}$/, 'non-negative decimal string formatted to 2 decimals'),
+});
+export type ProjectWeeklyStatusTimeSummary = z.infer<typeof zProjectWeeklyStatusTimeSummary>;
+
 export const zProjectWeeklyStatus = z.strictObject({
   ai: z.enum(PROJECT_WEEKLY_STATUS_STATES),
   project: z.strictObject({
@@ -603,6 +613,7 @@ export const zProjectWeeklyStatus = z.strictObject({
   columns: z.array(zProjectWeeklyStatusColumn).optional(),
   tasks: zProjectWeeklyStatusTasks,
   bottlenecks: z.array(zProjectWeeklyStatusBottleneck).optional(),
+  timeThisWeek: zProjectWeeklyStatusTimeSummary.optional(),
   hiddenByEntityCount: z.number().int().nonnegative(),
   // Vy's 3 to 5 plain sentences: empty unless `ai` is 'used'.
   sentences: z.array(z.string().max(400)).max(5),
@@ -1263,4 +1274,234 @@ export const zProjectCycleSummary = z.strictObject({
   truncated: z.boolean(),
 });
 export type ProjectCycleSummary = z.infer<typeof zProjectCycleSummary>;
+
+// Lean time tracking and billable hours (#2600, docs/plan/projects-v2.md section 5.2).
+export const PROJECT_TIME_NOTE_MAX = 500;
+export const PROJECT_TIME_DURATION_MIN = 1;
+export const PROJECT_TIME_DURATION_MAX = 14400;
+export const PROJECT_TIME_ENTRIES_PAGE_LIMIT = 50;
+export const PROJECT_TIME_EXPORT_LIMIT = 5000;
+
+export const zProjectTimeHourlyRate = z
+  .string()
+  .regex(/^\d{1,16}(\.\d{1,2})?$/, 'non-negative decimal string with up to 2 decimals');
+export const zProjectTimeMoneyTotal = z
+  .string()
+  .regex(/^\d{1,24}\.\d{2}$/, 'non-negative decimal string formatted to 2 decimals');
+const zProjectTimeIsoInstant = z.iso.datetime({ offset: true });
+const zProjectTimeDurationMinutes = z.number().int().min(PROJECT_TIME_DURATION_MIN).max(PROJECT_TIME_DURATION_MAX);
+const zProjectTimeNoteInput = z.string().trim().max(PROJECT_TIME_NOTE_MAX);
+
+export const zProjectTimeEntry = z.object({
+  id: zId,
+  projectId: zId,
+  taskId: zId.nullable(),
+  taskTitle: z.string().nullable(),
+  userId: zId.nullable(),
+  userDisplayName: z.string().nullable(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  durationMinutes: z.number().int().min(PROJECT_TIME_DURATION_MIN).max(PROJECT_TIME_DURATION_MAX).nullable(),
+  billable: z.boolean(),
+  hourlyRate: zProjectTimeHourlyRate.nullable(),
+  billableAmount: zProjectTimeMoneyTotal.nullable(),
+  note: z.string().nullable(),
+  running: z.boolean(),
+  canManage: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectTimeEntry = z.infer<typeof zProjectTimeEntry>;
+
+export const zProjectTimeTotals = z.object({
+  entryCount: z.number().int().nonnegative(),
+  totalMinutes: z.number().int().nonnegative(),
+  billableMinutes: z.number().int().nonnegative(),
+  nonBillableMinutes: z.number().int().nonnegative(),
+  totalHours: z.string(),
+  billableHours: z.string(),
+  nonBillableHours: z.string(),
+  billableAmount: zProjectTimeMoneyTotal,
+});
+export type ProjectTimeTotals = z.infer<typeof zProjectTimeTotals>;
+
+export const zProjectTimeTaskSummary = z.object({
+  taskId: zId.nullable(),
+  taskTitle: z.string().nullable(),
+  totals: zProjectTimeTotals,
+});
+export type ProjectTimeTaskSummary = z.infer<typeof zProjectTimeTaskSummary>;
+
+export const zProjectTimeMemberSummary = z.object({
+  userId: zId.nullable(),
+  displayName: z.string().nullable(),
+  totals: zProjectTimeTotals,
+});
+export type ProjectTimeMemberSummary = z.infer<typeof zProjectTimeMemberSummary>;
+
+export const zProjectTimeActiveTimer = z.object({
+  entry: zProjectTimeEntry,
+  projectName: z.string(),
+});
+export type ProjectTimeActiveTimer = z.infer<typeof zProjectTimeActiveTimer>;
+
+export const zProjectTimeStartInput = z.strictObject({
+  projectId: zId,
+  taskId: zId.nullable().optional(),
+  billable: z.boolean().default(false),
+  hourlyRate: zProjectTimeHourlyRate.nullable().optional(),
+  note: zProjectTimeNoteInput.nullable().optional(),
+  stopExisting: z.boolean().default(false),
+});
+export type ProjectTimeStartInput = z.input<typeof zProjectTimeStartInput>;
+
+export const zProjectTimeStartResult = z.object({
+  entry: zProjectTimeEntry,
+  stoppedEntry: zProjectTimeEntry.nullable(),
+});
+export type ProjectTimeStartResult = z.infer<typeof zProjectTimeStartResult>;
+
+export const zProjectTimeStopInput = z.strictObject({
+  projectId: zId.optional(),
+  entryId: zId.optional(),
+  note: zProjectTimeNoteInput.nullable().optional(),
+  billable: z.boolean().optional(),
+  hourlyRate: zProjectTimeHourlyRate.nullable().optional(),
+});
+export type ProjectTimeStopInput = z.infer<typeof zProjectTimeStopInput>;
+
+export const zProjectTimeStopResult = z.object({
+  entry: zProjectTimeEntry,
+  clampedToMax: z.boolean(),
+});
+export type ProjectTimeStopResult = z.infer<typeof zProjectTimeStopResult>;
+
+export function validTimeLogRange(v: {
+  startedAt: string;
+  endedAt?: string | undefined;
+  durationMinutes?: number | undefined;
+}): boolean {
+  if (v.endedAt !== undefined && Date.parse(v.endedAt) < Date.parse(v.startedAt)) return false;
+  return v.durationMinutes !== undefined || v.endedAt !== undefined;
+}
+export const PROJECT_TIME_LOG_RANGE_ISSUE = {
+  message: 'Provide durationMinutes or an endedAt at or after startedAt',
+  path: ['endedAt'],
+};
+
+export const zProjectTimeLogFields = z.strictObject({
+  projectId: zId,
+  taskId: zId.nullable().optional(),
+  startedAt: zProjectTimeIsoInstant,
+  endedAt: zProjectTimeIsoInstant.optional(),
+  durationMinutes: zProjectTimeDurationMinutes.optional(),
+  billable: z.boolean().default(false),
+  hourlyRate: zProjectTimeHourlyRate.nullable().optional(),
+  note: zProjectTimeNoteInput.nullable().optional(),
+});
+export const zProjectTimeLogInput = zProjectTimeLogFields.refine(validTimeLogRange, PROJECT_TIME_LOG_RANGE_ISSUE);
+export type ProjectTimeLogInput = z.input<typeof zProjectTimeLogInput>;
+
+export function validTimeUpdateRange(v: {
+  startedAt?: string | undefined;
+  endedAt?: string | undefined;
+}): boolean {
+  if (v.startedAt !== undefined && v.endedAt !== undefined) {
+    return Date.parse(v.endedAt) >= Date.parse(v.startedAt);
+  }
+  return true;
+}
+export const PROJECT_TIME_UPDATE_RANGE_ISSUE = {
+  message: 'endedAt must be at or after startedAt',
+  path: ['endedAt'],
+};
+
+export const zProjectTimeUpdateFields = z.strictObject({
+  projectId: zId.optional(),
+  entryId: zId,
+  taskId: zId.nullable().optional(),
+  startedAt: zProjectTimeIsoInstant.optional(),
+  endedAt: zProjectTimeIsoInstant.optional(),
+  durationMinutes: zProjectTimeDurationMinutes.optional(),
+  billable: z.boolean().optional(),
+  hourlyRate: zProjectTimeHourlyRate.nullable().optional(),
+  note: zProjectTimeNoteInput.nullable().optional(),
+});
+export const zProjectTimeUpdateInput = zProjectTimeUpdateFields.refine(validTimeUpdateRange, PROJECT_TIME_UPDATE_RANGE_ISSUE);
+export type ProjectTimeUpdateInput = z.infer<typeof zProjectTimeUpdateInput>;
+
+export const zProjectTimeMutateResult = z.object({
+  entry: zProjectTimeEntry,
+});
+export type ProjectTimeMutateResult = z.infer<typeof zProjectTimeMutateResult>;
+
+export const zProjectTimeDeleteInput = z.strictObject({
+  projectId: zId.optional(),
+  entryId: zId,
+});
+export type ProjectTimeDeleteInput = z.infer<typeof zProjectTimeDeleteInput>;
+
+export const zProjectTimeDeleteResult = z.object({
+  deleted: z.boolean(),
+  entryId: zId,
+  projectId: zId,
+});
+export type ProjectTimeDeleteResult = z.infer<typeof zProjectTimeDeleteResult>;
+
+export const zProjectTimeSummaryInput = z
+  .strictObject({
+    projectId: zId,
+    taskId: zId.optional(),
+    userId: zId.optional(),
+    from: zLocalDate.optional(),
+    to: zLocalDate.optional(),
+    billableOnly: z.boolean().optional(),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    limit: z.number().int().min(1).max(PROJECT_TIME_ENTRIES_PAGE_LIMIT).default(PROJECT_TIME_ENTRIES_PAGE_LIMIT),
+    offset: z.number().int().min(0).default(0),
+  })
+  .refine((v) => v.from === undefined || v.to === undefined || v.from <= v.to, {
+    message: 'from must be on or before to',
+    path: ['to'],
+  });
+export type ProjectTimeSummaryInput = z.input<typeof zProjectTimeSummaryInput>;
+
+export const zProjectTimeSummaryResult = z.object({
+  projectId: zId,
+  timeZone: z.string(),
+  canWrite: z.boolean(),
+  canManageProject: z.boolean(),
+  activeTimer: zProjectTimeActiveTimer.nullable(),
+  totals: zProjectTimeTotals,
+  byTask: z.array(zProjectTimeTaskSummary),
+  byMember: z.array(zProjectTimeMemberSummary),
+  entries: z.array(zProjectTimeEntry),
+  totalEntries: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
+export type ProjectTimeSummaryResult = z.infer<typeof zProjectTimeSummaryResult>;
+
+export const zProjectTimeExportCsvInput = z
+  .strictObject({
+    projectId: zId,
+    taskId: zId.optional(),
+    userId: zId.optional(),
+    from: zLocalDate.optional(),
+    to: zLocalDate.optional(),
+    billableOnly: z.boolean().optional(),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  })
+  .refine((v) => v.from === undefined || v.to === undefined || v.from <= v.to, {
+    message: 'from must be on or before to',
+    path: ['to'],
+  });
+export type ProjectTimeExportCsvInput = z.input<typeof zProjectTimeExportCsvInput>;
+
+export const zProjectTimeExportCsvResult = z.object({
+  filename: z.string(),
+  csv: z.string(),
+  rowCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type ProjectTimeExportCsvResult = z.infer<typeof zProjectTimeExportCsvResult>;
 

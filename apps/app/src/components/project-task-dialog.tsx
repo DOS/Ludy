@@ -38,6 +38,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
 import { ProjectDependencies } from './project-dependencies.tsx';
+import { TaskTimeTrackingPanel } from './project-time-panel.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl, fieldHintId } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -747,6 +748,12 @@ export function EditProjectTaskDialog({
           canWrite={canWrite && !task.checkedOut}
           projectTasks={projectTasks}
           onChanged={refreshProjectQueries}
+        />
+        <TaskTimeTrackingPanel
+          projectId={projectId}
+          taskId={task.id}
+          taskTitle={taskTitleText(task)}
+          canWrite={canWrite && !task.checkedOut}
         />
         <TaskRecurrenceControl
           projectId={projectId}

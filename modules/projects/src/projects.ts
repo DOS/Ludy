@@ -5,6 +5,8 @@ import { z } from 'zod';
 import {
   PROJECT_BOARD_LIMIT,
   PROJECT_LIST_LIMIT,
+  PROJECT_TIME_DURATION_MAX,
+  PROJECT_TIME_DURATION_MIN,
   PROJECT_UNASSIGNED_LIMIT,
   auditValue,
   normalizeFilter,
@@ -403,7 +405,10 @@ export const projectMemberRemove = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id']),
+    tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; userId: string; removed: boolean }> => {
     const userId = userOf(ctx.actor);
@@ -427,6 +432,29 @@ export const projectMemberRemove = defineCommand({
       .executeTakeFirst();
 
     const removed = deleted !== undefined;
+    if (removed && row.visibility === 'private') {
+      const runningTimers = await ctx.trx
+        .selectFrom('crove_projects.time_entry')
+        .select(['id', 'started_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('project_id', '=', row.id)
+        .where('user_id', '=', input.userId)
+        .where('ended_at', 'is', null)
+        .forUpdate()
+        .execute();
+      for (const timer of runningTimers) {
+        const startedMs = new Date(timer.started_at).getTime();
+        const endedAt = ctx.now.getTime() < startedMs ? new Date(startedMs) : ctx.now;
+        const rawMinutes = Math.round((endedAt.getTime() - startedMs) / 60_000);
+        const durationMinutes = Math.min(PROJECT_TIME_DURATION_MAX, Math.max(PROJECT_TIME_DURATION_MIN, rawMinutes));
+        await ctx.trx
+          .updateTable('crove_projects.time_entry')
+          .set({ ended_at: endedAt, duration_minutes: durationMinutes, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', timer.id)
+          .execute();
+      }
+    }
     ctx.audit({ projectId: row.id, memberUserId: input.userId, removed });
     if (removed) {
       await ctx.emit('projects.member.removed', { projectId: row.id, memberUserId: input.userId });
@@ -507,6 +535,8 @@ export const projectTaskRemove = defineCommand({
     tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
     // Removing a task from a project cascades ON DELETE CASCADE to crove_projects.task_dependency.
     tableWrite(TABLES, 'crove_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+    // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on crove_projects.time_entry.
+    tableWrite(TABLES, 'crove_projects', 'time_entry', ['task_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; removed: boolean }> => {

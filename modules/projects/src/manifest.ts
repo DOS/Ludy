@@ -107,6 +107,23 @@ export const projectsManifest = defineModule({
         'created_by',
         'created_at',
       ]),
+      time_entry: columns(
+        [
+          'org_id',
+          'id',
+          'project_id',
+          'task_id',
+          'user_id',
+          'started_at',
+          'ended_at',
+          'duration_minutes',
+          'billable',
+          'hourly_rate',
+          'created_at',
+          'updated_at',
+        ],
+        { note: 'pii' },
+      ),
     },
   },
   // Access comes from the base role (every member and viewer reads; owners, admins and members create projects and add

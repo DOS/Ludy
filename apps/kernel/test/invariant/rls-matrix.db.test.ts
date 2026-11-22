@@ -135,7 +135,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.link',
   'crove_notes.note',
   'crove_projects.roadmap_announcement',
-  'crove_projects.time_entry',
   'crove_sign.api_key',
   'crove_sign.kyc_check',
   'crove_sign.playbook_check',

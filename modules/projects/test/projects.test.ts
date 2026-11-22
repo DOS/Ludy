@@ -22,6 +22,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'roadmap_subscriber',
       'roadmap_vote',
       'task_dependency',
+      'time_entry',
     ]);
     expect(projectsManifest.tables.crove_projects.project_column.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project_column.task_status).toBe('internal');
@@ -56,6 +57,9 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocker_task_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.time_entry.note).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.time_entry.hourly_rate).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.time_entry.billable).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
@@ -65,7 +69,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 47 commands and 20 queries with consistent module prefix', () => {
+  it('exports all 52 commands and 22 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -112,6 +116,11 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.tasks_from_source.start',
       'projects.template.archive',
       'projects.template.create',
+      'projects.time.delete',
+      'projects.time.log',
+      'projects.time.start',
+      'projects.time.stop',
+      'projects.time.update',
       'projects.weekly_status.send_mail',
       'projects.weekly_status.share_note',
     ]);
@@ -132,6 +141,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.tasks_from_source.seats',
       'projects.tasks_from_source.status',
       'projects.template.list',
+      'projects.time.export_csv',
+      'projects.time.summary',
       'projects.timeline',
       'projects.today',
       'projects.unassigned_tasks',

@@ -30,6 +30,7 @@ import {
   PROJECT_NAME_MAX,
   PROJECT_TASK_TITLE_MAX,
   PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
+  PROJECT_TIME_NOTE_MAX,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
   ROADMAP_DESCRIPTION_MAX,
   ROADMAP_ITEM_SUMMARY_MAX,
@@ -625,6 +626,11 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: 'Sealed subscriber email for opt-in shipped notifications; erased by crove_projects.personal_erase_roadmap_machinery',
   },
+  'crove_projects.time_entry.note': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project time entry note written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
     kind: 'name',
@@ -1125,6 +1131,7 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_projects.project_column.name',
   'crove_projects.project_cycle.name',
   'crove_projects.project_cycle.goal',
+  'crove_projects.time_entry.note',
   'crove_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1961,6 +1968,20 @@ export const personalDataErase = defineCommand({
       add('crove_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
       add('crove_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
       add('crove_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+
+      // Project time entry notes that quote the person (#2600): replace mentions in note, bounded to 500 chars.
+      const timeEntryNote = freeTextMatch(probe, sql.ref('te.note'));
+      const { rows: timeEntries } = await sql<{ note: boolean }>`
+        UPDATE crove_projects.time_entry te
+           SET note = COALESCE(
+                 NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('te.note'), REDACTED_MARK)}, ${PROJECT_TIME_NOTE_MAX}::int)), ''),
+                 ${REDACTED_MARK}
+               ),
+               updated_at = ${ctx.now}
+          FROM crove_projects.time_entry o
+         WHERE o.org_id = te.org_id AND o.id = te.id AND te.org_id = ${ctx.orgId}::uuid AND ${timeEntryNote}
+         RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
+      add('crove_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

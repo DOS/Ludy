@@ -252,6 +252,7 @@ export interface CroveProjectsSchema {
   'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
   'crove_projects.roadmap_vote': ProjectsRoadmapVoteTable;
   'crove_projects.task_dependency': ProjectsTaskDependencyTable;
+  'crove_projects.time_entry': ProjectsTimeEntryTable;
 }
 
 export interface CroveSignSchema {
@@ -3915,6 +3916,23 @@ export interface ProjectsTaskDependencyTable {
   blocked_task_id: string;
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.time_entry */
+export interface ProjectsTimeEntryTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string | null;
+  user_id: string | null;
+  started_at: ColumnType<Date, Date | string, Date | string>;
+  ended_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  duration_minutes: number | null;
+  billable: Generated<boolean>;
+  hourly_rate: string | null;
+  note: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_sign.ai_analysis */

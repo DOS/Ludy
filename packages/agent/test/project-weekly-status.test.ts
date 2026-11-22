@@ -350,4 +350,48 @@ describe('projects.weekly_status agent checks (#2597)', () => {
     });
     expect(rejected).toMatchObject({ kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: ['77'] });
   });
+
+  it('includes deterministic weekly time and billable totals cleanly via summaryNumbersOutside (#2600)', () => {
+    const facts = sampleFacts({
+      timeThisWeek: {
+        entryCount: 4,
+        totalHours: '12.50',
+        billableHours: '8.00',
+        billableAmount: '2500000.00',
+      },
+    });
+    const prompt = projectWeeklyStatusPrompt(facts);
+    expect(prompt).toContain('Time logged this week (computed by code):');
+    expect(prompt).toContain('Total hours: 12,5');
+    expect(prompt).toContain('Billable hours: 8');
+    expect(prompt).toContain('Billable amount (VND): 2.500.000');
+
+    const accepted = checkProjectWeeklyStatus(facts, {
+      sentences: [
+        'Tuần này dự án Ra mắt Q4 hoàn thành 2 việc và ghi nhận 12,5 giờ trong 4 lượt.',
+        'Trong đó có 8 giờ tính phí với giá trị 2.500.000 đồng.',
+        'Tuần tới có 2 việc đến hạn cần theo dõi.',
+      ],
+    });
+    expect(accepted.kind).toBe('summary');
+
+    // Wrong locale separator ("12.5" in vi) or invented amount ("9.000.000") is refused.
+    const badLocale = checkProjectWeeklyStatus(facts, {
+      sentences: [
+        'Tuần này dự án Ra mắt Q4 hoàn thành 2 việc với 12.5 giờ làm việc.',
+        'Trong đó có 8 giờ tính phí.',
+        'Tuần tới có 2 việc đến hạn.',
+      ],
+    });
+    expect(badLocale).toMatchObject({ kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: ['12.5'] });
+
+    const invented = checkProjectWeeklyStatus(facts, {
+      sentences: [
+        'Tuần này dự án Ra mắt Q4 hoàn thành 2 việc với 12,5 giờ làm việc.',
+        'Giá trị tính phí đạt 9.000.000 đồng.',
+        'Tuần tới có 2 việc đến hạn.',
+      ],
+    });
+    expect(invented).toMatchObject({ kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: ['9.000.000'] });
+  });
 });
