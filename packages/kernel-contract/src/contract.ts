@@ -215,6 +215,7 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
+import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
@@ -3035,6 +3036,13 @@ export const contract = {
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
+  },
+  // The expense variance card of the Tổng quan (#4392), every role, read only: get answers the flagged expense lines of one ended month against the month before and the average of the three
+  // before it, with the suppliers or vouchers behind each; explain is the finance coworker's possible reason per flagged line, asked of the model outside any transaction, and a note that states a number,
+  // a date or a name it was not given is dropped.
+  financeExpenseVariance: {
+    get: oc.input(zFinanceExpenseVarianceInput).output(zFinanceExpenseVariance),
+    explain: oc.input(zFinanceExpenseVarianceExplainAsk).output(zExpenseVarianceExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.

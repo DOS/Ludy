@@ -15,6 +15,8 @@ export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './followup.ts';
 export * from './overview.ts';
+export * from './expense-variance.ts';
+export * from './expense-variance-coworker.ts';
 export * from './vat-late.ts';
 export * from './marketplace-line.ts';
 export * from './marketplace-columns.ts';
