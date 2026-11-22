@@ -158,4 +158,35 @@ export async function assertCanUseProjectAcceptanceSource(
   }
 }
 
+function isAcceptanceCheckViolation(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const pgErr = err as { code?: unknown; message?: unknown };
+  return (
+    pgErr.code === '23514' &&
+    typeof pgErr.message === 'string' &&
+    pgErr.message.includes('SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN')
+  );
+}
+
+export async function insertEnvelopeGuardingProjectAcceptance<T>(
+  sourceKind: SignSourceKind | string,
+  insertFn: () => Promise<T>,
+): Promise<T> {
+  if (sourceKind !== 'project_acceptance') {
+    return await insertFn();
+  }
+  try {
+    return await insertFn();
+  } catch (err) {
+    if (!isAcceptanceCheckViolation(err)) {
+      throw err;
+    }
+    throw new DomainError(
+      'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN',
+      422,
+      'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
+    );
+  }
+}
+
 export const signAcceptanceQueries = [signAcceptanceSource, signAcceptanceAiStatus];

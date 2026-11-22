@@ -23,7 +23,10 @@ import {
   zSignSignerCorrectRecipientInput,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext, type ErrorStatus } from '@ludy/kernel-runtime';
-import { assertCanUseProjectAcceptanceSource } from './acceptance.ts';
+import {
+  assertCanUseProjectAcceptanceSource,
+  insertEnvelopeGuardingProjectAcceptance,
+} from './acceptance.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
@@ -241,31 +244,33 @@ export const envelopeCreate = defineCommand({
       }
     }
 
-    const row = await ctx.trx
-      .insertInto('crove_sign.envelope')
-      .values({
-        org_id: ctx.orgId,
-        title: input.title,
-        subject: input.subject ?? null,
-        message: input.message ?? null,
-        status: 'draft',
-        routing_mode: input.routingMode,
-        allow_delegation: input.allowDelegation ?? false,
-        source_kind: input.sourceKind,
-        source_id: sourceId,
-        source_file_id: file.id,
-        source_storage_key: file.storage_key,
-        source_generation: file.generation,
-        source_sha256: file.sha256,
-        inspect_status: 'pending',
-        expires_at: expiresAt,
-        auto_remind_before_expiry: input.autoRemindBeforeExpiry ?? true,
-        created_by: userId,
-        created_at: ctx.now,
-        updated_at: ctx.now,
-      })
-      .returning(['id', 'status', 'inspect_status', 'version'])
-      .executeTakeFirstOrThrow();
+    const row = await insertEnvelopeGuardingProjectAcceptance(input.sourceKind, () =>
+      ctx.trx
+        .insertInto('crove_sign.envelope')
+        .values({
+          org_id: ctx.orgId,
+          title: input.title,
+          subject: input.subject ?? null,
+          message: input.message ?? null,
+          status: 'draft',
+          routing_mode: input.routingMode,
+          allow_delegation: input.allowDelegation ?? false,
+          source_kind: input.sourceKind,
+          source_id: sourceId,
+          source_file_id: file.id,
+          source_storage_key: file.storage_key,
+          source_generation: file.generation,
+          source_sha256: file.sha256,
+          inspect_status: 'pending',
+          expires_at: expiresAt,
+          auto_remind_before_expiry: input.autoRemindBeforeExpiry ?? true,
+          created_by: userId,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .returning(['id', 'status', 'inspect_status', 'version'])
+        .executeTakeFirstOrThrow(),
+    );
 
     await appendSigningEvent(ctx.trx, {
       orgId: ctx.orgId,

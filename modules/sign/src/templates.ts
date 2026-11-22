@@ -22,7 +22,10 @@ import {
 } from '@ludy/kernel-contract';
 import { tableWrite } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
-import { assertCanUseProjectAcceptanceSource } from './acceptance.ts';
+import {
+  assertCanUseProjectAcceptanceSource,
+  insertEnvelopeGuardingProjectAcceptance,
+} from './acceptance.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import {
@@ -1742,32 +1745,34 @@ export const templateInstantiate = defineCommand({
     const inheritedSummary = parseSharedSummary(tpl.shared_summary_json, tpl.page_count);
     const inheritedShareFlag = Boolean(tpl.share_summary_with_signers && inheritedSummary !== null);
 
-    const env = await ctx.trx
-      .insertInto('crove_sign.envelope')
-      .values({
-        org_id: ctx.orgId,
-        title: input.title ?? tpl.title,
-        subject: input.subject === undefined ? tpl.subject : input.subject,
-        message: input.message === undefined ? tpl.message : input.message,
-        status: 'draft',
-        routing_mode: tpl.routing_mode,
-        allow_delegation: input.allowDelegation ?? tpl.allow_delegation,
-        source_kind: sourceKind,
-        source_id: sourceId,
-        source_file_id: tpl.source_file_id,
-        source_storage_key: tpl.source_storage_key,
-        source_generation: tpl.source_generation,
-        source_sha256: tpl.source_sha256,
-        inspect_status: 'pending',
-        share_summary_with_signers: inheritedShareFlag,
-        shared_summary_json: inheritedSummary ? JSON.stringify(inheritedSummary) : null,
-        expires_at: expiresAt,
-        created_by: userId,
-        created_at: ctx.now,
-        updated_at: ctx.now,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const env = await insertEnvelopeGuardingProjectAcceptance(sourceKind, () =>
+      ctx.trx
+        .insertInto('crove_sign.envelope')
+        .values({
+          org_id: ctx.orgId,
+          title: input.title ?? tpl.title,
+          subject: input.subject === undefined ? tpl.subject : input.subject,
+          message: input.message === undefined ? tpl.message : input.message,
+          status: 'draft',
+          routing_mode: tpl.routing_mode,
+          allow_delegation: input.allowDelegation ?? tpl.allow_delegation,
+          source_kind: sourceKind,
+          source_id: sourceId,
+          source_file_id: tpl.source_file_id,
+          source_storage_key: tpl.source_storage_key,
+          source_generation: tpl.source_generation,
+          source_sha256: tpl.source_sha256,
+          inspect_status: 'pending',
+          share_summary_with_signers: inheritedShareFlag,
+          shared_summary_json: inheritedSummary ? JSON.stringify(inheritedSummary) : null,
+          expires_at: expiresAt,
+          created_by: userId,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow(),
+    );
 
     await appendSigningEvent(ctx.trx, {
       orgId: ctx.orgId,

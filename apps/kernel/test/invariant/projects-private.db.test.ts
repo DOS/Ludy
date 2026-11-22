@@ -536,6 +536,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       const { rows: fns } = await c.query<{
         sig: string;
         prosecdef: boolean;
+        provolatile: string;
         proconfig: string[] | null;
         def: string;
         pub_exec: boolean;
@@ -544,6 +545,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       }>(
         `SELECT p.oid::pg_catalog.regprocedure::text AS sig,
                 p.prosecdef,
+                p.provolatile,
                 p.proconfig,
                 pg_catalog.pg_get_functiondef(p.oid) AS def,
                 pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub_exec,
@@ -564,6 +566,9 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       expect(fns).toHaveLength(6);
       for (const fn of fns) {
         expect(fn.prosecdef, `${fn.sig} SECURITY DEFINER`).toBe(true);
+        if (fn.sig.includes('check_project_acceptance_source')) {
+          expect(fn.provolatile, `${fn.sig} VOLATILE for FOR SHARE lock`).toBe('v');
+        }
         expect(fn.proconfig, `${fn.sig} pinned search_path`).toContain('search_path=pg_catalog, pg_temp');
         expect(fn.def, `${fn.sig} preserves base acting-user / mcp pg_proc invariants`).not.toMatch(
           /ctx_acting_user_id|ctx_mcp_member_id/i,
@@ -590,14 +595,17 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
            FROM pg_catalog.pg_proc p
            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
           WHERE n.nspname = 'crove_projects'
-            AND p.proname = 'project_no_private_with_acceptance'`,
+            AND p.proname IN ('project_no_private_with_acceptance', 'envelope_require_org_project')
+          ORDER BY 1`,
       );
-      expect(trigFns).toHaveLength(1);
-      expect(trigFns[0]!.prosecdef).toBe(true);
-      expect(trigFns[0]!.proconfig).toContain('search_path=pg_catalog, pg_temp');
-      expect(trigFns[0]!.pub_exec).toBe(false);
-      expect(trigFns[0]!.def_exec).toBe(false);
-      expect(trigFns[0]!.tenant_exec).toBe(false);
+      expect(trigFns).toHaveLength(2);
+      for (const tfn of trigFns) {
+        expect(tfn.prosecdef, `${tfn.sig} SECURITY DEFINER`).toBe(true);
+        expect(tfn.proconfig, `${tfn.sig} pinned search_path`).toContain('search_path=pg_catalog, pg_temp');
+        expect(tfn.pub_exec, `${tfn.sig} revoked from PUBLIC`).toBe(false);
+        expect(tfn.def_exec, `${tfn.sig} revoked from crove_definer_tenant`).toBe(false);
+        expect(tfn.tenant_exec, `${tfn.sig} revoked from crove_tenant`).toBe(false);
+      }
     });
   });
 

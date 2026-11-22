@@ -28,6 +28,7 @@ import { ExportSealer } from '../src/export-seal.ts';
 import { runOrgExport } from '../src/org-export.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -353,6 +354,189 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
         ]),
       ),
     ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('serializes concurrent READ COMMITTED org -> private transitions against project_acceptance envelope creation (#2604)', async () => {
+    const o = await setupTeamOrg();
+    const ingestPdf = async (userId: string, tag: string) => {
+      const pdfBytes = Uint8Array.from(Buffer.from(`%PDF-1.4\n% ${tag}\n%%EOF\n`, 'utf8'));
+      const sha = sha256Hex(pdfBytes);
+      const { fileId } = await exec<{ fileId: string }>(userId, o.orgId, 'kernel.file.ingest', {
+        filename: `${tag}.pdf`,
+        contentType: 'application/pdf',
+        sizeBytes: pdfBytes.byteLength,
+        sha256: sha,
+        storageKey: fileKey(o.orgId, sha),
+        generation: contentGeneration(sha),
+        source: 'sign_document',
+      });
+      return { fileId, sha };
+    };
+    const waitForLock = async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const locked = await withAdmin(async (c) => {
+          const { rows } = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt
+               FROM pg_catalog.pg_stat_activity
+              WHERE datname = pg_catalog.current_database()
+                AND wait_event_type = 'Lock'
+                AND pid <> pg_catalog.pg_backend_pid()`,
+          );
+          return (rows[0]?.cnt ?? 0) > 0;
+        });
+        if (locked) return true;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      return false;
+    };
+
+    // Direction 1: Tx A locks project row FOR UPDATE and sets visibility = 'private' (uncommitted).
+    // Concurrent sign.envelope.create (Tx B) blocks on FOR SHARE, sees 'private' after Tx A commits, and rejects cleanly.
+    const { projectId: proj1 } = await exec<{ projectId: string }>(o.owner.userId, o.orgId, 'projects.project.create', {
+      name: 'Dự án Đua 1',
+      visibility: 'org',
+    });
+    const file1 = await ingestPdf(o.owner.userId, 'race-1');
+
+    const c1 = await pool.connect();
+    let envOutcome: Promise<{ ok: true; value: unknown } | { ok: false; err: unknown }> | undefined;
+    try {
+      await c1.query('BEGIN');
+      await enterUser(c1, o.owner.userId, o.orgId);
+      await c1.query('SET LOCAL ROLE crove_tenant');
+      await c1.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+        o.orgId,
+        proj1,
+      ]);
+
+      envOutcome = exec(o.owner.userId, o.orgId, 'sign.envelope.create', {
+        title: 'Biên bản đua 1',
+        sourceKind: 'project_acceptance',
+        sourceId: proj1,
+        sourceFileId: file1.fileId,
+      }).then(
+        (value) => ({ ok: true as const, value }),
+        (err: unknown) => ({ ok: false as const, err }),
+      );
+      expect(await waitForLock()).toBe(true);
+      await c1.query('COMMIT');
+    } catch (err) {
+      await c1.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c1.release();
+    }
+    expect(await envOutcome).toMatchObject({
+      ok: false,
+      err: { code: 'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN', status: 422 },
+    });
+    await expect(
+      rt.execute(
+        'sign.template.instantiate',
+        {
+          templateId: randomUUID(),
+          recipients: [],
+          sourceKind: 'project_acceptance',
+          sourceId: proj1,
+        },
+        { actor: asUser(o.owner.userId), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN', status: 422 });
+    await expect(
+      rt.execute(
+        'sign.template.instantiate',
+        {
+          templateId: randomUUID(),
+          recipients: [],
+          sourceKind: 'project_acceptance',
+          sourceId: proj1,
+        },
+        { actor: asUser(o.bystander.userId), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
+
+    // Even direct trigger check (bypassing check_project_acceptance_source) blocks inserting project_acceptance for private proj1.
+    await expect(
+      withAdmin((c) =>
+        c.query(
+          `INSERT INTO crove_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+           VALUES ($1, 'Bypass trigger check', 'draft', 'parallel', 'project_acceptance', $2, $3, $4, $5, $6, 'pending', $7)`,
+          [o.orgId, proj1, file1.fileId, fileKey(o.orgId, file1.sha), contentGeneration(file1.sha), file1.sha, o.owner.userId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+
+    const dir1State = await withAdmin(async (c) => {
+      const p = await c.query<{ visibility: string }>(
+        `SELECT visibility FROM crove_projects.project WHERE org_id = $1 AND id = $2`,
+        [o.orgId, proj1],
+      );
+      const e = await c.query<{ cnt: number }>(
+        `SELECT count(*)::int AS cnt FROM crove_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
+        [o.orgId, proj1],
+      );
+      return { visibility: p.rows[0]?.visibility, envelopes: e.rows[0]?.cnt };
+    });
+    expect(dir1State).toEqual({ visibility: 'private', envelopes: 0 });
+
+    // Direction 2: Tx A acquires FOR SHARE via check_project_acceptance_source and inserts envelope (uncommitted).
+    // Concurrent projects.project.update (Tx B) blocks on FOR UPDATE until Tx A commits, then rejects with 409.
+    const { projectId: proj2 } = await exec<{ projectId: string }>(o.owner.userId, o.orgId, 'projects.project.create', {
+      name: 'Dự án Đua 2',
+      visibility: 'org',
+    });
+    const file2 = await ingestPdf(o.owner.userId, 'race-2');
+
+    const c2 = await pool.connect();
+    let updateOutcome: Promise<{ ok: true; value: unknown } | { ok: false; err: unknown }> | undefined;
+    try {
+      await c2.query('BEGIN');
+      await enterUser(c2, o.owner.userId, o.orgId);
+      await c2.query('SET LOCAL ROLE crove_tenant');
+      const chk = await c2.query<{ state: number }>(
+        `SELECT crove_sign.check_project_acceptance_source($1::uuid, $2::uuid) AS state`,
+        [o.orgId, proj2],
+      );
+      expect(chk.rows[0]?.state).toBe(2);
+      await c2.query(
+        `INSERT INTO crove_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+         VALUES ($1, 'Biên bản đua 2', 'draft', 'parallel', 'project_acceptance', $2, $3, $4, $5, $6, 'pending', $7)`,
+        [o.orgId, proj2, file2.fileId, fileKey(o.orgId, file2.sha), contentGeneration(file2.sha), file2.sha, o.owner.userId],
+      );
+
+      updateOutcome = exec(o.owner.userId, o.orgId, 'projects.project.update', {
+        projectId: proj2,
+        visibility: 'private',
+      }).then(
+        (value) => ({ ok: true as const, value }),
+        (err: unknown) => ({ ok: false as const, err }),
+      );
+      expect(await waitForLock()).toBe(true);
+      await c2.query('COMMIT');
+    } catch (err) {
+      await c2.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c2.release();
+    }
+    expect(await updateOutcome).toMatchObject({
+      ok: false,
+      err: { code: 'PROJECT_PRIVATE_ACCEPTANCE_EXISTS', status: 409 },
+    });
+
+    const dir2State = await withAdmin(async (c) => {
+      const p = await c.query<{ visibility: string }>(
+        `SELECT visibility FROM crove_projects.project WHERE org_id = $1 AND id = $2`,
+        [o.orgId, proj2],
+      );
+      const e = await c.query<{ cnt: number }>(
+        `SELECT count(*)::int AS cnt FROM crove_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
+        [o.orgId, proj2],
+      );
+      return { visibility: p.rows[0]?.visibility, envelopes: e.rows[0]?.cnt };
+    });
+    expect(dir2State).toEqual({ visibility: 'org', envelopes: 1 });
   });
 
   it('saves private project weekly status share_note as private note and guards module-off notes panel + org_purge', async () => {

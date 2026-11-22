@@ -208,7 +208,7 @@ BEGIN
   END IF;
   SELECT p.visibility INTO v_visibility
   FROM crove_projects.project p
-  WHERE p.org_id = v_org AND p.id = p_project_id;
+  WHERE p.org_id = v_org AND p.id = p_project_id AND p.is_template = false;
   RETURN FOUND AND v_visibility = 'org' AND crove_projects.project_visible(v_org, p_project_id);
 END $$;
 REVOKE ALL ON FUNCTION crove_projects.project_acceptance_org_only(uuid, uuid)
@@ -243,7 +243,7 @@ GRANT EXECUTE ON FUNCTION crove_projects.has_project_acceptance_envelope(uuid, u
 CREATE OR REPLACE FUNCTION crove_sign.check_project_acceptance_source(p_org_id uuid, p_project_id uuid)
 RETURNS integer
 LANGUAGE plpgsql
-STABLE
+VOLATILE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
@@ -257,7 +257,10 @@ BEGIN
   END IF;
   SELECT p.visibility, p.owner_user_id INTO v_visibility, v_owner
   FROM crove_projects.project p
-  WHERE p.org_id = v_org AND p.id = p_project_id;
+  WHERE p.org_id = v_org
+    AND p.id = p_project_id
+    AND p.is_template = false
+  FOR SHARE;
   IF NOT FOUND OR NOT crove_projects.project_row_visible(v_org, p_project_id, v_visibility, v_owner) THEN
     RETURN 0;
   END IF;
@@ -299,6 +302,44 @@ DROP TRIGGER IF EXISTS project_no_private_with_acceptance ON crove_projects.proj
 CREATE TRIGGER project_no_private_with_acceptance
   BEFORE UPDATE OF visibility ON crove_projects.project
   FOR EACH ROW EXECUTE FUNCTION crove_projects.project_no_private_with_acceptance();
+
+-- Keep identical lock order (crove_projects.project -> crove_sign.envelope) via FOR SHARE so concurrent
+-- READ COMMITTED org -> private updates and project_acceptance envelope inserts serialize without deadlocks.
+CREATE OR REPLACE FUNCTION crove_projects.envelope_require_org_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_visibility text;
+BEGIN
+  IF NEW.source_kind IS DISTINCT FROM 'project_acceptance' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.source_id IS NULL THEN
+    RAISE EXCEPTION 'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN' USING ERRCODE = '23514';
+  END IF;
+  SELECT p.visibility INTO v_visibility
+  FROM crove_projects.project p
+  WHERE p.org_id = NEW.org_id
+    AND p.id = NEW.source_id
+    AND p.is_template = false
+  FOR SHARE;
+  IF NOT FOUND OR v_visibility IS DISTINCT FROM 'org' THEN
+    RAISE EXCEPTION 'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_projects.envelope_require_org_project()
+  FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+-- migration-lint: cross-module ADR-0056 section 1 (#2604): serialize project_acceptance envelope writes against private project transitions
+DROP TRIGGER IF EXISTS envelope_project_acceptance_org_only ON crove_sign.envelope;
+-- migration-lint: cross-module ADR-0056 section 1 (#2604): serialize project_acceptance envelope writes against private project transitions
+CREATE TRIGGER envelope_project_acceptance_org_only
+  AFTER INSERT OR UPDATE OF source_kind, source_id ON crove_sign.envelope
+  FOR EACH ROW EXECUTE FUNCTION crove_projects.envelope_require_org_project();
 
 -- migration-lint: cross-module ADR-0056 section 1 (#2604): forbid project_acceptance eSign envelopes on private projects
 DROP POLICY IF EXISTS project_acceptance_org_only ON crove_sign.envelope;
