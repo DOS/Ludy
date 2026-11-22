@@ -1440,6 +1440,8 @@ export function createRpcHandler(
         cancel: os.meetings.transcript.cancel.handler(meetingsCommand('meetings.transcript.cancel')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
+        redactCandidates: os.meetings.transcript.redactCandidates.handler(meetingsQuery('meetings.transcript.redact_candidates')),
+        redact: os.meetings.transcript.redact.handler(meetingsCommand('meetings.transcript.redact')),
       },
       // A member's own webhook for the minutes they publish (A6, #3164): the secret is made and sealed here, and only the person who asked sees it, once.
       hook: {

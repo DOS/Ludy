@@ -168,4 +168,21 @@ export const translationCopyResult = defineCommand({
   },
 });
 
+// Deletes the member's own draft translations for a meeting (zero reads), called by draft redaction so hidden values cannot return from cached translations.
+export async function dropDraftTranslationsForMember(
+  trx: CommandContext['trx'],
+  orgId: string,
+  meetingId: string,
+  memberUserId: string,
+): Promise<number> {
+  const res = await trx
+    .deleteFrom('crove_meetings.translation')
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('member_user_id', '=', memberUserId)
+    .where('source_stage', '=', 'draft')
+    .executeTakeFirst();
+  return Number(res.numDeletedRows ?? 0);
+}
+
 export const translateCommands = [translationCopyResult];
