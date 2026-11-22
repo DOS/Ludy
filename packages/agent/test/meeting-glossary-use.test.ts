@@ -127,13 +127,48 @@ describe('translation', () => {
     expect(plain('Gặp Thành ngày mai', 'Meeting Thanh tomorrow', ['Thành']).state).toBe('warn');
     expect(plain('Gặp khách ngày mai', 'Meeting a customer tomorrow', ['Crove']).state).toBe('ok');
     expect(plain('Gặp croveland ngày mai', 'Meeting croveland tomorrow', ['Crove']).state).toBe('ok');
+    // Overlapping differently-cased subterms: Cloud Crove satisfies the longer match without triggering NAME_ADDED for CROVE.
+    expect(plain('Họp về Cloud Crove hôm nay.', 'Meeting about Cloud Crove today.', ['Cloud Crove', 'CROVE'])).toMatchObject({ state: 'ok', codes: [] });
+    expect(plain('Họp về Cloud Crove hôm nay.', 'Meeting about cloud crove today.', ['CROVE', 'Cloud Crove'])).toMatchObject({
+      text: 'Meeting about Cloud Crove today.',
+      state: 'ok',
+      codes: [],
+    });
+    // Standalone CROVE alongside Cloud Crove is still required in the translation.
+    expect(plain('Họp về Cloud Crove và CROVE hôm nay.', 'Meeting about Cloud Crove today.', ['Cloud Crove', 'CROVE'])).toMatchObject({
+      state: 'warn',
+      codes: ['NAME_ADDED'],
+    });
+    expect(plain('Họp về Cloud Crove và CROVE hôm nay.', 'Meeting about Cloud Crove and crove today.', ['Cloud Crove', 'CROVE'])).toMatchObject({
+      text: 'Meeting about Cloud Crove and CROVE today.',
+      state: 'ok',
+      codes: [],
+    });
   });
 
-  it('judges a term inside Chinese text by its letters, rejects glued Latin edges, and with no glossary changes nothing', () => {
+  it('judges a term inside Chinese text by its letters, normalizes CJK-adjacent lowercase terms, rejects glued Latin/mark edges, and with no glossary changes nothing', () => {
     const zh = checkSegment({ key: 'k', text: 'Họp về Crove tuần này, kế hoạch gửi cho khách hàng.' }, '本周讨论Crove的计划，并发给客户。', 'zh', ['Crove']);
     expect(zh.state).toBe('ok');
+    const zhLower = checkSegment({ key: 'k', text: 'Họp về crove tuần này, kế hoạch gửi cho khách hàng.' }, '本周讨论crove的计划。', 'zh', ['Crove']);
+    expect(zhLower).toMatchObject({ text: '本周讨论Crove的计划。', state: 'ok', codes: [] });
+    const jaLower = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '今週はcroveについて話し合う。', 'ja', ['Crove']);
+    expect(jaLower).toMatchObject({ text: '今週はCroveについて話し合う。', state: 'ok', codes: [] });
+    const koLower = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '이번 주crove계획을 논의한다.', 'ko', ['Crove']);
+    expect(koLower).toMatchObject({ text: '이번 주Crove계획을 논의한다.', state: 'ok', codes: [] });
+    const cjkOverlap = checkSegment({ key: 'k', text: 'Họp về Cloud Crove hôm nay.' }, '本周讨论cloud crove的计划。', 'zh', ['Cloud Crove', 'CROVE']);
+    expect(cjkOverlap).toMatchObject({ text: '本周讨论Cloud Crove的计划。', state: 'ok', codes: [] });
+    const insideLatin = checkSegment({ key: 'k', text: 'Họp về crove tuần này, kế hoạch gửi cho khách hàng.' }, '本周讨论microservice的计划，并发给客户。', 'zh', ['Crove']);
+    expect(insideLatin).toMatchObject({ text: '本周讨论microservice的计划，并发给客户。', state: 'warn', codes: ['NAME_ADDED'] });
     const glued = checkSegment({ key: 'k', text: 'Họp về crove tuần này, kế hoạch gửi cho khách hàng.' }, '本周讨论Croveland的计划，并发给客户。', 'zh', ['Crove']);
     expect(glued.codes).toContain('NAME_ADDED');
+    const gluedLeadingMark = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '本周讨论a\u0338Crove的计划。', 'zh', ['Crove']);
+    expect(gluedLeadingMark.codes).toContain('NAME_ADDED');
+    const gluedSupplementaryLatin = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '本周讨论\u{10780}Crove的计划。', 'zh', ['Crove']);
+    expect(gluedSupplementaryLatin.codes).toContain('NAME_ADDED');
+    const gluedSupplementaryMark = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '本周讨论Crove\u{E0100}的计划。', 'zh', ['Crove']);
+    expect(gluedSupplementaryMark.codes).toContain('NAME_ADDED');
+    const hanExtB = checkSegment({ key: 'k', text: 'Họp về crove tuần này.' }, '本周\u{20000}crove\u{20001}的计划。', 'zh', ['Crove']);
+    expect(hanExtB).toMatchObject({ text: '本周\u{20000}Crove\u{20001}的计划。', state: 'ok', codes: [] });
     const lowercaseAi = checkSegment({ key: 'k', text: 'Có ai gửi báo cáo không?' }, 'Did anyone send the report?', 'en', ['AI']);
     expect(lowercaseAi).toMatchObject({ state: 'ok', codes: [] });
     const lost = checkSegment({ key: 'k', text: 'Họp về Crove tuần này, kế hoạch gửi cho khách hàng.' }, '本周讨论克罗夫的计划，并发给客户。', 'zh', ['Crove']);

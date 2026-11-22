@@ -52,44 +52,29 @@ export function glossaryData(terms: readonly string[]): string {
   return terms.length === 0 ? '' : `GLOSSARY:\n${JSON.stringify(terms)}\n\n`;
 }
 
-// What a word run is made of: a letter or a digit on either side ends it, nothing else does (a hyphen, a slash and a full stop stay inside a name such as "e-Invoice" or "VAT 10%").
-// A trailing combining mark (\p{M}, such as \u0338 that stays uncomposed in NFC) extends the word so "Crove\u0338" is neither rewritten nor treated as an exact match.
-const EDGE_BEFORE = '(?<![\\p{L}\\p{N}])';
+// What a word run is made of: a letter, digit or combining mark on either side ends it, nothing else does (a hyphen, a slash and a full stop stay inside a name such as "e-Invoice" or "VAT 10%").
+// Both leading and trailing combining marks (\p{M}, such as \u0338 that stays uncomposed in NFC) extend the word so "a\u0338Crove" and "Crove\u0338" are neither rewritten nor treated as exact matches.
+const EDGE_BEFORE = '(?<![\\p{L}\\p{N}\\p{M}])';
 const EDGE_AFTER = '(?![\\p{L}\\p{N}\\p{M}])';
+// CJK targets (zh, ja, ko) write words without spaces between Latin names and Han/Kana/Hangul characters, so only Latin letters, decimal digits and combining marks block a term edge.
+const CJK_EDGE_BEFORE = '(?<![\\p{Script=Latin}\\p{Nd}\\p{M}])';
+const CJK_EDGE_AFTER = '(?![\\p{Script=Latin}\\p{Nd}\\p{M}])';
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // A term as a pattern: its words joined by any run of spaces; the marks stay exactly as the term writes them.
-function termPattern(term: string, flags: string): RegExp {
+function termPattern(term: string, flags: string, cjk = false): RegExp {
   const words = term.split(/\s+/u).filter((w) => w !== '').map(escapeRegex);
-  return new RegExp(`${EDGE_BEFORE}${words.join('\\s+')}${EDGE_AFTER}`, flags);
+  const before = cjk ? CJK_EDGE_BEFORE : EDGE_BEFORE;
+  const after = cjk ? CJK_EDGE_AFTER : EDGE_AFTER;
+  return new RegExp(`${before}${words.join('\\s+')}${after}`, flags);
 }
 
 const letterCount = (term: string): number => (term.match(/\p{L}/gu) ?? []).length;
 const isShortCapitalized = (term: string): boolean => letterCount(term) <= 3 && term !== term.toLocaleLowerCase('vi');
 
-/**
- * Writes a term the way the glossary does wherever the text has it with another case or other spacing. A short term (three letters or fewer) that the glossary writes with a capital is
- * left alone where the text has it all in lower case: "AI" must not turn the Vietnamese "ai" (who) into an acronym. A difference in diacritics is never rewritten. Unicode form C in and out.
- */
-export function spellGlossary(text: string, terms: readonly string[]): string {
-  const normalized = text.normalize('NFC');
-  const candidates: Array<{ start: number; end: number; replacement: string; order: number }> = [];
-  for (let order = 0; order < terms.length; order += 1) {
-    const term = terms[order] as string;
-    if (term.trim() === '') continue;
-    const short = isShortCapitalized(term);
-    for (const match of normalized.matchAll(termPattern(term, 'giu'))) {
-      if (match.index === undefined) continue;
-      const found = match[0];
-      if (short && found === found.toLocaleLowerCase('vi')) continue;
-      candidates.push({ start: match.index, end: match.index + found.length, replacement: found === term ? found : term, order });
-    }
-  }
-  if (candidates.length === 0) return normalized;
-  // Longest match in the original text wins over shorter sub-terms inside it, keeping glossary order on ties.
-  candidates.sort((a, b) => b.end - b.start - (a.end - a.start) || a.order - b.order || a.start - b.start);
-  const occupied = new Uint8Array(normalized.length);
-  const chosen: typeof candidates = [];
+function selectNonOverlapping<T extends { start: number; end: number }>(candidates: readonly T[], length: number): T[] {
+  const occupied = new Uint8Array(length);
+  const chosen: T[] = [];
   for (const candidate of candidates) {
     let overlaps = false;
     for (let i = candidate.start; i < candidate.end; i += 1) {
@@ -102,6 +87,37 @@ export function spellGlossary(text: string, terms: readonly string[]): string {
     occupied.fill(1, candidate.start, candidate.end);
     chosen.push(candidate);
   }
+  return chosen;
+}
+
+export interface SpellGlossaryOptions {
+  /** Use CJK-adjacent Latin/digit/mark boundaries so terms directly next to Han, Kana or Hangul characters are matched. */
+  cjk?: boolean;
+}
+
+/**
+ * Writes a term the way the glossary does wherever the text has it with another case or other spacing. A short term (three letters or fewer) that the glossary writes with a capital is
+ * left alone where the text has it all in lower case: "AI" must not turn the Vietnamese "ai" (who) into an acronym. A difference in diacritics is never rewritten. Unicode form C in and out.
+ */
+export function spellGlossary(text: string, terms: readonly string[], options?: SpellGlossaryOptions): string {
+  const normalized = text.normalize('NFC');
+  const cjk = options?.cjk ?? false;
+  const candidates: Array<{ start: number; end: number; replacement: string; order: number }> = [];
+  for (let order = 0; order < terms.length; order += 1) {
+    const term = terms[order] as string;
+    if (term.trim() === '') continue;
+    const short = isShortCapitalized(term);
+    for (const match of normalized.matchAll(termPattern(term, 'giu', cjk))) {
+      if (match.index === undefined || match[0].length === 0) continue;
+      const found = match[0];
+      if (short && found === found.toLocaleLowerCase('vi')) continue;
+      candidates.push({ start: match.index, end: match.index + found.length, replacement: found === term ? found : term, order });
+    }
+  }
+  if (candidates.length === 0) return normalized;
+  // Longest match in the original text wins over shorter sub-terms inside it, keeping glossary order on ties.
+  candidates.sort((a, b) => b.end - b.start - (a.end - a.start) || a.order - b.order || a.start - b.start);
+  const chosen = selectNonOverlapping(candidates, normalized.length);
   chosen.sort((a, b) => a.start - b.start);
   let out = '';
   let cursor = 0;
@@ -141,20 +157,47 @@ function foldSourceWithSpans(source: string): { normSource: string; folded: stri
   return { normSource, folded, origStart, origEnd };
 }
 
-/** The terms a source text mentions, case and marks folded, whole words only, in the glossary's order. */
+const canonicalMarkKey = (text: string): string => text.normalize('NFC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('vi');
+
+/** The terms a source text mentions, case and marks folded, whole words only (longest match wins on overlap), in the glossary's order. */
 export function termsInSource(source: string, terms: readonly string[]): string[] {
   const { normSource, folded, origStart, origEnd } = foldSourceWithSpans(source);
-  return terms.filter((term) => {
+  const candidates: Array<{ start: number; end: number; spanLen: number; marksMatch: boolean; order: number }> = [];
+  for (let order = 0; order < terms.length; order += 1) {
+    const term = terms[order] as string;
     const key = foldForGlossary(term);
-    if (key.trim() === '') return false;
-    if (!isShortCapitalized(term)) return termPattern(key, 'u').test(folded);
+    if (key.trim() === '') continue;
+    const short = isShortCapitalized(term);
+    const termMarkKey = canonicalMarkKey(term);
     for (const match of folded.matchAll(termPattern(key, 'gu'))) {
       if (match.index === undefined || match[0].length === 0) continue;
-      const span = normSource.slice(origStart[match.index] as number, origEnd[match.index + match[0].length - 1] as number);
-      if (span !== span.toLocaleLowerCase('vi')) return true;
+      const spanStart = origStart[match.index] as number;
+      const spanEnd = origEnd[match.index + match[0].length - 1] as number;
+      const span = normSource.slice(spanStart, spanEnd);
+      if (short && span === span.toLocaleLowerCase('vi')) continue;
+      candidates.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        spanLen: spanEnd - spanStart,
+        marksMatch: canonicalMarkKey(span) === termMarkKey,
+        order,
+      });
     }
-    return false;
-  });
+  }
+  if (candidates.length === 0) return [];
+  // Longest match wins over overlapping sub-terms; on equal folded length prefer exact-mark matches (compatible with spellGlossary), then longer source spans and glossary order.
+  candidates.sort(
+    (a, b) =>
+      b.end - b.start - (a.end - a.start) ||
+      Number(b.marksMatch) - Number(a.marksMatch) ||
+      b.spanLen - a.spanLen ||
+      a.order - b.order ||
+      a.start - b.start,
+  );
+  const chosen = selectNonOverlapping(candidates, folded.length);
+  const matched = new Uint8Array(terms.length);
+  for (const span of chosen) matched[span.order] = 1;
+  return terms.filter((_, order) => matched[order] === 1);
 }
 
 /** Whether a text writes a term as the glossary does (exactly, as a whole word run, spaces aside). */

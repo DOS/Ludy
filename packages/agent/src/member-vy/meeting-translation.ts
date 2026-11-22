@@ -262,12 +262,33 @@ function namesToKeep(source: string): string[] {
   for (const word of wordsOf(plain)) if (/^[A-Z]{2,6}$/.test(word) && !COMMON_ACRONYMS.has(kept(word))) out.add(kept(word));
   return [...out];
 }
-// Whether a CJK text writes a term without gluing blocked neighbor characters onto either edge.
-function hasTermWithBoundary(text: string, needle: string, beforeBlocked: RegExp, afterBlocked: RegExp): boolean {
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
+
+function codePointBefore(text: string, index: number): string {
+  if (index <= 0) return '';
+  const low = text.charCodeAt(index - 1);
+  if (isLowSurrogate(low) && index >= 2 && isHighSurrogate(text.charCodeAt(index - 2))) {
+    return text.slice(index - 2, index);
+  }
+  return text.charAt(index - 1);
+}
+
+function codePointAt(text: string, index: number): string {
+  if (index >= text.length) return '';
+  const cp = text.codePointAt(index);
+  return cp === undefined ? '' : String.fromCodePoint(cp);
+}
+
+// Whether a CJK text writes a term without gluing blocked neighbor characters (inspected by full Unicode code point) onto either edge.
+export function hasTermWithBoundary(text: string, needle: string, beforeBlocked: RegExp, afterBlocked: RegExp): boolean {
   if (needle === '') return false;
   for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) {
-    const before = at === 0 ? '' : (text[at - 1] as string);
-    const after = text[at + needle.length] ?? '';
+    const end = at + needle.length;
+    if (at > 0 && isHighSurrogate(text.charCodeAt(at - 1)) && isLowSurrogate(text.charCodeAt(at))) continue;
+    if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) continue;
+    const before = codePointBefore(text, at);
+    const after = codePointAt(text, end);
     if (!beforeBlocked.test(before) && !afterBlocked.test(after)) return true;
   }
   return false;
@@ -276,7 +297,7 @@ function hasTermWithBoundary(text: string, needle: string, beforeBlocked: RegExp
 const carries = (written: string, name: string): boolean => hasTermWithBoundary(written, name, /[a-z0-9]/, /[a-z0-9]/);
 // Whether a CJK translation writes a glossary term verbatim (case-sensitive) without gluing a Latin letter, digit, or combining mark onto either edge.
 const carriesExactTerm = (text: string, term: string): boolean =>
-  hasTermWithBoundary(text, term, /[\p{Script=Latin}\p{Nd}]/u, /[\p{Script=Latin}\p{Nd}\p{M}]/u);
+  hasTermWithBoundary(text, term, /[\p{Script=Latin}\p{Nd}\p{M}]/u, /[\p{Script=Latin}\p{Nd}\p{M}]/u);
 
 /**
  * What code says about one translated segment against its original. Refused (the original shows, the model's text is dropped): nothing came back, an empty text, one over its
@@ -288,12 +309,14 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   if (answered === null) return refuse('MISSING');
   const answer = answered.replace(/\r\n?/g, '\n').trim();
   if (answer === '') return refuse('EMPTY');
+  const cjkTarget = to !== undefined && isCjkTarget(to) ? to : null;
+  const cjk = cjkTarget !== null;
   // The glossary's spelling (a term the model wrote with another case or spacing), before the rest looks at the text; with no terms the text is what it was.
-  const text = glossary.length === 0 ? answer : spellGlossary(answer, glossary).trim();
+  const text = glossary.length === 0 ? answer : spellGlossary(answer, glossary, { cjk }).trim();
   if (text.length > limitFor(source.key, source.text, to)) return refuse('TOO_LONG');
   if (squash(text) === squash(source.text)) return refuse('UNCHANGED');
   // Into Chinese, Japanese or Korean: a text that is mostly not in that script is the source language again (or a wrong one), and shows as untranslated.
-  if (to !== undefined && isCjkTarget(to) && !inTargetScript(text, to)) return refuse('UNCHANGED');
+  if (cjkTarget !== null && !inTargetScript(text, cjkTarget)) return refuse('UNCHANGED');
   const original = numberTokens(source.text);
   const translated = numberTokens(text);
   if (translated.some((token) => !held(token, original))) return refuse('INVENTED_NUMBER');
@@ -301,7 +324,7 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   for (const contact of contactsIn(text)) if (!known.has(contact)) return refuse('CONTACT_ADDED');
   const codes: TranslationCode[] = [];
   if (original.some((token) => !held(token, translated, true))) codes.push('NUMBER_DROPPED');
-  if (to === undefined || !isCjkTarget(to)) {
+  if (!cjk) {
     const seen = new Set(wordsOf(source.text).map(norm));
     if (midSentenceCapitals(text).some((word) => !seen.has(norm(word)) && !KNOWN_WORDS.has(norm(word)))) codes.push('NAME_ADDED');
   } else {
@@ -312,7 +335,6 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   }
   // A glossary term the source mentions (case and marks folded) has to stand in the translation as the glossary writes it; one that does not shows the same mark as a lost name.
   if (!codes.includes('NAME_ADDED') && glossary.length > 0) {
-    const cjk = to !== undefined && isCjkTarget(to);
     if (termsInSource(source.text, glossary).some((term) => !(cjk ? carriesExactTerm(text, term) : writesTerm(text, term)))) codes.push('NAME_ADDED');
   }
   return { key: source.key, text, state: codes.length > 0 ? 'warn' : 'ok', codes };
