@@ -2189,13 +2189,18 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(legacy).not.toBeNull();
             await admin(async (c) => {
               await c.query('BEGIN');
-              await c.query(`ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard`);
-              await c.query(`ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard`);
-              await c.query(`UPDATE crove_ads.ad_campaign_draft SET page_connection_id = NULL WHERE org_id = $1 AND id = $2`, [orgId, noPage.draft.id]);
-              await c.query(`UPDATE crove_ads.ad_launch SET plan_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, noPage.launch.id, planHash(legacy as NonNullable<typeof legacy>, noPage.account, 'VND')]);
-              await c.query(`ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`);
-              await c.query(`ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard`);
-              await c.query('COMMIT');
+              try {
+                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard`);
+                await c.query(`UPDATE crove_ads.ad_campaign_draft SET page_connection_id = NULL WHERE org_id = $1 AND id = $2`, [orgId, noPage.draft.id]);
+                await c.query(`UPDATE crove_ads.ad_launch SET plan_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, noPage.launch.id, planHash(legacy as NonNullable<typeof legacy>, noPage.account, 'VND')]);
+                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard`);
+                await c.query('COMMIT');
+              } catch (err) {
+                await c.query('ROLLBACK');
+                throw err;
+              }
             });
             expect(await run(w, noPage.launch.id)).toEqual({ steps: 0, ended: 'page_required' });
             expect(await launchNow(noPage.launch.id)).toMatchObject({ state: 'failed', stop_reason: 'page_required', commit_until: null });
