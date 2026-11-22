@@ -79,6 +79,13 @@ import {
   type SignPdfInspectJob,
   type SignTemplateInspectJob,
 } from './sign-worker.ts';
+import {
+  SIGN_HOOK_SWEEP_CRON,
+  SIGN_HOOK_SWEEP_EXPIRE_SECONDS,
+  runSignHookDelivery,
+  runSignHookSweep,
+  type SignHookJob,
+} from './sign-hook.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
 import {
@@ -1678,6 +1685,26 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.meetingChatSweep, MEETING_CHAT_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETING_CHAT_SWEEP_EXPIRE_SECONDS });
   } else {
     await dropCron(QUEUES.meetingChatSweep);
+  }
+  // Outbound eSign lifecycle webhooks (eSign Slice 5b, #4440): a sweep every minute hands queued deliveries to sign-hook-deliver, and one job per delivery posts signed safe metadata to the
+  // endpoint an owner or admin configured through sign.webhook.create (sign-hook.ts, using postSigned of mcp-wake.ts). Without a credential key no secret can be opened, so neither runs.
+  if (deps.runtime.installed('sign') && wakeBroker && wakeBroker.id !== 'none') {
+    await boss.work<SignHookJob>(QUEUES.signHookDeliver, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      await runSignHookDelivery({ runtime: deps.runtime, broker: wakeBroker }, job.data, { retryCount: job.retryCount, retryLimit: WAKE_RETRY_LIMIT });
+    });
+    await boss.work(QUEUES.signHookSweep, { batchSize: 1 }, async () => {
+      const done = await runSignHookSweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        send: (job: SignHookJob) =>
+          boss.send(QUEUES.signHookDeliver, job, { singletonKey: jobKey(job.orgId, QUEUES.signHookDeliver, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
+      });
+      if (done.handedOver + done.expired + done.failures > 0) console.log(`[sign-hook-sweep] handed over ${done.handedOver}, expired ${done.expired}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.signHookSweep, SIGN_HOOK_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: SIGN_HOOK_SWEEP_EXPIRE_SECONDS });
+  } else {
+    await dropCron(QUEUES.signHookSweep);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and

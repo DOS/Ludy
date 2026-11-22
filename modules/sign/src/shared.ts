@@ -24,6 +24,9 @@ import { appendSigningEvent } from './events.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import { SIGN_INVITE_MAIL_SOURCE, SIGN_INVITE_MAIL_TEMPLATE, queueSignInviteEmail } from './sign-mail.ts';
+import { WEBHOOK_DELIVERY_ENQUEUE_WRITE, enqueueSignWebhookEvent } from './webhooks.ts';
+
+export { WEBHOOK_DELIVERY_ENQUEUE_WRITE };
 
 export const SIGN_WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const SIGN_READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -555,6 +558,12 @@ export async function sendDraftEnvelope(
     actorLabel: actorLabelOfCtx(ctx),
     documentSha256: row.source_sha256,
     payloadJson: { routingMode: row.routing_mode, activeSignerIds: dueIds },
+    occurredAt: ctx.now,
+  });
+  await enqueueSignWebhookEvent(ctx, {
+    envelopeId: row.id,
+    eventType: 'sign.envelope.sent',
+    status: 'sent',
     occurredAt: ctx.now,
   });
   ctx.audit({ envelopeId: row.id, routingMode: row.routing_mode, mintedCount: links.length });

@@ -4,15 +4,15 @@
 // never claims more than the repository holds; the README's "How these numbers are counted" says how each one is taken.
 export const STATS = {
   modules: 9,
-  operations: 1544,
-  commands: 963,
-  queries: 581,
-  migrations: 808,
-  testCases: 17000,
+  operations: 1617,
+  commands: 1004,
+  queries: 613,
+  migrations: 823,
+  testCases: 18000,
   invariantSuites: 207,
-  adrs: 44,
+  adrs: 45,
   languages: 2,
   coworkers: 4,
-  mcpTools: 31,
-  typescriptLines: 1110000,
+  mcpTools: 33,
+  typescriptLines: 1150000,
 } as const;

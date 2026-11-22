@@ -16,6 +16,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
+import { SignWebhooksSection } from '../components/sign/sign-webhooks-card.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -1174,6 +1175,7 @@ export function SignSettingsPage() {
           }
         />
       )}
+      {!orgQuery.isPending ? <SignWebhooksSection role={orgQuery.data?.role} /> : null}
     </div>
   );
 }

@@ -93,6 +93,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_attendance.sql',
       // #4448 (HR Stage 5B): the purge restatement that adds onboarding_submission, overtime_request and probation_review restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_hr_stage5b.sql',
+      // #4440 (eSign Slice 5b outbound webhooks): the purge restatement that adds crove_sign.webhook_delivery and crove_sign.webhook restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_webhooks.sql',
     ]);
   });
 });
