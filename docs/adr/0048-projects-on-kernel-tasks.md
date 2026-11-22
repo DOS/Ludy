@@ -1,6 +1,7 @@
 # 0048. Projects on kernel tasks: a module that groups tasks, status columns, org-wide visibility, links from notes, Vy proposes
 
 - Status: Accepted (owner, 2026-11-04: "Đồng ý", Agreed, in the Frontend PO chat; decisions D-1 to D-5 of the plan as recommended). Proposed 2026-11-03. Nothing here is built yet.
+- Superseded / Extended by: [ADR-0056](0056-projects-v2-cycles-columns-dependencies-privacy.md) (`Accepted`, owner decisions 2026-11-22 `A1` and `A2`, [#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7072041736)), which amends decisions `D-2` (adds opt-in `private` projects and `RESTRICTIVE` `private_project_scope` on `crove_kernel.task`, `#2604`) and `D-4` (adds opt-in custom columns mapped to `kernel.task.status`, `#2605`), and specifies [projects-v2.md](../plan/projects-v2.md) (Sprints/Cycles & Story points `#4361`, dependencies `#2601`, timeline `#2599`, and lean time tracking `#2600`).
 - Date: 2026-11-04
 - Deciders: owner (JOY), who asked on 2026-11-03 for a lean, core-first, AI-first plan for projects and a task board and accepted it on 2026-11-04; the engineering choices below by the Claude Code session that wrote the plan
 - Builds on: ADR-0029 (agents, positions, tasks), ADR-0031 (module enablement), ADR-0037 (private notes and to-dos) and the owner's decision of 2026-11-03 on #1677 (each member has their own Vy, which reads exactly what the member can), the agents' write guard (#285), Home's today list (#2383), the AI budget meter (#2382)
@@ -92,7 +93,7 @@ Small teams need to group their work into projects, follow it on a board, and se
 
 ## Revisit when
 
-- The owner asks for private projects or per-project columns.
+- The owner asks for private projects or per-project columns. *(Amended 2026-11-22 by [ADR-0056](0056-projects-v2-cycles-columns-dependencies-privacy.md) and [projects-v2.md](../plan/projects-v2.md).)*
 - Teams exist (`team_lead`), so a project could belong to a team.
 - ADR-0049 (member-scoped Vy) is accepted, which unblocks plan step P7.
 - The Meeting Notes module (ADR-0047, planned in parallel) lands, so tasks can be proposed from a meeting.
