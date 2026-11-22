@@ -16324,6 +16324,7 @@ export const en = {
           get: 'See the wake-up receivers of the AI apps',
           line_check: 'Check which line events a wake-up already sent',
           line_plan: 'Read what a wake-up needs before the lines read for it',
+          minutes_targets: 'Find the AI apps to wake when meeting minutes are published',
           queued: 'Note a wake-up was handed to the queue',
           record: 'Record the result of sending a wake-up',
           rotate_secret: 'Rotate the wake-up secret of an AI app',
