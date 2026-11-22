@@ -86,6 +86,10 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #4398 / #4399 (Projects Public Roadmap, ADR-0057): short-lived hashed email OTP challenges (otp_sha256, rate counters) and sealed subscriber emails (preserving roadmap_vote anonymity):
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_projects.roadmap_otp',
+  'crove_projects.roadmap_subscriber',
   // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
   // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
   'crove_sign.ca_connection',
@@ -125,6 +129,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_projects.project_column',
   'crove_projects.project_cycle',
+  'crove_projects.roadmap_announcement',
+  'crove_projects.roadmap_board',
+  'crove_projects.roadmap_item',
+  'crove_projects.roadmap_otp',
+  'crove_projects.roadmap_subscriber',
+  'crove_projects.roadmap_vote',
   'crove_projects.task_dependency',
   'crove_projects.time_entry',
 ]);
@@ -748,6 +758,30 @@ const projectsProjectRow = (o: { id: string; owner: string }) => ({
   name: `RLS matrix project ${tag()}`,
   owner_user_id: o.owner,
   status: 'active',
+});
+const projectsRoadmapBoardRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  slug: `rls-board-${tag()}`,
+  title: 'RLS matrix roadmap',
+  enabled: 'false',
+  allow_submissions: 'true',
+  allow_voting: 'true',
+  require_moderation: 'true',
+  embed_allowed_origins: '{}',
+  created_by: o.owner,
+});
+const projectsRoadmapItemRow = (o: { id: string; owner: string }, boardId: string) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  board_id: boardId,
+  source: 'internal',
+  moderation_status: 'pending',
+  stage: 'under_review',
+  public_title: 'RLS matrix roadmap item',
+  vote_count: 0,
+  tainted: 'false',
+  created_by: o.owner,
 });
 // eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): parent rows for crove_sign.* factories.
 const signEnvelopeRow = (o: { id: string; owner: string; file: string }) => {
@@ -3465,6 +3499,98 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 2 (#4400, step 0 via #4398, ADR-0057): draft changelog announcement tied to a board.
+  'crove_projects.roadmap_announcement': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          title: 'RLS matrix announcement',
+          body_md: 'RLS matrix announcement body',
+          status: 'draft',
+          linked_item_ids: '{}',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): opt-in public roadmap board; project_id omitted (NULL) and unique slug per row.
+  'crove_projects.roadmap_board': {
+    make: (o) => ({ row: projectsRoadmapBoardRow(o) }),
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): curated or submitted roadmap item bound to a board.
+  'crove_projects.roadmap_item': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: projectsRoadmapItemRow(o, board.id),
+      };
+    },
+  },
+  // Definer-only machinery (Projects Public Roadmap Slice 1, #4399, step 0 via #4398, ADR-0057): short-lived hashed email OTP challenges.
+  'crove_projects.roadmap_otp': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          email: 'voter@rls.test',
+          email_hash: hex64(),
+          ip_hash: hex64(),
+          otp_sha256: hex64(),
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          attempts: 0,
+        },
+      };
+    },
+  },
+  // Definer-only machinery (Projects Public Roadmap Slice 1, #4399, step 0 via #4398, ADR-0057): sealed voter emails for opt-in shipped alerts.
+  'crove_projects.roadmap_subscriber': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          voter_email_hash: hex64(),
+          email_sealed: `crove:s1:${randomUUID()}:rlsMatrixSealed`,
+          notify_on_ship: 'true',
+          unsubscribe_token_sha256: hex64(),
+        },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): anonymous hashed vote on a board item.
+  'crove_projects.roadmap_vote': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      const item = projectsRoadmapItemRow(o, board.id);
+      return {
+        setup: [
+          { table: 'crove_projects.roadmap_board', values: board },
+          { table: 'crove_projects.roadmap_item', values: item },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          item_id: item.id,
+          voter_email_hash: hex64(),
+          notify_on_ship: 'true',
+        },
       };
     },
   },
