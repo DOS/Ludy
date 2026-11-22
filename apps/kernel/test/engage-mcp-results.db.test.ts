@@ -661,13 +661,13 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       ['ads.mcp.pages', {}],
     ];
 
-    it('lets a company grant of an owner or an admin read each of the six', async () => {
+    it('lets a company grant of an owner or an admin read each of them', async () => {
       for (const [name, input] of calls) {
         for (const who of ['owner', 'admin']) await expect(runtime.query(name, input, await as(who, 'company')), `${name} ${who}`).resolves.toBeDefined();
       }
     });
 
-    it('refuses a member-bound grant of a plain member or of a viewer with FORBIDDEN, on each of the six', async () => {
+    it('refuses a member-bound grant of a plain member or of a viewer with FORBIDDEN, on each of them', async () => {
       for (const [name, input] of calls) {
         for (const who of ['member', 'viewer']) {
           const error = await refusal(runtime.query(name, input, await as(who, 'member')));
@@ -687,11 +687,11 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       }
     });
 
-    it('refuses a browser session (no grant) with 403 on each of the six', async () => {
+    it('refuses a browser session (no grant) with 403 on each of them', async () => {
       for (const [name, input] of calls) expect((await refusal(runtime.query(name, input, browser('owner')))).status, name).toBe(403);
     });
 
-    it('refuses a grant without the scope on each of the six', async () => {
+    it('refuses a grant without the scope on each of them', async () => {
       for (const [name, input] of calls) {
         const company = await as('owner', 'company');
         const noScope = { actor: { ...company.actor, mcp: { ...(company.actor.mcp as NonNullable<UserActor['mcp']>), scopes: [] } } satisfies UserActor, orgId: orgs.a };
