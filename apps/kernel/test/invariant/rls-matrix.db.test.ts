@@ -123,6 +123,10 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_projects.project_column',
+  'crove_projects.project_cycle',
+  'crove_projects.task_dependency',
+  'crove_projects.time_entry',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -737,6 +741,7 @@ const notesVersionRow = (o: { id: string; owner: string }, noteId: string) => ({
   body: '',
 });
 // Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
+let projectCycleSeq = 1;
 const projectsProjectRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -3404,6 +3409,43 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_projects.project': {
     make: (o) => ({ row: projectsProjectRow(o) }),
   },
+  // Projects v2 (#2605, step 0 via #4360): per-project custom board columns mapped to canonical task statuses; lands in PENDING_TABLES before its migration.
+  'crove_projects.project_column': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          name: 'RLS matrix column',
+          task_status: 'in_progress',
+          color: 'neutral',
+          sort_key: 'a0',
+        },
+      };
+    },
+  },
+  // Projects v2 (#4361, step 0 via #4360): opt-in sprint/cycle; 'upcoming' avoids the single-active-cycle partial unique index and projectCycleSeq avoids per-project collisions.
+  'crove_projects.project_cycle': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          number: projectCycleSeq++,
+          name: 'Sprint 1',
+          status: 'upcoming',
+          starts_on: '2026-11-23',
+          ends_on: '2026-12-06',
+        },
+      };
+    },
+  },
   'crove_projects.project_member': {
     make: (o) => {
       const project = projectsProjectRow(o);
@@ -3423,6 +3465,56 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // Projects v2 (#2601, step 0 via #4360): directed dependency edge between two distinct tasks in the same project (composite FKs and blocker_task_id <> blocked_task_id).
+  'crove_projects.task_dependency': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const blockerTask = { org_id: o.id, id: randomUUID(), title: 'RLS matrix blocker task', source: 'human', created_by_type: 'user' };
+      const blockedTask = { org_id: o.id, id: randomUUID(), title: 'RLS matrix blocked task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: blockerTask },
+          { table: 'crove_kernel.task', values: blockedTask },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: blockerTask.id } },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: blockedTask.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          blocker_task_id: blockerTask.id,
+          blocked_task_id: blockedTask.id,
+        },
+      };
+    },
+  },
+  // Projects v2 (#2600, step 0 via #4360): completed time entry; non-null ended_at avoids the single-running-timer partial unique index per (org_id, user_id).
+  'crove_projects.time_entry': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix timed task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          task_id: task.id,
+          user_id: o.owner,
+          started_at: '2026-11-22T01:00:00Z',
+          ended_at: '2026-11-22T02:00:00Z',
+          duration_minutes: 60,
+          billable: 'true',
+          hourly_rate: '250000.00',
+        },
       };
     },
   },
