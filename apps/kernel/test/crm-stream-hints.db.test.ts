@@ -178,6 +178,117 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(quiet).toEqual([]);
   });
 
+  // #3423: a transaction that writes many contacts or deals sends a bounded number of hints (the first 20 name their row, the 21st the nil id), not one NOTIFY per row.
+  const MANY = '00000000-0000-0000-0000-000000000000';
+  const bounded = (payloads: string[], orgId: string, type: 'crm_party' | 'crm_deal') => {
+    expect(payloads.length).toBeLessThanOrEqual(21);
+    expect(payloads.every((p) => p.startsWith(`${orgId} ${type} `))).toBe(true);
+    expect(payloads.filter((p) => p.endsWith(` ${MANY}`))).toHaveLength(1);
+    expect(payloads[payloads.length - 1]).toBe(`${orgId} ${type} ${MANY}`);
+    for (const p of payloads) expect(parseHint(p)).toMatchObject({ orgId, hint: { type } });
+  };
+
+  it('bounds the hints of a large contact import: 2000 parties one by one, each with a company link, send at most 21 (#3423)', async () => {
+    const orgId = await org();
+    const payloads = await hintsOf(async (c) => {
+      await c.query('BEGIN');
+      const company = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Công ty nhập') RETURNING id`, [orgId])).rows[0]!.id;
+      for (let i = 0; i < 2000; i++) {
+        const id = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', $2, $3) RETURNING id`, [orgId, `Khách ${i}`, `k${i}@nhap.test`])).rows[0]!.id;
+        await c.query('UPDATE crove_kernel.party SET company_id = $3 WHERE org_id = $1 AND id = $2', [orgId, id, company]);
+      }
+      await c.query('COMMIT');
+    });
+    bounded(payloads, orgId, 'crm_party');
+    // The first hints name a party each, as a single change does (PostgreSQL folds the same payload sent twice in one transaction, so the insert and the link update of one party are one notification); the
+    // rest is the one nil hint. No name, email or phone anywhere.
+    expect(payloads.length).toBeGreaterThanOrEqual(11);
+    expect(new Set(payloads).size).toBe(payloads.length);
+    for (const p of payloads) expect(p).not.toMatch(/Khách|nhap\.test|Công ty/);
+  });
+
+  it('bounds one statement that writes 2000 parties, and the org purge\'s bulk updates (#3423)', async () => {
+    const orgId = await org();
+    const inserted = await hintsOf((c) => c.query(`INSERT INTO crove_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 2000) i`, [orgId]));
+    bounded(inserted, orgId, 'crm_party');
+    // The purge's updates: the contact fields erased, the duplicate mark reset, in bulk.
+    const erased = await hintsOf((c) => c.query(`UPDATE crove_kernel.party SET email = NULL, phone = NULL, address = NULL, name = 'Đã xóa' WHERE org_id = $1`, [orgId]));
+    bounded(erased, orgId, 'crm_party');
+    // A statement that changes nothing a screen shows sends nothing, however many rows it touches.
+    expect(await hintsOf((c) => c.query(`UPDATE crove_kernel.party SET verified_at = now() WHERE org_id = $1`, [orgId]))).toEqual([]);
+  });
+
+  it('keeps a small change exact and starts each transaction at zero: a few rows name themselves, and the count does not carry over (#3423)', async () => {
+    const orgId = await org();
+    let ids: string[] = [];
+    const few = await hintsOf(async (c) => {
+      ids = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 5) i RETURNING id`, [orgId])).rows.map((r) => r.id);
+    });
+    expect([...few].sort()).toEqual(ids.map((id) => `${orgId} crm_party ${id}`).sort());
+    // 30 rows use up the budget of their transaction; the next transaction names its own party again.
+    await hintsOf((c) => c.query(`INSERT INTO crove_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Đợt ' || i FROM generate_series(1, 30) i`, [orgId]));
+    const later = await hintsOf(async (c) => {
+      ids = [(await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Sau đó') RETURNING id`, [orgId])).rows[0]!.id];
+    });
+    expect(later).toEqual([`${orgId} crm_party ${ids[0]}`]);
+  });
+
+  it('bounds the budget per org: two orgs in one transaction each get their own 21 (#3423)', async () => {
+    const [first, second] = [await org(), await org()];
+    const payloads = await hintsOf(async (c) => {
+      await c.query('BEGIN');
+      for (const o of [first, second]) await c.query(`INSERT INTO crove_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 100) i`, [o]);
+      await c.query('COMMIT');
+    });
+    bounded(payloads.filter((p) => p.startsWith(first)), first, 'crm_party');
+    bounded(payloads.filter((p) => p.startsWith(second)), second, 'crm_party');
+    expect(payloads).toHaveLength(42);
+  });
+
+  it('bounds the hints of many deals written by one statement (a member\'s removal clears the owner of each deal), and one deal stays exact (#3423)', async () => {
+    const orgId = await org();
+    const [partyId, stageId] = [await party(orgId), await stage(orgId)];
+    const created = await hintsOf(async () => {
+      await deal(orgId, partyId, stageId, 60);
+    });
+    bounded(created, orgId, 'crm_deal');
+    const updated = await hintsOf((c) => c.query(`UPDATE crove_crm.deal SET sort_key = sort_key || 'x' WHERE org_id = $1`, [orgId]));
+    bounded(updated, orgId, 'crm_deal');
+    const [one] = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_crm.deal WHERE org_id = $1 LIMIT 1', [orgId])).rows);
+    const single = await hintsOf((c) => c.query(`UPDATE crove_crm.deal SET amount = 7 WHERE org_id = $1 AND id = $2`, [orgId, one!.id]));
+    expect(single).toEqual([`${orgId} crm_deal ${one!.id}`]);
+    for (const p of [...created, ...updated, ...single]) expect(p).not.toMatch(/bí mật|987654321|Hợp đồng/i);
+  });
+
+  it('lets nobody but the triggers send a bounded hint: the helper and the statement functions have no caller among the app roles (#3423)', async () => {
+    const callers = await admin(
+      async (c) =>
+        (
+          await c.query<{ fn: string; role: string }>(
+            `SELECT f.fn, r.rolname AS role
+               FROM unnest(ARRAY['crove_kernel.stream_hint_bounded(text, uuid, uuid)', 'crove_kernel.party_stream_hint_insert()', 'crove_kernel.party_stream_hint_update()', 'crove_crm.deal_stream_hint()']) AS f(fn),
+                    pg_catalog.pg_roles r
+              WHERE r.rolname = ANY (ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_prober'])
+                AND pg_catalog.has_function_privilege(r.oid, f.fn, 'EXECUTE')`,
+          )
+        ).rows,
+    );
+    expect(callers).toEqual([]);
+    // A tenant login cannot name an org and send it a hint of its own.
+    const orgId = await org();
+    await expect(
+      admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query(`SELECT crove_kernel.stream_hint_bounded('crm_party', $1::uuid, $1::uuid)`, [orgId]);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      }),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
   it('reaches only the streams of the org the row belongs to', async () => {
     const [mine, other] = [await org(), await org()];
     const [partyId, stageId] = [await party(mine), await stage(mine)];
