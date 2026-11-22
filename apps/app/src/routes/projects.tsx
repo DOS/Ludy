@@ -366,11 +366,26 @@ export function ProjectDetailPage() {
     ...orpc.projects.listCycles.queryOptions({ input: { projectId: id } }),
     enabled: cyclesEnabled,
   });
+  const validMetricsCycleId =
+    selectedMetricsCycleId && cyclesQuery.data
+      ? cyclesQuery.data.cycles.some((c) => c.id === selectedMetricsCycleId)
+        ? selectedMetricsCycleId
+        : ''
+      : selectedMetricsCycleId;
+  useEffect(() => {
+    if (
+      selectedMetricsCycleId &&
+      cyclesQuery.data &&
+      !cyclesQuery.data.cycles.some((c) => c.id === selectedMetricsCycleId)
+    ) {
+      setSelectedMetricsCycleId('');
+    }
+  }, [cyclesQuery.data, selectedMetricsCycleId]);
   const cycleMetricsQuery = useQuery({
     ...orpc.projects.cycleMetrics.queryOptions({
       input: {
         projectId: id,
-        ...(selectedMetricsCycleId ? { cycleId: selectedMetricsCycleId } : {}),
+        ...(validMetricsCycleId ? { cycleId: validMetricsCycleId } : {}),
       },
     }),
     enabled: cyclesEnabled,
@@ -549,7 +564,7 @@ export function ProjectDetailPage() {
           backlogTaskCount={cyclesQuery.data?.backlogTaskCount ?? 0}
           metrics={cycleMetricsQuery.data}
           cycleFilter={cycleFilter}
-          selectedMetricsCycleId={selectedMetricsCycleId}
+          selectedMetricsCycleId={validMetricsCycleId}
           onSelectMetricsCycleId={setSelectedMetricsCycleId}
           onCycleFilterChange={setCycleFilter}
         />

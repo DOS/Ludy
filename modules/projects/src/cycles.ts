@@ -783,6 +783,40 @@ export const projectCycleComplete = defineCommand({
   },
 });
 
+export function assertTaskLeaseFree(
+  checkoutRunId: string | null,
+  lockExpiresAt: Date | string | null,
+  now: Date,
+): void {
+  if (
+    checkoutRunId !== null &&
+    lockExpiresAt !== null &&
+    new Date(lockExpiresAt).getTime() > now.getTime()
+  ) {
+    throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
+  }
+}
+
+async function assertProjectTaskMutable(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  taskId: string,
+  now: Date,
+): Promise<void> {
+  const link = await trx
+    .selectFrom('crove_projects.project_task as pt')
+    .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+    .select(['pt.task_id', 't.checkout_run_id', 't.lock_expires_at'])
+    .where('pt.org_id', '=', orgId)
+    .where('pt.project_id', '=', projectId)
+    .where('pt.task_id', '=', taskId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!link) throw taskNotFound();
+  assertTaskLeaseFree(link.checkout_run_id, link.lock_expires_at, now);
+}
+
 export const projectTaskSetCycle = defineCommand({
   name: 'projects.task.set_cycle',
   input: zProjectTaskSetCycleInput,
@@ -796,15 +830,7 @@ export const projectTaskSetCycle = defineCommand({
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(project);
 
-    const link = await ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-      .select('pt.task_id')
-      .where('pt.org_id', '=', ctx.orgId)
-      .where('pt.project_id', '=', project.id)
-      .where('pt.task_id', '=', input.taskId)
-      .executeTakeFirst();
-    if (!link) throw taskNotFound();
+    await assertProjectTaskMutable(ctx.trx, ctx.orgId, project.id, input.taskId, ctx.now);
 
     if (input.cycleId !== null) {
       const cycle = await loadCycle(ctx.trx, ctx.orgId, project.id, input.cycleId, false);
@@ -842,15 +868,7 @@ export const projectTaskSetPoints = defineCommand({
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(project);
 
-    const link = await ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-      .select('pt.task_id')
-      .where('pt.org_id', '=', ctx.orgId)
-      .where('pt.project_id', '=', project.id)
-      .where('pt.task_id', '=', input.taskId)
-      .executeTakeFirst();
-    if (!link) throw taskNotFound();
+    await assertProjectTaskMutable(ctx.trx, ctx.orgId, project.id, input.taskId, ctx.now);
 
     await ctx.trx
       .updateTable('crove_projects.project_task')

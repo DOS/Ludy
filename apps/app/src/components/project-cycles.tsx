@@ -28,7 +28,7 @@ import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { projectCycleSummaryQueryKey } from '../lib/projects.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
-import { DateInput } from './date-input.tsx';
+import { DateInput, hasInvalidDate } from './date-input.tsx';
 import { refreshProjectQueries } from './project-task-dialog.tsx';
 import { ErrorText, FieldError, fieldControl } from './ui.tsx';
 
@@ -126,8 +126,12 @@ function CycleFormDialog({
   const mutationError = createCycle.error ?? updateCycle.error;
   const nameField = fieldControl(`cycle-form-name-${projectId}`, { error: nameError });
 
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (hasInvalidDate(e.currentTarget)) {
+      setDateError(true);
+      return;
+    }
     const trimmed = name.trim();
     if (!trimmed) {
       setNameError(true);
@@ -659,7 +663,7 @@ function CycleSummaryBlock({
         <Alert className="border-destructive/30 bg-destructive/5">
           <AlertDescription className="flex items-center justify-between gap-2 text-xs text-foreground">
             <span>{t('cycles.summary.loadError')}</span>
-            <Button type="button" size="sm" variant="outline" onClick={() => void query.refetch()}>
+            <Button type="button" size="sm" variant="outline" className="min-h-11 md:min-h-8" onClick={() => void query.refetch()}>
               {t('cycles.summary.retry')}
             </Button>
           </AlertDescription>

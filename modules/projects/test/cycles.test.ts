@@ -7,7 +7,7 @@ import {
   zProjectTaskSetPointsInput,
   zProjectUpdate,
 } from '@ludy/kernel-contract';
-import { computeCycleBurndown } from '../src/cycles.ts';
+import { assertTaskLeaseFree, computeCycleBurndown } from '../src/cycles.ts';
 
 describe('@ludy/mod-projects cycles (#4361)', () => {
   it('validates cycle duration (1..4 weeks), story points (0..100), and carryover union', () => {
@@ -163,5 +163,16 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
     expect(series.every((d) => d.remainingTasks === null && d.remainingPoints === null)).toBe(true);
     expect(series[0]?.idealRemainingPoints).toBe(3);
     expect(series[2]?.idealRemainingPoints).toBe(0);
+  });
+
+  it('refuses cycle or points mutations with 409 TASK_CHECKED_OUT while an active agent lease holds the task', () => {
+    const now = new Date('2027-02-01T10:00:00.000Z');
+    expect(() =>
+      assertTaskLeaseFree('00000000-0000-4000-8000-000000000010', '2027-02-01T10:15:00.000Z', now),
+    ).toThrowError(expect.objectContaining({ code: 'TASK_CHECKED_OUT', status: 409 }));
+    expect(() =>
+      assertTaskLeaseFree('00000000-0000-4000-8000-000000000010', '2027-02-01T10:00:00.000Z', now),
+    ).not.toThrow();
+    expect(() => assertTaskLeaseFree(null, null, now)).not.toThrow();
   });
 });

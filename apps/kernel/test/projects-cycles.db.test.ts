@@ -511,6 +511,33 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     expect(summaryOff.body.ai).toBe('off');
     expect(summaryOff.body.metrics.velocity).toHaveLength(1);
 
+    // Agent checkout holds an active lease: set_cycle and set_points reject with 409 TASK_CHECKED_OUT
+    // until the agent transitions status with its active fence and releases the lease.
+    const { taskId: tBot } = await exec<{ taskId: string }>(owner.userId, orgId, 'projects.task.create', {
+      projectId,
+      title: 'Tác vụ bot kiểm tra TASK_CHECKED_OUT',
+      assigneePositionId: installed.positionId,
+    });
+    const checkedOut = await workerRt.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tBot },
+      { actor: agentActor, orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id }),
+    ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
+    await expect(
+      exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 }),
+    ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
+
+    await workerRt.execute(
+      'kernel.task.set_status',
+      { id: tBot, status: 'done', fence: checkedOut.fence },
+      { actor: agentActor, orgId, idempotencyKey: randomUUID() },
+    );
+    await exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id });
+    await exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 });
+
     // Offboard and backdate audit events so crove_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
     await rt.execute('kernel.org.offboard', { confirmSlug: orgSlug }, { actor: asMfa(owner.userId), orgId });
     const purgeAdmin = new pg.Client({ connectionString: adminUrl });
