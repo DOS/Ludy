@@ -57,6 +57,7 @@ async function generateSummary(
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return result('busy');
 
+  const bottlenecks = source.bottlenecks ?? [];
   const facts: ProjectWeeklyStatusFacts = {
     language,
     projectName: source.project.name,
@@ -74,6 +75,16 @@ async function generateSummary(
       waiting: toTaskFacts(source.tasks.waiting),
       dueNextWeek: toTaskFacts(source.tasks.dueNextWeek),
     },
+    ...(bottlenecks.length > 0
+      ? {
+          bottlenecks: bottlenecks.map((item) => ({
+            title: item.title,
+            status: item.status,
+            dueDay: item.due ? vietnamToday(new Date(item.due)) : null,
+            blockedCount: item.blockedCount,
+          })),
+        }
+      : {}),
   };
 
   try {
@@ -100,12 +111,14 @@ export async function prepareProjectWeeklyStatus(
   language: 'vi' | 'en' = 'vi',
 ): Promise<ProjectWeeklyStatus> {
   const aiOut = await generateSummary(ai, orgId, userId, source, language);
+  const bottlenecks = source.bottlenecks ?? [];
   return {
     ai: aiOut.state,
     project: source.project,
     window: source.window,
     counts: source.counts,
     tasks: source.tasks,
+    ...(bottlenecks.length > 0 ? { bottlenecks } : {}),
     hiddenByEntityCount: source.hiddenByEntityCount,
     sentences: aiOut.sentences,
     truncated: source.truncated,

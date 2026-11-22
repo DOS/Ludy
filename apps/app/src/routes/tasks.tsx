@@ -16,7 +16,9 @@ import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { ProjectDependencies, shouldConfirmBlockedStatusMove, splitTaskDependencies } from '../components/project-dependencies.tsx';
 import { TaskChecklistBadge, TaskChecklistSection } from '../components/task-checklist.tsx';
 import { EditTaskPanel, NewTaskPanel } from '../components/task-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
@@ -333,9 +335,26 @@ export function TaskDetailPage() {
     enabled: projectsInstalled(),
     retry: false,
   });
+  const taskProjectsQuery = useQuery({
+    ...orpc.projects.taskProjects.queryOptions({ input: { taskIds: [id] } }),
+    enabled: projectsInstalled(),
+    retry: false,
+  });
+  const resolvedProjectId =
+    taskProjectsQuery.data?.[0]?.project.id ?? recurrenceQuery.data?.projectId ?? null;
+  const depsQuery = useQuery({
+    ...orpc.projects.listDependencies.queryOptions({ input: { projectId: resolvedProjectId ?? '', taskId: id } }),
+    enabled: projectsInstalled() && resolvedProjectId !== null,
+    retry: false,
+  });
+  const openBlockerCount = useMemo(
+    () => splitTaskDependencies(depsQuery.data?.edges ?? [], id).openBlockerCount,
+    [depsQuery.data?.edges, id],
+  );
   const perms = agentPermissions(org.data?.role);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const editing = editingTaskId === id;
+  const [pendingBlockedStatus, setPendingBlockedStatus] = useState<TaskStatus | null>(null);
   const [body, setBody] = useState('');
   const [commentKey, setCommentKey] = useState(() => crypto.randomUUID());
   const comment = useMutation(orpc.tasks.comment.mutationOptions({ onSuccess: refresh }));
@@ -452,7 +471,14 @@ export function TaskDetailPage() {
               className="mt-1 w-full"
               value={task.status}
               disabled={setStatus.isPending}
-              onChange={(e) => setStatus.mutate({ id: task.id, status: e.target.value as TaskStatus, idempotencyKey: crypto.randomUUID() })}
+              onChange={(e) => {
+                const nextStatus = e.target.value as TaskStatus;
+                if (shouldConfirmBlockedStatusMove(task.status, nextStatus, openBlockerCount)) {
+                  setPendingBlockedStatus(nextStatus);
+                  return;
+                }
+                setStatus.mutate({ id: task.id, status: nextStatus, idempotencyKey: crypto.randomUUID() });
+              }}
             >
               {TASK_STATUSES.map((s) => (
                 <NativeSelectOption key={s} value={s}>
@@ -464,6 +490,34 @@ export function TaskDetailPage() {
         )}
         {setStatus.error && <ErrorText>{errorMessage(setStatus.error)}</ErrorText>}
       </Card>
+
+      {pendingBlockedStatus && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingBlockedStatus(null);
+          }}
+          title={tp('dependencies.moveBlockedTitle')}
+          description={tp('dependencies.moveBlockedDesc', {
+            title: task.title,
+            count: openBlockerCount,
+          })}
+          confirm={tp('dependencies.moveBlockedConfirm')}
+          onConfirm={() => {
+            setStatus.mutate({ id: task.id, status: pendingBlockedStatus, idempotencyKey: crypto.randomUUID() });
+            setPendingBlockedStatus(null);
+          }}
+        />
+      )}
+
+      {resolvedProjectId && (
+        <ProjectDependencies
+          projectId={resolvedProjectId}
+          taskId={task.id}
+          canWrite={perms.tasks && !task.checkedOut}
+          onChanged={refresh}
+        />
+      )}
 
       {projectRecurrence && (
         <TaskRecurrenceControl

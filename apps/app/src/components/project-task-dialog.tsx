@@ -28,6 +28,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
+import { ProjectDependencies } from './project-dependencies.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -298,6 +299,7 @@ export function EditProjectTaskDialog({
   projectId,
   canWrite = true,
   task,
+  projectTasks,
   seats,
   open,
   onOpenChange,
@@ -306,6 +308,7 @@ export function EditProjectTaskDialog({
   projectId: string;
   canWrite?: boolean;
   task: ProjectTaskCard | null;
+  projectTasks?: readonly ProjectTaskCard[] | undefined;
   seats: readonly ProjectSeat[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -480,6 +483,13 @@ export function EditProjectTaskDialog({
             }}
           />
           {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
+          {(task.openBlockerCount ?? 0) > 0 && (
+            <Alert data-testid="edit-task-open-blockers-warning">
+              <AlertDescription>
+                {t('dependencies.moveBlockedWarning', { count: task.openBlockerCount ?? 0 })}
+              </AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
             <Button type="submit" disabled={task.checkedOut} loading={update.isPending}>
@@ -487,6 +497,13 @@ export function EditProjectTaskDialog({
             </Button>
           </DialogFooter>
         </form>
+        <ProjectDependencies
+          projectId={projectId}
+          taskId={task.id}
+          canWrite={canWrite && !task.checkedOut}
+          projectTasks={projectTasks}
+          onChanged={refreshProjectQueries}
+        />
         <TaskRecurrenceControl
           projectId={projectId}
           taskId={task.id}

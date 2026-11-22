@@ -29,6 +29,7 @@ export interface ProjectTodayRow {
   holderUserId: string | null;
   holderAgentId: string | null;
   positionStatus: string | null;
+  blockedCount?: number;
 }
 
 interface PrioritizedItem {
@@ -58,7 +59,7 @@ function overdueTitle(isMine: boolean, overdueDays: number): TodayTitle {
 
 /**
  * Pure projection of visible active-project open task rows into Home TodayItems for one actor.
- * Each task emits at most one item for its highest-urgency signal (overdue -> waiting stuck -> vacant seat -> due today).
+ * Each task emits at most one item for its highest-urgency signal (overdue -> bottleneck blocker -> waiting stuck -> vacant seat -> due today).
  * Viewers cannot manage projects or update task state, so they receive no actionable items.
  */
 export function projectsTodayItemsOf(
@@ -91,7 +92,9 @@ export function projectsTodayItemsOf(
     const updatedMs = toDate(row.updatedAt).getTime();
     const createdMs = toDate(row.createdAt).getTime();
 
+    const blockedCount = row.blockedCount ?? 0;
     const isOverdue = dueDate !== null && dueMs !== null && dueMs < nowMs;
+    const isBottleneck = blockedCount > 0;
     const isWaitingStuck =
       isProjectOwner && row.status === 'waiting' && !Number.isNaN(updatedMs) && updatedMs <= stuckCutoffMs;
     // An unassigned root task (assignee_position_id IS NULL) or archived seat is not a vacant seat.
@@ -121,10 +124,26 @@ export function projectsTodayItemsOf(
           href,
         },
       });
+    } else if (isBottleneck) {
+      prioritized.push({
+        priority: 1,
+        sortMs: -blockedCount,
+        taskId: row.taskId,
+        projectId: row.projectId,
+        item: {
+          kind: 'flag',
+          app: 'projects',
+          id: `bottleneck:${row.taskId}`,
+          title: { key: 'projects.blockingTasks', params: { count: blockedCount } },
+          severity: 'warn',
+          ...(dueDate && dueMs !== null ? { dueAt: dueDate.toISOString() } : {}),
+          href,
+        },
+      });
     } else if (isWaitingStuck) {
       const waitingDays = Math.floor((nowMs - updatedMs) / DAY_MS);
       prioritized.push({
-        priority: 1,
+        priority: 2,
         sortMs: updatedMs,
         taskId: row.taskId,
         projectId: row.projectId,
@@ -139,7 +158,7 @@ export function projectsTodayItemsOf(
       });
     } else if (isVacant) {
       prioritized.push({
-        priority: 2,
+        priority: 3,
         sortMs: dueMs ?? (Number.isNaN(createdMs) ? 0 : createdMs),
         taskId: row.taskId,
         projectId: row.projectId,
@@ -154,7 +173,7 @@ export function projectsTodayItemsOf(
       });
     } else if (isDueToday) {
       prioritized.push({
-        priority: 3,
+        priority: 4,
         sortMs: dueMs,
         taskId: row.taskId,
         projectId: row.projectId,
@@ -235,6 +254,7 @@ export const projectsToday = defineQuery({
     const isVacantSeatExpr = sql<boolean>`t.assignee_position_id IS NOT NULL AND pos.holder_user_id IS NULL AND pos.holder_agent_id IS NULL AND pos.status IS DISTINCT FROM 'archived'`;
 
     const isOverdueExpr = sql<boolean>`t.due IS NOT NULL AND t.due < ${now} AND ((${isMineExpr}) OR (${isProjectOwnerExpr}))`;
+    const isBottleneckExpr = sql<boolean>`dep.blocked_count > 0 AND ((${isMineExpr}) OR (${isProjectOwnerExpr}))`;
     const isWaitingStuckExpr = sql<boolean>`(${isProjectOwnerExpr}) AND t.status = 'waiting' AND t.updated_at <= ${stuckCutoff}`;
     const isVacantItemExpr = sql<boolean>`(${isProjectOwnerExpr}) AND (${isVacantSeatExpr})`;
     const isDueTodayExpr = sql<boolean>`(${isMineExpr}) AND t.due IS NOT NULL AND t.due >= ${now} AND t.due < ${vnTomorrowStart}`;
@@ -250,11 +270,24 @@ export const projectsToday = defineQuery({
       .leftJoin('crove_kernel.position as pos', (join) =>
         join.onRef('pos.org_id', '=', 't.org_id').onRef('pos.id', '=', 't.assignee_position_id'),
       )
+      .leftJoin(
+        sql<{ blocked_count: number }>`LATERAL (
+          SELECT pg_catalog.count(*)::int AS blocked_count
+            FROM crove_projects.task_dependency d
+            JOIN crove_kernel.task bt
+              ON bt.org_id = d.org_id AND bt.id = d.blocked_task_id
+           WHERE d.org_id = pt.org_id
+             AND d.project_id = pt.project_id
+             AND d.blocker_task_id = t.id
+             AND bt.status NOT IN ('done', 'cancelled')
+        )`.as('dep'),
+        (join) => join.onTrue(),
+      )
       .where('pt.org_id', '=', ctx.orgId)
       .where('p.is_template', '=', false)
       .where('p.status', '=', 'active')
       .where('t.status', 'not in', ['done', 'cancelled'])
-      .where(sql<boolean>`((${isOverdueExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`);
+      .where(sql<boolean>`((${isOverdueExpr}) OR (${isBottleneckExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`);
 
     const rows = await base
       .select([
@@ -269,18 +302,27 @@ export const projectsToday = defineQuery({
         'pos.holder_user_id as holderUserId',
         'pos.holder_agent_id as holderAgentId',
         'pos.status as positionStatus',
+        sql<number>`dep.blocked_count`.as('blockedCount'),
       ])
       .orderBy(
         sql`CASE
           WHEN ${isOverdueExpr} THEN 0
-          WHEN ${isWaitingStuckExpr} THEN 1
-          WHEN ${isVacantItemExpr} THEN 2
-          ELSE 3
+          WHEN ${isBottleneckExpr} THEN 1
+          WHEN ${isWaitingStuckExpr} THEN 2
+          WHEN ${isVacantItemExpr} THEN 3
+          ELSE 4
+        END ASC`,
+      )
+      .orderBy(
+        sql`CASE
+          WHEN NOT (${isOverdueExpr}) AND (${isBottleneckExpr}) THEN -dep.blocked_count
+          ELSE 0
         END ASC`,
       )
       .orderBy(
         sql`CASE
           WHEN ${isOverdueExpr} THEN t.due
+          WHEN ${isBottleneckExpr} THEN COALESCE(t.due, t.created_at)
           WHEN ${isWaitingStuckExpr} THEN t.updated_at
           WHEN ${isVacantItemExpr} THEN COALESCE(t.due, t.created_at)
           ELSE t.due

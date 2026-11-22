@@ -27,7 +27,9 @@ import {
   projectTemplateCreate,
   projectTemplateList,
 } from './templates.ts';
+import { projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 
+export { hasDependencyPath, projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 export { projectsManifest } from './manifest.ts';
 export { projectsToday } from './today.ts';
 export {
@@ -105,6 +107,8 @@ export const projectsCommands = [
   projectTaskRecurrenceSet,
   projectTaskRecurrenceClear,
   projectRecurringAdvance,
+  projectDependencyAdd,
+  projectDependencyRemove,
 ];
 
 export const projectsQueries = [
@@ -121,4 +125,5 @@ export const projectsQueries = [
   tasksFromSourceSeats,
   projectTemplateList,
   projectTaskRecurrenceGet,
+  projectDependencyList,
 ];

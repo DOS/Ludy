@@ -28,6 +28,15 @@ export const projectsManifest = defineModule({
         'added_by',
         'created_at',
       ]),
+      task_dependency: columns([
+        'org_id',
+        'id',
+        'project_id',
+        'blocker_task_id',
+        'blocked_task_id',
+        'created_by',
+        'created_at',
+      ]),
     },
   },
   // Access comes from the base role (every member and viewer reads; owners, admins and members create projects and add

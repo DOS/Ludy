@@ -275,4 +275,39 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       ),
     ).rejects.toBeInstanceOf(AiBudgetExhaustedError);
   });
+
+  it('grounds deterministic bottleneck titles and blockedCount values in prompt and summaryNumbersOutside (#2601)', () => {
+    const facts = sampleFacts({
+      bottlenecks: [{ title: 'Chốt hợp đồng khung', status: 'in_progress', dueDay: '2026-11-18', blockedCount: 4 }],
+    });
+    const prompt = projectWeeklyStatusPrompt(facts);
+    expect(prompt).toContain('Top bottleneck blockers:');
+    expect(prompt).toContain('Chốt hợp đồng khung');
+    expect(prompt).toContain('blocks 4 open tasks');
+
+    const ok = checkProjectWeeklyStatus(facts, {
+      sentences: [
+        'Tuần này dự án hoàn thành 2 việc gồm Chốt bảng giá.',
+        'Điểm nghẽn lớn nhất là Chốt hợp đồng khung đang chặn 4 việc mở.',
+        'Tuần tới có 2 việc đến hạn gồm Chạy thử chiến dịch.',
+      ],
+    });
+    expect(ok).toEqual({
+      kind: 'summary',
+      sentences: [
+        'Tuần này dự án hoàn thành 2 việc gồm Chốt bảng giá.',
+        'Điểm nghẽn lớn nhất là Chốt hợp đồng khung đang chặn 4 việc mở.',
+        'Tuần tới có 2 việc đến hạn gồm Chạy thử chiến dịch.',
+      ],
+    });
+
+    const invented = checkProjectWeeklyStatus(facts, {
+      sentences: [
+        'Tuần này dự án hoàn thành 2 việc gồm Chốt bảng giá.',
+        'Điểm nghẽn lớn nhất là Chốt hợp đồng khung đang chặn 9 việc mở.',
+        'Tuần tới có 2 việc đến hạn gồm Chạy thử chiến dịch.',
+      ],
+    });
+    expect(invented).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: ['9'] });
+  });
 });

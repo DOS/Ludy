@@ -16,6 +16,7 @@ const TITLES: Array<{ key: string; params: Record<string, string | number> }> = 
   { key: 'projects.ownerTaskOverdueDays', params: { days: 4 } },
   { key: 'projects.vacantSeat', params: {} },
   { key: 'projects.waitingStuck', params: { days: 3 } },
+  { key: 'projects.blockingTasks', params: { count: 2 } },
   { key: 'projects.more', params: { count: 5 } },
 ];
 
