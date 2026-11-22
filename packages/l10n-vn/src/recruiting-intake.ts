@@ -237,18 +237,29 @@ const EXCLUDED_SECTION_HEADINGS = new Set([
 const INLINE_EDUCATION_RE =
   /\b(?:dai hoc|cao dang|trung cap|cu nhan|thac si|tien si|tot nghiep|hoc sinh|sinh vien|university|college|bachelor|master|phd|high school|academy)\b/i;
 
+function isHeadingLeadingTrimChar(ch: string): boolean {
+  return ch === '-' || ch === '*' || ch === '•' || ch === '#' || /\s/.test(ch);
+}
+
+function isHeadingTrailingTrimChar(ch: string): boolean {
+  return ch === ':' || ch === '-' || /\s/.test(ch);
+}
+
 function normalizeHeadingCandidate(raw: string): string {
-  return foldDiacritics(raw)
-    .replace(/^[-*•#\s]+/, '')
-    .replace(/[:-]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const folded = foldDiacritics(raw);
+  let start = 0;
+  let end = folded.length;
+  while (start < end && isHeadingLeadingTrimChar(folded.charAt(start))) start += 1;
+  while (end > start && isHeadingTrailingTrimChar(folded.charAt(end - 1))) end -= 1;
+  return folded.slice(start, end).replace(/\s+/g, ' ').trim();
 }
 
 function classifyExperienceSectionLine(rawLine: string): 'employment' | 'excluded' | null {
-  const whole = normalizeHeadingCandidate(rawLine);
-  if (EMPLOYMENT_SECTION_HEADINGS.has(whole)) return 'employment';
-  if (EXCLUDED_SECTION_HEADINGS.has(whole)) return 'excluded';
+  if (rawLine.length <= 120) {
+    const whole = normalizeHeadingCandidate(rawLine);
+    if (EMPLOYMENT_SECTION_HEADINGS.has(whole)) return 'employment';
+    if (EXCLUDED_SECTION_HEADINGS.has(whole)) return 'excluded';
+  }
   const colonIdx = rawLine.indexOf(':');
   if (colonIdx > 0 && colonIdx <= 40) {
     const prefix = normalizeHeadingCandidate(rawLine.slice(0, colonIdx));

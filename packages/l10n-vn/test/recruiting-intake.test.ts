@@ -136,5 +136,15 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
       ['2016 - 2020: Cử nhân Đại học Kinh tế', '2021 - 2024: Chuyên viên nhân sự'].join('\n'),
     );
     expect(headerlessMixed.yearsExperience).toBe(3);
+
+    const longEduLine = extractCvFieldsDeterministically([`Education: ${'a'.repeat(200)}`, '2018 - 2022'].join('\n'));
+    expect(longEduLine.yearsExperience).toBeNull();
+
+    const startMs = performance.now();
+    const hostileColons = extractCvFieldsDeterministically(`${':'.repeat(200_000)}x`);
+    const elapsedMs = performance.now() - startMs;
+    expect(hostileColons.yearsExperience).toBeNull();
+    expect(hostileColons.email).toBeNull();
+    expect(elapsedMs).toBeLessThan(500);
   });
 });
