@@ -25,7 +25,8 @@ BEGIN
     RETURN;
   END IF;
   v_key := 'crove.hint_' || p_type || '_' || pg_catalog.replace(p_org::text, '-', '');
-  v_n := COALESCE(NULLIF(pg_catalog.current_setting(v_key, true), '')::integer, 0);
+  -- A value that is not a plain count (a placeholder set by raw SQL) counts as none, so a write never fails on it.
+  v_n := COALESCE(CASE WHEN pg_catalog.current_setting(v_key, true) ~ '^[0-9]{1,6}$' THEN pg_catalog.current_setting(v_key, true)::integer END, 0);
   IF v_n < 20 THEN
     PERFORM pg_catalog.pg_notify('crove_stream', p_org::text || ' ' || p_type || ' ' || p_id::text);
   ELSIF v_n = 20 THEN
@@ -43,8 +44,9 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_hint record;
 BEGIN
-  -- Only as the statement trigger below: AFTER INSERT with the new rows as `new_rows`.
-  IF TG_LEVEL <> 'STATEMENT' OR TG_OP <> 'INSERT' OR TG_NARGS <> 0 THEN
+  -- Only as the statement trigger below: AFTER INSERT with the new rows as `new_rows`, named ('crm_party', 'id') like every hint trigger, which the invariant suite reads (its scan finds the triggers that send on
+  -- crove_stream by their function's text, so the word stays here).
+  IF TG_LEVEL <> 'STATEMENT' OR TG_OP <> 'INSERT' OR TG_NARGS <> 2 OR TG_ARGV[0] <> 'crm_party' OR TG_ARGV[1] <> 'id' THEN
     RAISE EXCEPTION 'STREAM_HINT_INVALID' USING ERRCODE = '22023';
   END IF;
   FOR v_hint IN
@@ -65,7 +67,8 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_hint record;
 BEGIN
-  IF TG_LEVEL <> 'STATEMENT' OR TG_OP <> 'UPDATE' OR TG_NARGS <> 0 THEN
+  -- Named ('crm_party', 'id'); crove_stream is the channel (see the insert function).
+  IF TG_LEVEL <> 'STATEMENT' OR TG_OP <> 'UPDATE' OR TG_NARGS <> 2 OR TG_ARGV[0] <> 'crm_party' OR TG_ARGV[1] <> 'id' THEN
     RAISE EXCEPTION 'STREAM_HINT_INVALID' USING ERRCODE = '22023';
   END IF;
   FOR v_hint IN
@@ -86,8 +89,8 @@ REVOKE ALL ON FUNCTION crove_kernel.party_stream_hint_update() FROM PUBLIC, crov
 DROP TRIGGER IF EXISTS stream_hint ON crove_kernel.party;
 CREATE TRIGGER stream_hint AFTER INSERT ON crove_kernel.party
   REFERENCING NEW TABLE AS new_rows
-  FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.party_stream_hint_insert();
+  FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.party_stream_hint_insert('crm_party', 'id');
 DROP TRIGGER IF EXISTS stream_hint_update ON crove_kernel.party;
 CREATE TRIGGER stream_hint_update AFTER UPDATE ON crove_kernel.party
   REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
-  FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.party_stream_hint_update();
+  FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.party_stream_hint_update('crm_party', 'id');

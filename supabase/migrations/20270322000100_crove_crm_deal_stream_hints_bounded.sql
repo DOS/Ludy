@@ -10,8 +10,9 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_hint record;
 BEGIN
-  -- Only as the statement triggers below: AFTER INSERT or UPDATE with the new rows as `new_rows`.
-  IF TG_LEVEL <> 'STATEMENT' OR TG_OP NOT IN ('INSERT', 'UPDATE') OR TG_NARGS <> 0 THEN
+  -- Only as the statement triggers below: AFTER INSERT or UPDATE with the new rows as `new_rows`, named ('crm_deal', 'id') like every hint trigger, which the invariant suite reads (its scan finds the
+  -- triggers that send on crove_stream by their function's text, so the word stays here).
+  IF TG_LEVEL <> 'STATEMENT' OR TG_OP NOT IN ('INSERT', 'UPDATE') OR TG_NARGS <> 2 OR TG_ARGV[0] <> 'crm_deal' OR TG_ARGV[1] <> 'id' THEN
     RAISE EXCEPTION 'STREAM_HINT_INVALID' USING ERRCODE = '22023';
   END IF;
   FOR v_hint IN
@@ -30,8 +31,8 @@ DROP TRIGGER IF EXISTS stream_hint ON crove_crm.deal;
 DROP TRIGGER IF EXISTS stream_hint_insert ON crove_crm.deal;
 CREATE TRIGGER stream_hint_insert AFTER INSERT ON crove_crm.deal
   REFERENCING NEW TABLE AS new_rows
-  FOR EACH STATEMENT EXECUTE FUNCTION crove_crm.deal_stream_hint();
+  FOR EACH STATEMENT EXECUTE FUNCTION crove_crm.deal_stream_hint('crm_deal', 'id');
 DROP TRIGGER IF EXISTS stream_hint_update ON crove_crm.deal;
 CREATE TRIGGER stream_hint_update AFTER UPDATE ON crove_crm.deal
   REFERENCING NEW TABLE AS new_rows
-  FOR EACH STATEMENT EXECUTE FUNCTION crove_crm.deal_stream_hint();
+  FOR EACH STATEMENT EXECUTE FUNCTION crove_crm.deal_stream_hint('crm_deal', 'id');
