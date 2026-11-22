@@ -2197,7 +2197,7 @@ export const vi = {
     qrPrintBtn: 'In poster QR',
     qrCopyLink: 'Sao chép liên kết',
     qrCopied: 'Đã sao chép',
-    anomaliesTitle: 'Bất thường & Trợ lý Ly',
+    anomaliesTitle: 'Bất thường & Tóm tắt từ cộng sự Ly',
     anomaliesEmpty: 'Không phát hiện bất thường chấm công nào trong tháng {month}.',
     anomaliesAskLy: 'Tóm tắt bất thường với Ly',
     anomaliesAiOff: 'Kết quả quy tắc xác định (AI đang tắt hoặc hết hạn mức).',

@@ -183,8 +183,8 @@ function containsForbiddenPii(text: string, forbidden: readonly string[]): boole
 
 function attendanceInstructions(lang: 'vi' | 'en'): string {
   return lang === 'vi'
-    ? 'Bạn là Ly, trợ lý chấm công trong Crove. Chỉ tóm tắt ngắn gọn các bất thường dựa trên dữ liệu đã ẩn danh (E1, E2...). Không bịa số liệu, không tự động chỉnh công hay duyệt lương, trả về văn bản thuần tiếng Việt.'
-    : 'You are Ly, the attendance coworker in Crove. Concisely summarize the anonymized attendance anomalies (E1, E2...). Never invent numbers, never claim to modify attendance or approve payroll, plain text only.';
+    ? 'Bạn là Ly, cộng sự chấm công trong Ludy. Chỉ tóm tắt ngắn gọn các bất thường dựa trên dữ liệu đã ẩn danh (E1, E2...). Không bịa số liệu, không tự động chỉnh công hay duyệt lương, trả về văn bản thuần tiếng Việt.'
+    : 'You are Ly, the attendance coworker in Ludy. Concisely summarize the anonymized attendance anomalies (E1, E2...). Never invent numbers, never claim to modify attendance or approve payroll, plain text only.';
 }
 
 /** Creates the metered OpenAI-compatible generator for attendance anomaly narration (`hr.attendance_anomaly`). */
