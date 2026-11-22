@@ -11,7 +11,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { meetingsCommands, meetingsQueries, vnDay } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { runMeetingsSeriesNudgeSweep } from '../src/meetings-series-nudge.ts';
 
@@ -42,6 +42,12 @@ suite('the series nudge (#3542)', () => {
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const iso = (offsetMinutes: number) => new Date(Date.now() + offsetMinutes * 60_000).toISOString();
+  // Pick a start time whose +10m shift stays inside (now, now + 30m) and on the same Asia/Ho_Chi_Minh calendar day (even across 23:30-23:59+07).
+  const sameVnDayStartsAt = (nowMs = Date.now()) => {
+    // +15m..+25m shares one Vietnam day everywhere except ~23:34-23:46+07; +2m..+12m stays before midnight there.
+    const offsetMinutes = vnDay(new Date(nowMs + 14 * 60_000)) === vnDay(new Date(nowMs + 26 * 60_000)) ? 15 : 2;
+    return new Date(nowMs + offsetMinutes * 60_000).toISOString();
+  };
   const sweep = () => runMeetingsSeriesNudgeSweep({ runtime: worker, workerDb });
 
   // A member's calendar connection and an event of theirs, starting `startMinutes` from now, in `series` (a series id as the sweep keeps it).
@@ -243,14 +249,15 @@ suite('the series nudge (#3542)', () => {
     const series = randomUUID();
     const earlier = await meeting(-300, ['lan'], series);
     await item(earlier, 'Việc mở', { task: 'todo' });
-    const shared = await calendarEvent('lan', 20, series);
-    await calendarEvent('lan', 20, series);
+    const startsAt = sameVnDayStartsAt();
+    const shared = await calendarEvent('lan', 15, series, { startsAt });
+    await calendarEvent('lan', 15, series, { startsAt });
     // The same start in a second row of the same connection stands for the same event in a second calendar.
-    await calendarEvent('lan', 20, series, { connectionId: shared, startsAt: iso(20) });
+    await calendarEvent('lan', 15, series, { connectionId: shared, startsAt });
     expect(await sweep()).toMatchObject({ found: 1, sent: 1 });
     // The occurrence moves by 10 minutes and the cache follows: the same notice, not a second.
     await sqlAdmin(`UPDATE crove_meetings.calendar_agenda SET starts_at = starts_at + interval '10 minutes', ends_at = ends_at + interval '10 minutes' WHERE org_id = $1`, [orgId]);
-    expect(await sweep()).toMatchObject({ sent: 0 });
+    expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     expect(await notices('lan')).toHaveLength(1);
   });
 
