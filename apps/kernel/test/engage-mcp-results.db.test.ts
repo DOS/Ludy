@@ -650,6 +650,53 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     });
   });
 
+  describe('kernel.mcp.seats', () => {
+    interface SeatsView {
+      seats: Array<{ id: string; title: string }>;
+      truncated: boolean;
+    }
+    const seats = async (who = 'owner', org = orgs.a, input: unknown = {}) => runtime.query<SeatsView>('kernel.mcp.seats', input, await as(who, 'company', org));
+    const seat = async (orgId: string, title: string, status = 'active', role = 'finance.chief_accountant') => {
+      const id = randomUUID();
+      await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, status, job_description) VALUES ($1, $2, $3, 'finance', $4, $5, '{"secret":"never leaves"}'::jsonb)`, [orgId, id, title, role, status]);
+      return id;
+    };
+
+    it('lists the org chart\'s active seats as an id and a plain-line title, and nothing else: not a paused or archived seat, not another org\'s, no holder, role, job description or reporting line', async () => {
+      const first = await seat(orgs.a, `Kế toán${'\u200b'} trưởng\n${CANARY}`);
+      const second = await seat(orgs.a, 'Trưởng phòng bán hàng');
+      const paused = await seat(orgs.a, 'Vị trí tạm dừng', 'paused');
+      const archived = await seat(orgs.a, 'Vị trí đã lưu trữ', 'archived');
+      const foreign = await seat(orgs.b, 'Vị trí của tổ chức khác');
+      const got = await seats();
+      expect(Object.keys(got).sort()).toEqual(['seats', 'truncated']);
+      expect(got.truncated).toBe(false);
+      expect(got.seats.map((s) => s.id)).toEqual([first, second]);
+      for (const s of got.seats) expect(Object.keys(s).sort()).toEqual(['id', 'title']);
+      // The title is one plain line (the invisible and line-breaking characters are gone); the people's own words stay data.
+      expect(got.seats.map((s) => s.title)).toEqual([`Kế toán trưởng ${CANARY}`, 'Trưởng phòng bán hàng']);
+      const json = JSON.stringify(got);
+      expect(json).not.toMatch(HIDDEN);
+      for (const id of [paused, archived, foreign]) expect(json).not.toContain(id);
+      for (const word of ['never leaves', 'finance', 'chief_accountant', 'holder', 'reports', 'role']) expect(json, word).not.toContain(word);
+      // An admin reads the same; the other org's owner reads its own seat only.
+      expect(await seats('admin')).toEqual(got);
+      expect((await seats('foreign', orgs.b)).seats.map((s) => s.id)).toEqual([foreign]);
+    });
+
+    it('answers an empty list for an org with no seat, and takes an empty input only', async () => {
+      expect(await seats('owner', orgs.c)).toEqual({ seats: [], truncated: false });
+      for (const bad of [{ orgId: orgs.b }, { limit: 1 }, { status: 'paused' }]) expect((await refusal(seats('owner', orgs.a, bad))).status, JSON.stringify(bad)).toBeLessThan(500);
+    });
+
+    it('stops at 50 seats and says there are more', async () => {
+      for (let i = 0; i < 51; i += 1) await seat(orgs.d, `Vị trí ${String(i).padStart(2, '0')}`);
+      const got = await seats('owner', orgs.d);
+      expect(got.seats).toHaveLength(50);
+      expect(got.truncated).toBe(true);
+    });
+  });
+
   describe('who may read', () => {
     const calls: Array<[string, unknown]> = [
       ['social.mcp.metrics_summary', {}],
@@ -661,6 +708,8 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       ['ads.mcp.launches', {}],
       // Added by #4367: the org's active Facebook Pages, the ids a campaign draft names.
       ['ads.mcp.pages', {}],
+      // Added by #4369: the org chart's active seats, the ids a proposed follow-up task names.
+      ['kernel.mcp.seats', {}],
     ];
 
     it('lets a company grant of an owner or an admin read each of them', async () => {

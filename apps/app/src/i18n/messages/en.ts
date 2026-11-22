@@ -16583,6 +16583,7 @@ export const en = {
         party_create: 'Lets a connected AI app add a contact',
         conversation: 'Let an AI app read one inbox conversation with its messages',
         conversations: 'Let an AI app list the inbox conversations',
+        seats: 'Let an AI app read the org chart\'s active seats, by id and title',
         about: 'Show an AI app the organization name and its own connection',
         engage_reads_notify: 'Tell, once, a person who connected an AI app earlier that it now also reads the Inbox, bookings and ads',
         grant: {

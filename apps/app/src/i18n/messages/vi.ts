@@ -16583,6 +16583,7 @@ export const vi = {
         party_create: 'Cho ứng dụng AI thêm một liên hệ',
         conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
         conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
+        seats: 'Cho ứng dụng AI xem các vị trí đang hoạt động trong sơ đồ tổ chức, theo mã và tên',
         about: 'Cho ứng dụng AI xem tên tổ chức và quyền kết nối của nó',
         engage_reads_notify: 'Báo một lần cho người đã kết nối ứng dụng AI từ trước rằng ứng dụng đó nay còn đọc được Hộp thư, lịch hẹn và quảng cáo',
         grant: {
