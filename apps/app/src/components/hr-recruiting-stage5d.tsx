@@ -32,6 +32,12 @@ import { client, errorMessage, extractRecruitingCv, orpc } from '../lib/api.ts';
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
+function isForbiddenQueryError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { status?: unknown; code?: unknown; data?: { code?: unknown } };
+  return err.status === 403 || err.code === 'FORBIDDEN' || err.data?.code === 'FORBIDDEN';
+}
+
 export function CvIntakePanel({
   openings,
   defaultOpeningId,
@@ -63,7 +69,7 @@ export function CvIntakePanel({
   });
 
   return (
-    <Card className="mb-6 block border-dashed border-proposal/70 p-4" data-testid="hr-cv-intake-panel">
+    <Card className="mb-6 block min-w-0 border-dashed border-proposal/70 p-4" data-testid="hr-cv-intake-panel">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -137,11 +143,15 @@ export function FunnelAnalyticsSection({
 
   const data = analyticsOverride ?? query.data;
 
+  if (analyticsOverride === undefined && query.error && isForbiddenQueryError(query.error)) {
+    return null;
+  }
+
   return (
-    <section className="mb-6" data-testid="hr-recruiting-analytics">
+    <section className="mb-6 min-w-0" data-testid="hr-recruiting-analytics">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-base font-medium text-foreground">{t('analytics.title')}</h2>
             <Badge variant="outline">{t('analytics.zeroLlmBadge')}</Badge>
           </div>
@@ -154,39 +164,39 @@ export function FunnelAnalyticsSection({
       ) : analyticsOverride === undefined && query.error ? (
         <ErrorText>{errorMessage(query.error)}</ErrorText>
       ) : !data ? null : (
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Card className="p-3">
+        <div className="min-w-0 space-y-4">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.totalCandidates')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-total">
                 {data.totalCandidates}
               </p>
             </Card>
-            <Card className="p-3">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.activeCandidates')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-active">
                 {data.activeCandidates}
               </p>
             </Card>
-            <Card className="p-3">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.hiredCount')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-hired">
                 {data.hiredCount}
               </p>
             </Card>
-            <Card className="p-3">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.avgTimeToHire')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-avg-days">
                 {data.timeToHire.avgDays !== null ? t('analytics.daysUnit', { days: data.timeToHire.avgDays }) : t('analytics.noData')}
               </p>
             </Card>
-            <Card className="p-3">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.medianTimeToHire')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-median-days">
                 {data.timeToHire.medianDays !== null ? t('analytics.daysUnit', { days: data.timeToHire.medianDays }) : t('analytics.noData')}
               </p>
             </Card>
-            <Card className="p-3">
+            <Card className="min-w-0 p-3">
               <p className="text-xs text-muted-foreground">{t('analytics.erasedExcluded')}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-erased">
                 {data.erasedExcludedCount}
@@ -194,8 +204,8 @@ export function FunnelAnalyticsSection({
             </Card>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div>
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <div className="min-w-0">
               <h3 className="mb-2 text-sm font-medium text-foreground">{t('analytics.funnelTitle')}</h3>
               <DataTable
                 head={[
@@ -221,7 +231,7 @@ export function FunnelAnalyticsSection({
               </DataTable>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <h3 className="mb-2 text-sm font-medium text-foreground">{t('analytics.sourcesTitle')}</h3>
               <DataTable
                 head={[
@@ -298,10 +308,10 @@ export function EngageInvitePanel({
   };
 
   return (
-    <section className="mt-4 rounded-md border border-dashed border-proposal/60 bg-proposal/5 p-3" data-testid="hr-engage-invite-panel">
+    <section className="mt-4 min-w-0 rounded-md border border-dashed border-proposal/60 bg-proposal/5 p-3" data-testid="hr-engage-invite-panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium text-foreground">{t('engageInvite.title')}</h3>
             <Badge variant="proposal">{t('cvExtract.proposalBadge')}</Badge>
           </div>
@@ -309,12 +319,12 @@ export function EngageInvitePanel({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <div className="space-y-1">
+      <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-3">
+        <div className="min-w-0 space-y-1">
           <Label htmlFor="hr-engage-channel-select">{t('engageInvite.channelLabel')}</Label>
           <NativeSelect
             id="hr-engage-channel-select"
-            className="max-md:min-h-11"
+            className="min-w-0 max-w-full max-md:min-h-11"
             value={channel}
             onChange={(e) => setChannel(e.target.value as HrEngageChannel)}
             data-testid="hr-engage-channel"
@@ -326,11 +336,11 @@ export function EngageInvitePanel({
             ))}
           </NativeSelect>
         </div>
-        <div className="space-y-1">
+        <div className="min-w-0 space-y-1">
           <Label htmlFor="hr-engage-interviewer">{t('interview.interviewer')}</Label>
           <NativeSelect
             id="hr-engage-interviewer"
-            className="max-md:min-h-11"
+            className="min-w-0 max-w-full max-md:min-h-11"
             value={interviewerUserId}
             onChange={(e) => setInterviewerUserId(e.target.value)}
           >

@@ -40,7 +40,7 @@ import {
   parseVaultKey,
   sha256Hex,
 } from '@ludy/kernel-runtime';
-import { hrCommands, hrQueries } from '@ludy/mod-hr';
+import { hrCommands, hrQueries, inferSuggestedSource } from '@ludy/mod-hr';
 import { memberMeter } from '../src/ai-meter.ts';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
@@ -290,7 +290,18 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
   async function drainQueuedCvJobs(orgId: string) {
     const events = await withAdmin((c) =>
       c.query<{ id: string; payload: Omit<HrCvExtractJob, 'orgId'> }>(
-        `SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'hr.recruiting.cv_extract_queued' ORDER BY id ASC`,
+        `SELECT e.id, e.payload
+         FROM crove_kernel.outbox_event e
+         WHERE e.org_id = $1
+           AND e.type = 'hr.recruiting.cv_extract_queued'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM crove_kernel.audit_event a
+             WHERE a.org_id = e.org_id
+               AND a.command = 'hr.recruiting.cv_extract.complete'
+               AND a.detail ->> 'jobId' = e.payload ->> 'jobId'
+           )
+         ORDER BY e.id ASC`,
         [orgId],
       ),
     );
@@ -597,12 +608,24 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     ) as unknown as ConversationReader;
 
     const httpAiOn = makeHttp(o, { elsewhere: otherOrg, conversationReader: reader, hrCvWaitMs: 6000 });
-    // Wait until the outbox event commits, then drain it via worker + real crove-extract so POST returns 200 ready deterministically
+    // Wait until the new DOCX outbox_pending event commits, then drain it via worker + real crove-extract so POST returns 200 ready deterministically
     const workerDrainPromise = (async () => {
       for (let i = 0; i < 60; i += 1) {
         const pending = await withAdmin((c) =>
           c.query<{ count: string }>(
-            `SELECT count(*)::text AS count FROM crove_kernel.outbox WHERE org_id = $1 AND event_name = 'hr.recruiting.cv_extract_queued' AND delivered_at IS NULL`,
+            `SELECT pg_catalog.count(*)::text AS count
+             FROM crove_kernel.outbox_event e
+             JOIN crove_kernel.outbox_pending p
+               ON p.org_id = e.org_id AND p.event_id = e.id
+             WHERE e.org_id = $1
+               AND e.type = 'hr.recruiting.cv_extract_queued'
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM crove_kernel.audit_event a
+                 WHERE a.org_id = e.org_id
+                   AND a.command = 'hr.recruiting.cv_extract.complete'
+                   AND a.detail ->> 'jobId' = e.payload ->> 'jobId'
+               )`,
             [o.orgId],
           ),
         );
@@ -666,6 +689,13 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     // Unsupported file type refused with 415
     const txtRefused = await httpAiOff.postCv(o.admin, new TextEncoder().encode('hello world'), 'cv.txt', 'text/plain');
     expect(txtRefused.status).toBe(415);
+
+    // URL host matching never falls for query-string / subdomain spoofing
+    expect(inferSuggestedSource('Profile: https://fb.com/candidate-page')).toBe('facebook');
+    expect(inferSuggestedSource('Profile: https://sub.facebook.com/candidate')).toBe('facebook');
+    expect(inferSuggestedSource('Profile: https://evil.example/?ref=fb.com&next=facebook.com')).toBe('direct');
+    expect(inferSuggestedSource('Profile: https://zalo.me/0912345678')).toBe('zalo_oa');
+    expect(inferSuggestedSource('Profile: https://www.topcv.vn/xem-cv/abc')).toBe('job_board');
   });
 
   it('generates slot-backed Vietnamese Engage interview invite drafts and refuses erased/non-admin callers', async () => {

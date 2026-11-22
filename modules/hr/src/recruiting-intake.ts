@@ -101,14 +101,29 @@ export async function extractCvTextInSandbox(deps: {
   return { kind: result.kind, text };
 }
 
-function inferSuggestedSource(text: string): (typeof HR_CANDIDATE_SOURCES)[number] {
-  const lower = text.toLowerCase();
-  if (lower.includes('zalo')) return 'zalo_oa';
-  if (lower.includes('facebook') || lower.includes('fb.com')) return 'facebook';
-  if (lower.includes('vietnamworks') || lower.includes('topcv') || lower.includes('itviec') || lower.includes('linkedin')) {
+function hostnameMatches(hostname: string, domains: readonly string[]): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.+$/, '');
+  return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
+}
+
+export function inferSuggestedSource(text: string): (typeof HR_CANDIDATE_SOURCES)[number] {
+  const urlMatches = text.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
+  for (const rawUrl of urlMatches) {
+    try {
+      const host = new URL(rawUrl).hostname;
+      if (hostnameMatches(host, ['zalo.me'])) return 'zalo_oa';
+      if (hostnameMatches(host, ['facebook.com', 'fb.com', 'm.me'])) return 'facebook';
+      if (hostnameMatches(host, ['vietnamworks.com', 'topcv.vn', 'itviec.com', 'linkedin.com'])) return 'job_board';
+    } catch {
+      // Ignore malformed URLs found inside untrusted CV plain text.
+    }
+  }
+  if (/\bzalo\b/i.test(text)) return 'zalo_oa';
+  if (/\bfacebook\b/i.test(text)) return 'facebook';
+  if (/\b(?:vietnamworks|topcv|itviec|linkedin)\b/i.test(text)) {
     return 'job_board';
   }
-  if (lower.includes('giới thiệu') || lower.includes('referral')) return 'referral';
+  if (/\b(?:giới\s+thiệu|referral)\b/iu.test(text)) return 'referral';
   return 'direct';
 }
 

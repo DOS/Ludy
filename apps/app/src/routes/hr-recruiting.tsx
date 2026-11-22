@@ -1341,6 +1341,7 @@ export function HrRecruitingPage() {
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const owner = org.data?.role === 'owner';
+  const isManager = org.data?.role === 'owner' || org.data?.role === 'admin';
   const [showClosed, setShowClosed] = useState(false);
   const [selectedOpeningId, setSelectedOpeningId] = useState('');
   const [selectedStage, setSelectedStage] = useState<HrCandidateStage | ''>('');
@@ -1349,6 +1350,7 @@ export function HrRecruitingPage() {
   const [editingOpening, setEditingOpening] = useState<HrOpeningView | null>(null);
   const [uploadingCv, setUploadingCv] = useState(false);
   const [cvDraftProposal, setCvDraftProposal] = useState<HrCvExtractDraft | null>(null);
+  const [cvDraftSeq, setCvDraftSeq] = useState(0);
   const [addingCandidate, setAddingCandidate] = useState(false);
   const [openCandidateId, setOpenCandidateId] = useState<string | null>(null);
 
@@ -1448,6 +1450,7 @@ export function HrRecruitingPage() {
           onDraftReady={(draft) => {
             setUploadingCv(false);
             setCvDraftProposal(draft);
+            setCvDraftSeq((n) => n + 1);
             setAddingCandidate(true);
           }}
           onClose={() => setUploadingCv(false)}
@@ -1455,7 +1458,7 @@ export function HrRecruitingPage() {
       )}
       {addingCandidate && (
         <CandidateForm
-          key={cvDraftProposal ? `cv:${cvDraftProposal.extractedChars}:${cvDraftProposal.displayName ?? ''}` : 'blank'}
+          key={cvDraftProposal ? `cv:${cvDraftSeq}` : 'blank'}
           openings={openings}
           {...(cvDraftProposal ? { cvDraft: cvDraftProposal } : {})}
           {...(selectedOpeningId ? { defaultOpeningId: selectedOpeningId } : {})}
@@ -1469,9 +1472,9 @@ export function HrRecruitingPage() {
         <CandidateDetailPanel key={selectedCandidate.id} candidate={selectedCandidate} openings={openings} departments={departments} owner={owner} onClose={() => setOpenCandidateId(null)} />
       )}
 
-      <FunnelAnalyticsSection {...(selectedOpeningId ? { selectedOpeningId } : {})} />
+      {isManager && <FunnelAnalyticsSection {...(selectedOpeningId ? { selectedOpeningId } : {})} />}
 
-      <section className="mb-6">
+      <section className="mb-6 min-w-0">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-medium text-foreground">{t('openingsTitle')}</h2>
           <label className="flex items-center gap-1 text-xs text-subtle-foreground">
@@ -1531,11 +1534,11 @@ export function HrRecruitingPage() {
         )}
       </section>
 
-      <section>
+      <section className="min-w-0">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-medium text-foreground">{t('candidatesTitle')}</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <NativeSelect value={selectedOpeningId} onChange={(e) => setSelectedOpeningId(e.target.value)} aria-label={t('fields.opening')}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <NativeSelect className="min-w-0 max-w-full" value={selectedOpeningId} onChange={(e) => setSelectedOpeningId(e.target.value)} aria-label={t('fields.opening')}>
               <NativeSelectOption value="">{t('allOpenings')}</NativeSelectOption>
               {openings.map((o) => (
                 <NativeSelectOption key={o.id} value={o.id}>
@@ -1543,7 +1546,7 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <NativeSelect value={selectedStage} onChange={(e) => setSelectedStage(e.target.value as HrCandidateStage | '')} aria-label={t('fields.stage')}>
+            <NativeSelect className="min-w-0 max-w-full" value={selectedStage} onChange={(e) => setSelectedStage(e.target.value as HrCandidateStage | '')} aria-label={t('fields.stage')}>
               <NativeSelectOption value="">{t('allStages')}</NativeSelectOption>
               {HR_CANDIDATE_STAGES.map((st) => (
                 <NativeSelectOption key={st} value={st}>
@@ -1551,7 +1554,7 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <NativeSelect className="max-md:min-h-11" value={selectedSource} onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')} aria-label={t('sourceLabel')} data-testid="hr-filter-source">
+            <NativeSelect className="min-w-0 max-w-full max-md:min-h-11" value={selectedSource} onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')} aria-label={t('sourceLabel')} data-testid="hr-filter-source">
               <NativeSelectOption value="">{t('allSources')}</NativeSelectOption>
               {HR_CANDIDATE_SOURCES.map((src) => (
                 <NativeSelectOption key={src} value={src}>
