@@ -760,6 +760,7 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', ['note', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -803,6 +804,13 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
+    await ctx.trx
+      .updateTable('crove_hr.attendance_log')
+      .set({ note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('note', 'is not', null)
+      .execute();
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
@@ -815,7 +823,7 @@ export const employeeErase = defineCommand({
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'birth date', 'bank', 'work permit expiry', 'department', 'job title', 'dependents names', 'leave request notes'],
+      cleared: ['name', 'address', 'birth date', 'bank', 'work permit expiry', 'department', 'job title', 'dependents names', 'leave request notes', 'attendance log notes'],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },

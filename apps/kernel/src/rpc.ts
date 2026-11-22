@@ -66,6 +66,12 @@ import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
 import { explainPayrollDiff, explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
+import {
+  generateAttendanceAnomaliesBrief,
+  type AttendanceAnomaliesAi,
+  type AttendanceAnomaliesPorts,
+} from './attendance-coworker-ai.ts';
+import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
@@ -547,6 +553,10 @@ export function createRpcHandler(
     reader: conversationReader?.recruitingBrief ? { recruitingBrief: conversationReader.recruitingBrief.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
+  const attendanceAnomaliesAi: AttendanceAnomaliesAi = {
+    reader: conversationReader?.attendanceAnomalies ? { attendanceAnomalies: conversationReader.attendanceAnomalies.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -786,6 +796,11 @@ export function createRpcHandler(
       runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang, includeNotes }, { actor, orgId }),
     record: (candidateId, aiReason, includeNotes) =>
       runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason, includeNotes }, { actor, orgId }),
+  });
+  const attendanceAnomaliesPorts = (orgId: string, actor: UserActor): AttendanceAnomaliesPorts => ({
+    read: (input) => runtime.query<HrAttendanceAnomaliesSnapshot>('hr.attendance.anomalies.read', input, { actor, orgId }),
+    record: (month, legalEntityId, aiReason) =>
+      runtime.execute('hr.attendance.anomalies.audit', { month, legalEntityId, aiReason }, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1188,6 +1203,24 @@ export function createRpcHandler(
           list: os.hr.self.payslips.list.handler(hrQuery('hr.self.payslips.list')),
           get: os.hr.self.payslips.get.handler(hrQuery('hr.self.payslip.get')),
         },
+        attendance: {
+          checkIn: os.hr.self.attendance.checkIn.handler(hrCommand('hr.self.attendance.check_in')),
+          checkOut: os.hr.self.attendance.checkOut.handler(hrCommand('hr.self.attendance.check_out')),
+          list: os.hr.self.attendance.list.handler(hrQuery('hr.self.attendance.list')),
+        },
+      },
+      attendance: {
+        list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
+        adjust: os.hr.attendance.adjust.handler(hrCommand('hr.attendance.adjust')),
+        qr: {
+          rotate: os.hr.attendance.qr.rotate.handler(hrCommand('hr.attendance.qr.rotate')),
+        },
+        anomaliesBrief: os.hr.attendance.anomaliesBrief.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            generateAttendanceAnomaliesBrief(attendanceAnomaliesAi, attendanceAnomaliesPorts(orgId, actor), orgId, actor.userId, input),
+          ),
+        ),
+        rollupToPayroll: os.hr.attendance.rollupToPayroll.handler(hrCommand('hr.attendance.rollup_to_payroll')),
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),

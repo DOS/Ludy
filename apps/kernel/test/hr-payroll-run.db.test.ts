@@ -926,7 +926,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.job_opening', 'hr.candidate', 'meetings.glossary_term']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.job_opening', 'hr.candidate', 'meetings.glossary_term']);
     // No department, bank template, leave request, or recruiting data was saved in this org: those tables are served, and empty.
     const departments = await read(rt, 'hr.department', asUser(o.owner), o.orgId);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
@@ -937,10 +937,11 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const templates = await read(rt, 'hr.payroll_bank_template', asUser(o.owner), o.orgId);
     const leaveEntries = await read(rt, 'hr.payroll_leave_entry', asUser(o.owner), o.orgId);
     const leaveRequests = await read(rt, 'hr.leave_request', asUser(o.owner), o.orgId);
+    const attendanceLogs = await read(rt, 'hr.attendance_log', asUser(o.owner), o.orgId);
     const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
     const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
     const glossary = await read(rt, 'meetings.glossary_term', asUser(o.owner), o.orgId);
-    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, openings.length, candidates.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0]);
+    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, openings.length, candidates.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -956,7 +957,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
-    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(audits.map((a) => a.outcome)).toEqual(OWNER_RUN_EXPORT_TABLE_NAMES.map(() => 'ok'));
     // Each row names the table read (not personal data) and says the read was started.
     expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
     expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
@@ -1027,7 +1028,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.leave_request' || table === 'meetings.glossary_term' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'meetings.glossary_term' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);
@@ -1298,6 +1299,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(#2720 N2) pins expected runtime grants across all crove_hr tables so accidental DELETE or table UPDATE grants fail', async () => {
     const EXPECTED_HR_TABLE_GRANTS: Record<string, readonly string[]> = {
+      attendance_log: ['INSERT', 'SELECT'],
+      attendance_qr_config: ['INSERT', 'SELECT'],
       candidate: ['INSERT', 'SELECT'],
       department: ['INSERT', 'SELECT'],
       job_opening: ['INSERT', 'SELECT'],

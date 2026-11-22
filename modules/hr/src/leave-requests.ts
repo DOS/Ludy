@@ -32,7 +32,7 @@ import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 import { employerName, figuresOfLine, LINE_COLUMNS, type StoredLine } from './payroll-run.ts';
 
-const STAFF_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export const STAFF_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const LEAVE_REQUEST = hrManifest.tables.crove_hr.leave_request;
 
 const selfNotLinked = () =>
@@ -44,7 +44,7 @@ const invalidState = (message: string) =>
 const selfApprovalBlocked = () =>
   new DomainError('HR_LEAVE_REQUEST_SELF_APPROVAL', 403, 'Bạn không thể tự duyệt hoặc từ chối đơn xin nghỉ của chính mình');
 
-async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
+export async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
   return trx
     .selectFrom('crove_hr.payroll_employee as e')
     .leftJoin('ludy_kernel.legal_entity as le', (j) => j.onRef('le.org_id', '=', 'e.org_id').onRef('le.id', '=', 'e.legal_entity_id'))

@@ -11,6 +11,13 @@ export const hrManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_hr: {
+      // Daily attendance check-in/out logs (#4447 Stage 5C): note is optional free-text cleared on employee erasure.
+      attendance_log: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'work_date', 'checked_in_at', 'checked_out_at', 'check_in_method', 'worked_minutes', 'status', 'created_by', 'created_at', 'updated_at'],
+        { note: 'pii' },
+      ),
+      // Office attendance QR secret hashes per legal entity (#4447 Stage 5C): SHA-256 secret hashes, owner/admin only.
+      attendance_qr_config: columns(['org_id', 'id', 'legal_entity_id', 'active', 'created_by', 'created_at', 'updated_at'], { qr_secret_hash: 'sensitive' }),
       // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
       candidate: columns(
         ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'erased_at', 'created_by', 'created_at', 'updated_at'],
@@ -79,6 +86,9 @@ export const hrManifest = defineModule({
   // Its entities (#1656): the records its commands name as their audit target. The employment rows are written by the commands of their employee and are never a target; their
   // table is append-only with the purge-aware guard (a closing org's purge deletes them), not reject_mutation, which is what audit: append_only stands for.
   entities: [
+    // Daily attendance logs and office QR config (#4447 Stage 5C).
+    { type: 'hr.attendance_log', table: 'attendance_log', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.attendance_qr_config', table: 'attendance_qr_config', legalEntityScoped: true, audit: 'command' },
     // Lightweight recruiting candidates and job openings (#3425): edited by owners and admins, audited as commands.
     { type: 'hr.candidate', table: 'candidate', legalEntityScoped: true, audit: 'command' },
     // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.

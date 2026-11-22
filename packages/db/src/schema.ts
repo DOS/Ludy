@@ -1280,6 +1280,24 @@ export type HrLeaveRequestTable = Refine<
   },
   'legal_entity_id'
 >;
+export const HR_ATTENDANCE_METHODS = ['web', 'qr', 'manual'] as const;
+export type HrAttendanceMethod = (typeof HR_ATTENDANCE_METHODS)[number];
+export const HR_ATTENDANCE_STATUSES = ['present', 'half_day', 'missing_checkout', 'adjusted'] as const;
+export type HrAttendanceStatus = (typeof HR_ATTENDANCE_STATUSES)[number];
+export type HrAttendanceLogTable = Refine<
+  G.HrAttendanceLogTable,
+  {
+    check_in_method: Generated<HrAttendanceMethod>;
+    status: Generated<HrAttendanceStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrAttendanceQrConfigTable = Refine<
+  G.HrAttendanceQrConfigTable,
+  { legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1665,6 +1683,8 @@ type Refined = Tables<{
   'crove_crm.sales_order': CrmSalesOrderTable;
   'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
+  'crove_hr.attendance_log': HrAttendanceLogTable;
+  'crove_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;

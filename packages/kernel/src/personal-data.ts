@@ -549,6 +549,8 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
   'crove_hr.leave_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text leave reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.attendance_log.note': { kind: 'other', handling: 'erase', reason: "An employee's or HR admin's free-text note on a daily attendance log; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.attendance_qr_config.qr_secret_hash': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Org/entity-scoped SHA-256 hash of the office attendance QR check-in token; identifies an office entity only, never an individual' },
   'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },

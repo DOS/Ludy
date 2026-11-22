@@ -141,6 +141,7 @@ export * from './calendar.ts';
 export * from './crm.ts';
 export * from './hr.ts';
 export * from './hr-leave.ts';
+export * from './hr-attendance.ts';
 export * from './hr-payroll.ts';
 export * from './hr-declarations.ts';
 export * from './hr-recruiting.ts';

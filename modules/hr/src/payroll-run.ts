@@ -532,7 +532,7 @@ export const runRecalculate = defineCommand({
   },
 });
 
-const LINE_UPDATE_COLUMNS = [
+export const LINE_UPDATE_COLUMNS = [
   'employment_id', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'updated_at',
 ] as const;
 
@@ -630,7 +630,7 @@ export const lineInputsSet = defineCommand({
   },
 });
 
-async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly string[]) {
+export async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly string[]) {
   const run = await loadRun(ctx, runId);
   if (run.status !== 'draft') throw notDraft();
   if (lineIds !== undefined && lineIds.length === 0) {
@@ -651,7 +651,7 @@ async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly string
   return { payRun: run, locked, byLineId, people };
 }
 
-function resolveDraftLineTarget(
+export function resolveDraftLineTarget(
   byLineId: ReadonlyMap<string, { id: string; employee_id: string; kind: 'pay' | 'adjustment'; inputs: unknown }>,
   people: ReadonlyMap<string, Person>,
   lineId: string,
@@ -664,7 +664,7 @@ function resolveDraftLineTarget(
   return { line, person, existing: parseInputs(line.inputs) };
 }
 
-async function applyBatchLineUpdates(
+export async function applyBatchLineUpdates(
   ctx: Ctx,
   runId: string,
   updates: readonly { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[],
