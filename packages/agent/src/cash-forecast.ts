@@ -113,8 +113,10 @@ const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u
 // Advice to do something with money or with a payment, in either language: telling the owner to act, to move or transfer money, to borrow, to delay, chase or collect, to cut, to avoid. A word that
 // only describes the figures ("lowest", "thấp nhất") is not here. Matched on whole words, case folded; a hit refuses the sentence.
 const ADVICE = [
-  /(?<![\p{L}])(?:nên|hãy|đừng|khuyên|khuyến nghị|đề nghị|đề xuất|gợi ý|cần phải|vay|hoãn|trì hoãn|tránh|cắt giảm|đòi nợ|thu hồi|đẩy nhanh|chuyển tiền|chuyển khoản|xoay)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|move money|pay later|pay earlier)(?![\p{L}])/iu,
+  // "khoản vay" (a loan) names what the forecast leaves out, so "vay" counts only when it is not that noun.
+  /(?<![\p{L}])(?:nên|hãy|đừng|khuyên|khuyến nghị|đề nghị|đề xuất|gợi ý|cần|cần phải|xem xét|cân nhắc|chuẩn bị|huy động|thương lượng|bổ sung|giảm chi|hoãn|trì hoãn|tránh|cắt giảm|đòi nợ|thu hồi|đẩy nhanh|chuyển tiền|chuyển khoản|xoay)(?![\p{L}])/iu,
+  /(?<!khoản\s)(?<![\p{L}])vay(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|borrow more|take out a loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|make sure|prepare|plan to|may want to|worth|accelerate|speed up|negotiate|keep an eye|monitor|move money|pay later|pay earlier)(?![\p{L}])/iu,
 ];
 // A promise or a certainty about the future: "will", "sẽ", "chắc chắn", "guaranteed". A forecast is expected, never promised.
 const PROMISE = [

@@ -4,8 +4,9 @@
 // open purchase invoices, the approved supplier payments and the tax due dates (markers, no amount) are what it reads; payroll, insurance, tax payments and recurring costs are not in it, and the answer says so.
 //
 // Cost (performance is on the review checklist): four aggregate reads on crove_finance.journal_line by (org_id, legal_entity_id, account_code prefix, entry_date <= day 0), the same predicates the overview and the
-// customers list already run, then the invoices of the parties found. Every read is bounded: at most CASH_FORECAST_PARTIES_MAX customers and as many suppliers (the largest balances first), CASH_FORECAST_DOCUMENTS_MAX
-// purchase invoices (newest first) and CASH_FORECAST_PAYMENTS_MAX approved payments. Beyond a bound the forecast is partial and says so (`truncated`); it never reads without a limit.
+// customers list already run, then the invoices of the parties found. The reads are bounded: at most CASH_FORECAST_PARTIES_MAX customers and as many suppliers (the largest balances first), CASH_FORECAST_DOCUMENTS_MAX
+// purchase invoices (newest first) and CASH_FORECAST_PAYMENTS_MAX approved payments; the sales invoices are all those of the customers read (loadCustomers has no row limit on them, so they are bounded by the customer bound).
+// Beyond a bound the forecast is partial and says so (`truncated`). An invoice dated after day 0 is not laid under the balance of day 0.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
@@ -71,7 +72,7 @@ async function payableParties(ctx: QueryContext, entity: string, today: string, 
 }
 
 // The purchase invoices still in the books (not voided) of these suppliers, newest first, at most `limit`.
-async function purchaseDocuments(ctx: QueryContext, entity: string, partyIds: readonly string[], limit: number): Promise<Array<SaleInvoice & { partyId: string }>> {
+async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string, partyIds: readonly string[], limit: number): Promise<Array<SaleInvoice & { partyId: string }>> {
   if (partyIds.length === 0) return [];
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
@@ -83,6 +84,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, partyIds: re
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'purchase')
+    .where('d.invoice_date', '<=', asOf)
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(partyIds)})`)
     .orderBy('d.invoice_date', 'desc')
@@ -145,8 +147,9 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   if (found.length > CASH_FORECAST_PARTIES_MAX) truncated = true;
   const suppliers = found.slice(0, CASH_FORECAST_PARTIES_MAX);
   const supplierIds = suppliers.flatMap((s) => (s.partyId === null ? [] : [s.partyId]));
-  const documents = await purchaseDocuments(ctx, entity, supplierIds, CASH_FORECAST_DOCUMENTS_MAX + 1);
-  if (documents.length > CASH_FORECAST_DOCUMENTS_MAX) truncated = true;
+  const probed = await purchaseDocuments(ctx, entity, today, supplierIds, CASH_FORECAST_DOCUMENTS_MAX + 1);
+  if (probed.length > CASH_FORECAST_DOCUMENTS_MAX) truncated = true;
+  const documents = probed.slice(0, CASH_FORECAST_DOCUMENTS_MAX);
   const approved = await approvedPayments(ctx, entity, today, currency, CASH_FORECAST_PAYMENTS_MAX + 1);
   if (approved.length > CASH_FORECAST_PAYMENTS_MAX) truncated = true;
   const payables: Array<{ dueDate: string; amountDue: string }> = [];

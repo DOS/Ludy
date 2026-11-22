@@ -97,6 +97,23 @@ describe('checkCashForecastSentence', () => {
     expect(en(may)).toEqual({ kind: 'sentence', text: may });
   });
 
+  it('does not take the loans a forecast leaves out for advice to borrow', () => {
+    const text = 'Dự báo chưa gồm lương, thuế phải nộp và khoản vay; số dư thấp nhất dự kiến đến sau khoản phải trả người bán lớn nhất.';
+    expect(vi(text)).toEqual({ kind: 'sentence', text });
+    const english = 'The forecast leaves out payroll, tax payments and loans; the lowest balance is expected after the largest payment to a supplier.';
+    expect(en(english)).toEqual({ kind: 'sentence', text: english });
+    expect(vi('Số dư thấp nhất dự kiến đến sau một khoản phải trả; có thể vay thêm.')).toEqual({ kind: 'none', code: 'ADVICE' });
+  });
+
+  it('refuses the softer advice a model drifts to: needing to act, considering, preparing, negotiating, monitoring', () => {
+    for (const text of ['Số dư thấp nhất dự kiến đến sau một khoản phải trả, cần xem lại các khoản thu.', 'Số dư thấp nhất dự kiến đến sau một khoản phải trả; xem xét thương lượng với người bán.', 'Số dư thấp nhất dự kiến đến sau một khoản phải trả; chuẩn bị nguồn tiền.']) {
+      expect(vi(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
+    }
+    for (const text of ['The lowest balance is expected after a payment to a supplier; make sure the receipts come in.', 'The lowest balance is expected after a payment to a supplier; keep an eye on the receipts.', 'The lowest balance is expected after a payment; it may want to be watched, worth a look.']) {
+      expect(en(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
+    }
+  });
+
   it('refuses a link', () => {
     expect(en('The lowest balance is expected after a payment, see example.com for the details.')).toEqual({ kind: 'none', code: 'LINK' });
   });

@@ -82,7 +82,7 @@ export interface Customer {
 }
 
 export interface CustomerBounds {
-  // The balance counts only the entries dated up to this day (the cash forecast reads the books as of its day 0); left out, every entry counts.
+  // The balance counts only the entries, and the invoices laid under it only the ones, dated up to this day (the cash forecast reads the books as of its day 0); left out, everything counts.
   entriesTo?: string;
   // At most this many customers are read, the largest balances first (the cash forecast bounds its reads); their invoices are all read.
   customers: number;
@@ -128,6 +128,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .where('d.direction', '=', 'sale')
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
+    .$if(bounds?.entriesTo !== undefined, (q) => q.where('d.invoice_date', '<=', bounds?.entriesTo ?? ''))
     .execute();
   const byParty = new Map(parties.map((p) => [p.id, p]));
   // What the org and each customer set (#2488, slice 3): the terms date the invoices, a pause keeps the customer out of the list, the draft and the send.

@@ -55,7 +55,7 @@ export const zCashForecast = z.object({
   // Day 0 and the day the opening cash is booked up to.
   asOf: zLocalDate,
   openingCash: zMoney,
-  // True while the entity's books hold no entry at all: the screen then points at the first steps instead of a flat line.
+  // True while the entity's books hold no entry at all: the card is then not drawn (the overview points at the first steps instead).
   empty: z.boolean(),
   // Day 0 to day 90, one balance each, in date order (91 entries).
   series: z.array(zCashForecastDay).length(CASH_FORECAST_DAYS + 1),
