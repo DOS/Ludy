@@ -143,6 +143,10 @@ describe('personal-data registry: payroll people (#2530)', () => {
     expect(Object.keys(SEALED_COLUMNS).sort()).toEqual([
       'crove_finance.supplier_bank_account.account_holder_sealed',
       'crove_finance.supplier_bank_account.number_sealed',
+      'crove_hr.onboarding_submission.bank_account_sealed',
+      'crove_hr.onboarding_submission.insurance_number_sealed',
+      'crove_hr.onboarding_submission.national_id_sealed',
+      'crove_hr.onboarding_submission.tax_code_sealed',
       'crove_hr.payroll_employee.bank_account_sealed',
       'crove_hr.payroll_employee.insurance_number_sealed',
       'crove_hr.payroll_employee.national_id_sealed',

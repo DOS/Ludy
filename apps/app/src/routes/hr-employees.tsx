@@ -50,7 +50,9 @@ import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type La
 import { BankSelect } from '../components/bank-select.tsx';
 import { HrContractNd337Notice, HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
+import { HrProbationPanel } from '../components/hr-probation-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
+import { HrOnboardingReviewQueue, HrOvertimeReviewQueue } from '../components/hr-stage5b-queues.tsx';
 import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
@@ -1829,6 +1831,7 @@ export function Detail({
   const [confirmErase, setConfirmErase] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [severanceOpen, setSeveranceOpen] = useState(false);
+  const [probationOpen, setProbationOpen] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
     onSuccess: async () => {
@@ -2185,9 +2188,13 @@ export function Detail({
             <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
               {t('severance.toggle')}
             </Button>
+            <Button variant="outline" size="sm" onClick={() => setProbationOpen((v) => !v)} data-testid="hr-probation-toggle">
+              {t('probation.toggle')}
+            </Button>
           </div>
           {leaveOpen && <LeaveBalancePanel employeeId={e.id} />}
           {severanceOpen && <SeveranceCalculatorPanel employeeId={e.id} employeeEndedOn={e.endedOn} />}
+          {probationOpen && <HrProbationPanel employeeId={e.id} />}
         </div>
       )}
 
@@ -2517,7 +2524,13 @@ export function HrEmployeesPage() {
           })}
         </DataTable>
       )}
-      {manager && <LeaveApprovalQueue />}
+      {manager && (
+        <>
+          <LeaveApprovalQueue />
+          <HrOnboardingReviewQueue />
+          <HrOvertimeReviewQueue />
+        </>
+      )}
     </>
   );
 }

@@ -1088,6 +1088,15 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       await refresh();
     },
   });
+  const syncOvertime = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncOvertime({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
@@ -1115,6 +1124,16 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 data-testid="hr-sync-leave"
               >
                 {t('syncLeave')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncOvertime.isPending}
+                disabled={editing !== null}
+                onClick={() => syncOvertime.mutate()}
+                data-testid="hr-sync-overtime"
+              >
+                {t('syncOvertime')}
               </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
                 {t('thirteenthMonth.toggle')}
@@ -1158,6 +1177,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
         />
       )}
       {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
+      {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -1233,7 +1253,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" disabled={syncLeave.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}

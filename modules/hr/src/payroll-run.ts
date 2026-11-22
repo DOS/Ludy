@@ -36,6 +36,8 @@ import {
   type HrCheck,
   type HrLineFlag,
   type HrLineView,
+  type HrOvertimeDayKind,
+  type HrOvertimeDayType,
   type HrPayrollInputs,
   type HrPayslip,
   type HrRuleView,
@@ -320,6 +322,86 @@ export async function loadBhxhLeaveByEmployee(
   return result;
 }
 
+type PayrollOvertimeEntry = { dayKind: HrOvertimeDayKind; night: boolean; hours: string };
+
+const OVERTIME_DAY_KIND_BY_TYPE: Record<HrOvertimeDayType, HrOvertimeDayKind> = {
+  weekday: 'normal_day',
+  weekend: 'weekly_rest_day',
+  holiday: 'holiday',
+};
+
+const DAY_KIND_ORDER: Record<HrOvertimeDayKind, number> = {
+  normal_day: 0,
+  weekly_rest_day: 1,
+  holiday: 2,
+};
+
+function formatOvertimeHours(total: Decimal): string {
+  const normalized = total.toDecimalPlaces(2).toFixed();
+  if (total.isNegative() || total.greaterThan('999.99') || !/^\d{1,3}(\.\d{1,2})?$/.test(normalized)) {
+    throw new DomainError('HR_OVERTIME_HOURS_OUT_OF_RANGE', 422, 'Tổng số giờ làm thêm trong tháng vượt quá giới hạn định dạng (0 - 999.99)');
+  }
+  return normalized.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+}
+
+function sameOvertimeEntries(a: readonly PayrollOvertimeEntry[], b: readonly PayrollOvertimeEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((entry, idx) => {
+    const other = b[idx];
+    return (
+      other !== undefined &&
+      entry.dayKind === other.dayKind &&
+      entry.night === other.night &&
+      money(entry.hours).equals(money(other.hours))
+    );
+  });
+}
+
+export async function loadApprovedOvertimeByEmployee(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  employeeIds: readonly string[],
+  month: string,
+): Promise<Map<string, PayrollOvertimeEntry[]>> {
+  const result = new Map<string, PayrollOvertimeEntry[]>();
+  if (employeeIds.length === 0) return result;
+  const rows = await ctx.trx
+    .selectFrom('crove_hr.overtime_request')
+    .select(['employee_id', 'day_type', 'is_night', 'hours'])
+    .where('org_id', '=', ctx.orgId)
+    .where('employee_id', 'in', [...employeeIds])
+    .where('month', '=', month)
+    .where('status', '=', 'approved')
+    .execute();
+  const bucketsByEmp = new Map<string, Map<string, { dayKind: HrOvertimeDayKind; night: boolean; hours: Decimal }>>();
+  for (const row of rows) {
+    const dayKind = OVERTIME_DAY_KIND_BY_TYPE[row.day_type];
+    const night = row.is_night;
+    let empBuckets = bucketsByEmp.get(row.employee_id);
+    if (!empBuckets) {
+      empBuckets = new Map();
+      bucketsByEmp.set(row.employee_id, empBuckets);
+    }
+    const key = `${dayKind}:${night ? '1' : '0'}`;
+    const current = empBuckets.get(key);
+    if (current) {
+      current.hours = current.hours.plus(money(row.hours));
+    } else {
+      empBuckets.set(key, { dayKind, night, hours: money(row.hours) });
+    }
+  }
+  for (const [employeeId, buckets] of bucketsByEmp) {
+    const sorted = [...buckets.values()]
+      .sort((a, b) => DAY_KIND_ORDER[a.dayKind] - DAY_KIND_ORDER[b.dayKind] || Number(a.night) - Number(b.night))
+      .map((item) => ({
+        dayKind: item.dayKind,
+        night: item.night,
+        hours: formatOvertimeHours(item.hours),
+      }));
+    result.set(employeeId, sorted);
+  }
+  return result;
+}
+
 // What recurs from last month's line, and nothing else (the plan's 6.3): the allowances, other regular pay, the voluntary pension, the commitment form, whether insured, the term of a
 // fixed-term contract and the withholding request. The rest of a month's inputs starts empty.
 function recurringOf(previous: unknown): HrPayrollInputs {
@@ -333,8 +415,10 @@ export function initialInputsFor(
   person: Person,
   previous?: { employment_id: string | null; inputs: unknown },
   bhxh?: BhxhLeaveSummary,
+  overtime?: readonly PayrollOvertimeEntry[],
 ): HrPayrollInputs {
   const base = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
+  const overtimeList = overtime ? [...overtime] : [];
   const inputs: HrPayrollInputs = {
     ...base,
     unpaidLeaveFromLedger: false,
@@ -342,6 +426,8 @@ export function initialInputsFor(
     sicknessBhxhFromLedger: bhxh?.sicknessBhxhDays !== undefined ? true : null,
     maternityBhxhDays: bhxh?.maternityBhxhDays ?? '0',
     maternityBhxhFromLedger: bhxh?.maternityBhxhDays !== undefined ? true : null,
+    overtime: overtimeList,
+    overtimeFromRequests: overtimeList.length > 0 ? true : null,
   };
   if (
     person.terms.termMonths !== null &&
@@ -419,8 +505,18 @@ export const runOpen = defineCommand({
       people.map((p) => p.employeeId),
       input.month,
     );
+    const overtimeByEmployee = await loadApprovedOvertimeByEmployee(
+      ctx,
+      people.map((p) => p.employeeId),
+      input.month,
+    );
     for (const person of people) {
-      const inputs = initialInputsFor(person, lastInputs.get(person.employeeId), bhxhByEmployee.get(person.employeeId));
+      const inputs = initialInputsFor(
+        person,
+        lastInputs.get(person.employeeId),
+        bhxhByEmployee.get(person.employeeId),
+        overtimeByEmployee.get(person.employeeId),
+      );
       const f = figuresOf(person, inputs, input.month, workingDays);
       await ctx.trx
         .insertInto('crove_hr.payroll_line')
@@ -478,15 +574,27 @@ export const runRecalculate = defineCommand({
     const byEmployee = new Map(lines.map((l) => [l.employee_id, l]));
     const newlyPaidIds = people.filter((p) => !byEmployee.has(p.employeeId)).map((p) => p.employeeId);
     const bhxhByEmployee = await loadBhxhLeaveByEmployee(ctx, newlyPaidIds, run.month);
+    const overtimeByEmployee = await loadApprovedOvertimeByEmployee(
+      ctx,
+      people.map((p) => p.employeeId),
+      run.month,
+    );
     let added = 0;
     for (const person of people) {
       const existing = byEmployee.get(person.employeeId);
+      const approvedOt = overtimeByEmployee.get(person.employeeId) ?? [];
       if (existing) {
         const parsed = parseInputs(existing.inputs);
-        const nextInputs =
+        let nextInputs =
           person.terms.termMonths !== null && existing.employment_id !== person.terms.id
             ? { ...parsed, contractTermMonths: person.terms.termMonths }
             : parsed;
+        if (parsed.overtimeFromRequests !== false) {
+          const nextOtFromRequests = approvedOt.length > 0 ? true : null;
+          if (!sameOvertimeEntries(parsed.overtime, approvedOt) || parsed.overtimeFromRequests !== nextOtFromRequests) {
+            nextInputs = { ...nextInputs, overtime: [...approvedOt], overtimeFromRequests: nextOtFromRequests };
+          }
+        }
         const f = figuresOf(person, nextInputs, run.month, workingDays);
         await ctx.trx
           .updateTable('crove_hr.payroll_line')
@@ -501,7 +609,7 @@ export const runRecalculate = defineCommand({
           .execute();
       } else {
         // A person hired (or whose first terms were added) since the month was opened.
-        const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId));
+        const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId), approvedOt);
         const f = figuresOf(person, freshInputs, run.month, workingDays);
         await ctx.trx
           .insertInto('crove_hr.payroll_line')
@@ -610,6 +718,12 @@ export const lineInputsSet = defineCommand({
             ? existing.maternityBhxhFromLedger
             : input.inputs.maternityBhxhFromLedger)
         : false;
+    const overtimeFromRequests =
+      input.inputs.overtime === undefined || sameOvertimeEntries(input.inputs.overtime, existing.overtime)
+        ? (input.inputs.overtimeFromRequests === undefined
+            ? existing.overtimeFromRequests
+            : input.inputs.overtimeFromRequests)
+        : false;
     const nextInputs = zHrPayrollInputs.parse({
       ...input.inputs,
       contractTermMonths,
@@ -622,6 +736,7 @@ export const lineInputsSet = defineCommand({
       sicknessBhxhFromLedger,
       maternityBhxhDays,
       maternityBhxhFromLedger,
+      overtimeFromRequests,
     });
     const f = figuresOf(person, nextInputs, run.month, run.working_days);
     await updatePayLine(ctx, line.id, person.terms.id, nextInputs, f);
@@ -699,6 +814,7 @@ export const runImportTimekeeping = defineCommand({
         daysNotEmployed: row.daysNotEmployed,
         nightHours: row.nightHours,
         overtime: row.overtime,
+        overtimeFromRequests: sameOvertimeEntries(row.overtime, existing.overtime) ? existing.overtimeFromRequests : false,
       };
       return { lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: figuresOf(person, merged, payRun.month, payRun.working_days) };
     });
@@ -954,6 +1070,98 @@ export const runSyncLeave = defineCommand({
     return { runId: payRun.id, lines: updates.length };
   },
 });
+
+export const runSyncOvertime = defineCommand({
+  name: 'hr.payroll.run.sync_overtime',
+  input: zHrRunRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: runTarget,
+  writes: [
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+  ],
+  handler: async (ctx, input): Promise<HrRunWritten> => {
+    userOf(ctx.actor);
+    const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
+    const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
+    const overtimeByEmployee = await loadApprovedOvertimeByEmployee(ctx, paidEmployeeIds, payRun.month);
+    const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
+    for (const row of locked) {
+      if (!people.has(row.employee_id)) continue;
+      const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
+      if (existing.overtimeFromRequests === false) continue;
+      const targetOt = overtimeByEmployee.get(line.employee_id) ?? [];
+      const nextFromRequests = targetOt.length > 0 ? true : null;
+      if (sameOvertimeEntries(existing.overtime, targetOt) && existing.overtimeFromRequests === nextFromRequests) {
+        continue;
+      }
+      const merged = zHrPayrollInputs.parse({
+        ...existing,
+        overtime: targetOt,
+        overtimeFromRequests: nextFromRequests,
+      });
+      updates.push({
+        lineId: line.id,
+        employmentId: person.terms.id,
+        inputs: merged,
+        figures: figuresOf(person, merged, payRun.month, payRun.working_days),
+      });
+    }
+    await applyBatchLineUpdates(ctx, payRun.id, updates);
+    ctx.audit({ month: payRun.month, updatedLines: updates.length });
+    return { runId: payRun.id, lines: updates.length };
+  },
+});
+
+export async function syncEmployeeDraftPayrollOvertime(
+  ctx: Ctx,
+  legalEntityId: string,
+  month: string,
+  employeeId: string,
+): Promise<boolean> {
+  const payRun = await ctx.trx
+    .selectFrom('crove_hr.payroll_run')
+    .select(['id', 'month', 'working_days'])
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
+    .where('month', '=', month)
+    .where('status', '=', 'draft')
+    .forUpdate()
+    .executeTakeFirst();
+  if (!payRun) return false;
+  const line = await ctx.trx
+    .selectFrom('crove_hr.payroll_line')
+    .select(['id', 'employee_id', 'kind', 'inputs'])
+    .where('org_id', '=', ctx.orgId)
+    .where('run_id', '=', payRun.id)
+    .where('employee_id', '=', employeeId)
+    .where('kind', '=', 'pay')
+    .forUpdate()
+    .executeTakeFirst();
+  if (!line) return false;
+  const parsed = parseInputs(line.inputs);
+  if (parsed.overtimeFromRequests === false) return false;
+  const people = await peopleOf(ctx, legalEntityId, month);
+  const person = people.find((p) => p.employeeId === employeeId);
+  if (!person) return false;
+  const overtimeByEmployee = await loadApprovedOvertimeByEmployee(ctx, [employeeId], month);
+  const targetOt = overtimeByEmployee.get(employeeId) ?? [];
+  const nextFromRequests = targetOt.length > 0 ? true : null;
+  if (sameOvertimeEntries(parsed.overtime, targetOt) && parsed.overtimeFromRequests === nextFromRequests) {
+    return false;
+  }
+  const merged = zHrPayrollInputs.parse({
+    ...parsed,
+    overtime: targetOt,
+    overtimeFromRequests: nextFromRequests,
+  });
+  const f = figuresOf(person, merged, payRun.month, payRun.working_days);
+  await applyBatchLineUpdates(ctx, payRun.id, [{ lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: f }]);
+  return true;
+}
 
 // A signed correction of an approved month, carried in a draft run of a later month. The differences are typed; net and the employer's cost follow from them. A correction is never
 // an edit of the approved line.
@@ -1596,5 +1804,5 @@ export const coworkerAccess = defineQuery({
   },
 });
 
-export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, lineAdjust, runApprove];
+export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, runSyncOvertime, lineAdjust, runApprove];
 export const hrPayrollQueries = [runList, runSheet, linePayslip, runThirteenthMonthPreview, coworkerAccess];

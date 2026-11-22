@@ -3,6 +3,7 @@ import {
   projectBoard,
   projectGet,
   projectList,
+  projectMemberCompletedTasks,
   projectTaskProjects,
   projectUnassignedTasks,
 } from './projects.ts';
@@ -192,6 +193,7 @@ export {
   projectGet,
   projectList,
   projectMemberAdd,
+  projectMemberCompletedTasks,
   projectMemberRemove,
   projectSetOwner,
   projectSetStatus,
@@ -236,6 +238,7 @@ export const projectsCommands = [
 
 export const projectsQueries = [
   projectList,
+  projectMemberCompletedTasks,
   projectGet,
   projectBoard,
   projectUnassignedTasks,

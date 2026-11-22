@@ -143,7 +143,7 @@ const AUTONOMOUS_DECISION_EN_RE =
 const AUTONOMOUS_DECISION_VI_RE =
   /(?<![\p{L}\p{N}])(?:(?:tự\s+động|hãy|phải|cần|nên|chốt|tiến\s+hành|thực\s+hiện|xác\s+nhận)\s+(?:bị\s+|được\s+)?(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)(?:\s+(?:ngay|luôn|ứng\s+viên|c1))?(?!\s*(?:hay|hoặc|chưa|\?))|(?:đã|vừa|mới|sẽ)\s+(?:bị\s+|được\s+)?(?:tuyển(?:\s+dụng)?|duyệt\s+tuyển|từ\s+chối|loại(?:\s+hồ\s+sơ)?)(?!\s*(?:hay|hoặc|chưa|\?))|(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)\s+(?:ngay(?:\s+lập\s+tức)?|luôn)|quyết\s+định\s*:\s*(?:tuyển|từ\s+chối|loại))(?![\p{L}\p{N}])/iu;
 
-const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
+export const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const cut = (text: string, max: number): string => Array.from(text).slice(0, max).join('').trim();
 const fenced = (text: string): string => text.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
@@ -346,7 +346,7 @@ function matchesForbiddenToken(haystackFolded: string, compactFolded: string, ra
   return singleAlphaForbiddenMatches(rawNormalized, rawTrimmed, needle).length > 0;
 }
 
-function findForbiddenLeaks(text: string, forbidden: readonly string[]): string[] {
+export function findForbiddenLeaks(text: string, forbidden: readonly string[]): string[] {
   if (forbidden.length === 0) return [];
   const rawNormalized = text.normalize('NFKC').replace(/\s+/g, ' ').trim();
   const haystackFolded = foldForbiddenText(rawNormalized);
@@ -495,7 +495,7 @@ export function recruitingBriefInstructions(language: 'vi' | 'en'): string {
   ].join(' ');
 }
 
-function hasRecruitingAddress(bareText: string): boolean {
+export function hasRecruitingAddress(bareText: string): boolean {
   const withoutSafeFrameworks = bareText.replace(SAFE_JS_TECH_RE, ' ');
   return (
     hasAddress(withoutSafeFrameworks) ||

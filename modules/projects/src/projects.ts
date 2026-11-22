@@ -16,6 +16,7 @@ import {
   zProjectBoardInput,
   zProjectCreate,
   zProjectListInput,
+  zProjectMemberCompletedTasksAsk,
   zProjectMemberMutate,
   zProjectSetOwner,
   zProjectSetStatus,
@@ -29,6 +30,7 @@ import {
   type ProjectCandidateTask,
   type ProjectDetail,
   type ProjectListResult,
+  type ProjectMemberCompletedTasksResult,
   type ProjectMemberView,
   type ProjectStatus,
   type ProjectSummary,
@@ -1167,6 +1169,76 @@ export const projectTaskProjects = defineQuery({
       taskId: r.task_id,
       project: { id: r.project_id, name: r.project_name },
     }));
+  },
+});
+
+// Reads completed project tasks assigned to positions held by a member within a date window.
+// Caller RLS on crove_projects.project and crove_kernel.task filters private projects and legal entities.
+export const projectMemberCompletedTasks = defineQuery({
+  name: 'projects.member_completed_tasks',
+  input: zProjectMemberCompletedTasksAsk,
+  access: READERS,
+  handler: async (ctx, input): Promise<ProjectMemberCompletedTasksResult> => {
+    userOf(ctx.actor);
+    const { rows: countRows } = await sql<{ total_count: number }>`
+      SELECT count(*)::int AS total_count
+        FROM crove_projects.project_task pt
+        JOIN crove_projects.project p
+          ON p.org_id = pt.org_id AND p.id = pt.project_id
+        JOIN crove_kernel.task t
+          ON t.org_id = pt.org_id AND t.id = pt.task_id
+        JOIN crove_kernel.position pos
+          ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
+       WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND NOT p.is_template
+         AND t.status = 'done'
+         AND pos.holder_user_id = ${input.userId}::uuid
+         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= ${input.from}::date
+         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${input.to}::date`.execute(ctx.trx);
+
+    const totalCount = Number(countRows[0]?.total_count ?? 0);
+    if (totalCount === 0) {
+      return { totalCount: 0, tasks: [] };
+    }
+
+    const { rows } = await sql<{
+      task_id: string;
+      title: string;
+      project_id: string;
+      project_name: string;
+      updated_at: Date | string;
+    }>`
+      SELECT t.id AS task_id,
+             t.title,
+             p.id AS project_id,
+             p.name AS project_name,
+             t.updated_at
+        FROM crove_projects.project_task pt
+        JOIN crove_projects.project p
+          ON p.org_id = pt.org_id AND p.id = pt.project_id
+        JOIN crove_kernel.task t
+          ON t.org_id = pt.org_id AND t.id = pt.task_id
+        JOIN crove_kernel.position pos
+          ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
+       WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND NOT p.is_template
+         AND t.status = 'done'
+         AND pos.holder_user_id = ${input.userId}::uuid
+         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= ${input.from}::date
+         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${input.to}::date
+       ORDER BY t.updated_at DESC, t.id DESC
+       LIMIT ${input.limit}`.execute(ctx.trx);
+
+    return {
+      totalCount,
+      tasks: rows.map((r) => ({
+        taskId: r.task_id,
+        title: r.title,
+        projectId: r.project_id,
+        projectName: r.project_name,
+        completedAt: new Date(r.updated_at).toISOString(),
+      })),
+    };
   },
 });
 

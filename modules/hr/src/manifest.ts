@@ -32,6 +32,26 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'start_on', 'end_on', 'kind', 'days', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'payroll_leave_entry_id', 'created_by', 'created_at', 'updated_at'],
         { reason: 'pii', decision_note: 'pii' },
       ),
+      // Employee self-service onboarding checklist and HR-reviewed PII updates (#4448 Stage 5B).
+      onboarding_submission: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'status', 'contact_confirmed', 'id_confirmed', 'bank_confirmed', 'handbook_confirmed', 'reviewed_by', 'reviewed_at', 'created_by', 'created_at', 'updated_at'],
+        {
+          address: 'contact',
+          birth_date: 'pii',
+          national_id_sealed: 'national_id',
+          bank_code: 'payment',
+          bank_account_sealed: 'payment',
+          tax_code_sealed: 'national_id',
+          insurance_number_sealed: 'national_id',
+          note: 'pii',
+          decision_note: 'pii',
+        },
+      ),
+      // 2-level overtime requests feeding draft payroll runs (#4448 Stage 5B).
+      overtime_request: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'work_date', 'hours', 'day_type', 'is_night', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'created_by', 'created_at', 'updated_at'],
+        { reason: 'pii', decision_note: 'pii' },
+      ),
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
       payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
@@ -77,6 +97,11 @@ export const hrManifest = defineModule({
         note: 'sensitive',
       }),
       payroll_run: columns(['org_id', 'id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_at'], { approval: 'sensitive' }),
+      // End-of-probation reviews with Projects/attendance evidence snapshot and optional editable Ly draft (#4448 Stage 5B).
+      probation_review: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'reviewer_user_id', 'probation_end_on', 'period_start', 'period_end', 'completed_tasks_count', 'projects_available', 'decision', 'extended_until', 'decided_at', 'created_by', 'created_at', 'updated_at'],
+        { completed_tasks_snapshot: 'pii', attendance_snapshot: 'pii', review_note: 'pii', ai_draft_note: 'pii' },
+      ),
     },
   },
   // The one permission a command can name. Its risk is that of the highest command that names it: approving a month is R3. Declared with no default role: owners and admins pass by their base role, and the database's owner_admin policy enforces the same, so
@@ -95,6 +120,8 @@ export const hrManifest = defineModule({
     { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.leave_request', table: 'leave_request', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.onboarding_submission', table: 'onboarding_submission', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.overtime_request', table: 'overtime_request', legalEntityScoped: true, audit: 'command' },
     // The saved layout of a bank's bulk-salary file (#2893): edited and deleted by commands, so it is their audit target.
     { type: 'hr.payroll_bank_template', table: 'payroll_bank_template', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },
@@ -102,6 +129,7 @@ export const hrManifest = defineModule({
     { type: 'hr.payroll_leave_entry', table: 'payroll_leave_entry', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.probation_review', table: 'probation_review', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,
