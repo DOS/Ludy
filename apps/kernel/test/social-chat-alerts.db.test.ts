@@ -386,6 +386,18 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
     ]);
   });
 
+  it('posts one line for the late posts a long switch-off failed together, with their count and no post link (#3462)', async () => {
+    const o = await org();
+    const api = platforms();
+    await save(o, o.owner, telegramInput(['failed']), api.fetchImpl);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await event(o, 'social.publishing.late_failed', { count: 14, authors: [o.owner] });
+    // A count it did not write sends nothing.
+    await event(o, 'social.publishing.late_failed', { count: 1, authors: [] });
+    expect(await alert(o, sender(api.fetchImpl))).toEqual(['sent']);
+    expect(api.sent().map((c) => c.json?.text)).toEqual([`14 bài không đăng được vì đã quá giờ hẹn: ${PUBLIC_URL}/o/${o.slug}/social?tab=attention`]);
+  });
+
   it('drops what is over the per-org limit, and a target sealed for another org does not open', async () => {
     const o = await org();
     const api = platforms();

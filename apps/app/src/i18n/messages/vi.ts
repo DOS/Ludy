@@ -11226,6 +11226,7 @@ export const vi = {
         changes_requested: '{actor} đề nghị sửa bài của bạn',
         rejected: '{actor} đã từ chối bài của bạn',
         failed: 'Bài đăng lên {provider} không thành công',
+        failed_late: '{count, plural, other {# bài}} đã quá giờ hẹn hơn một giờ nên chưa đăng; mở ra để đăng ngay, sửa hoặc hủy',
         remove_failed: '{brand} chưa tự gỡ được bài trên {provider} như đã hẹn; bài vẫn còn trên kênh',
         needs_attention: 'Bài trên {provider} cần kiểm tra lại',
         channel_expired: 'Kênh {channel} đã hết hạn kết nối, hãy kết nối lại',
@@ -17355,6 +17356,7 @@ export const vi = {
       },
       notification: {
         dispatch: 'Gửi thông báo mạng xã hội',
+        dispatch_removal: 'Gửi thông báo gỡ bài theo hẹn không thành công khi ứng dụng đang tắt',
         list: 'Xem thông báo mạng xã hội',
         mail: 'Gửi thư thông báo',
         mute: 'Bật hoặc tắt thông báo mạng xã hội',
@@ -17420,6 +17422,8 @@ export const vi = {
       },
       publish: {
         begin: 'Bắt đầu đăng bài lên kênh',
+        fail_late: 'Đánh dấu thất bại cùng lúc các bài đăng quá giờ hẹn của tổ chức',
+        has_late: 'Kiểm tra tổ chức có bài đăng quá giờ hẹn không',
         record: 'Ghi kết quả đăng bài lên kênh',
       },
       publishing: {
