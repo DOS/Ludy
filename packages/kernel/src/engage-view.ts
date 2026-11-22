@@ -3,41 +3,18 @@
 // sends exactly what was stored, so the card shows exactly that: a control character, a bidirectional embedding, override or isolate or a zero-width mark is NOT dropped (the customer would then read something
 // other than what the approver read) but written out as a visible marker, <U+202E>. Each value is cut to a bounded length.
 import { sql, type Transaction } from 'kysely';
-import { isEngageProposalKind, type EngageProposalView } from '@ludy/kernel-contract';
+import { isEngageProposalKind, markHiddenText, type EngageProposalView } from '@ludy/kernel-contract';
 import type { Database } from '@ludy/db';
 
 const MAX_FIELDS = 40;
 const VALUE_MAX = 8000;
 const LONG_FROM = 80;
-// Controls other than a newline and a tab, soft hyphen, the Arabic letter mark, the bidirectional embeddings, overrides and isolates, the zero-width and invisible marks, line and paragraph separators, interlinear annotation
-// marks and the tag characters: the same set the database's title filter (20270119150000) refuses.
-const hidden = (code: number): boolean =>
-  code <= 0x08 ||
-  (code >= 0x0b && code <= 0x1f) ||
-  (code >= 0x7f && code <= 0x9f) ||
-  code === 0x00ad ||
-  code === 0x061c ||
-  code === 0x180e ||
-  (code >= 0x200b && code <= 0x200f) ||
-  code === 0x2028 ||
-  code === 0x2029 ||
-  (code >= 0x202a && code <= 0x202e) ||
-  (code >= 0x2060 && code <= 0x206f) ||
-  code === 0xfeff ||
-  (code >= 0xfff9 && code <= 0xfffb) ||
-  (code >= 0xe0000 && code <= 0xe007f);
-
-const marker = (code: number): string => `<U+${code.toString(16).toUpperCase().padStart(4, '0')}>`;
-
+// What the card writes out as a visible marker is the one class of the contract (markHiddenText in packages/kernel-contract/src/invisible-chars.ts): controls other than a newline and a tab, the soft hyphen, the Arabic letter
+// mark, the Hangul fillers, the direction marks, embeddings, overrides and isolates, the zero-width and invisible marks, the braille blank, line and paragraph separators, annotation marks and tag characters; the same
+// set the database's title filter (20270119150000) refuses and the screens use for an AI-written task title (#4423).
 const textOf = (value: unknown): string => {
   const raw = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
-  return Array.from(raw.slice(0, VALUE_MAX))
-    .map((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return hidden(code) ? marker(code) : ch;
-    })
-    .join('')
-    .slice(0, VALUE_MAX);
+  return markHiddenText(raw.slice(0, VALUE_MAX)).slice(0, VALUE_MAX);
 };
 
 export function engageViewOf(kind: string, command: string, payload: unknown, about: EngageProposalView['about'] = []): EngageProposalView | null {

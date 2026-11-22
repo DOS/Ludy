@@ -10833,6 +10833,7 @@ export const vi = {
     unknownPosition: 'Vị trí không còn',
     tainted: 'Nội dung bên ngoài',
     taintedHint: 'Việc này được tạo từ nội dung chưa kiểm chứng (email, tệp). Hãy đối chiếu trước khi làm theo.',
+    titleHidden: 'Đồng nghiệp AI đã viết tiêu đề này, và nó có ký tự bạn không nhìn thấy: {marked}',
     status: {
       todo: 'Cần làm',
       in_progress: 'Đang làm',
