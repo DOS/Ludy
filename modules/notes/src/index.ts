@@ -1,5 +1,6 @@
 import { attachmentCommands, attachmentQueries } from './attachments.ts';
 import { exportQueries } from './export.ts';
+import { importCommands } from './imports.ts';
 import { notebookCommands, notebookQueries } from './notebooks.ts';
 import { noteCommands, noteQueries } from './notes.ts';
 import { systemCommands, systemQueries } from './system.ts';
@@ -7,12 +8,13 @@ import { myWorkQueries, todoCommands, todoListCommands, todoListQueries, todoQue
 import { vyCommands, vyQueries } from './vy.ts';
 
 export * from './attachments.ts';
+export * from './imports.ts';
 export * from './notes.ts';
 export * from './notebooks.ts';
 export * from './system.ts';
 export * from './todos.ts';
 export * from './vy.ts';
 
-export const notesCommands = [...noteCommands, ...attachmentCommands, ...notebookCommands, ...todoCommands, ...todoListCommands, ...vyCommands, ...systemCommands];
+export const notesCommands = [...noteCommands, ...attachmentCommands, ...notebookCommands, ...todoCommands, ...todoListCommands, ...vyCommands, ...systemCommands, ...importCommands];
 export const notesQueries = [...noteQueries, ...attachmentQueries, ...notebookQueries, ...todoQueries, ...todoListQueries, ...myWorkQueries, ...exportQueries, ...vyQueries, ...systemQueries];
 export { notesManifest } from './manifest.ts';
