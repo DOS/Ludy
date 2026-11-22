@@ -4,9 +4,9 @@
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@ludy/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy, type TranscriptRedacted } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
@@ -18,6 +18,7 @@ import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
 import { MeetingMinutesSignHandoff, type MeetingSignMemberInfo } from './meeting-minutes-sign-handoff.tsx';
+import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
@@ -35,6 +36,7 @@ export function memberLabel(members: ReadonlyArray<{ userId: string; displayName
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
 const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
 };
 
 // The recorder picks the minutes template of their meeting (A4, #3162): the sections Vy fills and the sections they type under. The five built-in ones, then the templates the org wrote
@@ -105,6 +107,26 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
     Object.fromEntries(defs.map((d, i) => [d.key, parsed ? ((parsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
   );
   const [lines, setLines] = useState(decisions.join('\n'));
+  const decisionsKey = decisions.join('\n');
+  const copyHash = copy?.hash ?? null;
+  const prevServerRef = useRef({ summary, decisionsKey, template, copyHash });
+  useEffect(() => {
+    if (
+      prevServerRef.current.summary !== summary ||
+      prevServerRef.current.decisionsKey !== decisionsKey ||
+      prevServerRef.current.template !== template ||
+      prevServerRef.current.copyHash !== copyHash
+    ) {
+      prevServerRef.current = { summary, decisionsKey, template, copyHash };
+      const currentDefs = templateSections(template, copy?.sections ?? null);
+      const nextParsed = currentDefs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
+      setText(summary);
+      setValues(
+        Object.fromEntries(currentDefs.map((d, i) => [d.key, nextParsed ? ((nextParsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
+      );
+      setLines(decisionsKey);
+    }
+  }, [summary, decisionsKey, template, copy, copyHash]);
   const decisionList = lines.split('\n').map((l) => l.trim()).filter(Boolean);
   const sections = defs.map((d) => ({ key: d.key, text: (values[d.key] ?? '').trim() })).filter((x) => x.text !== '');
   // A section holds at most 1200 characters; text reflowed into the first one can be longer, and the recorder splits it before saving.
@@ -249,18 +271,28 @@ function AskVy({ itemId, answer, onAnswer }: { itemId: string; answer: AssigneeA
   );
 }
 
-function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean }) {
+function Item({ item, isRecorder, redactedEpoch = 0 }: { item: ActionItemView; isRecorder: boolean; redactedEpoch?: number }) {
   const t = useTranslations('meetings.results');
   const chart = useQuery(orpc.chart.get.queryOptions());
   // Who the item points at: the attendee it names, else the person the said name probably means (a suggestion only, found by code).
   // Vy's answer to a click (step 2) stands in for it when code found nobody; it is only text on the page, never stored.
   const [vy, setVy] = useState<AssigneeAnswer | null>(null);
+  const lastEpochRef = useRef(redactedEpoch);
+  useEffect(() => {
+    if (redactedEpoch !== lastEpochRef.current) {
+      lastEpochRef.current = redactedEpoch;
+      setVy(null);
+    }
+  }, [redactedEpoch]);
   const suggested = item.whoUserId === null ? (item.suggestion ?? (vy?.suggestion ? { ...vy.suggestion, source: 'vy' as const } : null)) : null;
   const offered = suggested ? suggested.positions : item.positions;
   // Their own seats first, then the others (a person may give the work to any seat).
   const own = new Set(offered.map((p) => p.id));
   const seats = (chart.data?.positions ?? []).filter((p) => p.status !== 'archived').sort((a, b) => Number(own.has(b.id)) - Number(own.has(a.id)));
   const [title, setTitle] = useState(item.title);
+  useEffect(() => {
+    setTitle(item.title);
+  }, [item.title]);
   const [due, setDue] = useState(item.whenDate ?? '');
   // The seat is preselected only when that person holds exactly one; otherwise a person picks it (the code never picks).
   const [seat, setSeat] = useState(offered.length === 1 ? (offered[0] as { id: string }).id : '');
@@ -506,6 +538,15 @@ function SaveSummaryAsNote({
   );
 }
 
+export interface MeetingRedactionControl {
+  queryEnabled: boolean;
+  onOpen: () => void;
+  lastRedacted: TranscriptRedacted | null;
+  showDone: boolean;
+  doneRef: RefObject<HTMLDivElement | null>;
+  redactedEpoch: number;
+}
+
 // `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not); `title` is
 // the meeting's title, for the heading of the text "Gửi qua Zalo" prepares (B5, #3169).
 export function MeetingResults({
@@ -518,6 +559,7 @@ export function MeetingResults({
   slug,
   minutesLink,
   signInfo,
+  redaction,
 }: {
   meetingId: string;
   readers: readonly string[];
@@ -537,9 +579,18 @@ export function MeetingResults({
     orgMembers: readonly MeetingSignMemberInfo[];
     canEdit?: boolean;
   };
+  redaction?: MeetingRedactionControl;
 }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
+  const [localRedactOpen, setLocalRedactOpen] = useState(false);
+  const [localLastRedacted, setLocalLastRedacted] = useState<TranscriptRedacted | null>(null);
+  const [localRedactedEpoch, setLocalRedactedEpoch] = useState(0);
+  const localDoneRef = useRef<HTMLDivElement | null>(null);
+  const redactEnabled = redaction
+    ? redaction.queryEnabled
+    : Boolean(query.data?.isRecorder && (query.data.draft !== null || query.data.items.some((i) => i.stage === 'draft')));
+  const redactCandidatesQuery = useRedactCandidatesQuery(meetingId, redactEnabled);
   // Publishing removes the button that held the focus (the draft is gone): the focus goes to the heading of what was shared, which a screen reader reads out as the result (WCAG 2.4.3, 4.1.3).
   const [focusPublished, setFocusPublished] = useState(false);
   const publishedHeading = useRef<HTMLHeadingElement | null>(null);
@@ -556,6 +607,7 @@ export function MeetingResults({
     // Waits for the results to be read again, so the heading is the one of the result that was just shared.
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
       setFocusPublished(true);
     },
   });
@@ -582,6 +634,7 @@ export function MeetingResults({
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
   const unread = unreadIds.length > 0;
   const cleanCount = items.filter((i) => i.clean).length;
+  const effectiveRedactedEpoch = redaction ? redaction.redactedEpoch : localRedactedEpoch;
   return (
     <Card data-testid="meeting-results">
       <CardHeader>
@@ -633,7 +686,7 @@ export function MeetingResults({
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
-        {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
+        {isRecorder && <VySummary key={`vy-${effectiveRedactedEpoch}`} meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">
             <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -658,7 +711,7 @@ export function MeetingResults({
             {acceptClean.error && <ErrorText>{errorMessage(acceptClean.error)}</ErrorText>}
             <ul className="divide-y">
               {items.map((item) => (
-                <Item key={item.id} item={item} isRecorder={isRecorder} />
+                <Item key={item.id} item={item} isRecorder={isRecorder} redactedEpoch={effectiveRedactedEpoch} />
               ))}
             </ul>
           </section>
@@ -666,6 +719,32 @@ export function MeetingResults({
         {isRecorder && <NewItem meetingId={meetingId} readers={readers} />}
         {isRecorder && hasDraft && (
           <div className="space-y-2 border-t pt-3">
+            <RedactionNudge
+              count={redactCandidatesQuery.data?.candidates.length ?? 0}
+              truncated={redactCandidatesQuery.data?.truncated ?? false}
+              onOpen={() => {
+                if (redaction) redaction.onOpen();
+                else setLocalRedactOpen(true);
+              }}
+              testId="redaction-prepublish-nudge"
+              lastRedacted={redaction ? redaction.lastRedacted : localLastRedacted}
+              showDone={redaction ? redaction.showDone : localLastRedacted !== null}
+              doneRef={redaction ? redaction.doneRef : localDoneRef}
+            />
+            {!redaction && (
+              <DraftRedactionDialog
+                meetingId={meetingId}
+                open={localRedactOpen}
+                onOpenChange={setLocalRedactOpen}
+                enabled={redactEnabled}
+                sources={{ meetingTitle: title, draftResult: draft, items }}
+                onRedacted={(result) => {
+                  setLocalLastRedacted(result);
+                  setLocalRedactedEpoch((n) => n + 1);
+                }}
+                doneRef={localDoneRef}
+              />
+            )}
             <p className="text-xs text-muted-foreground">{t('publishNote')}</p>
             {unread && (
               <div className="space-y-2" data-testid="vy-review">

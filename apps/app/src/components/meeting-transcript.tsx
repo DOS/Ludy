@@ -5,15 +5,16 @@
 // recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
 // transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptSegment, type TranslationTarget } from '@ludy/kernel-contract';
+import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptRedacted, type TranscriptSegment, type TranslationTarget } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
+import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
@@ -37,6 +38,17 @@ function Line({ segment, editable, focused, focusToken, translation }: { segment
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
   const [speaker, setSpeaker] = useState(segment.speakerLabel);
+  const prevServerRef = useRef({ text: segment.text, speakerLabel: segment.speakerLabel });
+  useEffect(() => {
+    if (prevServerRef.current.text !== segment.text || prevServerRef.current.speakerLabel !== segment.speakerLabel) {
+      prevServerRef.current = { text: segment.text, speakerLabel: segment.speakerLabel };
+      setText(segment.text);
+      setSpeaker(segment.speakerLabel);
+    } else if (!editing) {
+      setText(segment.text);
+      setSpeaker(segment.speakerLabel);
+    }
+  }, [editing, segment.text, segment.speakerLabel]);
   const save = useMutation({
     mutationFn: () =>
       orpc.meetings.transcript.correct.call({
@@ -213,10 +225,38 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
 
 // `focusSecond`: a chapter or a cited line was clicked (#3844): the line that starts at that whole second (the named speaker's, when the click names one) is marked and scrolled to; `token` changes on each click.
 // `platformCut`: the meeting's own flag that the platform's transcript was cut on import (#3922); without it the panel can only guess from the line count.
-export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, platformCut = false }: { meetingId: string; focusSegmentId?: string; focusSecond?: TranscriptFocus | undefined; platformCut?: boolean }) {
+export function MeetingTranscript({
+  meetingId,
+  focusSegmentId,
+  focusSecond,
+  platformCut = false,
+  redaction,
+}: {
+  meetingId: string;
+  focusSegmentId?: string;
+  focusSecond?: TranscriptFocus | undefined;
+  platformCut?: boolean;
+  redaction?: {
+    queryEnabled: boolean;
+    onOpen: () => void;
+    lastRedacted: TranscriptRedacted | null;
+    showDone: boolean;
+    doneRef: RefObject<HTMLDivElement | null>;
+    redactedEpoch?: number;
+  };
+}) {
   const t = useTranslations('meetings.transcript');
   const tp = useTranslations('meetings.platform');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
+  const [localRedactOpen, setLocalRedactOpen] = useState(false);
+  const [localLastRedacted, setLocalLastRedacted] = useState<TranscriptRedacted | null>(null);
+  const [localRedactedEpoch, setLocalRedactedEpoch] = useState(0);
+  const redactedEpoch = redaction?.redactedEpoch ?? localRedactedEpoch;
+  const localDoneRef = useRef<HTMLDivElement | null>(null);
+  const redactEnabled = redaction
+    ? redaction.queryEnabled
+    : Boolean(query.data?.isRecorder && query.data.stage === 'draft');
+  const redactCandidatesQuery = useRedactCandidatesQuery(meetingId, redactEnabled);
   // The member's own translated parts beside the lines (E2, #3185); none until they asked.
   // The language the member picked to translate into (E3, #3186), shared by the panel and the lines under it; none until they pick.
   const [target, setTarget] = useState<TranslationTarget | undefined>(undefined);
@@ -228,7 +268,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, plat
     // Only the recorder is told there is none; to another reader a meeting with nothing shared simply shows no transcript.
     return transcript?.isRecorder ? (
       <div className="space-y-3">
-        <VyTranscribe meetingId={meetingId} hasDraft={false} />
+        <VyTranscribe key={`vy-transcribe-${redactedEpoch}`} meetingId={meetingId} hasDraft={false} />
         <Empty title={t('emptyRecorder')} />
       </div>
     ) : null;
@@ -239,12 +279,40 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, plat
   const focusedId = focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId;
   return (
     <div className="space-y-3">
-      {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
-      <TranscriptTranslationPanel meetingId={meetingId} target={target} onTarget={setTarget} />
+      {transcript.isRecorder && <VyTranscribe key={`vy-transcribe-${redactedEpoch}`} meetingId={meetingId} hasDraft={draft} />}
+      <TranscriptTranslationPanel key={`tt-${redactedEpoch}`} meetingId={meetingId} target={target} onTarget={setTarget} />
       <Card>
       <CardHeader>
         <CardTitle role="heading" aria-level={2} className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{draft ? t('draftNote') : t('publishedNote')}</CardDescription>
+        {transcript.isRecorder && draft && (
+          <RedactionNudge
+            count={redactCandidatesQuery.data?.candidates.length ?? 0}
+            truncated={redactCandidatesQuery.data?.truncated ?? false}
+            onOpen={() => {
+              if (redaction) redaction.onOpen();
+              else setLocalRedactOpen(true);
+            }}
+            testId="transcript-redaction-nudge"
+            lastRedacted={redaction ? redaction.lastRedacted : localLastRedacted}
+            showDone={redaction ? redaction.showDone : localLastRedacted !== null}
+            doneRef={redaction ? redaction.doneRef : localDoneRef}
+          />
+        )}
+        {!redaction && transcript.isRecorder && draft && (
+          <DraftRedactionDialog
+            meetingId={meetingId}
+            open={localRedactOpen}
+            onOpenChange={setLocalRedactOpen}
+            enabled={redactEnabled}
+            sources={{ segments: transcript.segments }}
+            onRedacted={(result) => {
+              setLocalLastRedacted(result);
+              setLocalRedactedEpoch((n) => n + 1);
+            }}
+            doneRef={localDoneRef}
+          />
+        )}
         {platform && (
           <p className="text-xs text-muted-foreground" data-testid="transcript-platform">
             {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}

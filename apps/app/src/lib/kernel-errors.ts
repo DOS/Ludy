@@ -1573,6 +1573,11 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'SIGN_OBLIGATION_INVALID_VALUE',
   'SIGN_OBLIGATION_ITEM_NOT_FOUND',
   'SIGN_OBLIGATION_NOT_FOUND',
+  'REDACTION_DUPLICATE_SELECTION',
+  'REDACTION_PUBLISHED_IMMUTABLE',
+  'REDACTION_SPAN_MISMATCH',
+  'REDACTION_STALE',
+  'VY_RUN_BUSY',
 ]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {

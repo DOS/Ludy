@@ -3,7 +3,7 @@
 // takes the transcript to that line; the recorder also writes their own draft by hand (a title and the line it starts at, picked from the transcript), which is shared with the minutes when they
 // press Publish in the minutes box. Nothing here needs AI. Titles are shown as plain text.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { CHAPTER_TITLE_MAX, CHAPTERS_MAX, type Chapter } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
@@ -63,6 +63,14 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
   const initial: Row[] = base.map((c) => ({ vy: c.tainted, title: c.title, second: String(c.startSeconds) }));
   const [rows, setRows] = useState<Row[] | null>(null);
   const [saved, setSaved] = useState(false);
+  const baseKey = JSON.stringify(base.map((c) => [c.id, c.title, c.startSeconds, c.tainted]));
+  const prevBaseKeyRef = useRef(baseKey);
+  useEffect(() => {
+    if (prevBaseKeyRef.current !== baseKey) {
+      prevBaseKeyRef.current = baseKey;
+      setRows(null);
+    }
+  }, [baseKey]);
   const current = rows ?? initial;
   const change = (next: Row[]) => {
     setSaved(false);
@@ -78,6 +86,7 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
       setRows(null);
       setSaved(true);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.chaptersGet.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
     },
   });
   const complete = current.every((r) => r.title.trim() !== '' && r.second !== '');
@@ -141,6 +150,7 @@ function VyChapters({ meetingId, hasModelDraft }: { meetingId: string; hasModelD
     onSuccess: () => {
       ask.reset();
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.chaptersGet.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
     },
   });
   if (!status.data?.enabled) return null;
@@ -194,7 +204,7 @@ function ConfirmRead({ meetingId, ids }: { meetingId: string; ids: string[] }) {
   );
 }
 
-export function MeetingChapters({ meetingId, isRecorder, onJump }: { meetingId: string; isRecorder: boolean; onJump: (seconds: number) => void }) {
+export function MeetingChapters({ meetingId, isRecorder, onJump, redactedEpoch = 0 }: { meetingId: string; isRecorder: boolean; onJump: (seconds: number) => void; redactedEpoch?: number }) {
   const t = useTranslations('meetings.chapters');
   const chapters = useQuery({ ...orpc.meetings.results.chaptersGet.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   if (chapters.isPending) return null;
@@ -220,7 +230,7 @@ export function MeetingChapters({ meetingId, isRecorder, onJump }: { meetingId: 
         {isRecorder && (
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">{t('draftTitle')}</h3>
-            <VyChapters meetingId={meetingId} hasModelDraft={draft.some((c) => c.tainted)} />
+            <VyChapters key={`vy-chapters-${redactedEpoch}`} meetingId={meetingId} hasModelDraft={draft.some((c) => c.tainted)} />
             {unreadIds.length > 0 && <ConfirmRead meetingId={meetingId} ids={unreadIds} />}
             {/* The draft if there is one, else a copy of the published set to edit (the next publish replaces it). */}
             <ChapterEditor meetingId={meetingId} base={draft.length > 0 ? draft : published} />

@@ -3,7 +3,7 @@
 // transcript into the sections of the meeting's template (or one block); what comes back is read here first, the recorder's own lines in one style and every line Vy added in another, "Vy thêm
 // từ bản ghi", with the time of the transcript line it rests on, and only the recorder's own click copies it into their draft (where it stays Vy's text until the recorder has read it).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -28,6 +28,7 @@ export function NotesPreviewPanel({ meetingId, runId, onCopied, minutesTemplate 
     mutationFn: () => orpc.meetings.results.copySummary.call({ meetingId, runId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
       onCopied();
     },
   });
@@ -73,7 +74,7 @@ export function NotesPreviewPanel({ meetingId, runId, onCopied, minutesTemplate 
   );
 }
 
-export function MeetingNotes({ meetingId, minutesTemplate = null }: { meetingId: string; minutesTemplate?: MinutesTemplateCopy | null }) {
+export function MeetingNotes({ meetingId, minutesTemplate = null, redactedEpoch = 0 }: { meetingId: string; minutesTemplate?: MinutesTemplateCopy | null; redactedEpoch?: number }) {
   const t = useTranslations('meetings');
   const tr = useTranslations('meetings.results');
   const notes = useQuery({ ...orpc.meetings.results.notesGet.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -92,6 +93,15 @@ export function MeetingNotes({ meetingId, minutesTemplate = null }: { meetingId:
     },
   });
   const enhance = useMutation({ mutationFn: () => orpc.meetings.results.enhance.call({ meetingId }) });
+  const lastEpochRef = useRef(redactedEpoch);
+  const enhanceResetRef = useRef(enhance.reset);
+  enhanceResetRef.current = enhance.reset;
+  useEffect(() => {
+    if (redactedEpoch !== lastEpochRef.current) {
+      lastEpochRef.current = redactedEpoch;
+      enhanceResetRef.current();
+    }
+  }, [redactedEpoch]);
   if (notes.isPending || notes.error) return notes.error ? <ErrorText>{errorMessage(notes.error)}</ErrorText> : null;
   const answer = enhance.data;
   const canEnhance = status.data?.enabled === true;

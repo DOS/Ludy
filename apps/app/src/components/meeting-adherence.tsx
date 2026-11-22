@@ -43,7 +43,7 @@ export const typedOverflow = (text: string): boolean => nonEmptyLines(text).leng
 // The server's reason with the recorder's own one folded into "off" (only the recorder is shown this card), in the shape the shared blocked text knows.
 const asAsk = (status: AdherenceStatus) => ({ enabled: status.enabled, reason: status.reason === 'not_recorder' ? ('off' as const) : status.reason });
 
-export function MeetingAdherence({ meetingId, isRecorder, onJump }: { meetingId: string; isRecorder: boolean; onJump: (seconds: number) => void }) {
+export function MeetingAdherence({ meetingId, isRecorder, onJump, redactedEpoch = 0 }: { meetingId: string; isRecorder: boolean; onJump: (seconds: number) => void; redactedEpoch?: number }) {
   const t = useTranslations('meetings.adherence');
   const [text, setText] = useState('');
   const agenda = useQuery({ ...orpc.meetings.adherence.agenda.queryOptions({ input: { meetingId } }), ...READ_ONCE, enabled: isRecorder });
@@ -82,8 +82,8 @@ export function MeetingAdherence({ meetingId, isRecorder, onJump }: { meetingId:
         </div>
         {lines === 0 && <p className="text-xs text-muted-foreground" data-testid="adherence-no-agenda">{t('noAgenda')}</p>}
         {!data.transcriptFits && <p className="text-xs text-muted-foreground" data-testid="adherence-too-long">{t('transcriptTooLong')}</p>}
-        {/* Keyed by the typed lines: an answer to other lines is gone as soon as they change, so the page never shows an answer beside a box it does not match. */}
-        <Vy key={typed.join('\n')} meetingId={meetingId} typed={typed} ready={lines > 0 && data.transcriptFits} onJump={onJump} />
+        {/* Keyed by the typed lines and redaction epoch: stale Vy answers clear on edit or draft redaction while preserving typed lines. */}
+        <Vy key={`${typed.join('\n')}-${redactedEpoch}`} meetingId={meetingId} typed={typed} ready={lines > 0 && data.transcriptFits} onJump={onJump} />
       </CardContent>
     </Card>
   );

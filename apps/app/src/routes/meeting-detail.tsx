@@ -21,7 +21,14 @@ import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
 import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
+import {
+  DraftRedactionDialog,
+  RedactionNudge,
+  canQueryRedactCandidates,
+  useRedactCandidatesQuery,
+} from '../components/meeting-redaction.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
+import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
@@ -51,6 +58,12 @@ export function MeetingDetailPage() {
   const { seg } = useSearch({ strict: false }) as { seg?: string };
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [redactionOpen, setRedactionOpen] = useState(false);
+  const [nudgeOrigin, setNudgeOrigin] = useState<'transcript' | 'results' | 'detail'>('results');
+  const [doneOrigin, setDoneOrigin] = useState<'transcript' | 'results' | 'detail' | null>(null);
+  const [lastRedacted, setLastRedacted] = useState<TranscriptRedacted | null>(null);
+  const [redactedEpoch, setRedactedEpoch] = useState(0);
+  const doneRef = useRef<HTMLDivElement | null>(null);
   const [newReaderUserId, setNewReaderUserId] = useState('');
   const [readerError, setReaderError] = useState<string | null>(null);
   // The meeting the owner confirmed deleting: a step-up retry deletes that one and no other.
@@ -91,6 +104,44 @@ export function MeetingDetailPage() {
   const orgMembers = orgQuery.data?.members ?? [];
 
   const meeting = meetingQuery.data;
+
+  // Shared cache entries with MeetingResults and MeetingChapters (same queryOptions, no extra audit reads).
+  const resultsQuery = useQuery({
+    ...orpc.meetings.results.get.queryOptions({ input: { meetingId: id } }),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    enabled: Boolean(meeting),
+  });
+  const chaptersQuery = useQuery({
+    ...orpc.meetings.results.chaptersGet.queryOptions({ input: { meetingId: id } }),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    enabled: Boolean(meeting),
+  });
+
+  const isRecorder = meeting?.isRecorder === true;
+  const transcriptData = transcriptQuery.data;
+  const resultsData = resultsQuery.data;
+  const chaptersData = chaptersQuery.data;
+  const hasAnyPublished = Boolean(
+    transcriptData?.segments.some((s) => s.stage === 'published') ||
+      (resultsData?.published !== null && resultsData?.published !== undefined) ||
+      resultsData?.items.some((i) => i.stage === 'published') ||
+      (chaptersData?.published.length ?? 0) > 0,
+  );
+  const hasTranscriptDraft = transcriptData?.stage === 'draft';
+  const hasResultsDraft = Boolean(resultsData && (resultsData.draft !== null || resultsData.items.some((i) => i.stage === 'draft')));
+  const hasAnyDraftSurface = Boolean(
+    hasTranscriptDraft ||
+      (resultsData?.draft !== null && resultsData?.draft !== undefined) ||
+      resultsData?.items.some((i) => i.stage === 'draft' && i.status === 'suggested') ||
+      (chaptersData?.draft.length ?? 0) > 0,
+  );
+  const canHaveDraftRedactions =
+    isRecorder &&
+    Boolean(transcriptData && resultsData && chaptersData) &&
+    canQueryRedactCandidates({ isRecorder, hasAnyPublished, hasAnyDraftSurface });
+  const redactCandidatesQuery = useRedactCandidatesQuery(id, canHaveDraftRedactions);
 
   useEffect(() => {
     let active = true;
@@ -163,10 +214,14 @@ export function MeetingDetailPage() {
     };
   }, [meeting?.id, meeting?.hasAudio, meeting?.hasVideo]);
 
-  // Leaving a meeting drops a pending owner deletion and its step-up prompt.
+  // Leaving a meeting drops a pending owner deletion, its step-up prompt, and transient redaction state.
   useEffect(() => {
     setPendingOwnerDeleteId(null);
     setDeleteOpen(false);
+    setRedactionOpen(false);
+    setLastRedacted(null);
+    setDoneOrigin(null);
+    setRedactedEpoch(0);
   }, [id]);
 
   const deleteMutation = useMutation({
@@ -287,7 +342,21 @@ export function MeetingDetailPage() {
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
-      <MeetingTitleSuggest key={`title-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      <MeetingTitleSuggest key={`title-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      {meeting.isRecorder && ((!hasTranscriptDraft && !hasResultsDraft) || doneOrigin === 'detail') && (
+        <RedactionNudge
+          count={!hasTranscriptDraft && !hasResultsDraft ? (redactCandidatesQuery.data?.candidates.length ?? 0) : 0}
+          truncated={redactCandidatesQuery.data?.truncated ?? false}
+          onOpen={() => {
+            setNudgeOrigin('detail');
+            setRedactionOpen(true);
+          }}
+          testId="redaction-detail-nudge"
+          lastRedacted={lastRedacted}
+          showDone={doneOrigin === 'detail'}
+          doneRef={doneRef}
+        />
+      )}
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (
@@ -356,19 +425,36 @@ export function MeetingDetailPage() {
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* Each keyed child below has a key of its own: the same key on siblings makes React duplicate or drop children on a re-render (#4066) */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
-      <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
-      <MeetingCommitments key={`commitments-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      <MeetingCommitments key={`commitments-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
-      <MeetingTranscript key={`transcript-${id}`} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
+      <MeetingTranscript
+        key={`transcript-${id}`}
+        meetingId={id}
+        {...(seg ? { focusSegmentId: seg } : {})}
+        focusSecond={jump}
+        platformCut={meeting.platformTranscriptCut}
+        redaction={{
+          queryEnabled: canHaveDraftRedactions,
+          onOpen: () => {
+            setNudgeOrigin('transcript');
+            setRedactionOpen(true);
+          },
+          lastRedacted,
+          showDone: doneOrigin === 'transcript',
+          doneRef,
+          redactedEpoch,
+        }}
+      />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
-      <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
       {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
-      {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
+      {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} redactedEpoch={redactedEpoch} />}
       <MeetingResults
         key={`results-${id}`}
         meetingId={id}
@@ -396,7 +482,41 @@ export function MeetingDetailPage() {
             {t('minutes.open')}
           </Link>
         }
+        redaction={{
+          queryEnabled: canHaveDraftRedactions,
+          onOpen: () => {
+            setNudgeOrigin('results');
+            setRedactionOpen(true);
+          },
+          lastRedacted,
+          showDone: doneOrigin === 'results',
+          doneRef,
+          redactedEpoch,
+        }}
       />
+
+      {meeting.isRecorder && (
+        <DraftRedactionDialog
+          meetingId={id}
+          open={redactionOpen}
+          onOpenChange={setRedactionOpen}
+          enabled={canHaveDraftRedactions}
+          sources={{
+            meetingTitle: meeting.title,
+            segments: transcriptData?.segments,
+            draftResult: resultsData?.draft,
+            items: resultsData?.items,
+            draftChapters: chaptersData?.draft,
+          }}
+          doneRef={doneRef}
+          onRedacted={(result) => {
+            setLastRedacted(result);
+            setDoneOrigin(nudgeOrigin);
+            setRedactedEpoch((n) => n + 1);
+            toast(t('redaction.doneSummary', { count: result.redactedCount }), 'success');
+          }}
+        />
+      )}
 
       {notesInstalled() && (
         <RecordNotesPanel
