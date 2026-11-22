@@ -22,11 +22,13 @@ import {
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
   type ProjectWeeklyStatusTasks,
+  type ProjectWeeklyStatusTimeSummary,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { z } from 'zod';
 import { loadProjectColumns, resolveTaskColumnId } from './columns.ts';
 import { READERS, loadProject, userOf } from './projects.ts';
+import { queryProjectWeeklyTimeSummary } from './time.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
@@ -64,6 +66,7 @@ export interface ProjectWeeklyStatusSource {
   columns?: ProjectWeeklyStatusColumn[];
   tasks: ProjectWeeklyStatusTasks;
   bottlenecks?: ProjectWeeklyStatusBottleneck[];
+  timeThisWeek?: ProjectWeeklyStatusTimeSummary;
   hiddenByEntityCount: number;
   truncated: boolean;
   aiAllowed: boolean;
@@ -439,6 +442,8 @@ export const projectWeeklyStatusSource = defineQuery({
       counts.waiting > tasks.waiting.length ||
       counts.dueNextWeek > tasks.dueNextWeek.length;
 
+    const timeThisWeek = await queryProjectWeeklyTimeSummary(ctx.trx, ctx.orgId, project.id, fromStartIso, nextStartIso);
+
     return {
       project: { id: project.id, name: project.name, status: project.status },
       window: { from, to, nextFrom, nextTo, timeZone: VIETNAM_TIME_ZONE },
@@ -446,6 +451,7 @@ export const projectWeeklyStatusSource = defineQuery({
       ...(columns ? { columns } : {}),
       tasks,
       bottlenecks,
+      timeThisWeek,
       hiddenByEntityCount,
       truncated,
       aiAllowed,

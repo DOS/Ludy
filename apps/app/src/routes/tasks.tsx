@@ -23,6 +23,7 @@ import { TaskChecklistBadge, TaskChecklistSection } from '../components/task-che
 import { EditTaskPanel, NewTaskPanel } from '../components/task-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { TaskFilterBar } from '../components/task-filter-bar.tsx';
+import { TaskTimeTrackingPanel } from '../components/project-time-panel.tsx';
 import { TaskRecurrenceControl, formatRecurrenceBadgeLabel } from '../components/task-recurrence-control.tsx';
 import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
@@ -511,12 +512,20 @@ export function TaskDetailPage() {
       )}
 
       {resolvedProjectId && (
-        <ProjectDependencies
-          projectId={resolvedProjectId}
-          taskId={task.id}
-          canWrite={perms.tasks && !task.checkedOut}
-          onChanged={refresh}
-        />
+        <>
+          <ProjectDependencies
+            projectId={resolvedProjectId}
+            taskId={task.id}
+            canWrite={perms.tasks && !task.checkedOut}
+            onChanged={refresh}
+          />
+          <TaskTimeTrackingPanel
+            projectId={resolvedProjectId}
+            taskId={task.id}
+            taskTitle={task.title}
+            canWrite={perms.tasks && !task.checkedOut}
+          />
+        </>
       )}
 
       {projectRecurrence && (

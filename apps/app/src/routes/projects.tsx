@@ -36,6 +36,7 @@ import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
 import { ProjectRoadmapPanel } from '../components/project-roadmap-panel.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
+import { ProjectTimeTab } from '../components/project-time-panel.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
 import {
   AttachTaskDialog,
@@ -669,228 +670,247 @@ export function ProjectDetailPage() {
       )}
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <Tabs value={view} onValueChange={(next) => handleViewChange(next as ProjectViewMode)}>
-          <TabsList aria-label={t('detail.viewSwitchLabel')}>
-            <TabsTrigger value="board" data-testid="view-toggle-board" className="min-h-11 gap-1.5 sm:min-h-9">
+        <Tabs value={view} onValueChange={(next) => handleViewChange(next as ProjectViewMode)} className="w-full min-w-0 sm:w-auto">
+          <TabsList
+            aria-label={t('detail.viewSwitchLabel')}
+            className="flex h-auto w-full max-w-full flex-wrap justify-start gap-1 group-data-horizontal/tabs:h-auto sm:w-fit"
+          >
+            <TabsTrigger value="board" data-testid="view-toggle-board" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="board" className="size-3.5" />
               <span>{t('detail.viewBoard')}</span>
             </TabsTrigger>
-            <TabsTrigger value="list" data-testid="view-toggle-list" className="min-h-11 gap-1.5 sm:min-h-9">
+            <TabsTrigger value="list" data-testid="view-toggle-list" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="list" className="size-3.5" />
               <span>{t('detail.viewList')}</span>
             </TabsTrigger>
-            <TabsTrigger value="timeline" data-testid="view-toggle-timeline" className="min-h-11 gap-1.5 sm:min-h-9">
+            <TabsTrigger value="timeline" data-testid="view-toggle-timeline" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="calendar" className="size-3.5" />
               <span>{t('detail.viewTimeline')}</span>
+            </TabsTrigger>
+            <TabsTrigger value="time" data-testid="view-toggle-time" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
+              <ProjectIcon name="clock" className="size-3.5" />
+              <span>{t('detail.viewTime')}</span>
             </TabsTrigger>
           </TabsList>
         </Tabs>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex min-w-44 items-center gap-2">
-            <Label htmlFor="project-seat-filter" className="sr-only">
-              {t('detail.positionFilter')}
-            </Label>
-            <NativeSelect
-              id="project-seat-filter"
-              aria-label={t('detail.positionFilter')}
-              value={positionId}
-              onChange={(e) => setPositionId(e.target.value)}
-              className="h-9 w-full text-xs sm:h-8"
-            >
-              <NativeSelectOption value="">{t('detail.allPositions')}</NativeSelectOption>
-              <NativeSelectOption value="root">{t('detail.rootPosition')}</NativeSelectOption>
-              {seats.map((seat) => (
-                <NativeSelectOption key={seat.id} value={seat.id}>
-                  {seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix'))}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
+        {view !== 'time' && view !== 'timeline' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-44 items-center gap-2">
+              <Label htmlFor="project-seat-filter" className="sr-only">
+                {t('detail.positionFilter')}
+              </Label>
+              <NativeSelect
+                id="project-seat-filter"
+                aria-label={t('detail.positionFilter')}
+                value={positionId}
+                onChange={(e) => setPositionId(e.target.value)}
+                className="h-9 w-full text-xs sm:h-8"
+              >
+                <NativeSelectOption value="">{t('detail.allPositions')}</NativeSelectOption>
+                <NativeSelectOption value="root">{t('detail.rootPosition')}</NativeSelectOption>
+                {seats.map((seat) => (
+                  <NativeSelectOption key={seat.id} value={seat.id}>
+                    {seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix'))}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
 
-          <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs text-foreground sm:min-h-8">
-            <Checkbox
-              checked={includeCancelled}
-              onCheckedChange={(checked) => setIncludeCancelled(checked === true)}
-            />
-            <span>{t('detail.includeCancelled')}</span>
-          </label>
-        </div>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs text-foreground sm:min-h-8">
+              <Checkbox
+                checked={includeCancelled}
+                onCheckedChange={(checked) => setIncludeCancelled(checked === true)}
+              />
+              <span>{t('detail.includeCancelled')}</span>
+            </label>
+          </div>
+        )}
       </div>
 
-      {view !== 'timeline' && board.truncated && (
-        <p className="text-xs text-muted-foreground">{t('detail.truncated', { count: String(tasks.length) })}</p>
-      )}
+      {view === 'time' ? (
+        <ProjectTimeTab
+          slug={slug}
+          projectId={project.id}
+          canWrite={project.canWrite}
+          tasks={board.tasks}
+          members={members}
+        />
+      ) : view === 'timeline' ? (
+        <>
+          {timelineQuery.error && <ErrorText>{errorMessage(timelineQuery.error)}</ErrorText>}
+          {timelineQuery.data ? (
+            <ProjectTimelineView
+              slug={slug}
+              timeline={timelineQuery.data}
+              canWrite={timelineQuery.data.project.canWrite}
+              savingTaskId={savingTimelineTaskId}
+              saveError={setTaskDates.error}
+              onResetSaveError={() => setTaskDates.reset()}
+              onSetTaskDates={(input, onSuccess) => {
+                setSavingTimelineTaskId(input.taskId);
+                setTaskDates.reset();
+                setTaskDates.mutate(
+                  {
+                    projectId: project.id,
+                    taskId: input.taskId,
+                    startOn: input.startOn,
+                    due: input.due,
+                    idempotencyKey: crypto.randomUUID(),
+                  },
+                  {
+                    onSuccess: () => {
+                      onSuccess?.();
+                    },
+                    onSettled: () => {
+                      setSavingTimelineTaskId((current) =>
+                        current === input.taskId ? null : current,
+                      );
+                    },
+                  },
+                );
+              }}
+            />
+          ) : timelineQuery.error ? null : (
+            <ListSkeleton rows={4} />
+          )}
+        </>
+      ) : (
+        <>
+          {board.truncated && (
+            <p className="text-xs text-muted-foreground">{t('detail.truncated', { count: String(tasks.length) })}</p>
+          )}
 
-      {view !== 'timeline' && (
-        <div className="space-y-2">
-          <ViewTabs scope="kernel.task" filters={filters} sort={sort} onApply={applyView} />
-          <TaskFilterBar
-            idPrefix="project-tasks-filter"
-            bar={bar}
-            setBar={setBar}
-            sort={sort}
-            setSort={setSort}
-            positions={seats.map((seat) => ({
-              id: seat.id,
-              label: seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix')),
-            }))}
-          />
-        </div>
-      )}
+          <div className="space-y-2">
+            <ViewTabs scope="kernel.task" filters={filters} sort={sort} onApply={applyView} />
+            <TaskFilterBar
+              idPrefix="project-tasks-filter"
+              bar={bar}
+              setBar={setBar}
+              sort={sort}
+              setSort={setSort}
+              positions={seats.map((seat) => ({
+                id: seat.id,
+                label: seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix')),
+              }))}
+            />
+          </div>
 
-      {boardQuery.error && <ErrorText>{errorMessage(boardQuery.error)}</ErrorText>}
-      {view === 'timeline' && timelineQuery.error && <ErrorText>{errorMessage(timelineQuery.error)}</ErrorText>}
-      {moveError !== null && <ErrorText>{errorMessage(moveError)}</ErrorText>}
-      {createTask.error && <ErrorText>{errorMessage(createTask.error)}</ErrorText>}
-      {removeTask.error && <ErrorText>{errorMessage(removeTask.error)}</ErrorText>}
-      {setTaskPoints.error && <ErrorText>{errorMessage(setTaskPoints.error)}</ErrorText>}
+          {boardQuery.error && <ErrorText>{errorMessage(boardQuery.error)}</ErrorText>}
+          {moveError !== null && <ErrorText>{errorMessage(moveError)}</ErrorText>}
+          {createTask.error && <ErrorText>{errorMessage(createTask.error)}</ErrorText>}
+          {removeTask.error && <ErrorText>{errorMessage(removeTask.error)}</ErrorText>}
+          {setTaskPoints.error && <ErrorText>{errorMessage(setTaskPoints.error)}</ErrorText>}
 
-      {view === 'timeline' ? (
-        timelineQuery.data ? (
-          <ProjectTimelineView
+          <ProjectBoardView
             slug={slug}
-            timeline={timelineQuery.data}
-            canWrite={timelineQuery.data.project.canWrite}
-            savingTaskId={savingTimelineTaskId}
-            saveError={setTaskDates.error}
-            onResetSaveError={() => setTaskDates.reset()}
-            onSetTaskDates={(input, onSuccess) => {
-              setSavingTimelineTaskId(input.taskId);
-              setTaskDates.reset();
-              setTaskDates.mutate(
-                {
-                  projectId: project.id,
-                  taskId: input.taskId,
-                  startOn: input.startOn,
-                  due: input.due,
-                  idempotencyKey: crypto.randomUUID(),
-                },
-                {
-                  onSuccess: () => {
-                    onSuccess?.();
-                  },
-                  onSettled: () => {
-                    setSavingTimelineTaskId((current) =>
-                      current === input.taskId ? null : current,
-                    );
-                  },
+            view={view}
+            tasks={tasks}
+            seats={seats}
+            columns={board.columns}
+            canEdit={project.canWrite}
+            includeCancelled={effectiveIncludeCancelled}
+            creatingTask={createTask.isPending}
+            customSortActive={sort !== null}
+            cyclesEnabled={cyclesEnabled}
+            pointsEnabled={pointsEnabled}
+            cycleNamesById={new Map((cyclesQuery.data?.cycles ?? []).map((c) => [c.id, `#${c.number} ${c.name}`]))}
+            onSetTaskPoints={(taskId, storyPoints) => {
+              setTaskPoints.mutate({
+                projectId: project.id,
+                taskId,
+                storyPoints,
+                idempotencyKey: crypto.randomUUID(),
+              });
+            }}
+            onMoveStatus={(taskId, nextStatus, placement) => {
+              const capturedProjectId = project.id;
+              enqueueBoardMutation(
+                (items) => optimisticMoveTask(items, taskId, nextStatus, placement),
+                (orgClient, markCommitted) =>
+                  commitBoardStatusMove(
+                    orgClient,
+                    { projectId: capturedProjectId, taskId, nextStatus, placement },
+                    markCommitted,
+                  ),
+              );
+            }}
+            onMoveColumn={(taskId: string, column: ProjectColumn, placement?: TaskPlacement) => {
+              const capturedProjectId = project.id;
+              enqueueBoardMutation(
+                (items) => optimisticMoveColumn(items, taskId, column, placement),
+                (orgClient, markCommitted) =>
+                  commitBoardColumnMove(
+                    orgClient,
+                    { projectId: capturedProjectId, taskId, column, placement },
+                    markCommitted,
+                  ),
+              );
+            }}
+            onReorderTask={(taskId: string, placement: TaskPlacement) => {
+              const capturedProjectId = project.id;
+              enqueueBoardMutation(
+                (items) => optimisticReorderTask(items, taskId, placement),
+                async (orgClient, markCommitted) => {
+                  await orgClient.reorderTask({
+                    projectId: capturedProjectId,
+                    taskId,
+                    place: placement.place,
+                    anchorId: placement.anchorId,
+                    idempotencyKey: crypto.randomUUID(),
+                  });
+                  markCommitted();
                 },
               );
             }}
-          />
-        ) : timelineQuery.error ? null : (
-          <ListSkeleton rows={4} />
-        )
-      ) : (
-        <ProjectBoardView
-          slug={slug}
-          view={view}
-          tasks={tasks}
-          seats={seats}
-          columns={board.columns}
-          canEdit={project.canWrite}
-          includeCancelled={effectiveIncludeCancelled}
-          creatingTask={createTask.isPending}
-          customSortActive={sort !== null}
-          cyclesEnabled={cyclesEnabled}
-          pointsEnabled={pointsEnabled}
-          cycleNamesById={new Map((cyclesQuery.data?.cycles ?? []).map((c) => [c.id, `#${c.number} ${c.name}`]))}
-          onSetTaskPoints={(taskId, storyPoints) => {
-            setTaskPoints.mutate({
-              projectId: project.id,
-              taskId,
-              storyPoints,
-              idempotencyKey: crypto.randomUUID(),
-            });
-          }}
-          onMoveStatus={(taskId, nextStatus, placement) => {
-            const capturedProjectId = project.id;
-            enqueueBoardMutation(
-              (items) => optimisticMoveTask(items, taskId, nextStatus, placement),
-              (orgClient, markCommitted) =>
-                commitBoardStatusMove(
-                  orgClient,
-                  { projectId: capturedProjectId, taskId, nextStatus, placement },
-                  markCommitted,
-                ),
-            );
-          }}
-          onMoveColumn={(taskId: string, column: ProjectColumn, placement?: TaskPlacement) => {
-            const capturedProjectId = project.id;
-            enqueueBoardMutation(
-              (items) => optimisticMoveColumn(items, taskId, column, placement),
-              (orgClient, markCommitted) =>
-                commitBoardColumnMove(
-                  orgClient,
-                  { projectId: capturedProjectId, taskId, column, placement },
-                  markCommitted,
-                ),
-            );
-          }}
-          onReorderTask={(taskId: string, placement: TaskPlacement) => {
-            const capturedProjectId = project.id;
-            enqueueBoardMutation(
-              (items) => optimisticReorderTask(items, taskId, placement),
-              async (orgClient, markCommitted) => {
-                await orgClient.reorderTask({
-                  projectId: capturedProjectId,
-                  taskId,
-                  place: placement.place,
-                  anchorId: placement.anchorId,
+            onCreateTask={(
+              input: {
+                title: string;
+                assigneePositionId: string | null;
+                due?: string;
+                checklist?: TaskChecklistStep[];
+                status: BoardColumnStatus;
+                columnId?: string;
+              },
+              done,
+            ) => {
+              const selectedFilterCycle =
+                validCycleFilter.mode === 'cycle'
+                  ? (cyclesQuery.data?.cycles ?? []).find((c) => c.id === validCycleFilter.cycleId)
+                  : undefined;
+              const autoCycleId =
+                !cyclesEnabled
+                  ? undefined
+                  : validCycleFilter.mode === 'cycle' && selectedFilterCycle && selectedFilterCycle.status !== 'completed'
+                    ? selectedFilterCycle.id
+                    : validCycleFilter.mode === 'active' && board.activeCycle
+                      ? board.activeCycle.id
+                      : undefined;
+              createTask.mutate(
+                {
+                  projectId: project.id,
+                  title: input.title,
+                  assigneePositionId: input.assigneePositionId,
+                  ...(input.due ? { due: input.due } : {}),
+                  ...(input.checklist?.length ? { checklist: input.checklist } : {}),
+                  ...(autoCycleId ? { cycleId: autoCycleId } : {}),
+                  status: input.status,
+                  ...(input.columnId ? { columnId: input.columnId } : {}),
                   idempotencyKey: crypto.randomUUID(),
-                });
-                markCommitted();
-              },
-            );
-          }}
-          onCreateTask={(
-            input: {
-              title: string;
-              assigneePositionId: string | null;
-              due?: string;
-              checklist?: TaskChecklistStep[];
-              status: BoardColumnStatus;
-              columnId?: string;
-            },
-            done,
-          ) => {
-            const selectedFilterCycle =
-              validCycleFilter.mode === 'cycle'
-                ? (cyclesQuery.data?.cycles ?? []).find((c) => c.id === validCycleFilter.cycleId)
-                : undefined;
-            const autoCycleId =
-              !cyclesEnabled
-                ? undefined
-                : validCycleFilter.mode === 'cycle' && selectedFilterCycle && selectedFilterCycle.status !== 'completed'
-                  ? selectedFilterCycle.id
-                  : validCycleFilter.mode === 'active' && board.activeCycle
-                    ? board.activeCycle.id
-                    : undefined;
-            createTask.mutate(
-              {
+                },
+                { onSuccess: done },
+              );
+            }}
+            onEditTask={setEditingTask}
+            onRemoveTask={(taskId) => {
+              removeTask.mutate({
                 projectId: project.id,
-                title: input.title,
-                assigneePositionId: input.assigneePositionId,
-                ...(input.due ? { due: input.due } : {}),
-                ...(input.checklist?.length ? { checklist: input.checklist } : {}),
-                ...(autoCycleId ? { cycleId: autoCycleId } : {}),
-                status: input.status,
-                ...(input.columnId ? { columnId: input.columnId } : {}),
+                taskId,
                 idempotencyKey: crypto.randomUUID(),
-              },
-              { onSuccess: done },
-            );
-          }}
-          onEditTask={setEditingTask}
-          onRemoveTask={(taskId) => {
-            removeTask.mutate({
-              projectId: project.id,
-              taskId,
-              idempotencyKey: crypto.randomUUID(),
-            });
-          }}
-        />
+              });
+            }}
+          />
+        </>
       )}
 
       {notesInstalled() && (

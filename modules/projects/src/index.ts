@@ -30,6 +30,15 @@ import {
 import { projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 import { projectTaskSetDates, projectTimeline } from './timeline.ts';
 import { projectCycleCommands, projectCycleQueries } from './cycles.ts';
+import {
+  projectTimeDelete,
+  projectTimeExportCsv,
+  projectTimeLog,
+  projectTimeStart,
+  projectTimeStop,
+  projectTimeSummary,
+  projectTimeUpdate,
+} from './time.ts';
 
 export { hasDependencyPath, projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 export {
@@ -43,6 +52,25 @@ export {
   type TimelineScheduleTask,
 } from './domain/timeline.ts';
 export { projectTaskSetDates, projectTimeline } from './timeline.ts';
+export {
+  PROJECT_TIME_CSV_HEADERS,
+  computeTimeBillableAmount,
+  computeTimeHoursString,
+  formatHourlyRateOutput,
+  normalizeHourlyRateInput,
+  projectTimeCsvCell,
+  projectTimeDelete,
+  projectTimeExportCsv,
+  projectTimeLog,
+  projectTimeStart,
+  projectTimeStop,
+  projectTimeSummary,
+  projectTimeUpdate,
+  resolveLogTimestamps,
+  resolveUpdatedCompletedTimestamps,
+  sumTimeBillableAmounts,
+  validateEndedAndDuration,
+} from './time.ts';
 export { projectsManifest } from './manifest.ts';
 export { projectsToday } from './today.ts';
 export {
@@ -185,6 +213,11 @@ export const projectsCommands = [
   projectTaskSetDates,
   ...projectCycleCommands,
   ...roadmapCommands,
+  projectTimeStart,
+  projectTimeStop,
+  projectTimeLog,
+  projectTimeUpdate,
+  projectTimeDelete,
 ];
 
 export const projectsQueries = [
@@ -205,4 +238,6 @@ export const projectsQueries = [
   projectTimeline,
   ...projectCycleQueries,
   ...roadmapQueries,
+  projectTimeSummary,
+  projectTimeExportCsv,
 ];

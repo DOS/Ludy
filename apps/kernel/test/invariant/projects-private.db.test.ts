@@ -537,6 +537,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
           'project_task',
           'roadmap_board',
           'task_dependency',
+          'time_entry',
         ]),
       );
       for (const row of projTables) {

@@ -63,6 +63,7 @@ import {
   memberProfilesMap,
   ownerDisplayName,
   resolveCreateMemberIds,
+  stopRunningProjectTimers,
   taskNotFound,
   userOf,
 } from './shared.ts';
@@ -72,6 +73,7 @@ export { READERS, loadProject, userOf };
 
 const TABLES = projectsManifest.tables;
 const PROJECT = TABLES.crove_projects.project;
+const TIME_ENTRY_STOP_WRITE = tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']);
 
 type TaskStatus = ProjectTaskCard['status'];
 
@@ -170,6 +172,7 @@ export const projectUpdate = defineCommand({
       'updated_at',
     ]),
     tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+    TIME_ENTRY_STOP_WRITE,
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string }> => {
@@ -220,6 +223,10 @@ export const projectUpdate = defineCommand({
           );
         }
         await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [row.owner_user_id], ctx.now);
+        await stopRunningProjectTimers(ctx, row.id, {
+          kind: 'excluded_on_private',
+          ownerUserId: row.owner_user_id,
+        });
       }
       await ctx.trx
         .updateTable('crove_projects.project')
@@ -261,7 +268,7 @@ export const projectSetStatus = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: ProjectStatus }> => {
     const userId = userOf(ctx.actor);
@@ -269,6 +276,9 @@ export const projectSetStatus = defineCommand({
     assertCanManage(ctx, row, userId);
 
     if (row.status !== input.status) {
+      if (input.status === 'archived') {
+        await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
+      }
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({ status: input.status, updated_at: ctx.now })
@@ -290,7 +300,7 @@ export const projectArchive = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: 'archived' }> => {
     const userId = userOf(ctx.actor);
@@ -298,6 +308,7 @@ export const projectArchive = defineCommand({
     assertCanManage(ctx, row, userId);
 
     if (row.status !== 'archived') {
+      await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({ status: 'archived', updated_at: ctx.now })
@@ -403,7 +414,10 @@ export const projectMemberRemove = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id']),
+    TIME_ENTRY_STOP_WRITE,
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; userId: string; removed: boolean }> => {
     const userId = userOf(ctx.actor);
@@ -427,6 +441,9 @@ export const projectMemberRemove = defineCommand({
       .executeTakeFirst();
 
     const removed = deleted !== undefined;
+    if (removed && row.visibility === 'private') {
+      await stopRunningProjectTimers(ctx, row.id, { kind: 'user', userId: input.userId });
+    }
     ctx.audit({ projectId: row.id, memberUserId: input.userId, removed });
     if (removed) {
       await ctx.emit('projects.member.removed', { projectId: row.id, memberUserId: input.userId });
@@ -507,6 +524,8 @@ export const projectTaskRemove = defineCommand({
     tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
     // Removing a task from a project cascades ON DELETE CASCADE to crove_projects.task_dependency.
     tableWrite(TABLES, 'crove_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+    // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on crove_projects.time_entry.
+    tableWrite(TABLES, 'crove_projects', 'time_entry', ['task_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; removed: boolean }> => {

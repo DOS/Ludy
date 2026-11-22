@@ -4708,6 +4708,13 @@ export function createRpcHandler(
         itemConvertToTask: os.projects.roadmap.itemConvertToTask.handler(projectsCommand('projects.roadmap.item.convert_to_task')),
         itemSyncStage: os.projects.roadmap.itemSyncStage.handler(projectsCommand('projects.roadmap.item.sync_stage')),
       },
+      startTime: os.projects.startTime.handler(projectsCommand('projects.time.start')),
+      stopTime: os.projects.stopTime.handler(projectsCommand('projects.time.stop')),
+      logTime: os.projects.logTime.handler(projectsCommand('projects.time.log')),
+      updateTimeEntry: os.projects.updateTimeEntry.handler(projectsCommand('projects.time.update')),
+      deleteTimeEntry: os.projects.deleteTimeEntry.handler(projectsCommand('projects.time.delete')),
+      timeSummary: os.projects.timeSummary.handler(projectsQuery('projects.time.summary')),
+      exportTimeCsv: os.projects.exportTimeCsv.handler(projectsQuery('projects.time.export_csv')),
     },
     sign: {
       envelope: {

@@ -70,6 +70,7 @@ async function generateSummary(
     },
     counts: source.counts,
     ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
+    ...(source.timeThisWeek ? { timeThisWeek: source.timeThisWeek } : {}),
     tasks: {
       doneThisWeek: toTaskFacts(source.tasks.doneThisWeek),
       overdue: toTaskFacts(source.tasks.overdue),
@@ -121,6 +122,7 @@ export async function prepareProjectWeeklyStatus(
     ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
     tasks: source.tasks,
     ...(bottlenecks.length > 0 ? { bottlenecks } : {}),
+    ...(source.timeThisWeek ? { timeThisWeek: source.timeThisWeek } : {}),
     hiddenByEntityCount: source.hiddenByEntityCount,
     sentences: aiOut.sentences,
     truncated: source.truncated,
