@@ -471,10 +471,10 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
       }),
     ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' });
 
-    // Outsider cannot read or write (cross-org returns PROJECT_NOT_FOUND).
+    // Outsider cannot read or write (non-member returns NOT_A_MEMBER; cross-org returns PROJECT_NOT_FOUND).
     await expect(
       query(outsider.userId, org.orgId, 'projects.dependency.list', { projectId }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'NOT_A_MEMBER' });
     await expect(
       query(outsider.userId, otherOrg.orgId, 'projects.dependency.list', { projectId }),
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
