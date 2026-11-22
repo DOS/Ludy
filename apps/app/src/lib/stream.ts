@@ -54,7 +54,10 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'parties.customers' ||
         // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
         path === 'financeOverview.get' ||
-        path === 'financeOverview.explain'
+        path === 'financeOverview.explain' ||
+        // The cash forecast (#4391) reads the same entries (cash, receivables, payables) and the coworker's note on it.
+        path === 'financeCashForecast.get' ||
+        path === 'financeCashForecast.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;

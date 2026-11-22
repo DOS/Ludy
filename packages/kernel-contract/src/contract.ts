@@ -214,6 +214,7 @@ import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPayme
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
+import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
@@ -3030,6 +3031,10 @@ export const contract = {
   // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
   // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
   // do not hold (ai says why there is none).
+  financeCashForecast: {
+    get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
+    explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),

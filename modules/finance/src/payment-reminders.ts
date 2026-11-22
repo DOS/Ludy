@@ -81,12 +81,19 @@ export interface Customer {
   paused: boolean;
 }
 
+export interface CustomerBounds {
+  // The balance counts only the entries dated up to this day (the cash forecast reads the books as of its day 0); left out, every entry counts.
+  entriesTo?: string;
+  // At most this many customers are read, the largest balances first (the cash forecast bounds its reads); their invoices are all read.
+  customers: number;
+}
+
 // The customers of one legal entity with a positive balance on 131, their sales invoices laid under it (domain/payment-reminder.ts),
 // and the invoices past due. A party and the parties marked as its duplicates are one customer, as on the customers list. `only`:
 // one customer, or a list of them (the Home signals read asks for many at once). The invoices of a customer are the sales still in the books, not voided. An adjustment invoice carries the difference it changes an invoice by: an
 // increase is billed like an invoice of its own amount, and a decrease (a negative total) is skipped, as the balance already holds it, so the older invoices
 // show as paid by it.
-export async function loadCustomers(ctx: QueryContext, entity: string, today: string, only?: string | readonly string[]): Promise<Customer[]> {
+export async function loadCustomers(ctx: QueryContext, entity: string, today: string, only?: string | readonly string[], bounds?: CustomerBounds): Promise<Customer[]> {
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   let balances = ctx.trx
     .selectFrom('crove_finance.journal_line as l')
@@ -98,6 +105,12 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .where('l.account_code', 'like', `${RECEIVABLE_ACCOUNT}%`)
     .groupBy(kept)
     .having(sql<boolean>`sum(l.debit - l.credit) > 0`);
+  if (bounds?.entriesTo !== undefined) {
+    balances = balances
+      .innerJoin('crove_finance.journal_entry as je', (join) => join.onRef('je.org_id', '=', 'l.org_id').onRef('je.id', '=', 'l.entry_id'))
+      .where('je.entry_date', '<=', bounds.entriesTo);
+  }
+  if (bounds !== undefined) balances = balances.orderBy(sql`sum(l.debit - l.credit)`, 'desc').orderBy(kept).limit(bounds.customers);
   if (typeof only === 'string') balances = balances.where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ${only}`);
   else if (only !== undefined) balances = balances.where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(only.length > 0 ? only : [''])})`);
   const owed = await balances.execute();
