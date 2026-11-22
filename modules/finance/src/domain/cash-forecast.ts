@@ -121,8 +121,8 @@ export function buildCashForecast(input: CashForecastInput): CashForecast {
   }
 
   const opening = new Decimal(input.openingCash);
-  const inOf = new Array<DecimalValue>(CASH_FORECAST_DAYS + 1).fill(ZERO);
-  const outOf = new Array<DecimalValue>(CASH_FORECAST_DAYS + 1).fill(ZERO);
+  const inOf: DecimalValue[] = Array.from({ length: CASH_FORECAST_DAYS + 1 }, () => ZERO);
+  const outOf: DecimalValue[] = Array.from({ length: CASH_FORECAST_DAYS + 1 }, () => ZERO);
   for (const item of items) {
     const at = indexOf(today, item.date);
     if (item.kind === 'receipt') inOf[at] = (inOf[at] ?? ZERO).plus(item.amount);
