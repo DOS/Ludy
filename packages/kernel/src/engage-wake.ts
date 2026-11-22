@@ -174,8 +174,10 @@ export const wakeToday = defineQuery({
     const read = zEngageWakeConversations.safeParse(answer.value);
     if (!read.success) return [];
     const items: TodayItem[] = [];
+    // A read gives one page of at most ENGAGE_WAKE_ROWS_MAX ids per rule, so a full list is a lower bound: the line says "100+" (the `plus` param) rather than a number that reads as exact.
+    const plusOf = (list: readonly unknown[]): string => (list.length >= ENGAGE_WAKE_ROWS_MAX ? '+' : '');
     if (read.data.unanswered.length > 0) {
-      items.push({ kind: 'message', app: 'conversations', id: 'wake:unanswered', title: { key: 'wake.unanswered', params: { count: read.data.unanswered.length, hours: rules.unansweredHours } }, count: read.data.unanswered.length, severity: 'warn', href: INBOX });
+      items.push({ kind: 'message', app: 'conversations', id: 'wake:unanswered', title: { key: 'wake.unanswered', params: { count: read.data.unanswered.length, plus: plusOf(read.data.unanswered), hours: rules.unansweredHours } }, count: read.data.unanswered.length, severity: 'warn', href: INBOX });
     }
     const closing = read.data.replyWindow;
     if (closing.length > 0) {
@@ -183,14 +185,14 @@ export const wakeToday = defineQuery({
         kind: 'deadline',
         app: 'conversations',
         id: 'wake:reply-window',
-        title: { key: 'wake.replyWindow', params: { count: closing.length, hours: rules.replyWindowHours } },
+        title: { key: 'wake.replyWindow', params: { count: closing.length, plus: plusOf(closing), hours: rules.replyWindowHours } },
         count: closing.length,
         dueAt: (closing[0] as { closesAt: string }).closesAt,
         href: INBOX,
       });
     }
     if (read.data.comments.length > 0) {
-      items.push({ kind: 'message', app: 'social', id: 'wake:comments', title: { key: 'wake.postComments', params: { count: read.data.comments.length } }, count: read.data.comments.length, href: INBOX });
+      items.push({ kind: 'message', app: 'social', id: 'wake:comments', title: { key: 'wake.postComments', params: { count: read.data.comments.length, plus: plusOf(read.data.comments) } }, count: read.data.comments.length, href: INBOX });
     }
     return zTodayItems.parse(items);
   },

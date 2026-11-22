@@ -220,6 +220,8 @@ const SAMPLE_EMPLOYEE: HrEmployee = {
   departmentId: null,
   departmentName: 'Kỹ thuật',
   jobTitle: 'Kỹ sư phần mềm',
+  linkedUserId: null,
+  linkedMemberName: null,
   address: 'Quận 1, TP. Hồ Chí Minh',
   status: 'active',
   endedOn: null,

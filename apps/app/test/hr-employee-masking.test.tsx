@@ -106,6 +106,8 @@ const EMPLOYEE: HrEmployee = {
   departmentId: null,
   departmentName: null,
   jobTitle: null,
+  linkedUserId: null,
+  linkedMemberName: null,
   status: 'active',
   endedOn: null,
   isForeign: false,

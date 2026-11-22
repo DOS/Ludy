@@ -37,6 +37,13 @@ describe('the AI-written mark', () => {
     expect(render({ actorOrigin: 'ui', showHint: true })).toBe('');
   });
 
+  it('keeps the hint in a hidden element with the given id, outside the name, when a control describes itself by it (#4163)', () => {
+    const inCard = render({ actorOrigin: 'mcp', tainted: true, hintId: 'hint-1' });
+    expect(inCard).toContain('<span id="hint-1" hidden="">');
+    expect(inCard).toContain('kiểm tra trước khi dùng');
+    expect(inCard).not.toContain('sr-only');
+  });
+
   it('titles each badge with its own hint, so an "edited" badge never carries the "written" sentence (#4168)', () => {
     const titleOf = (html: string) => /title="([^"]*)"/.exec(html)?.[1];
     for (const locale of ['vi', 'en'] as const) {

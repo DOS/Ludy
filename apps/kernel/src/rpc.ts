@@ -1127,10 +1127,30 @@ export function createRpcHandler(
         list: os.hr.departments.list.handler(hrQuery('hr.department.list')),
         add: os.hr.departments.add.handler(hrCommand('hr.department.add')),
         edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
+        setManager: os.hr.departments.setManager.handler(hrCommand('hr.department.set_manager')),
         archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
       },
       employee: {
         contractPdf: os.hr.employee.contractPdf.handler(hrQuery('hr.employee.contract_pdf')),
+      },
+      self: {
+        profile: { get: os.hr.self.profile.get.handler(hrQuery('hr.self.profile.get')) },
+        leave: {
+          balance: os.hr.self.leave.balance.handler(hrQuery('hr.self.leave.balance')),
+          requests: os.hr.self.leave.requests.handler(hrQuery('hr.self.leave.requests')),
+          submit: os.hr.self.leave.submit.handler(hrCommand('hr.self.leave.request_submit')),
+          cancel: os.hr.self.leave.cancel.handler(hrCommand('hr.self.leave.request_cancel')),
+        },
+        payslips: {
+          list: os.hr.self.payslips.list.handler(hrQuery('hr.self.payslips.list')),
+          get: os.hr.self.payslips.get.handler(hrQuery('hr.self.payslip.get')),
+        },
+      },
+      leaveRequests: {
+        list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),
+        approveL1: os.hr.leaveRequests.approveL1.handler(hrCommand('hr.leave_request.approve_l1')),
+        approveFinal: os.hr.leaveRequests.approveFinal.handler(hrCommand('hr.leave_request.approve_final')),
+        reject: os.hr.leaveRequests.reject.handler(hrCommand('hr.leave_request.reject')),
       },
       payroll: {
         employees: {
@@ -1138,6 +1158,7 @@ export function createRpcHandler(
           get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
           add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
           edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          linkMember: os.hr.payroll.employees.linkMember.handler(hrCommand('hr.payroll.employee.link_member')),
           finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),

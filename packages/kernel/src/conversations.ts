@@ -2718,13 +2718,24 @@ async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
-// Identities left with no thread: nothing the org holds names them any more.
+// Identities left with no thread: nothing the org holds names them any more. Two statements: the first picks the candidates and locks their rows, skipping a row another transaction holds (an intake of another
+// channel that is reusing the customer's identity right now, whose new thread this statement's snapshot may not see yet: its upsert holds the row until it commits); the second deletes them with a fresh snapshot,
+// so a thread committed in between is seen. A locked row also makes a later upsert of the same customer wait for this transaction and then make a new row, so the customer's new thread is never left with no
+// identity (#3480). A skipped identity is swept by the next run.
 async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
+  const candidates = await sql<{ id: string }>`
+    SELECT i.id FROM crove_kernel.conversation_identity i
+    WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+      -- A person who only replied in other customers' threads is still named by what they wrote there.
+      AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
+    ORDER BY i.id
+    FOR UPDATE OF i SKIP LOCKED`.execute(ctx.trx);
+  if (candidates.rows.length === 0) return 0;
   const { rows } = await sql<{ n: string }>`
     WITH gone AS (
       DELETE FROM crove_kernel.conversation_identity i
-      WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
-        -- A person who only replied in other customers' threads is still named by what they wrote there.
+      WHERE i.org_id = ${ctx.orgId}::uuid AND i.id = ANY (${candidates.rows.map((r) => r.id)}::uuid[])
+        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
         AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
       RETURNING i.id)
     SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);

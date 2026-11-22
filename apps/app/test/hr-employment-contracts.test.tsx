@@ -239,6 +239,8 @@ describe('HR labor contract & probation UI (#3384)', () => {
       departmentId: null,
       departmentName: null,
       jobTitle: null,
+      linkedUserId: null,
+      linkedMemberName: null,
       status: 'active',
       endedOn: null,
       isForeign: false,

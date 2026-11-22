@@ -6,7 +6,7 @@ import { zTodayItems, type AdsFlag } from '@ludy/kernel-contract';
 import { TODAY_ADS_CAMPAIGNS, todayItemsOf } from '../src/today.ts';
 
 const accountId = '0190c4a1-0000-7000-8000-000000000001';
-const pace = (over: Partial<Extract<AdsFlag, { kind: 'pace' }>> = {}): AdsFlag => ({ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, ...over });
+const pace = (over: Partial<Extract<AdsFlag, { kind: 'pace' }>> = {}): AdsFlag => ({ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01', ...over });
 const day = (over: Partial<Extract<AdsFlag, { kind: 'day' }>> = {}): AdsFlag => ({ kind: 'day', scope: 'account', adAccountId: accountId, accountName: 'Cửa hàng', currency: 'USD', skippedAccounts: 0, period: 'daily', cap: '100.00', share: '100.00', day: '2026-11-09', spend: '160.00', ratio: '1.60', ...over });
 const cpr = (n: number, ratio: string): AdsFlag => ({ kind: 'cpr', adAccountId: accountId, accountName: 'Cửa hàng', campaignId: `c${String(n).padStart(3, '0')}`, campaignName: `Chiến dịch ${n}`, currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio, recentResults: '300', historyDays: 6 });
 
