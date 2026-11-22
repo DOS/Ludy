@@ -13,6 +13,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { MarketplaceProposalNote } from '../components/marketplace-proposal-note.tsx';
 import { EngageProposalCard, EngageProposalHiddenCard } from '../components/engage-proposal-card.tsx';
 import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
@@ -254,7 +255,7 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
 
 // A general journal voucher entered by hand (NVK, #888): its reason and the entry its approval posts, line by line with
 // each line's party. The number is given on approval; code is the one it was given, once approved.
-function JournalVoucherCard({ voucher, code, slug, accountName }: { voucher: JournalVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string }) {
+function JournalVoucherCard({ voucher, code, slug, accountName, proposalId }: { voucher: JournalVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string; proposalId: string }) {
   const t = useTranslations('inboxDetail');
   const f = useFormat();
   return (
@@ -304,6 +305,7 @@ function JournalVoucherCard({ voucher, code, slug, accountName }: { voucher: Jou
           {t('viewJournal')}
         </Link>
       </div>
+      <MarketplaceProposalNote proposalId={proposalId} />
     </Card>
   );
 }
@@ -926,7 +928,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('voucherNotEligible')}</p>
           )}
-          <JournalVoucherCard voucher={journalVoucher} code={journalVoucherCode} slug={slug} accountName={accountName} />
+          <JournalVoucherCard voucher={journalVoucher} code={journalVoucherCode} slug={slug} accountName={accountName} proposalId={item.id} />
         </div>
       )}
       {ads && (

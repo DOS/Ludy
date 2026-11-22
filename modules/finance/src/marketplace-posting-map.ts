@@ -134,7 +134,7 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
 // household seller, in the settlement voucher and again in the payout; its debit side is the owner's equity (pitOwnerEquity), not an expense. `payout_adjustments`: the incentives, lost-goods compensation and
 // tax withheld from a company a person classified on a payout (#4303 S4). 333 and the retired 1388 row belong to no path.
 export type MarketplacePath = 'sales' | 'payout' | 'fee_accrual' | 'household_tax' | 'payout_adjustments';
-type MarketplaceRow = 'receivable' | 'revenue' | 'salesReturn' | 'cash' | 'feePayable' | 'feeAwaitingInvoice' | 'taxWithheld' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity' | 'feeExpense' | 'accruedExpense' | 'outputVat' | 'feeInputVat' | 'otherReceivable' | 'assetAwaitingHandling' | 'costOfGoods' | 'otherIncome' | 'otherExpense';
+export type MarketplaceRow = 'receivable' | 'revenue' | 'salesReturn' | 'cash' | 'feePayable' | 'feeAwaitingInvoice' | 'taxWithheld' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity' | 'feeExpense' | 'accruedExpense' | 'outputVat' | 'feeInputVat' | 'otherReceivable' | 'assetAwaitingHandling' | 'costOfGoods' | 'otherIncome' | 'otherExpense';
 
 export const MARKETPLACE_PATH_ROWS: Readonly<Record<MarketplacePath, readonly MarketplaceRow[]>> = Object.freeze({
   sales: Object.freeze<MarketplaceRow[]>(['receivable', 'revenue', 'salesReturn', 'outputVat']),
