@@ -286,9 +286,9 @@ export const en = {
         dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled for the next 24 hours, or overdue, and still waiting for approval',
       },
       wake: {
-        unanswered: '{count, plural, one {# conversation has} other {# conversations have}} waited over {hours, plural, one {# hour} other {# hours}} without an answer',
-        replyWindow: '{count, plural, one {# conversation} other {# conversations}} about to pass the platform reply window (within {hours, plural, one {# hour} other {# hours}})',
-        postComments: '{count, plural, one {# new comment} other {# new comments}} under a published post without an answer',
+        unanswered: '{count, plural, one {#{plus} conversation has} other {#{plus} conversations have}} waited over {hours, plural, one {# hour} other {# hours}} without an answer',
+        replyWindow: '{count, plural, one {#{plus} conversation} other {#{plus} conversations}} about to pass the platform reply window (within {hours, plural, one {# hour} other {# hours}})',
+        postComments: '{count, plural, one {#{plus} new comment} other {#{plus} new comments}} under a published post without an answer',
       },
       conversations: {
         unanswered: '{count, plural, one {# customer message is} other {# customer messages are}} waiting for a reply',
