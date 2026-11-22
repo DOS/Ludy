@@ -216,7 +216,13 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     });
 
     const createTask = async (title: string, pId = projectId) =>
-      (await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', { projectId: pId, title })).taskId;
+      (
+        await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
+          projectId: pId,
+          title,
+          assigneePositionId: null,
+        })
+      ).taskId;
 
     const a = await createTask('Task A');
     const b = await createTask('Task B');
@@ -473,8 +479,10 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     const { projectId: capProjectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
       name: 'Dự án 500',
     });
+    let capExtraA = '';
+    let capExtraB = '';
     await withAdmin(async (c) => {
-      // Create 501 tasks in a chain and seed 500 edges directly (within <=2 incident edges each).
+      // Create 502 tasks: 0..500 form a 500-edge chain (<=2 edges each), while 501 stays disconnected.
       const capTaskIds: string[] = [];
       for (let i = 0; i < PROJECT_DEPENDENCIES_MAX + 2; i++) {
         const id = randomUUID();
@@ -498,23 +506,16 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
            FROM unnest($3::uuid[], $4::uuid[]) AS b(blocker, blocked)`,
         [org.orgId, capProjectId, blockers, blockeds],
       );
+      capExtraA = capTaskIds[PROJECT_DEPENDENCIES_MAX + 1]!;
+      capExtraB = capTaskIds[0]!;
     });
     const capBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: capProjectId });
     expect(capBoard.totalVisible).toBeGreaterThan(0);
-    // Fetch two extra tasks in capProject not at 20 edges yet and attempt 501st edge.
-    const extraTasks = await withAdmin(async (c) =>
-      (
-        await c.query<{ task_id: string }>(
-          `SELECT task_id FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2 ORDER BY created_at DESC LIMIT 2`,
-          [org.orgId, capProjectId],
-        )
-      ).rows.map((r) => r.task_id),
-    );
     await expect(
       exec(owner.userId, org.orgId, 'projects.dependency.add', {
         projectId: capProjectId,
-        blockerTaskId: extraTasks[1]!,
-        blockedTaskId: extraTasks[0]!,
+        blockerTaskId: capExtraA,
+        blockedTaskId: capExtraB,
       }),
     ).rejects.toMatchObject({ code: 'DEPENDENCY_LIMIT_REACHED', status: 422 });
   });
@@ -527,7 +528,13 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     });
 
     const createTask = async (title: string) =>
-      (await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', { projectId, title })).taskId;
+      (
+        await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
+          projectId,
+          title,
+          assigneePositionId: null,
+        })
+      ).taskId;
 
     const blocker = await createTask('Chốt hợp đồng khung');
     const blocked1 = await createTask('Phát hành báo giá');
@@ -578,6 +585,8 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
           JSON.stringify({
             id: 'chatcmpl-test',
             object: 'chat.completion',
+            created: 1,
+            model: 'test',
             choices: [
               {
                 index: 0,
