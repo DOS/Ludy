@@ -72,7 +72,7 @@ suite('HR Home Today alerts (#4444)', () => {
     const created = await createOrg(rt, asUser(owner), `${namePrefix} ${tag}`);
     const orgId = created.orgId;
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'),
               ($1, $3, 'member'),
               ($1, $4, 'member'),
@@ -87,14 +87,14 @@ suite('HR Home Today alerts (#4444)', () => {
     );
 
     const defaultEntityRow = await adminPool.query<{ id: string }>(
-      `SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`,
+      `SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`,
       [orgId],
     );
     const defaultEntityId = defaultEntityRow.rows[0]?.id as string;
 
     const branch = async (name = 'Chi nhánh HN') => {
       const res = await adminPool.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`,
         [orgId, name, owner],
       );
       return res.rows[0]?.id as string;
@@ -134,11 +134,11 @@ suite('HR Home Today alerts (#4444)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appPool = createPool({ connectionString: appUrl.toString(), max: 4 });
 
@@ -651,7 +651,7 @@ suite('HR Home Today alerts (#4444)', () => {
 
     // Check audit_event & DB counts before read calls.
     const countState = async () => {
-      const audit = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1`, [o.orgId]);
+      const audit = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1`, [o.orgId]);
       const reqs = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_hr.leave_request WHERE org_id = $1`, [o.orgId]);
       const emps = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_hr.payroll_employee WHERE org_id = $1`, [o.orgId]);
       return { audit: audit.rows[0]!.n, reqs: reqs.rows[0]!.n, emps: emps.rows[0]!.n };
@@ -740,8 +740,8 @@ suite('HR Home Today alerts (#4444)', () => {
     await createDb(appPool)
       .transaction()
       .execute(async (trx) => {
-        await sql`SELECT crove_kernel.enter_context(${o.owner}::uuid, ${o.orgId}::uuid)`.execute(trx);
-        await sql`SET LOCAL ROLE crove_tenant`.execute(trx);
+        await sql`SELECT ludy_kernel.enter_context(${o.owner}::uuid, ${o.orgId}::uuid)`.execute(trx);
+        await sql`SET LOCAL ROLE ludy_tenant`.execute(trx);
         const directResult = await hrToday.handler(
           {
             trx,
@@ -755,14 +755,14 @@ suite('HR Home Today alerts (#4444)', () => {
         expect(directResult).toEqual([]);
       });
 
-    // Re-enabling restores hr.today and kernel.today alerts cleanly (including direct crove_tenant invocation).
+    // Re-enabling restores hr.today and kernel.today alerts cleanly (including direct ludy_tenant invocation).
     await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: true });
     expect((await o.query<TodayItem[]>(o.mgrLinked, 'hr.today', {})).length).toBe(1);
     await createDb(appPool)
       .transaction()
       .execute(async (trx) => {
-        await sql`SELECT crove_kernel.enter_context(${o.mgrLinked}::uuid, ${o.orgId}::uuid)`.execute(trx);
-        await sql`SET LOCAL ROLE crove_tenant`.execute(trx);
+        await sql`SELECT ludy_kernel.enter_context(${o.mgrLinked}::uuid, ${o.orgId}::uuid)`.execute(trx);
+        await sql`SET LOCAL ROLE ludy_tenant`.execute(trx);
         const directMember = await hrToday.handler(
           {
             trx,
