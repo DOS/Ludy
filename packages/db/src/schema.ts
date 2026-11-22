@@ -207,6 +207,7 @@ export type PartyTable = Refine<
   {
     kind: Generated<(typeof PARTY_KINDS)[number]>;
     source_trust: Generated<(typeof PARTY_SOURCE_TRUSTS)[number]>;
+    actor_origin: Generated<ActorOrigin>;
   }
 >;
 
@@ -960,16 +961,16 @@ export type CrmEventTypeTable = Refine<
 export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
-export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]>; actor_origin: Generated<ActorOrigin> }>;
 // A quote of a deal (#2693): a draft until a person sends it (crm.quote.send, #2694); the status, the number and the sent columns change only through the guard trigger's transitions.
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
 export const QUOTE_SENT_VIA = ['link', 'email'] as const;
 export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
 export type CrmQuoteTable = Refine<
   G.CrmQuoteTable,
-  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null }
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null; actor_origin: Generated<ActorOrigin> }
 >;
-export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
+export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number]; actor_origin: Generated<ActorOrigin> }>;
 // The sales order of an accepted quote (#2696, ADR-0050): confirmed until a person cancels it; a person records how the customer's yes arrived.
 export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
 export const QUOTE_ACCEPTED_VIA = ['chat', 'email', 'phone', 'in_person', 'other'] as const;
@@ -1047,7 +1048,10 @@ export type ConversationDraftTable = Refine<
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 // Where a row came from: a connected AI app in its sealed write context ('mcp'), or not ('ui': a person's own act, and also what the system or an org-chart agent writes), stamped by the database (#4149).
 export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
-export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<(typeof ACTOR_ORIGINS)[number]> }>;
+type ActorOrigin = (typeof ACTOR_ORIGINS)[number];
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<ActorOrigin> }>;
+// The other five tables that carry the mark (a note, a contact, a deal, a quote and a quote line): their CHECK is a compound one (the origin is `ui` or `mcp`, and `mcp` only with `tainted`), which check-unions reads.
+export type ConversationNoteTable = Refine<G.KernelConversationNoteTable, { actor_origin: Generated<ActorOrigin> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
@@ -1670,6 +1674,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_attachment': ConversationAttachmentTable;
   'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
+  'crove_kernel.conversation_note': ConversationNoteTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.activity': ActivityTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;

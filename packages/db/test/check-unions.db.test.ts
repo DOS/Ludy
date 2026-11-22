@@ -634,11 +634,20 @@ function allowedValues(column: string, definition: string): string[] | null | 'u
   return /= ANY \(|\bIN \(/.test(definition) || literalCompare.test(definition) ? 'unreadable' : null;
 }
 
+// The origin set of the mark's compound CHECK, or null when the definition is not that shape: `actor_origin` is one of a fixed set, and `mcp` only on a tainted row.
+const MARK_CHECK = /^CHECK \(\(\(actor_origin = ANY \(ARRAY\[(.*)\]\)\) AND \(\(actor_origin <> 'mcp'::text\) OR tainted\)\)\)$/;
+function markOrigins(definition: string): string[] | null {
+  const list = MARK_CHECK.exec(definition)?.[1];
+  return list === undefined ? null : literals(list);
+}
+
 suite('CHECK-constraint unions of schema.ts against the database', () => {
   const dbName = `crove_test_check_unions_${Date.now()}_${randomBytes(4).toString('hex')}`;
   let admin: pg.Client;
   let created = false;
   let constraints: Constraint[] = [];
+  // The mark's compound CHECK (`mcp_origin_ck`: the origin is a fixed set, and `mcp` only with `tainted`) of the tables that carry both columns; it reads two columns, so the query above, which keeps single-column CHECKs, does not see it.
+  let marks: { table: string; definition: string }[] = [];
 
   beforeAll(async () => {
     admin = new pg.Client({ connectionString: ADMIN });
@@ -665,6 +674,16 @@ suite('CHECK-constraint unions of schema.ts against the database', () => {
         [SCHEMAS],
       );
       constraints = rows;
+      const compound = await client.query<{ table: string; definition: string }>(
+        `SELECT n.nspname || '.' || c.relname AS table, pg_catalog.pg_get_constraintdef(con.oid) AS definition
+           FROM pg_catalog.pg_constraint con
+           JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE con.contype = 'c' AND con.conname = 'mcp_origin_ck' AND pg_catalog.cardinality(con.conkey) = 2 AND n.nspname = ANY($1)
+          ORDER BY 1`,
+        [SCHEMAS],
+      );
+      marks = compound.rows;
     } finally {
       await client.end();
     }
@@ -711,6 +730,31 @@ suite('CHECK-constraint unions of schema.ts against the database', () => {
       if (!seen.has(key)) problems.push(`${key}: listed in UNIONS but the database has no CHECK constraint with a fixed set on it`);
     }
     expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+  // The tables schema.ts refines `actor_origin` on beside the activity row (whose CHECK has the origin alone and is compared above): their CHECK also ties `mcp` to a tainted row.
+  it('the mark\'s compound CHECK is on each of the five tables, and its origins are the ACTOR_ORIGINS schema.ts refines the column to', () => {
+    const problems: string[] = [];
+    for (const table of ['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.conversation_note', 'crove_kernel.party']) {
+      const found = marks.find((m) => m.table === table);
+      if (!found) {
+        problems.push(`${table}: no two-column mcp_origin_ck CHECK (the migration of the mark adds it)`);
+        continue;
+      }
+      const origins = markOrigins(found.definition);
+      if (origins === null) problems.push(`${table}: cannot read mcp_origin_ck (${found.definition}); teach markOrigins() its shape`);
+      else if ([...origins].sort().join('\u0000') !== [...ACTOR_ORIGINS].sort().join('\u0000')) problems.push(`${table}: the database allows [${origins.join(', ')}], schema.ts has [${ACTOR_ORIGINS.join(', ')}]`);
+    }
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+});
+
+describe('the mark\'s compound CHECK (actor_origin, tainted)', () => {
+  it('reads the shape PostgreSQL stores and refuses the ones it does not know', () => {
+    expect(markOrigins("CHECK (((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])) AND ((actor_origin <> 'mcp'::text) OR tainted)))")).toEqual(['ui', 'mcp']);
+    expect(markOrigins("CHECK (((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])) AND (actor_origin <> 'x'::text)))")).toBeNull();
+    expect(markOrigins("CHECK ((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])))")).toBeNull();
   });
 });
 
