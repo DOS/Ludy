@@ -124,6 +124,25 @@ export {
   resolveTaskColumnId,
   type ProjectOrderRow,
 } from './columns.ts';
+import { roadmapCommands, roadmapQueries } from './roadmap.ts';
+export {
+  generateEphemeralOtpWrapKey,
+  openEphemeralOtpCode,
+  renderRoadmapOtpMail,
+  sealEphemeralOtpCode,
+} from './roadmap-mail.ts';
+export {
+  roadmapBoardCreate,
+  roadmapBoardGet,
+  roadmapBoardUpdate,
+  roadmapBoards,
+  roadmapItemConvertToTask,
+  roadmapItemCreate,
+  roadmapItemMerge,
+  roadmapItemModerate,
+  roadmapItemSyncStage,
+  roadmapOtpMailData,
+} from './roadmap.ts';
 export {
   projectArchive,
   projectBoard,
@@ -165,6 +184,7 @@ export const projectsCommands = [
   projectDependencyRemove,
   projectTaskSetDates,
   ...projectCycleCommands,
+  ...roadmapCommands,
 ];
 
 export const projectsQueries = [
@@ -184,4 +204,5 @@ export const projectsQueries = [
   projectDependencyList,
   projectTimeline,
   ...projectCycleQueries,
+  ...roadmapQueries,
 ];

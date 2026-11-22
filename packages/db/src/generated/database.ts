@@ -248,6 +248,9 @@ export interface CroveProjectsSchema {
   'crove_projects.project_cycle': ProjectsProjectCycleTable;
   'crove_projects.project_member': ProjectsProjectMemberTable;
   'crove_projects.project_task': ProjectsProjectTaskTable;
+  'crove_projects.roadmap_board': ProjectsRoadmapBoardTable;
+  'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'crove_projects.roadmap_vote': ProjectsRoadmapVoteTable;
   'crove_projects.task_dependency': ProjectsTaskDependencyTable;
 }
 
@@ -3850,6 +3853,56 @@ export interface ProjectsProjectTaskTable {
   start_on: string | null;
   cycle_id: string | null;
   story_points: number | null;
+}
+
+/** crove_projects.roadmap_board */
+export interface ProjectsRoadmapBoardTable {
+  org_id: string;
+  id: Generated<string>;
+  slug: string;
+  title: string;
+  description: string | null;
+  enabled: Generated<boolean>;
+  project_id: string | null;
+  allow_submissions: Generated<boolean>;
+  allow_voting: Generated<boolean>;
+  require_moderation: Generated<boolean>;
+  embed_allowed_origins: Generated<string[]>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.roadmap_item */
+export interface ProjectsRoadmapItemTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  linked_task_id: string | null;
+  source: string;
+  moderation_status: Generated<string>;
+  merged_into_item_id: string | null;
+  stage: Generated<string>;
+  category: string | null;
+  public_title: string;
+  public_summary: string | null;
+  vote_count: Generated<number>;
+  tainted: Generated<boolean>;
+  submitter_display_name: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.roadmap_vote */
+export interface ProjectsRoadmapVoteTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  item_id: string;
+  voter_email_hash: string;
+  notify_on_ship: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_projects.task_dependency */

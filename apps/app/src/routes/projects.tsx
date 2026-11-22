@@ -32,6 +32,7 @@ import { ProjectTimelineView } from '../components/project-timeline.tsx';
 import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
 import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
 import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
+import { ProjectRoadmapPanel } from '../components/project-roadmap-panel.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
@@ -162,6 +163,7 @@ export function ProjectsPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
   const t = useTranslations('projects');
+  const [workspaceTab, setWorkspaceTab] = useState<'projects' | 'roadmap'>('projects');
   const [statusFilter, setStatusFilter] = useState<ProjectStatusFilter>('open');
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -180,7 +182,7 @@ export function ProjectsPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          canWrite ? (
+          canWrite && workspaceTab === 'projects' ? (
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" onClick={() => setTemplateOpen(true)} data-testid="create-from-template-button">
                 <ProjectIcon name="template" />
@@ -195,76 +197,97 @@ export function ProjectsPage() {
         }
       />
 
-      <CreateProjectDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={(projectId) => {
-          void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
-        }}
-      />
+      <Tabs
+        value={workspaceTab}
+        onValueChange={(next) => setWorkspaceTab(next as 'projects' | 'roadmap')}
+        data-testid="projects-workspace-tabs"
+      >
+        <TabsList aria-label={t('workspaceTabs.label')}>
+          <TabsTrigger value="projects" className="min-h-11">
+            {t('workspaceTabs.projects')}
+          </TabsTrigger>
+          <TabsTrigger value="roadmap" className="min-h-11" data-testid="projects-roadmap-tab">
+            {t('workspaceTabs.roadmap')}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <ProjectTemplateDialog
-        mode="create"
-        open={templateOpen}
-        onOpenChange={setTemplateOpen}
-        onCreated={(projectId) => {
-          void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
-        }}
-      />
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs
-          value={statusFilter}
-          onValueChange={(next) => setStatusFilter(next as ProjectStatusFilter)}
-          className="min-w-0 overflow-x-auto"
-        >
-          <TabsList aria-label={t('filters.label')}>
-            {filterTabs.map((tab) => (
-              <TabsTrigger key={tab} value={tab}>
-                {t(`filters.${tab}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-
-        <div className="w-full sm:w-72">
-          <Input
-            type="search"
-            aria-label={t('searchLabel')}
-            placeholder={t('searchPlaceholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {query.isPending ? (
-        <ListSkeleton />
-      ) : query.error ? (
-        <ErrorText>{errorMessage(query.error)}</ErrorText>
-      ) : projects.length === 0 ? (
-        <Empty
-          title={search.trim() || statusFilter !== 'open' ? t('emptyFiltered') : t('empty')}
-          hint={search.trim() || statusFilter !== 'open' ? t('emptyFilteredHint') : t('emptyHint')}
-          action={
-            canWrite && !search.trim() ? (
-              <Button onClick={() => setCreateOpen(true)}>
-                <ProjectIcon name="plus" />
-                {t('newProject')}
-              </Button>
-            ) : undefined
-          }
-        />
+      {workspaceTab === 'roadmap' ? (
+        <ProjectRoadmapPanel orgSlug={slug} />
       ) : (
         <>
-          {query.data?.truncated && (
-            <p className="text-xs text-muted-foreground">{t('truncated', { count: String(projects.length) })}</p>
+          <CreateProjectDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            onCreated={(projectId) => {
+              void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
+            }}
+          />
+
+          <ProjectTemplateDialog
+            mode="create"
+            open={templateOpen}
+            onOpenChange={setTemplateOpen}
+            onCreated={(projectId) => {
+              void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
+            }}
+          />
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Tabs
+              value={statusFilter}
+              onValueChange={(next) => setStatusFilter(next as ProjectStatusFilter)}
+              className="min-w-0 overflow-x-auto"
+            >
+              <TabsList aria-label={t('filters.label')}>
+                {filterTabs.map((tab) => (
+                  <TabsTrigger key={tab} value={tab}>
+                    {t(`filters.${tab}`)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            <div className="w-full sm:w-72">
+              <Input
+                type="search"
+                aria-label={t('searchLabel')}
+                placeholder={t('searchPlaceholder')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {query.isPending ? (
+            <ListSkeleton />
+          ) : query.error ? (
+            <ErrorText>{errorMessage(query.error)}</ErrorText>
+          ) : projects.length === 0 ? (
+            <Empty
+              title={search.trim() || statusFilter !== 'open' ? t('emptyFiltered') : t('empty')}
+              hint={search.trim() || statusFilter !== 'open' ? t('emptyFilteredHint') : t('emptyHint')}
+              action={
+                canWrite && !search.trim() ? (
+                  <Button onClick={() => setCreateOpen(true)}>
+                    <ProjectIcon name="plus" />
+                    {t('newProject')}
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <>
+              {query.data?.truncated && (
+                <p className="text-xs text-muted-foreground">{t('truncated', { count: String(projects.length) })}</p>
+              )}
+              <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects-list">
+                {projects.map((project) => (
+                  <ProjectCardItem key={project.id} slug={slug} project={project} />
+                ))}
+              </ul>
+            </>
           )}
-          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects-list">
-            {projects.map((project) => (
-              <ProjectCardItem key={project.id} slug={slug} project={project} />
-            ))}
-          </ul>
         </>
       )}
     </div>

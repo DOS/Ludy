@@ -27,6 +27,8 @@ const ORG_LEVEL = new Map<string, string>([
   ['kernel.tenant', "the org's own settings"],
   ['kernel.user', "a member's sessions"],
   ['projects.project', 'a project (created, updated, status, owner, members, tasks)'],
+  ['projects.roadmap_board', 'a public roadmap board (created and configuration updated; org-wide)'],
+  ['projects.roadmap_item', 'a public roadmap item (created, moderated, merged, or converted to a task; org-wide)'],
 ]);
 // Record types whose record names no entity, written with the entity the action was for at every call (#1725). Sorted.
 const ENTITY_NAMED = new Map<string, string>([

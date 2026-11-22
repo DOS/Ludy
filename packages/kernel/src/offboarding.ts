@@ -284,6 +284,9 @@ export const EXPORT_TABLES = {
   'projects.project_cycle': { from: 'crove_projects.project_cycle', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
+  'projects.roadmap_board': { from: 'crove_projects.roadmap_board', omit: [] },
+  'projects.roadmap_item': { from: 'crove_projects.roadmap_item', omit: [] },
+  'projects.roadmap_vote': { from: 'crove_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'crove_projects.task_dependency', omit: [] },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {

@@ -42,6 +42,8 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_sign.signing_token': 'signing link token hashes: credentials',
   'crove_sign.signing_otp': 'email signing OTP hashes: short-lived credentials',
   'crove_sign.template_direct_link': 'template direct signing link token hashes: credentials',
+  'crove_projects.roadmap_otp': 'public roadmap email OTP challenges and session claims: ephemeral credentials, definer-only',
+  'crove_projects.roadmap_subscriber': 'sealed public roadmap voter emails and unsubscribe token hashes: definer-only privacy boundary',
   // Private to one member by row security (no owner or admin path), or readable only through the meeting's recorder and reader checks.
   'crove_social.notification': "private to its member: a member's own social notifications are readable by that member alone",
   'crove_social.notification_mail_off': "private to its member: a member's own mail preference",

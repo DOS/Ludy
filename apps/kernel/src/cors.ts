@@ -7,15 +7,15 @@
 // cookies: the answer never sets Access-Control-Allow-Credentials, and the browser sends no cookie on these requests.
 // With the list empty (the default, and every same-origin deployment) the middleware does nothing.
 import type { MiddlewareHandler } from 'hono';
-import { LEGACY_ORG_HEADER, ORG_HEADER } from '@ludy/kernel-contract';
+import { LEGACY_ORG_HEADER, ORG_HEADER, ROADMAP_VOTER_HEADER } from '@ludy/kernel-contract';
 import { INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER } from './auth-signup-policy.ts';
 
 export const CORS_MAX_ORIGINS = 10;
 
 // The request headers the web app sends cross-origin: the session and org headers, JSON bodies, the invite token of a
-// sign-up (#563), the headers Supabase's auth client adds (`apikey`, `x-client-info`, `x-supabase-api-version`) and the
-// no-cache pair a browser adds to a fetch with `cache: 'no-store'`.
-const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, LEGACY_ORG_HEADER, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version', 'cache-control', 'pragma'];
+// sign-up (#563), the public roadmap OTP voter claim header (#4399), the headers Supabase's auth client adds
+// (`apikey`, `x-client-info`, `x-supabase-api-version`) and the no-cache pair a browser adds to a fetch with `cache: 'no-store'`.
+const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, LEGACY_ORG_HEADER, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER, ROADMAP_VOTER_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version', 'cache-control', 'pragma'];
 const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 // The response headers a page may read: the request id for a report, Retry-After for a busy answer and a download's
 // name and size.

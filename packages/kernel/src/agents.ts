@@ -923,6 +923,56 @@ export const createTaskFromTemplate = defineCommand({
   },
 });
 
+// Tasks created when a human converts a public roadmap item into an internal project task (#4399, ADR-0057):
+// keeps `tainted: true` and `source_ref` pointing to `projects.roadmap_item`; never copies internal assignees/notes back out.
+export const createTaskFromRoadmap = defineCommand({
+  name: 'kernel.task.create_from_roadmap',
+  input: z.strictObject({
+    itemId: zId,
+    title: zTaskTitle,
+    description: z.string().max(4000).nullable(),
+    positionId: zId.nullable(),
+    tainted: z.boolean().default(true),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: input.positionId,
+      due: null,
+      sourceRef: { type: 'projects.roadmap_item', id: input.itemId },
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, itemId: input.itemId, positionId: input.positionId, tainted: input.tainted });
+    return created;
+  },
+});
+
+// Nightly keeping duty (#4399, ADR-0053, ADR-0057): prunes expired/invalidated public roadmap OTP challenges via definer even if Projects is switched off.
+export const roadmapOtpCleanup = defineCommand({
+  name: 'kernel.projects_roadmap.otp_cleanup',
+  input: z.strictObject({
+    cutoff: z.iso.datetime({ offset: true }),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ deleted: number }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ tác vụ hệ thống mới dọn mã OTP bảng lộ trình');
+    }
+    const { rows } = await sql<{ deleted: number }>`
+      SELECT crove_projects.cleanup_roadmap_otp_org(${input.cutoff}::timestamptz) AS deleted`.execute(ctx.trx);
+    const deleted = Number(rows[0]?.deleted ?? 0);
+    ctx.audit({ deleted });
+    return { deleted };
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2323,6 +2373,8 @@ export const agentCommands = [
   createTaskFromNote,
   createTaskFromSource,
   createTaskFromTemplate,
+  createTaskFromRoadmap,
+  roadmapOtpCleanup,
   updateTask,
   checkoutTask,
   commentTask,

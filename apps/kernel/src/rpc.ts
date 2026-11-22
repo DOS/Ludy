@@ -4695,6 +4695,17 @@ export function createRpcHandler(
       completeCycle: os.projects.completeCycle.handler(projectsCommand('projects.cycle.complete')),
       setTaskCycle: os.projects.setTaskCycle.handler(projectsCommand('projects.task.set_cycle')),
       setTaskPoints: os.projects.setTaskPoints.handler(projectsCommand('projects.task.set_points')),
+      roadmap: {
+        boards: os.projects.roadmap.boards.handler(projectsQuery('projects.roadmap.boards')),
+        boardDetail: os.projects.roadmap.boardDetail.handler(projectsQuery('projects.roadmap.board.get')),
+        boardCreate: os.projects.roadmap.boardCreate.handler(projectsCommand('projects.roadmap.board.create')),
+        boardUpdate: os.projects.roadmap.boardUpdate.handler(projectsCommand('projects.roadmap.board.update')),
+        itemCreate: os.projects.roadmap.itemCreate.handler(projectsCommand('projects.roadmap.item.create')),
+        itemModerate: os.projects.roadmap.itemModerate.handler(projectsCommand('projects.roadmap.item.moderate')),
+        itemMerge: os.projects.roadmap.itemMerge.handler(projectsCommand('projects.roadmap.item.merge')),
+        itemConvertToTask: os.projects.roadmap.itemConvertToTask.handler(projectsCommand('projects.roadmap.item.convert_to_task')),
+        itemSyncStage: os.projects.roadmap.itemSyncStage.handler(projectsCommand('projects.roadmap.item.sync_stage')),
+      },
     },
     sign: {
       envelope: {
