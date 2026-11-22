@@ -2124,8 +2124,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   await boss.work<AgentDispatchJob & { type: string }>(QUEUES.notify, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
     // The wake-up of an AI app for the minutes of an org-visible meeting (#3803): stored and handed to the wake queue here, by the worker (a module cannot build the signed body).
+    // Without a credential key QUEUES.mcpWake is not worked, so skip storing deliveries or enqueuing unworked wake jobs (#4354).
     if (job.data.type === MINUTES_PUBLISHED_EVENT) {
-      if (!deps.runtime.installed('meetings')) return;
+      if (!deps.runtime.installed('meetings') || !wakeBroker || wakeBroker.id === 'none') return;
       const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
       if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
       return;
@@ -3433,7 +3434,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               // The minutes of an org-visible meeting were published (#3803): one notify job per event, which stores the wake-ups for the company grants that stand.
-              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings')) {
+              // Match QUEUES.mcpWake and QUEUES.mcpWakeSweep: when no credential key is configured, skip relaying minutes wakes so deliveries are not stored or queued past the 24h window (#4354).
+              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
                 await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
                   singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
                   retryLimit: NOTIFY_RETRY_LIMIT,

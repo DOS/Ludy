@@ -1342,5 +1342,3 @@ export const MINUTES_PUBLISHED_EVENT = 'meetings.minutes.published';
 export const MINUTES_WAKE_TYPE = 'meetings.minutes_published';
 export const zMinutesPublishedEvent = z.strictObject({ meetingId: zId, publishedAt: z.iso.datetime() });
 export type MinutesPublishedEvent = z.infer<typeof zMinutesPublishedEvent>;
-// The worker's dispatch is told the event's id only and reads the event itself.
-export const zMinutesWakeDispatch = z.strictObject({ eventId: zId });
