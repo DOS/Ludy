@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { zHrPayrollInputs } from '@ludy/kernel-contract';
+import { isVietnamHoliday, weekdayOf, zHrPayrollInputs } from '@ludy/kernel-contract';
 import { parseTimekeepingSheet } from '@ludy/l10n-vn';
 import {
   computeEmployeeAttendanceRollup,
@@ -118,20 +118,19 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     ).toBe(0);
   });
 
-  it('rolls monthly attendance logs via decimal.js with 100% parity to timekeeping CSV import', () => {
+  it('rolls monthly attendance logs via decimal.js with 100% parity to timekeeping CSV import and VN Art. 112 holidays', () => {
     const baseInputs = zHrPayrollInputs.parse({ daysNotEmployed: '0' });
 
-    // In 2026-09 (26 regular Mon-Sat working days, excluding Sundays 06/13/20/27 and holiday 09-02):
-    // Take 22 regular Mon-Sat days (08:30-17:30 = 540m), 1 half-day (240m), 1 long shift with night work & OT (660m),
-    // 1 Sunday (2026-09-27, 4h weekly_rest_day OT), and 1 holiday (2026-09-02, 4h holiday OT)
-    // Plus 1.5 paid leave -> 23.5 worked + 1.5 paid = 25 out of 26 working days -> 1 unpaid day.
+    // In 2026-09: 26 Mon-Sat days total (25 normal Mon-Sat days + 1 paid public holiday on 2026-09-02).
+    // (1) Taking 2026-09-02 off OR working it for 4h holiday OT: 22 regular days + 1 half-day (0.5) + 1 long shift (1)
+    // + 1.5 paid leave + 1 paid holiday = 26 compensated days -> 0 unpaid days.
     const regularWeekdays = [
       '2026-09-01', '2026-09-03', '2026-09-04', '2026-09-05',
       '2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12',
       '2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18', '2026-09-19',
       '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26',
     ];
-    const cleanEntries = [
+    const withoutHolidayEntries = [
       ...regularWeekdays.map((d) => ({
         workDate: d,
         checkedInAt: new Date(`${d}T01:30:00Z`),
@@ -162,8 +161,23 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
         workedMinutes: 240,
         status: 'present' as const,
       },
+    ];
+    const unworkedHolidayRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '1.5',
+      entries: withoutHolidayEntries,
+    });
+    expect(unworkedHolidayRollup.workedDays).toBe('23.5');
+    expect(unworkedHolidayRollup.unpaidLeaveDays).toBe('0');
+    expect(unworkedHolidayRollup.overtimeHours).toBe('6');
+
+    const withWorkedHolidayEntries = [
+      ...withoutHolidayEntries,
       {
-        // National Day 2026-09-02
+        // National Day 2026-09-02 worked 4h holiday OT (does not double-count workedDays)
         workDate: '2026-09-02',
         checkedInAt: new Date('2026-09-02T01:30:00Z'),
         checkedOutAt: new Date('2026-09-02T05:30:00Z'),
@@ -171,15 +185,29 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
         status: 'present' as const,
       },
     ];
-    const rollup = computeEmployeeAttendanceRollup({
+    const workedHolidayRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
       workingDays: '26',
       payBasis: 'monthly',
       existingInputs: baseInputs,
       paidLeaveDays: '1.5',
-      entries: cleanEntries,
+      entries: withWorkedHolidayEntries,
+    });
+    expect(workedHolidayRollup.workedDays).toBe('23.5');
+    expect(workedHolidayRollup.unpaidLeaveDays).toBe('0');
+    expect(workedHolidayRollup.overtimeHours).toBe('10');
+
+    // (2) Missing 1 normal Mon-Sat day (21 regular + 1 half-day + 1 long = 22.5 worked + 1.5 paid leave + 1 paid holiday = 25) -> 1 unpaid day + CSV parity
+    const rollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '1.5',
+      entries: withWorkedHolidayEntries.filter((e) => e.workDate !== '2026-09-26'),
     });
 
-    expect(rollup.workedDays).toBe('23.5');
+    expect(rollup.workedDays).toBe('22.5');
     expect(rollup.paidLeaveDays).toBe('1.5');
     expect(rollup.unpaidLeaveDays).toBe('1');
     expect(rollup.workedHours).toBeNull();
@@ -204,9 +232,84 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     expect(rollup.overtime).toEqual(csvInputs.overtime);
   });
 
+  it('caps standard working days to February Mon-Sat calendar and excludes pre-hire/post-end holidays', () => {
+    const baseInputs = zHrPayrollInputs.parse({ daysNotEmployed: '0' });
+    const regularDaysIn = (year: number, m: number, startDay: number, endDay: number): string[] => {
+      const mm = String(m).padStart(2, '0');
+      const out: string[] = [];
+      for (let d = startDay; d <= endDay; d += 1) {
+        const ds = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+        if (weekdayOf(ds) !== 7 && !isVietnamHoliday(ds)) out.push(ds);
+      }
+      return out;
+    };
+
+    // Feb 2026 has 28 calendar days and 4 Sundays (01, 08, 15, 22) = 24 Mon-Sat days (19 regular + 5 Tet holidays).
+    // With default workingDays = '26', working all 19 non-holiday Mon-Sat days must produce 0 unpaid days.
+    const febWorkdays = regularDaysIn(2026, 2, 1, 28);
+    expect(febWorkdays).toHaveLength(19);
+    const febRollup = computeEmployeeAttendanceRollup({
+      month: '2026-02',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: febWorkdays.map((d) => ({
+        workDate: d,
+        checkedInAt: new Date(`${d}T01:30:00Z`),
+        checkedOutAt: new Date(`${d}T10:30:00Z`),
+        workedMinutes: 540,
+        status: 'present' as const,
+      })),
+    });
+    expect(febRollup.workedDays).toBe('19');
+    expect(febRollup.unpaidLeaveDays).toBe('0');
+
+    // Mid-month joiner starting 2026-09-05 (daysNotEmployed = '4' covers 09-01..04 including 09-02 holiday):
+    // paidHolidayDays must NOT double-count 2026-09-02.
+    const postHireDays = regularDaysIn(2026, 9, 5, 30);
+    expect(postHireDays).toHaveLength(22);
+    const joinerFull = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: zHrPayrollInputs.parse({ daysNotEmployed: '4' }),
+      paidLeaveDays: '0',
+      hireDate: '2026-09-05',
+      entries: postHireDays.map((d) => ({
+        workDate: d,
+        checkedInAt: new Date(`${d}T01:30:00Z`),
+        checkedOutAt: new Date(`${d}T10:30:00Z`),
+        workedMinutes: 540,
+        status: 'present' as const,
+      })),
+    });
+    expect(joinerFull.workedDays).toBe('22');
+    expect(joinerFull.unpaidLeaveDays).toBe('0');
+
+    const joinerMissedOne = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: zHrPayrollInputs.parse({ daysNotEmployed: '4' }),
+      paidLeaveDays: '0',
+      hireDate: '2026-09-05',
+      entries: postHireDays.slice(1).map((d) => ({
+        workDate: d,
+        checkedInAt: new Date(`${d}T01:30:00Z`),
+        checkedOutAt: new Date(`${d}T10:30:00Z`),
+        workedMinutes: 540,
+        status: 'present' as const,
+      })),
+    });
+    expect(joinerMissedOne.workedDays).toBe('21');
+    expect(joinerMissedOne.unpaidLeaveDays).toBe('1');
+  });
+
   it('computes workedHours for hourly payBasis cleanly via decimal.js', () => {
     const baseInputs = zHrPayrollInputs.parse({});
     const rollup = computeEmployeeAttendanceRollup({
+      month: '2026-11',
       workingDays: '26',
       payBasis: 'hourly',
       existingInputs: baseInputs,
@@ -237,6 +340,7 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     // Shift 14:00-01:00+1d ICT (660m wall clock: regular 14:00-23:00 has 60m night 22:00-23:00; OT 23:00-01:00 has 120m night).
     // When workedMinutes is capped to 600m (540m regular + 60m OT), ordNight must stay 60m (1h), NOT 120m!
     const cappedRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
       workingDays: '26',
       payBasis: 'monthly',
       existingInputs: baseInputs,
@@ -257,6 +361,7 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
 
     // Fully credited 660m preserves 60m (1h) ordinary night + 120m (2h) night OT
     const fullRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
       workingDays: '26',
       payBasis: 'monthly',
       existingInputs: baseInputs,
@@ -277,6 +382,7 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
 
     // Truncated 300m shift stays inside 14:00-19:00 before 22:00, so zero night hours
     const truncatedRollup = computeEmployeeAttendanceRollup({
+      month: '2026-09',
       workingDays: '26',
       payBasis: 'monthly',
       existingInputs: baseInputs,

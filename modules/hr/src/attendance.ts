@@ -116,6 +116,30 @@ function monthRange(month: string): { start: string; end: string } {
   };
 }
 
+/** Counts scheduled Mon-Sat days in the month and Mon-Sat Vietnam public holidays within the active employment window. */
+function monthCalendarRollupMetrics(args: {
+  month: string;
+  hireDate?: string | null | undefined;
+  endedOn?: string | null | undefined;
+}): { scheduledMonSatDays: number; paidHolidayDays: number } {
+  const { start, end } = monthRange(args.month);
+  const [yearStr, monthStr] = args.month.split('-');
+  const lastDay = Number(end.slice(8, 10));
+  const activeStart = args.hireDate && args.hireDate > start ? args.hireDate : start;
+  const activeEnd = args.endedOn && args.endedOn < end ? args.endedOn : end;
+  let scheduledMonSatDays = 0;
+  let paidHolidayDays = 0;
+  for (let day = 1; day <= lastDay; day += 1) {
+    const date = `${yearStr}-${monthStr}-${String(day).padStart(2, '0')}`;
+    if (weekdayOf(date) === 7) continue;
+    scheduledMonSatDays += 1;
+    if (date >= activeStart && date <= activeEnd && isVietnamHoliday(date)) {
+      paidHolidayDays += 1;
+    }
+  }
+  return { scheduledMonSatDays, paidHolidayDays };
+}
+
 function elapsedMinutes(checkedInAt: Date, checkedOutAt: Date): number {
   const diff = Math.floor((checkedOutAt.getTime() - checkedInAt.getTime()) / 60_000);
   return Math.min(1440, Math.max(0, diff));
@@ -204,10 +228,13 @@ function dayKindForDate(workDate: string): HrOvertimeDayKind {
 
 /** Deterministic decimal.js rollup of an employee's month attendance into payroll inputs (100% parity with CSV import). */
 export function computeEmployeeAttendanceRollup(args: {
+  month: string;
   workingDays: string;
   payBasis: HrPayBasis;
   existingInputs: HrPayrollInputs;
   paidLeaveDays: string;
+  hireDate?: string | null | undefined;
+  endedOn?: string | null | undefined;
   entries: readonly AttendanceRollupEntry[];
 }): ComputedEmployeeAttendanceRollup {
   let workedDaysDec = money('0');
@@ -268,14 +295,24 @@ export function computeEmployeeAttendanceRollup(args: {
     }
   }
 
+  const { scheduledMonSatDays, paidHolidayDays } = monthCalendarRollupMetrics({
+    month: args.month,
+    hireDate: args.hireDate,
+    endedOn: args.endedOn,
+  });
   const paidLeaveDec = money(args.paidLeaveDays);
   const workingDaysDec = money(args.workingDays);
+  const scheduledCapDec = money(scheduledMonSatDays);
+  // Cap standard working days to the calendar's actual Mon-Sat count (e.g. Feb = 24), and credit Mon-Sat public holidays
+  // within the employee's active employment dates per VN Labor Code Art. 112 without double-counting daysNotEmployed.
+  const effectiveWorkingDaysDec = workingDaysDec.lt(scheduledCapDec) ? workingDaysDec : scheduledCapDec;
   const compensatedDec = workedDaysDec
+    .plus(paidHolidayDays)
     .plus(paidLeaveDec)
     .plus(args.existingInputs.daysNotEmployed)
     .plus(args.existingInputs.sicknessBhxhDays)
     .plus(args.existingInputs.maternityBhxhDays);
-  const shortfallDec = workingDaysDec.minus(compensatedDec);
+  const shortfallDec = effectiveWorkingDaysDec.minus(compensatedDec);
   const unpaidLeaveDec = shortfallDec.gt(0)
     ? shortfallDec.gt(workingDaysDec)
       ? workingDaysDec
@@ -413,28 +450,20 @@ export const selfAttendanceCheckIn = defineCommand({
       }
     }
 
-    // Serialize concurrent self check-in calls for the same employee so the second returns 409 instead of hitting 23505.
-    await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
-      .select(['id'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', emp.id)
-      .forUpdate()
-      .executeTakeFirst();
-
     const existing = await ctx.trx
       .selectFrom('crove_hr.attendance_log')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
       .where('work_date', '=', today)
-      .forUpdate()
       .executeTakeFirst();
     if (existing) {
       throw new DomainError('HR_ATTENDANCE_ALREADY_CHECKED_IN', 409, 'Bạn đã check-in cho ngày hôm nay rồi');
     }
 
-    const [inserted] = await ctx.trx
+    // Handle concurrent check-ins on the same (org_id, employee_id, work_date) atomically with ON CONFLICT DO NOTHING
+    // instead of selecting FOR UPDATE on payroll_employee (read-only for non-admin members under RLS).
+    const inserted = await ctx.trx
       .insertInto('crove_hr.attendance_log')
       .values({
         org_id: ctx.orgId,
@@ -450,8 +479,13 @@ export const selfAttendanceCheckIn = defineCommand({
         created_by: uid,
         updated_at: ctx.now,
       })
+      .onConflict((oc) => oc.columns(['org_id', 'employee_id', 'work_date']).doNothing())
       .returningAll()
-      .execute();
+      .executeTakeFirst();
+
+    if (!inserted) {
+      throw new DomainError('HR_ATTENDANCE_ALREADY_CHECKED_IN', 409, 'Bạn đã check-in cho ngày hôm nay rồi');
+    }
 
     ctx.audit({
       employeeId: emp.id,
@@ -459,7 +493,7 @@ export const selfAttendanceCheckIn = defineCommand({
       method: parsed.method,
       status: 'missing_checkout',
     });
-    return toAttendanceLogView(inserted!, today);
+    return toAttendanceLogView(inserted, today);
   },
 });
 
@@ -797,6 +831,13 @@ export const attendanceAdjust = defineCommand({
     if (!checkedInAt && parsed.status !== 'adjusted') {
       throw new DomainError('HR_ATTENDANCE_CHECKIN_REQUIRED', 422, 'Cần có giờ check-in trừ khi trạng thái là điều chỉnh');
     }
+    if ((parsed.status === 'present' || parsed.status === 'half_day') && !checkedOutAt) {
+      throw new DomainError(
+        'HR_ATTENDANCE_TIME_INVALID',
+        422,
+        'Trạng thái đã chấm công hoặc nửa ngày công phải có giờ check-out',
+      );
+    }
 
     const inChanged =
       parsed.checkedInAt !== undefined &&
@@ -1083,6 +1124,7 @@ export const attendanceRollupToPayroll = defineCommand({
 
     const empIds = [...people.keys()];
     const nameByEmpId = new Map<string, string>();
+    const firstHireByEmpId = new Map<string, string>();
     if (empIds.length > 0) {
       const empRows = await ctx.trx
         .selectFrom('crove_hr.payroll_employee')
@@ -1091,6 +1133,19 @@ export const attendanceRollupToPayroll = defineCommand({
         .where('id', 'in', empIds)
         .execute();
       for (const er of empRows) nameByEmpId.set(er.id, er.display_name);
+
+      const employmentRows = await ctx.trx
+        .selectFrom('crove_hr.payroll_employment')
+        .select(['employee_id', 'effective_from'])
+        .where('org_id', '=', ctx.orgId)
+        .where('employee_id', 'in', empIds)
+        .orderBy('effective_from', 'asc')
+        .execute();
+      for (const em of employmentRows) {
+        if (!firstHireByEmpId.has(em.employee_id)) {
+          firstHireByEmpId.set(em.employee_id, isoDateOnly(em.effective_from));
+        }
+      }
     }
 
     const updates: {
@@ -1119,10 +1174,13 @@ export const attendanceRollupToPayroll = defineCommand({
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, lineId);
       const paidLeaveDays = toMoney(paidLeaveByEmp.get(line.employee_id) ?? money('0'));
       const computed = computeEmployeeAttendanceRollup({
+        month: payRun.month,
         workingDays: payRun.working_days,
         payBasis: person.terms.payBasis,
         existingInputs: existing,
         paidLeaveDays,
+        hireDate: firstHireByEmpId.get(line.employee_id) ?? person.terms.effectiveFrom,
+        endedOn: person.endedOn,
         entries: completedLogs,
       });
       if (person.terms.payBasis === 'hourly' && computed.workedHours === null) {

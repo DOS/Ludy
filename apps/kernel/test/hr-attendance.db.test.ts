@@ -664,6 +664,17 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       o.exec(o.memberB, 'hr.self.attendance.check_out', { workDate: '2026-09-14' }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_TIME_INVALID' });
 
+    // Adjust rejects present/half_day without checkedOutAt cleanly (422 DomainError instead of PG 23514)
+    await expect(
+      o.exec(o.owner, 'hr.attendance.adjust', {
+        employeeId: o.empBId,
+        workDate: '2026-09-14',
+        checkedInAt: '2026-09-14T01:30:00Z',
+        checkedOutAt: null,
+        status: 'present',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_TIME_INVALID' });
+
     // Resolve empB's missing checkout via admin adjust (8h = 480m)
     await o.exec(o.owner, 'hr.attendance.adjust', {
       employeeId: o.empBId,
@@ -681,9 +692,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     expect(rolled.missingCheckoutCount).toBe(0);
 
     const rowA = rolled.rows.find((r) => r.employeeId === o.empAId)!;
-    // 22 full normal days + 1 half normal day (2026-09-28) = 22.5 workedDays -> 3.5 unpaid days out of 26 workingDays + 4h holiday OT
+    // 22 full normal days + 1 half normal day (2026-09-28) = 22.5 workedDays + 1 paid holiday (2026-09-02) -> 2.5 unpaid days out of 26 + 4h holiday OT
     expect(rowA.workedDays).toBe('22.5');
-    expect(rowA.unpaidLeaveDays).toBe('3.5');
+    expect(rowA.unpaidLeaveDays).toBe('2.5');
     expect(rowA.overtimeHours).toBe('4');
 
     const rowB = rolled.rows.find((r) => r.employeeId === o.empBId)!;
@@ -695,7 +706,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     if (!lineA.figures) throw new Error('expected payroll figures on owner sheet');
     const expectedA = calculatePayroll(
       { region: 'I', contract: 'indefinite', contractTermMonths: null, resident: true, insured: true, baseWage: '15000000', allowances: [] },
-      { month: targetMonth, standardWorkingDays: '26', unpaidLeaveDays: '3.5', overtime: [{ dayKind: 'holiday', night: false, hours: '4' }], nightHours: '0' },
+      { month: targetMonth, standardWorkingDays: '26', unpaidLeaveDays: '2.5', overtime: [{ dayKind: 'holiday', night: false, hours: '4' }], nightHours: '0' },
       PAYROLL_RULES,
     );
     expect(money(lineA.figures.gross).eq(expectedA.gross)).toBe(true);

@@ -2231,6 +2231,7 @@ export const vi = {
     colNote: 'Ghi chú',
     colActions: 'Thao tác',
     editBtn: 'Điều chỉnh',
+    editRowAria: 'Điều chỉnh chấm công của {name} ngày {date}',
     rollupTableEmployee: 'Nhân viên',
     rollupTableWorkedDays: 'Ngày công',
     rollupTablePaidLeave: 'Nghỉ hưởng lương',

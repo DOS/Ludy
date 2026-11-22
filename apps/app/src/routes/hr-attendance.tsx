@@ -843,6 +843,7 @@ export function HrAttendancePage() {
                     size="sm"
                     variant="ghost"
                     className={PHONE_TARGET}
+                    aria-label={t('editRowAria', { name: row.employeeName, date: row.workDate })}
                     onClick={() => openEditRow(row)}
                     data-testid={`hr-attendance-edit-${row.id}`}
                   >

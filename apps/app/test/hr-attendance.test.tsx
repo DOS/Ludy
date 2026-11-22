@@ -316,6 +316,7 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
     expect(html).toContain('Nguyễn Thị Lan');
     expect(html).toContain('12h');
     expect(html).toContain('Ca dài (&gt; 10h)');
+    expect(html).toContain(`aria-label="Điều chỉnh chấm công của Nguyễn Thị Lan ngày ${month}-16"`);
   });
 
   it('blocks viewers and non-admin members from rendering the attendance admin screen', () => {

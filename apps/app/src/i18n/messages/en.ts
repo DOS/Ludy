@@ -2233,6 +2233,7 @@ export const en = {
     colNote: 'Note',
     colActions: 'Actions',
     editBtn: 'Adjust',
+    editRowAria: 'Adjust attendance for {name} on {date}',
     rollupTableEmployee: 'Employee',
     rollupTableWorkedDays: 'Worked days',
     rollupTablePaidLeave: 'Paid leave',
