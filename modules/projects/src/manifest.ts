@@ -13,11 +13,11 @@ export const projectsManifest = defineModule({
         ['org_id', 'id', 'owner_user_id', 'status', 'is_template', 'created_by', 'created_at', 'updated_at'],
         { name: 'pii', description: 'pii', template_tasks: 'pii' },
       ),
-      project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
       project_column: columns(
         ['org_id', 'id', 'project_id', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'],
         { name: 'pii' },
       ),
+      project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
       project_task: columns([
         'org_id',
         'id',

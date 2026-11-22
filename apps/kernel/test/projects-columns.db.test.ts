@@ -84,6 +84,16 @@ suite('projects custom board columns (#2605)', () => {
     mfaAt: Math.floor(Date.now() / 1000),
   });
 
+  async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+
   async function newPerson(tag: string) {
     const subject = randomUUID();
     const email = `${tag}-${randomUUID().slice(0, 8)}@projects-cols.test`;
@@ -384,7 +394,11 @@ suite('projects custom board columns (#2605)', () => {
       { actor: SYSTEM, orgId: org.orgId },
     );
     const agentActor: AgentActor = { type: 'agent', agentId: installed.agentId, runId: started.runId as string };
-    await workerRt.execute('kernel.task.checkout', { id: agentTaskId }, { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() });
+    const checkedOut = await workerRt.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: agentTaskId },
+      { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
 
     // Human move_column refuses with TASK_CHECKED_OUT while lease is live.
     await expect(
@@ -404,15 +418,10 @@ suite('projects custom board columns (#2605)', () => {
       }),
     ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
 
-    // Org-chart agent completes its task by updating task.status directly ('in_review') and releasing the lease.
+    // Org-chart agent completes its task by updating task.status directly ('in_review'), releasing its lease.
     await workerRt.execute(
       'kernel.task.set_status',
-      { id: agentTaskId, status: 'in_review' },
-      { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() },
-    );
-    await workerRt.execute(
-      'kernel.task.release',
-      { id: agentTaskId },
+      { id: agentTaskId, status: 'in_review', fence: checkedOut.fence },
       { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() },
     );
 
@@ -461,16 +470,16 @@ suite('projects custom board columns (#2605)', () => {
     });
 
     // PDPL find and erase redacts crove_projects.project_column.name.
-    const found = await rt.query<PersonalDataResult>(
+    const found = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
-      { query: '0901234567', kind: 'phone' },
+      { value: '0901234567' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
     expect(found.matches.some((m) => m.column === 'crove_projects.project_column.name' && m.rowId === piiCol.id)).toBe(true);
 
     const erased = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
-      { query: '0901234567', kind: 'phone' },
+      { value: '0901234567' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
     expect(erased.erased.find((e) => e.column === 'crove_projects.project_column.name')?.rows).toBe(1);
@@ -478,9 +487,8 @@ suite('projects custom board columns (#2605)', () => {
     const boardAfterErase = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId });
     expect(boardAfterErase.columns?.find((c) => c.id === piiCol.id)?.name).toContain('[đã xóa]');
 
-    // Export + org_purge removes project_task before project_column without FK violations.
+    // Export + org_purge removes project_task and project_column before project without FK violations.
     expect(EXPORT_TABLE_NAMES).toContain('projects.project_column');
-    await rt.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exp = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
     const colPart = exp.parts.find((p) => p.table === 'projects.project_column');
@@ -493,10 +501,33 @@ suite('projects custom board columns (#2605)', () => {
     expect(lines.some((r) => r.id === piiCol.id)).toBe(true);
     expect(lines.some((r) => r.id === todoCol.id)).toBe(true);
 
-    const purged = await purgeOrg(workerRt, 30, { ref: org.orgId, reason: 'projects-columns-test' });
-    expect(purged.kind).toBe('purged');
+    await rt.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(owner.userId), orgId: org.orgId });
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE crove_kernel.audit_event
+            SET occurred_at = $1
+          WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
+        [new Date(Date.now() - 32 * DAY), org.orgId],
+      );
+      await c.query('COMMIT');
+    });
 
-    const { rows } = await pool.query('SELECT count(*)::int AS n FROM crove_projects.project_column WHERE org_id = $1', [org.orgId]);
-    expect(rows[0]?.n).toBe(0);
+    const purged = await purgeOrg(workerRt, 30, { ref: org.orgId, reason: 'projects-columns-test' });
+    expect(purged).toMatchObject({ kind: 'purged', orgId: org.orgId });
+
+    await withAdmin(async (c) => {
+      for (const tbl of [
+        'crove_projects.project_column',
+        'crove_projects.project_task',
+        'crove_projects.project_member',
+        'crove_projects.project',
+        'crove_kernel.task',
+      ]) {
+        const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
+        expect(rows[0]?.n, tbl).toBe('0');
+      }
+    });
   });
 });
