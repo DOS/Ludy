@@ -102,7 +102,13 @@ export async function extractCvTextInSandbox(deps: {
 }
 
 function hostnameMatches(hostname: string, domains: readonly string[]): boolean {
-  const normalized = hostname.toLowerCase().replace(/\.+$/, '');
+  if (hostname.length === 0 || hostname.length > 254) return false;
+  let end = hostname.length;
+  while (end > 0 && hostname.charCodeAt(end - 1) === 46) {
+    end -= 1;
+  }
+  if (end === 0 || end > 253) return false;
+  const normalized = hostname.slice(0, end).toLowerCase();
   return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
 }
 
