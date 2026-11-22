@@ -17,6 +17,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingMinutesSignHandoff, type MeetingSignMemberInfo } from './meeting-minutes-sign-handoff.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
@@ -516,6 +517,7 @@ export function MeetingResults({
   visibility,
   slug,
   minutesLink,
+  signInfo,
 }: {
   meetingId: string;
   readers: readonly string[];
@@ -526,6 +528,15 @@ export function MeetingResults({
   visibility?: MeetingVisibility;
   slug?: string;
   minutesLink?: ReactNode;
+  signInfo?: {
+    startedAt: string | null;
+    createdAt: string;
+    endedAt: string | null;
+    recorderUserId: string;
+    companyName: string;
+    orgMembers: readonly MeetingSignMemberInfo[];
+    canEdit?: boolean;
+  };
 }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -593,6 +604,28 @@ export function MeetingResults({
           </section>
         )}
         {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
+        {signInfo && (published !== null || items.some((i) => i.stage === 'published')) && (
+          <MeetingMinutesSignHandoff
+            source={{
+              meeting: {
+                id: meetingId,
+                title,
+                startedAt: signInfo.startedAt,
+                createdAt: signInfo.createdAt,
+                endedAt: signInfo.endedAt,
+                recorderUserId: signInfo.recorderUserId,
+                readers,
+                summaryTemplate: template,
+                minutesTemplate,
+                isRecorder,
+              },
+              results: data,
+              companyName: signInfo.companyName,
+              orgMembers: signInfo.orgMembers,
+            }}
+            {...(signInfo.canEdit !== undefined ? { canEdit: signInfo.canEdit } : {})}
+          />
+        )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
         {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (

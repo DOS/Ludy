@@ -21,7 +21,7 @@ function toDisplayDate(isoDay: string): string {
 }
 
 async function auditMyWorkScreen(page: Page, path: string, theme: 'light' | 'dark'): Promise<string[]> {
-  await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+  await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
   await page.goto(path);
   await page.waitForLoadState('networkidle');
   await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);

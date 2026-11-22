@@ -149,7 +149,7 @@ describe('hr-visibility helpers and @ludy/mod-sign HR contract guards (#3553)', 
 
     queries.length = 0;
     await envelopeList.handler(makeUserQueryCtx(trx, ADMIN_ID, 'admin'), { limit: 20 });
-    expect(queries[0]!.sql).not.toContain('"source_kind" != $');
+    expect(queries[0]!.parameters).not.toContain('hr_contract');
 
     queries.length = 0;
     await envelopeBySource.handler(makeUserQueryCtx(trx, MEMBER_ID, 'member'), {

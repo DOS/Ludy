@@ -33,6 +33,8 @@ const PUBLIC: Record<string, string> = {
     "a bank feed provider's signed notice (ADR-0039, #2044): the adapter checks its signature and timestamp before anything else, it is rate limited per address, stores nothing of its body, and only asks the worker for a pull of a connection that lists an account it names",
   '/api/bank-feed/:provider/webhook/:hookKey':
     "a bank feed provider's signed notice at the address of one connection (Tingee S3 of #2045, #4203, ADR-0039): the hook key in the path is looked up by its SHA-256 before anything is stored, the per-address limit and the 16 KB cap run first, and the worker verifies the provider's signature with the connection's sealed secret",
+  '/api/marketplace/:adapter/webhook/:hookKey':
+    "a marketplace's signed push (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315) at the address of one connection: the adapter must be one the deployment runs, the per-address limit and the 16 KB cap run first, the hook key in the path is looked up by its SHA-256 before anything is stored (the org and the connection come from our own row, never the body), every answer is an empty 2xx or a 404 with a fixed code, and the worker verifies the platform's signature with the connection's sealed secret",
   '/api/webhooks/misa-amis':
     "MISA AMIS's callback with the result of a save (#3903, S4 of #3854): the body is capped and the client address limited before it is read, the HMAC of its signed `data` (the ClientID as the key, constant time) is checked before anything else is read, a refusal is a fixed code with nothing stored or logged, the organisation is found only from our own stored push row by org_refid (never from the unsigned envelope), the company code must equal the located connection's, a refid found in two organisations is refused, and a verified message is always answered 200 and only moves a row forward through finance.misa_amis.push_record",
   '/api/ads/meta/data-deletion':
@@ -65,12 +67,14 @@ const PUBLIC: Record<string, string> = {
   '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
   '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
   '/api/sign/delegate': 'public eSign audited signer delegation (#3819): same token in JSON body; enforces org_app_on + entitlement opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), allow_delegation = true, delegation_count < 2 anti-relay cap, single-mailbox RFC validation, mail_suppression check, and atomic token consume',
+  '/api/sign/attachment': 'public eSign signer supporting attachment upload (#3818): active signing token in body, OTP gate (403 SIGN_OTP_REQUIRED), <= 10 MB magic-byte verified PDF/PNG/JPEG, isolated sign_attachment storage, and opaque 404',
   '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
   '/api/sign/direct/view': 'public eSign direct template link view (#3551): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
   '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (#3551): fragment token + optional OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
   '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (#3551): rate limited per IP, token hash, email bucket, and DB hourly cap with opaque 404',
   '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (#3551): validates 6-digit OTP, locks after 5 attempts, and returns short-lived verified claim',
   '/api/sign/direct/start': 'public eSign direct link self-service start (#3551): atomically enforces max_uses + optional OTP, instantiates sent envelope, and returns single-use signing token without storing plaintext tokens',
+  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820): GET lists only active 1-signer templates with listed_on_public_hub = true (opaque 404 when empty/off/unentitled); POST runs view/pdf/otp/start via crove_sign.public_hub_* definers without exposing direct-link tokens',
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',
@@ -98,8 +102,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/sign/attachment': 'public eSign verified signer supporting attachment upload (#3818, Slice 4b): active signing token is the credential; enforces org_app_on and entitlement with opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), IP + token rate limits, 10 MB size cap, magic-byte check (PDF/PNG/JPEG only), and SHA-256 audit event',
-  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820, Slice 4d): lists only active public-hub-opted-in 1-signer templates for an org with org_app_on and entitlement opaque 404 and per-IP rate limiting',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -130,6 +132,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     // An adapter that takes signed notices, so the bank feed route is registered and listed (ADR-0039, #2044).
     bankFeedWebhooks: { bank_sandbox: { id: 'bank_sandbox', hosts: [], verifyWebhook: () => [] } } as unknown as NonNullable<HttpDeps['bankFeedWebhooks']>,
     bankFeedHooks: { bank_tingee: { id: 'bank_tingee', hosts: [], hookTimestampFresh: () => true, verifyHook: () => 'ok' } } as unknown as NonNullable<HttpDeps['bankFeedHooks']>,
+    // A marketplace that takes signed pushes, so its route is registered and listed (#4346).
+    marketplacePush: { adapters: ['shopee'] },
     // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
     misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).

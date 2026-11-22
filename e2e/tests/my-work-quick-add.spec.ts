@@ -93,7 +93,7 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
   await test.step('360px phone layout fits with zero horizontal scroll and passes axe in light and dark', async () => {
     await page.setViewportSize({ width: 360, height: 780 });
     for (const theme of ['light', 'dark'] as const) {
-      await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+      await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
       await page.reload();
       await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
       const quickInput = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });

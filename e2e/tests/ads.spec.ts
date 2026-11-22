@@ -24,7 +24,7 @@ async function problemsOf(page: Page, url: string): Promise<string[]> {
   const problems: string[] = [];
   for (const [width, theme] of [[1280, 'light'], [360, 'light'], [360, 'dark']] as const) {
     await page.setViewportSize({ width, height: 800 });
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     await page.goto(url);
     await expect(page.getByRole('region', { name: 'Tổng cộng' })).toBeVisible();
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
@@ -232,7 +232,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {
     expect(await problemsOf(page, page.url())).toEqual([]);
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.evaluate(() => localStorage.setItem('crove-theme', 'light'));
+    await page.evaluate(() => localStorage.setItem('ludy-theme', 'light'));
   });
 
   await test.step('a second test account, in dollars, is not set beside the books in dong', async () => {

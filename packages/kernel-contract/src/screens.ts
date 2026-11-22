@@ -228,7 +228,7 @@ export const PROJECTS_SCREENS = {
   nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
 } as const satisfies ModuleScreens;
 
-// eSign (docs/plan/esign.md, #3325, #3526, #3551, #3554): Ky ket / eSign app in the switcher plus public signing links /-/sign and /-/sign/d.
+// eSign (docs/plan/esign.md, #3325, #3526, #3551, #3554, #3820): Ky ket / eSign app in the switcher plus public signing links /-/sign, /-/sign/d, and /-/sign/p/$orgSlug.
 export const SIGN_SCREENS = {
   routes: [
     { path: 'sign/envelopes' },
@@ -237,7 +237,11 @@ export const SIGN_SCREENS = {
     { path: 'sign/verify' },
     { path: 'sign/settings' },
   ],
-  outside: [{ path: '/-/sign', public: true }, { path: '/-/sign/d', public: true }],
+  outside: [
+    { path: '/-/sign', public: true },
+    { path: '/-/sign/d', public: true },
+    { path: '/-/sign/p/$orgSlug', public: true },
+  ],
   nav: [
     { app: 'sign', group: 'sign', path: 'sign/envelopes', label: 'signEnvelopes' },
     { app: 'sign', group: 'sign', path: 'sign/templates', label: 'signTemplates' },

@@ -21,6 +21,7 @@ import {
   type SignSignerForSeal,
   type SigningEventChainRow,
 } from '../src/index.ts';
+import { parseFieldOptions, serializeFieldOptionsForType } from '../src/shared.ts';
 
 const ORG_ID = '00000000-0000-7000-8000-000000000001';
 const ENVELOPE_ID = '00000000-0000-7000-8000-000000000002';
@@ -363,6 +364,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'ca_connection',
       'ca_signing_request',
       'envelope',
+      'envelope_obligation',
       'field',
       'signer',
       'signing_event',
@@ -408,5 +410,138 @@ describe('sign sealing payloads and certificate artifacts', () => {
         hNorm: 0.05,
       }).success,
     ).toBe(true);
+  });
+
+  it('validates dropdown/radio choice options and embeds attachment SHA-256 in sealed certificate (#3818)', () => {
+    expect(serializeFieldOptionsForType('dropdown', [' Chuyển khoản ', 'Tiền mặt'])).toBe(
+      JSON.stringify(['Chuyển khoản', 'Tiền mặt']),
+    );
+    expect(parseFieldOptions('["Chuyển khoản","Tiền mặt"]')).toEqual(['Chuyển khoản', 'Tiền mặt']);
+    expect(() => serializeFieldOptionsForType('dropdown', [])).toThrow(/1/);
+    expect(() => serializeFieldOptionsForType('radio', ['A', 'A'])).toThrow(/unique/i);
+    expect(() => serializeFieldOptionsForType('text', ['A'])).toThrow(/dropdown and radio/);
+
+    const attSha = 'c'.repeat(64);
+    const fields: SignFieldForSeal[] = [
+      {
+        id: 'f-sig',
+        signer_id: SIGNER_1,
+        field_type: 'signature',
+        page_number: 1,
+        x_norm: '0.100000',
+        y_norm: '0.700000',
+        w_norm: '0.240000',
+        h_norm: '0.080000',
+        required: true,
+        font_size_pt: null,
+        value_text: null,
+        value_checked: null,
+        signature_png_base64: PNG_1X1_BASE64,
+        filled_at: '2026-11-21T10:05:00.000Z',
+      },
+      {
+        id: 'f-dd',
+        signer_id: SIGNER_1,
+        field_type: 'dropdown',
+        page_number: 1,
+        x_norm: '0.100000',
+        y_norm: '0.400000',
+        w_norm: '0.240000',
+        h_norm: '0.050000',
+        required: true,
+        font_size_pt: 11,
+        value_text: 'Chuyển khoản ngân hàng',
+        value_checked: null,
+        signature_png_base64: null,
+        filled_at: '2026-11-21T10:05:00.000Z',
+      },
+      {
+        id: 'f-radio',
+        signer_id: SIGNER_1,
+        field_type: 'radio',
+        page_number: 1,
+        x_norm: '0.450000',
+        y_norm: '0.400000',
+        w_norm: '0.180000',
+        h_norm: '0.040000',
+        required: true,
+        font_size_pt: 11,
+        value_text: 'Đồng ý điều khoản',
+        value_checked: null,
+        signature_png_base64: null,
+        filled_at: '2026-11-21T10:05:00.000Z',
+      },
+      {
+        id: 'f-att',
+        signer_id: SIGNER_1,
+        field_type: 'attachment',
+        page_number: 1,
+        x_norm: '0.100000',
+        y_norm: '0.520000',
+        w_norm: '0.260000',
+        h_norm: '0.060000',
+        label: 'Giấy ĐKKD',
+        required: true,
+        font_size_pt: null,
+        value_text: null,
+        value_checked: null,
+        signature_png_base64: null,
+        attachment_file_id: '00000000-0000-7000-8000-000000000099',
+        attachment_filename: 'giay-dkkd.pdf',
+        attachment_sha256: attSha,
+        filled_at: '2026-11-21T10:04:30.000Z',
+      },
+    ];
+
+    const mapped = buildPdfSealFields(1, fields);
+    expect(mapped).toHaveLength(3);
+    expect(mapped[1]).toMatchObject({ type: 'dropdown', text: 'Chuyển khoản ngân hàng', fontSizePt: 11 });
+    expect(mapped[2]).toMatchObject({ type: 'radio', text: 'Đồng ý điều khoản', checked: true });
+
+    const signers: SignSignerForSeal[] = [
+      {
+        id: SIGNER_1,
+        routing_order: 1,
+        signer_role: 'signer',
+        role_label: 'Bên B',
+        name: 'Trần Thị B',
+        email: 'tran@example.com',
+        delivery_mode: 'email',
+        require_email_otp: false,
+        status: 'signed',
+        signed_at: '2026-11-21T10:05:00.000Z',
+        otp_verified_at: null,
+        signature_kind: 'draw',
+        signer_ip_hash: null,
+        created_at: '2026-11-21T10:00:00.000Z',
+      },
+    ];
+
+    const cert = buildPdfSealCertificate({
+      certificateCode: 'CS-2026-TEST-3818',
+      envelopeTitle: 'Hợp đồng dịch vụ',
+      sourceSha256: DOC_SHA,
+      completedAtIso: '2026-11-21T10:06:00.000Z',
+      eventChainTipHash: 'd'.repeat(64),
+      signers,
+      fields,
+    });
+    expect(cert.signers[0]?.attachments).toEqual([
+      {
+        label: 'Giấy ĐKKD',
+        filename: 'giay-dkkd.pdf',
+        sha256: attSha,
+      },
+    ]);
+
+    const encoded = buildPdfSealInputBytes({
+      sourcePdfBytes: new TextEncoder().encode('%PDF-1.4\n%%EOF\n'),
+      pageCount: 1,
+      fields,
+      certificate: cert,
+    });
+    const decoded = decodePdfSealInput(encoded);
+    expect(decoded.fields).toEqual(mapped);
+    expect(decoded.certificate.signers[0]?.attachments).toEqual(cert.signers[0]?.attachments);
   });
 });

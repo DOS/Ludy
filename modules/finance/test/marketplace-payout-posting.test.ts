@@ -10,7 +10,7 @@ import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const PARTY = '0192a000-0000-7000-8000-000000000003';
 const ID = '0192a000-0000-7000-8000-000000000001';
@@ -176,13 +176,14 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
     // Both open: posted.
     expect(code(() => payoutProposal(adj, open))).toBeNull();
   });
-  it('is closed in the shipped maps: only the three adjustment rows are confirmed, and the map and the payout path are not, so a payout with adjustments is refused', () => {
+  it('is closed in the shipped maps: the sales path (S3b) and the three adjustment rows (S4) are confirmed, the payout rows are not, so a payout with adjustments is refused', () => {
     for (const regime of ['tt133', 'tt99'] as const) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
-      expect(map.status).toBe('commentary');
+      // The map's own flag is confirmed with the sales path (#4303 S3b); the payout path still needs its own rows.
+      expect(map.status).toBe('confirmed');
       const confirmedRows = (Object.entries(map) as [string, { status?: string }][]).filter(([, v]) => typeof v === 'object' && v?.status === 'confirmed').map(([k]) => k).sort();
-      expect(confirmedRows).toEqual(['costOfGoods', 'otherIncome', 'otherReceivable']);
-      for (const r of ['receivable', 'cash', 'feePayable'] as const) expect(map[r].status).toBe('commentary');
+      expect(confirmedRows).toEqual(['costOfGoods', 'otherIncome', 'otherReceivable', 'outputVat', 'receivable', 'revenue', 'salesReturn']);
+      for (const r of ['cash', 'feePayable'] as const) expect(map[r].status).toBe('commentary');
       for (const r of [map.otherReceivable, map.costOfGoods, map.otherIncome]) expect(r.comment).toContain('Uncertain (#2520)');
     }
     const shipped = { regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', taxSplit: null, household: false };

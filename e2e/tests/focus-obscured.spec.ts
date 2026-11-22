@@ -85,7 +85,7 @@ test('a focused control is never hidden behind a sticky bar, at 360px in light a
 
   const problems: string[] = [];
   for (const theme of ['light', 'dark'] as const) {
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of [proposal, `/o/${slug}/vendors`]) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');

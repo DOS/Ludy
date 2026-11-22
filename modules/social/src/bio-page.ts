@@ -14,7 +14,7 @@ const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 export const MAX_BIO_BUTTONS = 12;
 export const BIO_SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 // Paths of the app and the API a slug may not look like (they share the origin, under /b/ but read by people).
-const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'new', 'settings', 'support']);
+const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'ludy', 'new', 'settings', 'support']);
 
 const zText = (max: number) =>
   z

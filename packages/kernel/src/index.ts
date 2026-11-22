@@ -51,5 +51,5 @@ export { zMcpConversationsInput, zMcpConversationInput } from './mcp-conversatio
 export { mcpConversationAssign, mcpConversationResolve, mcpConversationReopen, mcpConversationNote, mcpConversationLinkContact, mcpPartyCreate } from './mcp-write.ts';
 export { MCP_PROPOSAL_NOTICE_SWEEP_MS, sweepMcpProposalNotices } from './mcp-proposal-notice.ts';
 export { MCP_ENGAGE_READS_NOTICE_SWEEP_MS, sweepMcpEngageReadsNotices } from './mcp-engage-reads-notice.ts';
-export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeLinePlan, type McpWakeTargetRow } from './mcp-wake.ts';
+export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeLinePlan, type McpWakeMinutesTargets, type McpWakeTargetRow } from './mcp-wake.ts';
 export { conversationProposalCommands, requireApprover } from './engage-proposals.ts';

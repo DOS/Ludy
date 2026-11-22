@@ -87,6 +87,7 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_connection_file': FinanceMarketplaceConnectionFileTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
+  'crove_finance.marketplace_vat_rate': FinanceMarketplaceVatRateTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_amis_match': FinanceMisaAmisMatchTable;
   'crove_finance.misa_amis_match_check': FinanceMisaAmisMatchCheckTable;
@@ -250,6 +251,7 @@ export interface CroveSignSchema {
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
@@ -1494,6 +1496,18 @@ export interface FinanceMarketplacePartyTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   platform: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.marketplace_vat_rate */
+export interface FinanceMarketplaceVatRateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  method: ColumnType<string, string, NotGranted>;
+  vat_percent: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
@@ -3807,6 +3821,29 @@ export interface SignCaSigningRequestTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_sign.envelope_obligation */
+export interface SignEnvelopeObligationTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  counterparty_name: string | null;
+  effective_date: string | null;
+  expiry_date: string | null;
+  renewal_notice_days: number | null;
+  auto_renew: Generated<boolean>;
+  contract_value: string | null;
+  currency: Generated<string>;
+  obligations_json: ColumnType<unknown, string | undefined, string>;
+  proposal_json: ColumnType<unknown, string | null | undefined, string | null>;
+  prompt_version: string | null;
+  status: Generated<string>;
+  confirmed_by: string | null;
+  confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_sign.envelope */
 export interface SignEnvelopeTable {
   org_id: string;
@@ -3880,6 +3917,12 @@ export interface SignFieldTable {
   filled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
+  attachment_file_id: string | null;
+  attachment_filename: string | null;
+  attachment_content_type: string | null;
+  attachment_size_bytes: number | null;
+  attachment_sha256: string | null;
 }
 
 /** crove_sign.signer */
@@ -3935,6 +3978,7 @@ export interface SignSigningEventTable {
   ip_hash: ColumnType<string | null, string | null, NotGranted>;
   user_agent: ColumnType<string | null, string | null, NotGranted>;
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  host_user_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_sign.template_field */
@@ -3954,6 +3998,7 @@ export interface SignTemplateFieldTable {
   font_size_pt: number | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_sign.template_role */

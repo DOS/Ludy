@@ -7,6 +7,8 @@
 // logs no request paths, and the boot step below moves it into the fragment before the app starts, so no later
 // request and no history entry keeps it.
 
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+
 export const SHARE_PATH = '/-/share';
 // The text kept from a share: a title and a selection, never a whole page.
 export const SHARE_TEXT_MAX = 4000;
@@ -103,12 +105,13 @@ export function moveShareQueryToFragment(win: BootWindow): void {
 export interface PendingShare extends Shared {
   org: string | null;
 }
-const PENDING_KEY = 'crove-pending-share';
+const PENDING_KEY = 'ludy-pending-share';
+const LEGACY_PENDING_KEY = 'crove-pending-share';
 export const PENDING_SHARE_TTL_MS = 60 * 60 * 1000;
 
 export function rememberShare(shared: PendingShare, now: number = Date.now()): void {
   try {
-    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ link: shared.link, text: shared.text, org: shared.org, savedAt: now }));
+    writeMigratedItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY, JSON.stringify({ link: shared.link, text: shared.text, org: shared.org, savedAt: now }));
   } catch {
     // Storage blocked: the share is lost, and sharing again works once signed in.
   }
@@ -117,26 +120,32 @@ export function rememberShare(shared: PendingShare, now: number = Date.now()): v
 // The waiting share while it is fresh, without taking it. Anything else stored is removed.
 export function pendingShare(now: number = Date.now()): PendingShare | null {
   try {
-    const raw = sessionStorage.getItem(PENDING_KEY);
-    if (raw === null) return null;
-    const value = JSON.parse(raw) as { link?: unknown; text?: unknown; org?: unknown; savedAt?: unknown } | null;
+    const entry = readLegacyAwareItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY);
+    if (!entry) return null;
+    const value = JSON.parse(entry.value) as { link?: unknown; text?: unknown; org?: unknown; savedAt?: unknown } | null;
     const savedAt = typeof value?.savedAt === 'number' ? value.savedAt : Number.NaN;
     const link = typeof value?.link === 'string' && isWebLink(value.link) ? value.link : null;
     const fresh = Number.isFinite(savedAt) && savedAt <= now && now - savedAt < PENDING_SHARE_TTL_MS;
     const shared = fresh ? normalize(link, typeof value?.text === 'string' ? value.text : '') : null;
     if (!shared) {
-      sessionStorage.removeItem(PENDING_KEY);
+      removeMigratedItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY);
       return null;
     }
+    if (entry.fromLegacy) promoteMigratedItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY, entry.value);
     return { ...shared, org: typeof value?.org === 'string' && SLUG.test(value.org) ? value.org : null };
   } catch {
+    try {
+      removeMigratedItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return null;
   }
 }
 
 export function forgetShare(): void {
   try {
-    sessionStorage.removeItem(PENDING_KEY);
+    removeMigratedItem(sessionStorage, PENDING_KEY, LEGACY_PENDING_KEY);
   } catch {
     // Nothing stored.
   }

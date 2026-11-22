@@ -69,6 +69,10 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_capture_session.sql',
       // #4316 (marketplace push hooks): the purge restatement that adds crove_finance.marketplace_hook and marketplace_hook_notice restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_marketplace_hook.sql',
+      // #4303 (marketplace VAT rate): the purge restatement that adds crove_finance.marketplace_vat_rate restates the whole list, the translation table included; it is never read as a source.
+      'crove_kernel_org_purge_marketplace_vat_rate.sql',
+      // #3821 (eSign post-signature obligations): the purge restatement that adds crove_sign.envelope_obligation restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_sign_obligations.sql',
     ]);
   });
 });

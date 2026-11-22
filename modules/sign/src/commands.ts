@@ -15,11 +15,22 @@ import {
   type SignSignerStatus,
 } from '@ludy/db';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
-import { tableWrite, zId, zSignSharedSummary, zSignSignerCorrectRecipientInput } from '@ludy/kernel-contract';
+import {
+  tableWrite,
+  zId,
+  zSignFieldOptions,
+  zSignSharedSummary,
+  zSignSignerCorrectRecipientInput,
+} from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext, type ErrorStatus } from '@ludy/kernel-runtime';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import { signInPersonCommands } from './in-person.ts';
+import {
+  assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanCreateMeetingMinutesEnvelope,
+} from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken, maskEmail } from './sealing.ts';
@@ -40,10 +51,12 @@ import {
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
+  serializeFieldOptionsForType,
   zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
 import { signCaCommands } from './ca.ts';
+import { signObligationCommands } from './obligations.ts';
 import { signTemplateCommands } from './templates.ts';
 import { envelopePreExpiryRemindSweep } from './today-and-reminders.ts';
 
@@ -112,6 +125,7 @@ async function lockEnvelope(ctx: CommandContext, envelopeId: string) {
     .executeTakeFirst();
   if (!row) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
   assertCanAccessEnvelopeRow(ctx, row);
+  await assertCanAccessMeetingMinutesEnvelopeRow(ctx, row);
   return row;
 }
 
@@ -178,8 +192,51 @@ export const envelopeCreate = defineCommand({
     if (expiresAt !== null && expiresAt.getTime() <= ctx.now.getTime()) {
       throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
     }
+    await assertCanCreateMeetingMinutesEnvelope(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
+    if (input.sourceKind === 'hr_contract' || input.sourceKind === 'meeting_minutes') {
+      const { rows: attachCheck } = await sql<{ allowed: boolean }>`
+        SELECT crove_sign.can_attach_confidential_source_file(
+          ${ctx.orgId}::uuid,
+          ${file.id}::uuid,
+          ${input.sourceKind},
+          ${sourceId}::uuid,
+          ${ctx.now}::timestamptz,
+          false
+        ) AS allowed
+      `.execute(ctx.trx);
+      if (!attachCheck[0]?.allowed) {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Existing template or non-matching envelope source files cannot be reused on confidential envelopes',
+        );
+      }
+    } else {
+      const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM crove_sign.envelope e
+            WHERE e.org_id = ${ctx.orgId}::uuid
+              AND e.source_file_id = ${file.id}::uuid
+              AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM crove_sign.template t
+            WHERE t.org_id = ${ctx.orgId}::uuid
+              AND t.source_file_id = ${file.id}::uuid
+          )
+        ) AS restricted
+      `.execute(ctx.trx);
+      if (confidentialRefs[0]?.restricted) {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
+        );
+      }
+    }
 
     const row = await ctx.trx
       .insertInto('crove_sign.envelope')
@@ -741,8 +798,17 @@ const zFieldItem = z
     required: z.boolean().default(true),
     proposedByAi: z.boolean().default(false),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, issueCtx) => {
+    const isChoice = item.fieldType === 'dropdown' || item.fieldType === 'radio';
+    if (isChoice) {
+      if (!item.options || item.options.length === 0) {
+        issueCtx.addIssue({ code: 'custom', path: ['options'], message: 'dropdown and radio fields require at least one option' });
+      }
+    } else if (item.options !== undefined && item.options !== null) {
+      issueCtx.addIssue({ code: 'custom', path: ['options'], message: 'options are only valid on dropdown and radio fields' });
+    }
     const x = toMicroNorm(item.xNorm);
     const y = toMicroNorm(item.yNorm);
     const w = toMicroNorm(item.wNorm);
@@ -794,6 +860,7 @@ export const fieldSet = defineCommand({
       'required',
       'proposed_by_ai',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -859,6 +926,7 @@ export const fieldSet = defineCommand({
             required: f.required,
             proposed_by_ai: f.proposedByAi,
             font_size_pt: f.fontSizePt ?? null,
+            options_json: serializeFieldOptionsForType(f.fieldType, f.options),
             created_at: ctx.now,
             updated_at: ctx.now,
           })),
@@ -1081,6 +1149,7 @@ export const signerCorrectRecipient = defineCommand({
   ],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
+    await lockEnvelope(ctx, input.envelopeId);
     const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
     const normalizedPhone = input.phone ? input.phone.trim() : null;
     const { rows: sqlRows } = await sql<{ res: CorrectRecipientSqlRow }>`
@@ -1903,4 +1972,6 @@ export const signCommands = [
   ...signDirectPublicCommands,
   ...signTemplateCommands,
   ...signCaCommands,
+  ...signInPersonCommands,
+  ...signObligationCommands,
 ];
