@@ -76,7 +76,7 @@ export function AdsCampaignsPage() {
     if (wasWaiting.current && !waiting) void queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDrafts.key() });
     wasWaiting.current = waiting;
   }, [waiting]);
-  // The Facebook Pages a Messenger ad can open a conversation with.
+  // The Facebook Pages an ad can run as (every objective needs one).
   const channels = useQuery({ ...orpc.channels.list.queryOptions({ input: {} }), enabled: canDraft && Boolean(account) });
   const pages: PageChoice[] = (channels.data ?? []).filter((c) => c.provider === 'facebook_page' && c.status === 'active').map((c) => ({ id: c.id, name: c.displayName }));
 

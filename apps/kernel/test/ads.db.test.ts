@@ -19,7 +19,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { decideApproval, kernelCommands, kernelQueries } from '@ludy/kernel';
 import { zTodayItems, type AdAccountView, type AdsSummary, type AdsSyncRunView, type TodayItem } from '@ludy/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@ludy/mod-ads';
+import { addDays, addMonths, adsCommands, adsQueries, completePlan, planHash, todayIn } from '@ludy/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { runAdsActivate } from '../src/ads-activate.ts';
@@ -1338,6 +1338,17 @@ suite('ads on PostgreSQL (#2217)', () => {
       describe('campaign drafts (W1, #2295)', () => {
         const zone = 'Asia/Ho_Chi_Minh';
         const inDays = (n: number) => addDays(todayIn(zone, new Date()), n);
+        // A Facebook Page of the org, which the ads run as (every ad needs one, whatever its objective: #3864).
+        const pageConnection = async () => {
+          const id = randomUUID();
+          const external = String(100_000_000 + Math.floor(Math.random() * 899_999_999));
+          await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, 'Trang thử', $4)`, [orgId, id, external, owner.userId]);
+          return { id, external };
+        };
+        let draftsPage = '';
+        beforeAll(async () => {
+          draftsPage = (await pageConnection()).id;
+        });
         const plan = (over: Record<string, unknown> = {}) => ({
           name: 'Khuyến mãi cuối tuần',
           objective: 'traffic',
@@ -1346,6 +1357,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           endOn: inDays(8),
           targeting: { locations: [{ country: 'VN' }], ageMin: 22, ageMax: 45, gender: 'all', interests: ['Cà phê'] },
           linkUrl: 'https://example.com/khuyen-mai',
+          pageConnectionId: draftsPage,
           variants: [{ headline: 'Giảm 20% cuối tuần', primaryText: 'Ghé quán hôm nay để nhận ưu đãi.', callToAction: 'learn_more' }],
           ...over,
         });
@@ -1391,7 +1403,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           const draft = await saved(member, account, { name: 'Mới', objective: 'traffic' });
           expect(draft).toMatchObject({ status: 'draft', revision: 1, maxSpend: null, days: null, currency: 'VND', aiFields: [], pendingProposalId: null });
           expect(codes(draft)).toEqual(expect.arrayContaining(['error:missing_field']));
-          expect(draft.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl']);
+          expect(draft.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl', 'pageConnectionId']);
           expect((await save(viewer, account, plan())).status).toBe(403);
           for (const who of [owner, adminAccount, member]) expect((await save(who, account, plan())).status, who.email).toBe(200);
           expect((await callAs(viewer, 'ads/campaignDrafts', {})).status).toBe(403);
@@ -1431,13 +1443,20 @@ suite('ads on PostgreSQL (#2217)', () => {
           for (const bad of [{ variants }, { linkUrl: 'http://example.com' }, { targeting: { locations: [{ country: 'VN' }], ageMin: 22, ageMax: 45, gender: 'all', interests: Array.from({ length: 21 }, (_, i) => `sở thích ${i}`) } }, { objective: 'sales' }]) {
             expect((await save(owner, account, plan(bad))).status, JSON.stringify(bad).slice(0, 60)).toBe(400);
           }
-          // Messenger wants a Page that is a connection of the org.
-          const messenger = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null }));
-          expect(messenger.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['pageConnectionId']);
+          // Every ad wants a Page that is a connection of the org, a Traffic or Engagement one as much as a Messenger one (#3864): without it the launch would stop as page_required.
+          for (const objective of ['traffic', 'engagement', 'messenger'] as const) {
+            const noPage = await saved(owner, account, plan({ objective, linkUrl: objective === 'messenger' ? null : 'https://example.com/khuyen-mai', pageConnectionId: null }));
+            expect(noPage.issues.filter((i) => i.code === 'missing_field').map((i) => i.field), objective).toEqual(['pageConnectionId']);
+            // It is no plan to submit: the request for approval names the Page as what is missing.
+            expect(await submit(owner, noPage.id), objective).toMatchObject({ status: 422 });
+          }
+          const messenger = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: null }));
           // A connection of the org that is not a Facebook Page (the account's own, for reading) is not a Page; an id that is not the org's is refused.
           const readConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
           expect(codes(await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: readConnection }), messenger.id))).toContain('error:page_not_found');
           expect(await save(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: randomUUID() }), messenger.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
+          expect(codes(await saved(owner, account, plan({ pageConnectionId: readConnection })))).toContain('error:page_not_found');
+          expect(await save(owner, account, plan({ pageConnectionId: randomUUID() }))).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
           expect(await save(owner, account, plan({ mediaFileId: randomUUID() }))).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
           // The caps are the owners' and admins' to read: a member is told a cap is exceeded, not its amount.
           const overAsMember = await saved(member, account, plan({ dailyBudget: '300000' }));
@@ -1592,9 +1611,9 @@ suite('ads on PostgreSQL (#2217)', () => {
           const body = plan({ name: 'Do đồng nghiệp AI soạn' });
           // A draft the system wrote (origin ai, the fields it drafted named), inserted as the database owner: the draft job's command does the same in the system context.
           const [made] = await row<{ id: string }>(
-            `INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, daily_budget, start_on, end_on, targeting, link_url, variants, origin, ai_fields, max_spend, created_by)
-             VALUES ($1, $2, $3, 'traffic', $4, $5, $6, $7::jsonb, $8, $9::jsonb, 'ai', ARRAY['name', 'targeting', 'variants'], $10, $11) RETURNING id`,
-            [orgId, account, body.name, body.dailyBudget, body.startOn, body.endOn, JSON.stringify(body.targeting), body.linkUrl, JSON.stringify(body.variants), '700000', member.userId],
+            `INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, daily_budget, start_on, end_on, targeting, link_url, page_connection_id, variants, origin, ai_fields, max_spend, created_by)
+             VALUES ($1, $2, $3, 'traffic', $4, $5, $6, $7::jsonb, $8, $12, $9::jsonb, 'ai', ARRAY['name', 'targeting', 'variants'], $10, $11) RETURNING id`,
+            [orgId, account, body.name, body.dailyBudget, body.startOn, body.endOn, JSON.stringify(body.targeting), body.linkUrl, JSON.stringify(body.variants), '700000', member.userId, draftsPage],
           );
           const id = made?.id as string;
           const asked = proposalId(await submit(owner, id));
@@ -1839,13 +1858,6 @@ suite('ads on PostgreSQL (#2217)', () => {
         describe('the launch job (W2-3)', () => {
           const ORDER = ['campaign', 'ad_set', 'creative_1', 'ad_1', 'creative_2', 'ad_2', 'creative_3', 'ad_3'];
           const variant = (n: number) => ({ headline: `Tiêu đề ${n}`, primaryText: `Nội dung quảng cáo số ${n}`, callToAction: 'learn_more' });
-          // A Facebook Page of the org, which the ads run as.
-          const pageConnection = async () => {
-            const id = randomUUID();
-            const external = String(100_000_000 + Math.floor(Math.random() * 899_999_999));
-            await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, 'Trang thử', $4)`, [orgId, id, external, owner.userId]);
-            return { id, external };
-          };
           // An account that can run ads, with the sandbox's write connection, and an approved plan whose launch is queued.
           const queued = async (name: string, over: Record<string, unknown> = {}, withPage = true) => {
             const account = await ready(name);
@@ -2170,6 +2182,26 @@ suite('ads on PostgreSQL (#2217)', () => {
             const w = new SandboxAdWriter();
             // No Page connection in the plan: every ad needs one.
             const noPage = await queued('Không có trang', {}, false);
+            // A plan approved before the builder asked for a Page has none (a draft cannot be submitted without one any more): the draft and the hash the ledger
+            // holds are made so, outside the guards, as the older rows were.
+            const view = ((await callAs(owner, 'ads/campaignDraft', { draftId: noPage.draft.id })).body as { plan: Record<string, unknown> }).plan;
+            const legacy = completePlan({ ...view, pageConnectionId: null } as never);
+            expect(legacy).not.toBeNull();
+            await admin(async (c) => {
+              await c.query('BEGIN');
+              try {
+                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard`);
+                await c.query(`UPDATE crove_ads.ad_campaign_draft SET page_connection_id = NULL WHERE org_id = $1 AND id = $2`, [orgId, noPage.draft.id]);
+                await c.query(`UPDATE crove_ads.ad_launch SET plan_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, noPage.launch.id, planHash(legacy as NonNullable<typeof legacy>, noPage.account, 'VND')]);
+                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard`);
+                await c.query('COMMIT');
+              } catch (err) {
+                await c.query('ROLLBACK');
+                throw err;
+              }
+            });
             expect(await run(w, noPage.launch.id)).toEqual({ steps: 0, ended: 'page_required' });
             expect(await launchNow(noPage.launch.id)).toMatchObject({ state: 'failed', stop_reason: 'page_required', commit_until: null });
             expect((await launchNow(noPage.launch.id))?.finished_at).toBeInstanceOf(Date);

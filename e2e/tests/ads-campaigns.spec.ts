@@ -109,6 +109,9 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await expect(issues).toContainText('Cần sửa trước khi được duyệt');
     await expect(issues).toContainText('Chưa đặt hạn mức chi tiêu nào.');
     await expect(issues).toContainText('Việc chạy quảng cáo đang tắt cho tổ chức.');
+    // A Traffic ad runs as a Page too (#3864): with none chosen the plan says so, and the field says it under itself.
+    await expect(issues).toContainText('Còn thiếu: Trang Facebook.');
+    await expect(builder.getByText('Hãy chọn Trang Facebook mà quảng cáo chạy dưới tên: thiếu Trang thì quảng cáo không chạy được.')).toBeVisible();
     // Held back until nothing is to fix, and the draft is listed.
     await expect(builder.getByRole('button', { name: 'Gửi duyệt' })).toBeDisabled();
     await expect(page.getByTestId('campaign-drafts').getByText('Khai trương chi nhánh mới', { exact: false })).toBeVisible();

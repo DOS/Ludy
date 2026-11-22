@@ -124,8 +124,8 @@ const draft = (over: Partial<AdsCampaignDraftView> = {}): AdsCampaignDraftView =
   ...over,
 });
 
-const builder = (over: { draft?: AdsCampaignDraftView | null; canManage?: boolean; seed?: ReturnType<typeof formFromPost> | null } = {}) => (
-  <CampaignBuilder slug="demo" account={account()} draft={over.draft === undefined ? draft() : over.draft} seed={over.seed ?? null} canManage={over.canManage ?? true} pages={[]} onSaved={() => undefined} onDiscarded={() => undefined} />
+const builder = (over: { draft?: AdsCampaignDraftView | null; canManage?: boolean; seed?: ReturnType<typeof formFromPost> | null; pages?: Array<{ id: string; name: string }> } = {}) => (
+  <CampaignBuilder slug="demo" account={account()} draft={over.draft === undefined ? draft() : over.draft} seed={over.seed ?? null} canManage={over.canManage ?? true} pages={over.pages ?? []} onSaved={() => undefined} onDiscarded={() => undefined} />
 );
 
 // Whether the button with this text is there, and off (its own `disabled` attribute: the class names carry the word too).
@@ -213,13 +213,36 @@ describe('the builder of a saved draft', () => {
     expect(html).not.toContain('Set the daily budget and the dates to see the most it can spend.');
   });
 
-  it('offers the Page of a Messenger ad in place of the link, and the link of the others', () => {
-    const messenger = render(builder({ draft: draft({ plan: { ...draft().plan, objective: 'messenger', linkUrl: null } }) }));
-    expect(messenger).toContain('The Facebook Page');
-    expect(messenger).not.toContain('Where the ad leads');
-    const traffic = render(builder());
-    expect(traffic).toContain('Where the ad leads');
-    expect(traffic).not.toContain('The Facebook Page');
+  it('offers the Facebook Page for every objective, and the link only for Traffic and Engagement (#3864)', () => {
+    for (const objective of ['traffic', 'engagement', 'messenger'] as const) {
+      const html = render(builder({ draft: draft({ plan: { ...draft().plan, objective, linkUrl: objective === 'messenger' ? null : 'https://example.com/khai-truong' } }) }));
+      expect(html, objective).toContain('The Facebook Page');
+      expect(html, objective).toContain('Every ad runs as a Facebook Page');
+      expect(html.includes('Where the ad leads'), objective).toBe(objective !== 'messenger');
+    }
+    expect(render(builder(), 'vi')).toContain('Trang Facebook');
+  });
+
+  it('lists the org’s Pages, keeps the chosen one for a Traffic ad and says so when none is connected', () => {
+    const pages = [{ id: ID, name: 'Trang Cà phê Sài Gòn' }];
+    const chosen = render(builder({ pages, draft: draft({ plan: { ...draft().plan, pageConnectionId: ID } }) }));
+    expect(chosen).toContain('Trang Cà phê Sài Gòn');
+    expect(chosen).toMatch(new RegExp(`<option[^>]*value="${ID}"[^>]*selected`));
+    expect(render(builder({ pages }))).toContain('Choose a Page');
+    expect(render(builder())).toContain('No Facebook Page connected');
+  });
+
+  it('says under the Page field, in both languages, that a checked plan has no Page or one that is not the org’s', () => {
+    const missing = draft({ issues: [{ code: 'missing_field', severity: 'error', field: 'pageConnectionId', params: {} }] });
+    const en = render(builder({ draft: missing }));
+    expect(en).toContain('Choose the Facebook Page the ad runs as: an ad cannot launch without one.');
+    expect(en).toContain('aria-invalid="true"');
+    expect(render(builder({ draft: missing }), 'vi')).toContain('Hãy chọn Trang Facebook mà quảng cáo chạy dưới tên');
+    const foreign = draft({ issues: [{ code: 'page_not_found', severity: 'error', field: 'pageConnectionId', params: {} }] });
+    expect(render(builder({ draft: foreign }))).toContain('The Page you chose is not a connected Facebook Page of this org. Choose another.');
+    // A plan with its Page has nothing to say about it.
+    const fine = render(builder({ draft: draft({ plan: { ...draft().plan, pageConnectionId: ID } }), pages: [{ id: ID, name: 'Trang A' }] }));
+    expect(fine).not.toContain('an ad cannot launch without one');
   });
 
   it('shows a day of a finding the way the date fields write it', () => {

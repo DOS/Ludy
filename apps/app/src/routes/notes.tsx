@@ -25,6 +25,7 @@ import { Input } from '@ludy/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-attachments.tsx';
+import { NoteImportDialog } from '../components/note-import-dialog.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
@@ -803,6 +804,7 @@ export function NotesPage() {
   // Back and forward change the address, and the search box follows it.
   useEffect(() => setQ(search.q ?? ''), [search.q]);
   const [created, setCreated] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const go = (next: NotesSearch) => void navigate({ to: '/o/$slug/notes', params: { slug }, search: next });
   // A tag, notebook or stack filters the lists, not a search.
   const tag = search.q ? undefined : search.tag;
@@ -835,7 +837,7 @@ export function NotesPage() {
   const found = useQuery({ ...orpc.notes.search.queryOptions({ input: { q: search.q ?? '' } }), enabled: Boolean(search.q) });
   const notes = search.q ? found : list;
   const open = useQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: search.note ?? '' } }), enabled: Boolean(search.note) });
-  const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: Boolean(search.note) && role !== undefined });
+  const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: (Boolean(search.note) || importOpen) && role !== undefined });
   const sharedLinkable = useQuery({
     ...orpc.notes.list.queryOptions({ input: { view: 'shared' } }),
     enabled: Boolean(search.note) && role !== undefined,
@@ -916,6 +918,11 @@ export function NotesPage() {
         <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
+        {writer && (
+          <Button variant="outline" data-testid="notes-import-enex-btn" onClick={() => setImportOpen(true)}>
+            {t('import.button')}
+          </Button>
+        )}
         <NewFromTemplateButton
           slug={slug}
           role={role}
@@ -1071,6 +1078,27 @@ export function NotesPage() {
           )}
         </section>
       </div>
+      {writer && (
+        <NoteImportDialog
+          mode="enex"
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          slug={slug}
+          notebooks={notebooksList}
+          existingNoteTitles={(mineLinkable.data ?? (view === 'mine' ? all.data : undefined) ?? []).filter((n) => n.visibility === 'private').map((n) => n.title)}
+          defaultNotebookId={selectedNotebookObj?.id ?? null}
+          onImported={(result) => {
+            void refreshNotes();
+            if (result.noteIds.length === 1 && result.noteIds[0]) {
+              go({ list: 'mine', ...(result.notebookIds.length === 1 && result.notebookIds[0] ? { notebook: result.notebookIds[0] } : {}), note: result.noteIds[0] });
+            } else if (result.notebookIds.length === 1 && result.notebookIds[0]) {
+              go({ list: 'mine', notebook: result.notebookIds[0] });
+            } else {
+              go({ list: 'mine' });
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
