@@ -104,6 +104,11 @@ BEGIN
     RAISE EXCEPTION 'user actor required to insert attendance_log' USING ERRCODE = '42501';
   END IF;
 
+  -- Cross-org inserts from user sessions must fail in RLS WITH CHECK (T8 matrix) rather than firing same-org business guards early.
+  IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    RETURN NEW;
+  END IF;
+
   SELECT EXISTS (
     SELECT 1
     FROM crove_kernel.tenant_member m
