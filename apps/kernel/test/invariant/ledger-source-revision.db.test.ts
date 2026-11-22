@@ -82,7 +82,7 @@ suite('idempotent posting under concurrency (#1283)', () => {
         await c.query('BEGIN');
         await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       }
-      const key = `crove_finance.journal_entry.source:${orgId}:test.race:${sourceId}`;
+      const key = `${dbIds?.schema('finance') ?? 'crove_finance'}.journal_entry.source:${orgId}:test.race:${sourceId}`;
       await gate.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
       const pids = await Promise.all(clients.map(async (c) => (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid ?? 0));
       const calls = clients.map(async (c, i) => {
