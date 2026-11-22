@@ -85,10 +85,11 @@ describe('recorded request shapes', () => {
     expect(() => webhookBody(alert, 'telegram')).toThrow(/ALERT_TELEGRAM_CHAT_ID/);
   });
 
-  it('generic: {text, content, crove}', () => {
+  it('generic: {text, content, ludy, crove}', () => {
     const body = webhookBody(alert, 'generic');
-    expect(Object.keys(body)).toEqual(['text', 'content', 'crove']);
-    expect(body).toMatchObject({ text, content: text, crove: { kind: 'alert', state: 'new', severity: 'critical', instance: 'books.example.test', at: AT } });
+    expect(Object.keys(body)).toEqual(['text', 'content', 'ludy', 'crove']);
+    const expected = { kind: 'alert', state: 'new', severity: 'critical', instance: 'books.example.test', at: AT };
+    expect(body).toMatchObject({ text, content: text, ludy: expected, crove: expected });
   });
 });
 
@@ -183,7 +184,7 @@ describe('delivery to fake vendor endpoints', () => {
     received.length = 0;
     const failed = await deliverAlert(alert, { webhookUrl: `${base}/elsewhere`, format: 'generic', ...quiet });
     expect(failed.error).toMatch(/^webhook at .* failed: HTTP 404$/);
-    expect(Object.keys(received[0]?.body ?? {})).toEqual(['text', 'content', 'crove']);
+    expect(Object.keys(received[0]?.body ?? {})).toEqual(['text', 'content', 'ludy', 'crove']);
   });
 
   it('the test alert reaches each format through the prober entry point', async () => {
@@ -194,7 +195,7 @@ describe('delivery to fake vendor endpoints', () => {
     expect(
       await run({ ALERT_WEBHOOK_URL: `${base}/telegram/bot${TELEGRAM_TOKEN}/sendMessage`, ALERT_WEBHOOK_FORMAT: 'telegram', ALERT_TELEGRAM_CHAT_ID: '42' }),
     ).toBe(EXIT.ok);
-    const testText = '[Crove] Test alert from office: alert delivery works.';
+    const testText = '[Ludy] Test alert from office: alert delivery works.';
     expect(received.map((r) => r.body)).toEqual([
       { text: testText, mrkdwn: false },
       { content: testText, allowed_mentions: { parse: [] } },

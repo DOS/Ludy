@@ -177,6 +177,22 @@ describe('the card of the deal board (#3648)', () => {
     expect(html).toContain('aria-label="Giai đoạn của cơ hội Gói kế toán năm"');
   });
 
+  it('keeps the AI mark\'s long hint out of the card\'s name and gives it as the card\'s description (#4163)', () => {
+    const marked = render(undefined, 'vi', withCard({ actorOrigin: 'mcp', tainted: true }));
+    const open = /<div[^>]*data-testid="deal-card-open"[^>]*>/.exec(marked)?.[0] ?? '';
+    const describedBy = /aria-describedby="([^"]+)"/.exec(open)?.[1];
+    expect(describedBy).toBeTruthy();
+    // The hint sits in a hidden element the card points at, not in screen-reader text inside the card's name.
+    expect(marked).toContain(`<span id="${describedBy}" hidden="">`);
+    expect(marked).not.toContain('sr-only');
+    // The short label stays in the name.
+    expect(marked).toContain('Do đồng nghiệp AI viết');
+    // A person's own card has no description and no hidden hint.
+    const own = render(undefined);
+    expect(own).not.toContain('aria-describedby');
+    expect(own).not.toContain('hidden=""');
+  });
+
   it("shows the owner's name, or that there is none", () => {
     expect(render(undefined)).toContain('Chưa có người phụ trách');
     const owned = render(undefined, 'vi', withCard({ ownerUserId: 'u1' }), true, [{ userId: 'u1', displayName: 'Lan', email: 'lan@example.test' }]);

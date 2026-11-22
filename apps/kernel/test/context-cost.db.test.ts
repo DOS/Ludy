@@ -18,7 +18,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ROUNDS = 5;
 
-const suite = ADMIN && process.env.CROVE_BENCH === '1' ? describe : describe.skip;
+const suite = ADMIN && (process.env.LUDY_BENCH ?? process.env.CROVE_BENCH) === '1' ? describe : describe.skip;
 
 // The per-call re-check a later migration could add (§4.5): the context's member must still be a member of the
 // still-active org; a system context needs the org still active. Same contract as ctx_verified() otherwise.

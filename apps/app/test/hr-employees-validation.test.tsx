@@ -140,6 +140,8 @@ const sampleEmployee = (over: Partial<HrEmployee> = {}): HrEmployee => ({
   departmentId: null,
   departmentName: null,
   jobTitle: null,
+  linkedUserId: null,
+  linkedMemberName: null,
   address: null,
   identityNumber: null,
   hasIdentityNumber: false,

@@ -286,7 +286,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         sp_password: creds.spPassword,
         user_id: creds.userId,
         serial_number: requestedSerial,
-        transaction_id: `crove-cert-${now().getTime()}`,
+        transaction_id: `ludy-cert-${now().getTime()}`,
       },
       false,
     );
@@ -399,7 +399,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
             sp_password: creds.spPassword,
             user_id: creds.userId,
             serial_number: creds.serialNumber ?? '',
-            transaction_id: 'crove-connection-check',
+            transaction_id: 'ludy-connection-check',
           },
           false,
         );

@@ -32,7 +32,7 @@ describe('claimImportedMedia', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ importId: 'r1', kind: 'audio' });
     const headers = init?.headers as Record<string, string>;
     expect(headers.authorization).toBe('Bearer token-1');
-    expect(headers['x-crove-org']).toBe('acme');
+    expect(headers['x-ludy-org']).toBe('acme');
     expect(headers['content-type']).toBe('application/json');
   });
 

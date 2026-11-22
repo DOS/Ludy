@@ -15,7 +15,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
-const STANDBY = process.env.CROVE_TEST_STANDBY_URL;
+const STANDBY = process.env.LUDY_TEST_STANDBY_URL ?? process.env.CROVE_TEST_STANDBY_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN && STANDBY ? describe : describe.skip;

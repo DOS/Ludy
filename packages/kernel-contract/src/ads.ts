@@ -366,6 +366,8 @@ export const zAdsFlag = z.discriminatedUnion('kind', [
     projected: z.string(),
     elapsedDays: z.number().int(),
     daysInMonth: z.number().int(),
+    // The first day of the month the pace is about, in the ad account's own time zone (an org flag takes the first judged account's): the key of the month, so a reader in another calendar never names a different month.
+    month: zLocalDate,
     // The accounts of the cap's currency that were left out because they have not read yesterday yet (an org flag is about the others).
     skippedAccounts: z.number().int(),
   }),

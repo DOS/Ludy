@@ -28,7 +28,7 @@ describe('CROVE_CONTEXT_TOKEN_KEY', () => {
       expect(loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: key }).CROVE_CONTEXT_TOKEN_KEY).toBe(key);
     }
     for (const bad of [randomBytes(31).toString('base64'), randomBytes(65).toString('base64'), 'not base64 at all!', randomBytes(32).toString('hex').slice(0, 20)]) {
-      expect(() => loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: bad }), bad).toThrow(/CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes/);
+      expect(() => loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: bad }), bad).toThrow(/LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes/);
     }
   });
 

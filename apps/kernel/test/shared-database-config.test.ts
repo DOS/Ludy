@@ -7,16 +7,22 @@ const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repe
 
 describe('CROVE_SHARED_DATABASE', () => {
   it('is off when unset or empty (a compose `${VAR:-}`), on only for true, and refuses anything else', () => {
+    expect(loadConfig(base).LUDY_SHARED_DATABASE).toBe('false');
     expect(loadConfig(base).CROVE_SHARED_DATABASE).toBe('false');
     expect(loadConfig({ ...base, CROVE_SHARED_DATABASE: '' }).CROVE_SHARED_DATABASE).toBe('false');
-    expect(loadConfig({ ...base, CROVE_SHARED_DATABASE: 'true' }).CROVE_SHARED_DATABASE).toBe('true');
-    for (const bad of ['TRUE', '1', 'yes']) expect(() => loadConfig({ ...base, CROVE_SHARED_DATABASE: bad }), bad).toThrow(/CROVE_SHARED_DATABASE/);
+    expect(loadConfig({ ...base, CROVE_SHARED_DATABASE: 'true' }).LUDY_SHARED_DATABASE).toBe('true');
+    expect(loadConfig({ ...base, LUDY_SHARED_DATABASE: 'true' }).CROVE_SHARED_DATABASE).toBe('true');
+    expect(loadConfig({ ...base, LUDY_SHARED_DATABASE: 'true', CROVE_SHARED_DATABASE: 'true' }).LUDY_SHARED_DATABASE).toBe('true');
+    expect(() => loadConfig({ ...base, LUDY_SHARED_DATABASE: 'true', CROVE_SHARED_DATABASE: 'false' })).toThrow(/LUDY_SHARED_DATABASE and CROVE_SHARED_DATABASE are both set with conflicting values/);
+    for (const bad of ['TRUE', '1', 'yes']) expect(() => loadConfig({ ...base, CROVE_SHARED_DATABASE: bad }), bad).toThrow(/LUDY_SHARED_DATABASE/);
   });
 
   it('has a separate switch for changing the recorded mode, off by default', () => {
     expect(loadConfig(base).CROVE_SHARED_DATABASE_SWITCH).toBe('false');
-    expect(loadConfig({ ...base, CROVE_SHARED_DATABASE_SWITCH: 'true' }).CROVE_SHARED_DATABASE_SWITCH).toBe('true');
-    expect(() => loadConfig({ ...base, CROVE_SHARED_DATABASE_SWITCH: 'maybe' })).toThrow(/CROVE_SHARED_DATABASE_SWITCH/);
+    expect(loadConfig({ ...base, CROVE_SHARED_DATABASE_SWITCH: 'true' }).LUDY_SHARED_DATABASE_SWITCH).toBe('true');
+    expect(loadConfig({ ...base, LUDY_SHARED_DATABASE_SWITCH: 'true' }).CROVE_SHARED_DATABASE_SWITCH).toBe('true');
+    expect(() => loadConfig({ ...base, LUDY_SHARED_DATABASE_SWITCH: 'true', CROVE_SHARED_DATABASE_SWITCH: 'false' })).toThrow(/LUDY_SHARED_DATABASE_SWITCH and CROVE_SHARED_DATABASE_SWITCH are both set with conflicting values/);
+    expect(() => loadConfig({ ...base, CROVE_SHARED_DATABASE_SWITCH: 'maybe' })).toThrow(/LUDY_SHARED_DATABASE_SWITCH/);
   });
 
   it('refuses the database session check, whose auth-grants step a shared database refuses', () => {

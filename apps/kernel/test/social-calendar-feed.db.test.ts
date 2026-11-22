@@ -156,7 +156,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const ics = await res.text();
     expect(ics.startsWith('BEGIN:VCALENDAR\r\n')).toBe(true);
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(4);
-    expect(ics.replace(/\r\n /g, '')).toContain(`UID:${titled.variantId}@crove\r\n`);
+    expect(ics.replace(/\r\n /g, '')).toContain(`UID:${titled.variantId}@ludy\r\n`);
     expect(ics.replace(/\r\n /g, '')).toContain(`URL:http://localhost:8080/o/${o.slug}/social/${titled.postId}\r\n`);
     expect(ics.replace(/\r\n /g, '')).toContain('SUMMARY:Sandbox: Khai trương\r\n');
     // Without the extension, or with a wrong token: a plain 404.

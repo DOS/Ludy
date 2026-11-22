@@ -85,7 +85,7 @@ export function opsAlert(line: string, error?: unknown): void {
     return;
   }
   const posted = line.length > MAX_POSTED ? `${line.slice(0, MAX_POSTED - 1)}…` : line;
-  pending.push({ text: `[Crove] ${target.instance}: ${posted}`, crove: { kind: 'ops_alert', instance: target.instance, line: posted } });
+  pending.push({ text: `[Ludy] ${target.instance}: ${posted}`, ludy: { kind: 'ops_alert', instance: target.instance, line: posted } });
 }
 
 /**
@@ -102,7 +102,7 @@ export function flushOpsAlerts(deadlineMs?: number): Promise<void> {
     if (!config || !target?.webhookUrl) return;
     const post = config.post ?? postMessage;
     if (dropped > 0) {
-      pending.push({ text: `[Crove] ${target.instance}: ${dropped} more operational alert(s) are in the log only`, crove: { kind: 'ops_alert', instance: target.instance, dropped } });
+      pending.push({ text: `[Ludy] ${target.instance}: ${dropped} more operational alert(s) are in the log only`, ludy: { kind: 'ops_alert', instance: target.instance, dropped } });
       dropped = 0;
     }
     for (let message = pending.shift(); message; message = pending.shift()) {

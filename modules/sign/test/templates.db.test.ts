@@ -789,7 +789,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
         },
         { actor: asUser(ownerA), orgId: orgA },
       ),
-    ).rejects.toThrow(/signature field/i);
+    ).rejects.toThrow(/signature( or stamp)? field/i);
 
     // Place signature field on r2 (approver r1 requires 0 signature fields).
     await runtime.execute(

@@ -252,9 +252,10 @@ export interface ModuleDefinitions {
 // The figures each module adds to the multi-client home (#1261); a module without any is left out.
 const OVERVIEW_CONTRIBUTIONS: Partial<Record<ModuleId, readonly OverviewContribution[]>> = { social: socialOverviewContributions };
 
-// The overview contributions of the modules CROVE_MODULES enables, which kernel.org.overview runs in each org.
-export function overviewContributions(config: Pick<Config, 'CROVE_MODULES'>): OverviewContribution[] {
-  return config.CROVE_MODULES.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
+// The overview contributions of the modules LUDY_MODULES enables, which kernel.org.overview runs in each org.
+export function overviewContributions(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): OverviewContribution[] {
+  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
+  return modules.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
 }
 
 // Transcription of meetings is on only with MEETINGS_TRANSCRIBE=on and a provider (#2578, M4b); the module works with it off.
@@ -302,7 +303,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
       queries: kernelQueries({
         inboundDomain: config.INBOUND_DOMAIN ?? null,
         overview: overviewContributions(config),
-        apps: { shipped: AVAILABLE_MODULES, deployment: config.CROVE_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
+        apps: { shipped: AVAILABLE_MODULES, deployment: config.LUDY_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
       }),
     }),
     finance: () => ({ commands: financeCommands, queries: financeQueries }),
@@ -315,7 +316,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
     sign: () => ({ commands: [...signCommands, ...signAiCommands], queries: [...signQueries, ...signAiQueries] }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
-  const enabled = config.CROVE_MODULES.map((module) => all[module]());
+  const enabled = config.LUDY_MODULES.map((module) => all[module]());
   return { commands: enabled.flatMap((m) => m.commands), queries: enabled.flatMap((m) => m.queries) };
 }
 
@@ -325,10 +326,10 @@ async function assertContextTokenKey(pool: ReturnType<typeof createPool>, key: s
   const nil = '00000000-0000-4000-8000-000000000000';
   const token = mintContextToken(key, { userId: nil, sessionId: null, orgId: nil, aal: 'aal1', mfaAt: null });
   const { rows } = await pool.query<{ ok: boolean }>('SELECT crove_kernel.context_token_valid($1) AS ok', [token]);
-  if (rows[0]?.ok !== true) throw new Error('CROVE_CONTEXT_TOKEN_KEY is not the key the database holds: run the migrate step with it first');
+  if (rows[0]?.ok !== true) throw new Error('LUDY_CONTEXT_TOKEN_KEY is not the key the database holds: run the migrate step with it first');
 }
 
-// The manifests of the modules CROVE_MODULES enables (plan §5.2). The runtime checks every command's declared writes
+// The manifests of the modules LUDY_MODULES enables (plan §5.2). The runtime checks every command's declared writes
 // against their tables when the command registers (#1710), so P04 rests on the manifests' column classes.
 const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   kernel: kernelManifest,
@@ -343,8 +344,9 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   hr: hrManifest,
 };
 
-export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {
-  return config.CROVE_MODULES.map((module) => MODULE_MANIFESTS[module]);
+export function moduleManifests(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {
+  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
+  return modules.map((module) => MODULE_MANIFESTS[module]);
 }
 
 // The runtime of every server role, and the only place the server constructs one: the enabled modules' commands and
@@ -366,7 +368,7 @@ function subjectVaultOf(config: Config): SubjectVault | null {
 export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & { billing?: Billing }): Runtime {
   const { billing, ...runtimeOptions } = options;
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
-  const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
+  const absentModules = AVAILABLE_MODULES.filter((module) => !config.LUDY_MODULES.includes(module));
   const runtime = new Runtime(cells, {
     // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
     readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
@@ -743,19 +745,19 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   };
 
   function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
-    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
+    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.LUDY_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
       // The org's entitlements, for kernel.org.apps (ADR-0053).
       billing: resolved.billing,
       // Approval audit rows name the build their policy ran under (plan §4.7, #1402).
-      build: config.CROVE_BUILD ?? 'dev',
+      build: config.LUDY_BUILD ?? 'dev',
       // Audit and idempotency rows hash a command's input under the deployment's key (#1732), so an exported or
       // archived row never confirms a guessed input.
       inputHash: 'keyed',
       // User contexts entered with a token signed by the deployment's key (#1822), once one is configured.
-      contextTokenKey: config.CROVE_CONTEXT_TOKEN_KEY ?? null,
+      contextTokenKey: config.LUDY_CONTEXT_TOKEN_KEY ?? null,
       // Every user request is checked against its session (ADR-0028); the identity port never resolves to "no check".
       sessions: resolved.identity.sessions,
       stepUp: config.AUTH_STEP_UP,
@@ -815,7 +817,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'denied');
-        if (config.CROVE_CONTEXT_TOKEN_KEY) await assertContextTokenKey(pool, config.CROVE_CONTEXT_TOKEN_KEY);
+        if (config.LUDY_CONTEXT_TOKEN_KEY) await assertContextTokenKey(pool, config.LUDY_CONTEXT_TOKEN_KEY);
         const authenticate = resolved.identity.authenticator(db);
         // Realtime invalidation (issue #69): one LISTEN connection per process; STREAM_MAX_CONNECTIONS=0 turns it off.
         let stream: StreamDeps | undefined;
@@ -937,7 +939,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
             refusalTallyRetentionDays: config.REFUSAL_TALLY_RETENTION_DAYS,
-            build: { id: config.CROVE_BUILD ?? null, time: config.CROVE_BUILD_TIME ?? null },
+            build: { id: config.LUDY_BUILD ?? null, time: config.LUDY_BUILD_TIME ?? null },
             agentPrograms: { ...financeAgentPrograms, ...socialAgentPrograms, ...crmAgentPrograms },
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
@@ -1039,7 +1041,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function shredReplay(): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for shred-replay; run it in the worker container');
-    if (!config.CROVE_MODULES.includes('meetings')) {
+    if (!config.LUDY_MODULES.includes('meetings')) {
       console.log('[shred-replay] the meetings module is not enabled here; nothing to replay');
       return 0;
     }
@@ -1058,7 +1060,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     }
   }
 
-  return { config, modules: config.CROVE_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay };
+  return { config, modules: config.LUDY_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay };
 }
 
 // The Social writer as the API uses it: drafts, rewrites, hashtags, post ideas (#1181) and period summaries (#1237) as

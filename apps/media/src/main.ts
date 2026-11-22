@@ -53,12 +53,14 @@ export function unexpectedVariables(env: NodeJS.ProcessEnv): string[] {
     .sort();
 }
 
-export const IMAGE_MARKER = '/etc/crove-media-image';
+export const IMAGE_MARKER = '/etc/ludy-media-image';
+export const LEGACY_IMAGE_MARKER = '/etc/crove-media-image';
 
 const RELAXED_NODE_ENV = new Set(['development', 'test']);
 
-export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath: string = IMAGE_MARKER): boolean {
-  return existsSync(markerPath) || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
+export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath?: string): boolean {
+  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER) || existsSync(LEGACY_IMAGE_MARKER);
+  return hasMarker || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
 }
 
 export interface LoadOptions {
@@ -96,7 +98,7 @@ export function cleanupScratchDir(dir = process.env.TMPDIR || tmpdir()): void {
     if (existsSync(dir)) {
       const entries = readdirSync(dir);
       for (const entry of entries) {
-        if (entry.startsWith('crove-media-')) {
+        if (entry.startsWith('ludy-media-') || entry.startsWith('crove-media-')) {
           rmSync(join(dir, entry), { recursive: true, force: true });
         }
       }

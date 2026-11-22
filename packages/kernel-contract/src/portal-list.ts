@@ -18,7 +18,7 @@ export type PortalListStatus = (typeof PORTAL_LIST_STATUSES)[number];
 
 // declared_late (#560): a Crove document of an earlier invoice date, posted in this period after its own month was
 // locked (#478). The VAT working declares it here; the portal lists it under its invoice date, in an earlier period.
-export const RECONCILE_OUTCOMES = ['matched', 'in_inbox', 'amount_mismatch', 'missing', 'void_in_crove', 'void', 'not_on_portal', 'declared_late'] as const;
+export const RECONCILE_OUTCOMES = ['matched', 'in_inbox', 'amount_mismatch', 'missing', 'void_in_ludy', 'void', 'not_on_portal', 'declared_late'] as const;
 export type ReconcileOutcome = (typeof RECONCILE_OUTCOMES)[number];
 
 export const RECONCILE_DIFFERENCES = ['total', 'vat', 'currency'] as const;
@@ -75,7 +75,7 @@ export const zPortalRow = z.object({
   statusLabel: z.string().nullable(),
 });
 
-export const zCroveInvoice = z.object({
+export const zLudyInvoice = z.object({
   kind: z.enum(['document', 'proposal']),
   id: zId,
   sellerTaxCode: z.string().nullable(),
@@ -99,12 +99,12 @@ export const zCroveInvoice = z.object({
 export const zReconcileItem = z.object({
   outcome: z.enum(RECONCILE_OUTCOMES),
   portal: zPortalRow.nullable(),
-  crove: zCroveInvoice.nullable(),
+  ludy: zLudyInvoice.nullable(),
   differences: z.array(z.enum(RECONCILE_DIFFERENCES)),
   withoutTaxCode: z.boolean(),
   outsidePeriod: z.boolean(),
   duplicateRows: z.number().int().nonnegative(),
-  duplicateInCrove: z.boolean(),
+  duplicateInLudy: z.boolean(),
   // The Crove document is dated in (or, matched to a row of this period's lists, before) this period but posted after
   // it (#478): the VAT working declares it in the period of its posting date (crove.postingDate), flagged declared_late
   // there, not in this one (#560).
@@ -121,7 +121,7 @@ export const zPortalReconciliation = z.object({
     inInbox: z.number().int().nonnegative(),
     amountMismatch: z.number().int().nonnegative(),
     missing: z.number().int().nonnegative(),
-    voidInCrove: z.number().int().nonnegative(),
+    voidInLudy: z.number().int().nonnegative(),
     void: z.number().int().nonnegative(),
     notOnPortal: z.number().int().nonnegative(),
     declaredLate: z.number().int().nonnegative(),

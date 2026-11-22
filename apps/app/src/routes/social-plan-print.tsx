@@ -10,7 +10,7 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { ErrorText, Logo, ScreenTitle, Spinner } from '../components/ui.tsx';
-import { AccentRule, BrandMark, MadeWithCrove, accentStyle } from '../components/social-report-branding.tsx';
+import { AccentRule, BrandMark, MadeWithLudy, accentStyle } from '../components/social-report-branding.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { usePrintInLight } from '../lib/print.ts';
@@ -117,7 +117,7 @@ export function SocialPlanPrintPage() {
                 ))}
               </ol>
             )}
-            <MadeWithCrove brand={brand} />
+            <MadeWithLudy brand={brand} />
           </>
         ) : null}
       </div>

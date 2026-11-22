@@ -42,7 +42,7 @@ async function postRpc(
   const response = await request.post(`/api/rpc/${path}`, {
     headers: {
       authorization: `Bearer ${token}`,
-      'x-crove-org': slug,
+      'x-ludy-org': slug,
       'content-type': 'application/json',
     },
     data: { json: input },
@@ -395,7 +395,12 @@ test('Phase 7 non-admin (member + Kế toán trưởng) department and wage-roll
     expect(journalCheck.status).toBe(200);
 
     await memberPage.goto(`/o/${slug}/overview`);
-    await expect(memberPage.getByRole('navigation').getByText('Nhân sự', { exact: true })).toHaveCount(0);
+    const nav = memberPage.getByRole('navigation');
+    const hrNavLink = nav.getByRole('link', { name: 'Nhân sự', exact: true });
+    await expect(hrNavLink).toHaveAttribute('href', `/o/${slug}/hr/my`);
+    for (const adminPath of ['/hr/employees', '/hr/recruiting', '/hr/payroll', '/hr/declarations']) {
+      await expect(nav.locator(`a[href*="${adminPath}"]`)).toHaveCount(0);
+    }
 
     await test.step('all 4 department RPCs return 403 FORBIDDEN for member + Kế toán trưởng', async () => {
       const departmentRpcs: Array<[string, unknown]> = [

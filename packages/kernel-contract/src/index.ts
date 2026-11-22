@@ -54,7 +54,8 @@ export * from './today.ts';
 export * from './coworkers.ts';
 export * from './sign.ts';
 
-export const ORG_HEADER = 'x-crove-org';
+export const ORG_HEADER = 'x-ludy-org';
+export const LEGACY_ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // When the store takes presigned uploads, files of at most this size still go through the kernel (POST /api/files):
 // bulk intake (#314) sends a batch of 200 e-invoice XML files that way instead of opening 200 upload grants. The
@@ -138,6 +139,7 @@ export * from './hr-declarations.ts';
 export * from './hr-recruiting.ts';
 export * from './hr-bank-template.ts';
 export * from './notes.ts';
+export * from './notes-import.ts';
 export * from './extension.ts';
 export * from './mcp.ts';
 export * from './meeting-agenda.ts';

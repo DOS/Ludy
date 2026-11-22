@@ -53,7 +53,7 @@ export interface PortalRow {
   statusLabel: string | null;
 }
 
-export interface CroveInvoice {
+export interface LudyInvoice {
   // document: recorded in the books; proposal: read from a file and waiting for approval in the Inbox.
   kind: 'document' | 'proposal';
   id: string;
@@ -87,7 +87,7 @@ export interface CroveInvoice {
 export interface ReconcileItem {
   outcome: ReconcileOutcome;
   portal: PortalRow | null;
-  crove: CroveInvoice | null;
+  ludy: LudyInvoice | null;
   differences: ReconcileDifference[];
   // Matched on series and number alone (the Crove invoice has no seller tax code).
   withoutTaxCode: boolean;
@@ -96,7 +96,7 @@ export interface ReconcileItem {
   // Further rows of the same invoice on the period's lists (the same list exported twice, or two overlapping lists).
   duplicateRows: number;
   // A second copy in Crove of an invoice already matched to a portal row (not_on_portal only): reject or reverse it.
-  duplicateInCrove: boolean;
+  duplicateInLudy: boolean;
   // The Crove document is dated in (or before) the period but posted after it: the VAT working declares it in the
   // period of its posting date, not in this one.
   declaredInLaterPeriod: boolean;
@@ -108,7 +108,7 @@ export interface ReconcileSummary {
   inInbox: number;
   amountMismatch: number;
   missing: number;
-  voidInCrove: number;
+  voidInLudy: number;
   void: number;
   notOnPortal: number;
   declaredLate: number;
@@ -135,18 +135,18 @@ const looseKeyOf = (series: string, number: string) => `${series}|${normalizeNum
 
 const templatesAgree = (a: string | null, b: string | null) => a === null || b === null || a === b;
 
-function differences(portal: PortalRow, crove: CroveInvoice): ReconcileDifference[] {
+function differences(portal: PortalRow, ludy: LudyInvoice): ReconcileDifference[] {
   const out: ReconcileDifference[] = [];
-  if (portal.currency !== crove.currency) out.push('currency');
+  if (portal.currency !== ludy.currency) out.push('currency');
   // Invoices round per line; one dong either way is the same amount.
-  if (portal.total !== null && !approxEqual(portal.total, crove.total)) out.push('total');
-  if (portal.vatAmount !== null && !approxEqual(portal.vatAmount, crove.vatAmount)) out.push('vat');
+  if (portal.total !== null && !approxEqual(portal.total, ludy.total)) out.push('total');
+  if (portal.vatAmount !== null && !approxEqual(portal.vatAmount, ludy.vatAmount)) out.push('vat');
   return out;
 }
 
 const RANK: Record<ReconcileOutcome, number> = {
   missing: 0,
-  void_in_crove: 1,
+  void_in_ludy: 1,
   amount_mismatch: 2,
   not_on_portal: 3,
   in_inbox: 4,
@@ -156,33 +156,33 @@ const RANK: Record<ReconcileOutcome, number> = {
 };
 
 // Posted after the period: a document dated up to the end of the period whose entry is dated after it.
-function declaredLater(crove: CroveInvoice | null, period: { from: string; to: string }): boolean {
-  return crove !== null && crove.postingDate !== null && crove.issueDate <= period.to && crove.postingDate > period.to;
+function declaredLater(ludy: LudyInvoice | null, period: { from: string; to: string }): boolean {
+  return ludy !== null && ludy.postingDate !== null && ludy.issueDate <= period.to && ludy.postingDate > period.to;
 }
 
 // Dated before the period and posted in it: the VAT working declares it in this period (declared_late there).
-function declaredHere(crove: CroveInvoice, period: { from: string; to: string }): boolean {
-  return crove.postingDate !== null && crove.issueDate < period.from && crove.postingDate >= period.from && crove.postingDate <= period.to;
+function declaredHere(ludy: LudyInvoice, period: { from: string; to: string }): boolean {
+  return ludy.postingDate !== null && ludy.issueDate < period.from && ludy.postingDate >= period.from && ludy.postingDate <= period.to;
 }
 
-// rows: every row of the period's done, not removed lists. crove: the org's purchase documents (not voided) and
+// rows: every row of the period's done, not removed lists. ludy: the org's purchase documents (not voided) and
 // pending purchase proposals; those dated in [from, to] that match nothing are reported as not on the portal, and
 // documents dated before it but posted in it that match nothing as declared late.
-export function reconcilePortalList(rows: readonly PortalRow[], crove: readonly CroveInvoice[], period: { from: string; to: string }): Reconciliation {
-  // Crove's side by key. A document is preferred over a proposal for the same invoice (a pending duplicate of a booked
+export function reconcilePortalList(rows: readonly PortalRow[], ludy: readonly LudyInvoice[], period: { from: string; to: string }): Reconciliation {
+  // Ludy's side by key. A document is preferred over a proposal for the same invoice (a pending duplicate of a booked
   // invoice is not a second invoice).
-  const normalizedCrove = crove.map((c) => ({ invoice: c, ...invoiceSymbol(c.template, c.series) }));
-  const byKey = new Map<string, typeof normalizedCrove>();
-  const byLooseKey = new Map<string, typeof normalizedCrove>();
-  for (const entry of normalizedCrove) {
+  const normalizedLudy = ludy.map((c) => ({ invoice: c, ...invoiceSymbol(c.template, c.series) }));
+  const byKey = new Map<string, typeof normalizedLudy>();
+  const byLooseKey = new Map<string, typeof normalizedLudy>();
+  for (const entry of normalizedLudy) {
     const taxCode = entry.invoice.sellerTaxCode;
     const map = taxCode ? byKey : byLooseKey;
     const key = taxCode ? keyOf(taxCode, entry.series, entry.invoice.number) : looseKeyOf(entry.series, entry.invoice.number);
     map.set(key, [...(map.get(key) ?? []), entry]);
   }
-  const used = new Set<CroveInvoice>();
-  // Crove invoices that repeat one already matched to a portal row.
-  const duplicates = new Set<CroveInvoice>();
+  const used = new Set<LudyInvoice>();
+  // Ludy invoices that repeat one already matched to a portal row.
+  const duplicates = new Set<LudyInvoice>();
 
   // The portal's side, one invoice per key and template; later rows of the same invoice count as duplicates. When the
   // same invoice appears with different statuses (two lists exported at different times), the later list's row wins
@@ -246,36 +246,36 @@ export function reconcilePortalList(rows: readonly PortalRow[], crove: readonly 
     // copy of the same invoice in Crove (a pending proposal of a booked invoice, or the invoice booked twice): it is not
     // used here, so it is reported below as not on the portal and marked as a duplicate.
     const match = candidates.find((c) => c.invoice.kind === 'document') ?? candidates[0];
-    const crove = match?.invoice ?? null;
-    if (crove) used.add(crove);
-    for (const c of candidates) if (c.invoice !== crove) duplicates.add(c.invoice);
+    const ludy = match?.invoice ?? null;
+    if (ludy) used.add(ludy);
+    for (const c of candidates) if (c.invoice !== ludy) duplicates.add(c.invoice);
     const voided = VOID_STATUSES.has(row.status);
-    const diffs = crove && !voided ? differences(row, crove) : [];
+    const diffs = ludy && !voided ? differences(row, ludy) : [];
     const outcome: ReconcileOutcome = voided
-      ? crove
-        ? 'void_in_crove'
+      ? ludy
+        ? 'void_in_ludy'
         : 'void'
-      : !crove
+      : !ludy
         ? 'missing'
         : diffs.length > 0
           ? 'amount_mismatch'
-          : crove.kind === 'proposal'
+          : ludy.kind === 'proposal'
             ? 'in_inbox'
             : 'matched';
     items.push({
       outcome,
       portal: row,
-      crove,
+      ludy,
       differences: diffs,
-      withoutTaxCode: crove !== null && exact.length === 0,
+      withoutTaxCode: ludy !== null && exact.length === 0,
       outsidePeriod: row.issueDate < period.from || row.issueDate > period.to,
       duplicateRows: p.duplicates,
-      duplicateInCrove: false,
-      declaredInLaterPeriod: declaredLater(crove, period),
+      duplicateInLudy: false,
+      declaredInLaterPeriod: declaredLater(ludy, period),
     });
   }
 
-  for (const { invoice } of normalizedCrove) {
+  for (const { invoice } of normalizedLudy) {
     const duplicate = duplicates.has(invoice);
     const outside = invoice.issueDate < period.from || invoice.issueDate > period.to;
     // Declared in this period though dated before it (posted late): reported, so the period agrees with the VAT working.
@@ -286,12 +286,12 @@ export function reconcilePortalList(rows: readonly PortalRow[], crove: readonly 
     items.push({
       outcome: late ? 'declared_late' : 'not_on_portal',
       portal: null,
-      crove: invoice,
+      ludy: invoice,
       differences: [],
       withoutTaxCode: false,
       outsidePeriod: outside,
       duplicateRows: 0,
-      duplicateInCrove: duplicate,
+      duplicateInLudy: duplicate,
       declaredInLaterPeriod: declaredLater(invoice, period),
     });
   }
@@ -299,8 +299,8 @@ export function reconcilePortalList(rows: readonly PortalRow[], crove: readonly 
   items.sort((a, b) => {
     const rank = RANK[a.outcome] - RANK[b.outcome];
     if (rank !== 0) return rank;
-    const da = a.portal?.issueDate ?? a.crove?.issueDate ?? '';
-    const db = b.portal?.issueDate ?? b.crove?.issueDate ?? '';
+    const da = a.portal?.issueDate ?? a.ludy?.issueDate ?? '';
+    const db = b.portal?.issueDate ?? b.ludy?.issueDate ?? '';
     return da < db ? -1 : da > db ? 1 : 0;
   });
 
@@ -313,7 +313,7 @@ export function reconcilePortalList(rows: readonly PortalRow[], crove: readonly 
       inInbox: count('in_inbox'),
       amountMismatch: count('amount_mismatch'),
       missing: count('missing'),
-      voidInCrove: count('void_in_crove'),
+      voidInLudy: count('void_in_ludy'),
       void: count('void'),
       notOnPortal: count('not_on_portal'),
       declaredLate: count('declared_late'),

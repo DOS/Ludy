@@ -55,8 +55,8 @@ COMMAND="${1:-}"
 }
 shift
 
-STEP="reading $CROVE_DIR/.env"
-load_env_file "$CROVE_DIR/.env"
+STEP="reading $LUDY_DIR/.env"
+load_env_file "$LUDY_DIR/.env"
 WAL_ARCHIVE_TIMEOUT="${WAL_ARCHIVE_TIMEOUT:-60}"
 [[ "$WAL_ARCHIVE_TIMEOUT" =~ ^[0-9]+$ ]] && [ "$WAL_ARCHIVE_TIMEOUT" -ge 10 ] && [ "$WAL_ARCHIVE_TIMEOUT" -le 3600 ] || {
   echo '[wal] WAL_ARCHIVE_TIMEOUT is a whole number of seconds, 10 to 3600' >&2

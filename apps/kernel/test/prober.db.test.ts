@@ -367,10 +367,11 @@ suite('prober on PostgreSQL', () => {
     expect(await probeOnce(proberConfig(), quiet)).toBe(EXIT.unhealthy);
     expect(received).toHaveLength(1);
     expect(received[0]?.path).toBe('/hook/secret');
-    const body = received[0]?.body as { text: string; crove: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> } };
-    expect(body.text).toMatch(/^\[Crove\] ALERT on prober-test: 5 health check\(s\) failed\./);
-    expect(body.crove.kind).toBe('alert');
-    expect(body.crove.findings.map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
+    const body = received[0]?.body as { text: string; ludy: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> }; crove: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> } };
+    expect(body.text).toMatch(/^\[Ludy\] ALERT on prober-test: 5 health check\(s\) failed\./);
+    expect(body.ludy.kind).toBe('alert');
+    expect(body.ludy.findings.map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
+    expect(body.crove).toEqual(body.ludy);
     // Aggregates only: no org id or payload leaves the database.
     expect(JSON.stringify(body)).not.toContain(orgId);
     expect(Object.keys(body.crove.health).sort()).toEqual([
@@ -398,7 +399,7 @@ suite('prober on PostgreSQL', () => {
     expect(received).toEqual([
       {
         path: '/hook/secret',
-        body: { text: '[Crove] Test alert from office: alert delivery works.', content: '[Crove] Test alert from office: alert delivery works.', crove: expect.objectContaining({ kind: 'test', severity: 'info' }) },
+        body: { text: '[Ludy] Test alert from office: alert delivery works.', content: '[Ludy] Test alert from office: alert delivery works.', ludy: expect.objectContaining({ kind: 'test', severity: 'info' }), crove: expect.objectContaining({ kind: 'test', severity: 'info' }) },
       },
     ]);
   });

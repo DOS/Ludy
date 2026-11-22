@@ -207,6 +207,7 @@ export type PartyTable = Refine<
   {
     kind: Generated<(typeof PARTY_KINDS)[number]>;
     source_trust: Generated<(typeof PARTY_SOURCE_TRUSTS)[number]>;
+    actor_origin: Generated<ActorOrigin>;
   }
 >;
 
@@ -960,16 +961,16 @@ export type CrmEventTypeTable = Refine<
 export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
-export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]>; actor_origin: Generated<ActorOrigin> }>;
 // A quote of a deal (#2693): a draft until a person sends it (crm.quote.send, #2694); the status, the number and the sent columns change only through the guard trigger's transitions.
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
 export const QUOTE_SENT_VIA = ['link', 'email'] as const;
 export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
 export type CrmQuoteTable = Refine<
   G.CrmQuoteTable,
-  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null }
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null; actor_origin: Generated<ActorOrigin> }
 >;
-export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
+export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number]; actor_origin: Generated<ActorOrigin> }>;
 // The sales order of an accepted quote (#2696, ADR-0050): confirmed until a person cancels it; a person records how the customer's yes arrived.
 export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
 export const QUOTE_ACCEPTED_VIA = ['chat', 'email', 'phone', 'in_person', 'other'] as const;
@@ -1047,7 +1048,10 @@ export type ConversationDraftTable = Refine<
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 // Where a row came from: a connected AI app in its sealed write context ('mcp'), or not ('ui': a person's own act, and also what the system or an org-chart agent writes), stamped by the database (#4149).
 export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
-export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<(typeof ACTOR_ORIGINS)[number]> }>;
+type ActorOrigin = (typeof ACTOR_ORIGINS)[number];
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<ActorOrigin> }>;
+// The other five tables that carry the mark (a note, a contact, a deal, a quote and a quote line): their CHECK is a compound one (the origin is `ui` or `mcp`, and `mcp` only with `tainted`), which check-unions reads.
+export type ConversationNoteTable = Refine<G.KernelConversationNoteTable, { actor_origin: Generated<ActorOrigin> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
@@ -1258,9 +1262,22 @@ export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
 export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'] as const;
 export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export const HR_LEAVE_REQUEST_KINDS = ['annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveRequestKind = (typeof HR_LEAVE_REQUEST_KINDS)[number];
+export const HR_LEAVE_REQUEST_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrLeaveRequestStatus = (typeof HR_LEAVE_REQUEST_STATUSES)[number];
 export type HrPayrollLeaveEntryTable = Refine<
   G.HrPayrollLeaveEntryTable,
   { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type HrLeaveRequestTable = Refine<
+  G.HrLeaveRequestTable,
+  {
+    kind: ColumnType<HrLeaveRequestKind, HrLeaveRequestKind, never>;
+    status: Generated<HrLeaveRequestStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
   'legal_entity_id'
 >;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
@@ -1416,10 +1433,26 @@ export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', '
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
 export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
 export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
 export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
+export const SIGN_MEMBER_SIGNATURE_KINDS = ['signature', 'initials'] as const;
+export type SignMemberSignatureKind = (typeof SIGN_MEMBER_SIGNATURE_KINDS)[number];
+export const SIGN_ORG_STAMP_KINDS = ['company', 'title', 'custom'] as const;
+export type SignOrgStampKind = (typeof SIGN_ORG_STAMP_KINDS)[number];
+export const SIGN_ORG_STAMP_STATUSES = ['active', 'archived'] as const;
+export type SignOrgStampStatus = (typeof SIGN_ORG_STAMP_STATUSES)[number];
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
@@ -1542,6 +1575,20 @@ export type SignEnvelopeObligationTable = Refine<
   G.SignEnvelopeObligationTable,
   { status: Generated<SignObligationStatus> }
 >;
+export type SignMemberSignatureTable = Refine<
+  G.SignMemberSignatureTable,
+  {
+    kind: SignMemberSignatureKind;
+    signature_kind: SignSignatureKind;
+  }
+>;
+export type SignOrgStampTable = Refine<
+  G.SignOrgStampTable,
+  {
+    stamp_kind: Generated<SignOrgStampKind>;
+    status: Generated<SignOrgStampStatus>;
+  }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1568,6 +1615,7 @@ type Refined = Tables<{
   'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
+  'crove_hr.leave_request': HrLeaveRequestTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -1595,6 +1643,8 @@ type Refined = Tables<{
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
+  'crove_sign.member_signature': SignMemberSignatureTable;
+  'crove_sign.org_stamp': SignOrgStampTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;
@@ -1638,6 +1688,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_attachment': ConversationAttachmentTable;
   'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
+  'crove_kernel.conversation_note': ConversationNoteTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.activity': ActivityTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;

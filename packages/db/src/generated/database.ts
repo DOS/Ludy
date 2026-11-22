@@ -120,6 +120,7 @@ export interface CroveHrSchema {
   'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
+  'crove_hr.leave_request': HrLeaveRequestTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
@@ -253,6 +254,8 @@ export interface CroveSignSchema {
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
+  'crove_sign.member_signature': SignMemberSignatureTable;
+  'crove_sign.org_stamp': SignOrgStampTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;
@@ -1999,6 +2002,7 @@ export interface HrDepartmentTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  manager_user_id: string | null;
 }
 
 /** crove_hr.job_opening */
@@ -2017,6 +2021,31 @@ export interface HrJobOpeningTable {
   required_skills: Generated<string[]>;
   status: Generated<string>;
   closed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.leave_request */
+export interface HrLeaveRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  start_on: ColumnType<string, string, NotGranted>;
+  end_on: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  days: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  reason: string | null;
+  decision_note: string | null;
+  payroll_leave_entry_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -2074,6 +2103,7 @@ export interface HrPayrollEmployeeTable {
   work_permit_exempt: Generated<boolean>;
   work_permit_expires_on: string | null;
   work_permit_number_sealed: string | null;
+  user_id: string | null;
 }
 
 /** crove_hr.payroll_employment */
@@ -3923,6 +3953,41 @@ export interface SignFieldTable {
   attachment_content_type: string | null;
   attachment_size_bytes: number | null;
   attachment_sha256: string | null;
+}
+
+/** crove_sign.member_signature */
+export interface SignMemberSignatureTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  kind: string;
+  signature_kind: string;
+  signature_typed_text: string | null;
+  signature_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.org_stamp */
+export interface SignOrgStampTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  stamp_kind: Generated<string>;
+  file_id: string | null;
+  stamp_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  status: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_sign.signer */

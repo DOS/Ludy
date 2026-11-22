@@ -61,7 +61,7 @@ describe('booking mails (#1319)', () => {
     expect(lines).toEqual(
       expect.arrayContaining([
         'METHOD:PUBLISH',
-        `UID:booking-${base.bookingId}@crove`,
+        `UID:booking-${base.bookingId}@ludy`,
         'SEQUENCE:2',
         'DTSTAMP:20261101T000000Z',
         'DTSTART:20261102T020000Z',

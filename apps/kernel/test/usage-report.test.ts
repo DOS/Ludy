@@ -132,7 +132,7 @@ describe('usage report --post (#344)', () => {
   it('summarizes the last complete week against the week before, deployment totals only', () => {
     const summary = usageSummary(rows, 'Asia/Ho_Chi_Minh', 'books.example.test', AT);
     expect(summary?.text.split('\n')).toEqual([
-      '[Crove] Weekly usage on books.example.test: 2026-W42, from 2026-10-12 (Asia/Ho_Chi_Minh). In brackets: 2026-W41.',
+      '[Ludy] Weekly usage on books.example.test: 2026-W42, from 2026-10-12 (Asia/Ho_Chi_Minh). In brackets: 2026-W41.',
       '- active orgs: 2 [1]',
       '- active users: 3 [2]',
       '- documents uploaded: 10 [10]',
@@ -146,11 +146,12 @@ describe('usage report --post (#344)', () => {
     ]);
     // A generic receiver gets the counts as data, without the org columns.
     const body = messageBody(summary!, 'generic');
-    expect(body).toMatchObject({ text: summary!.text, content: summary!.text, crove: { kind: 'usage', severity: 'info', instance: 'books.example.test', at: AT.toISOString(), time_zone: 'Asia/Ho_Chi_Minh' } });
-    const crove = body.crove as { week: Record<string, unknown>; previous: Record<string, unknown> };
-    expect(crove.week).toMatchObject({ iso_week: '2026-W42', active_users: 3 });
-    expect(crove.previous).toMatchObject({ iso_week: '2026-W41', active_users: 2 });
-    expect(Object.keys(crove.week)).not.toContain('org_id');
+    const expected = { kind: 'usage', severity: 'info', instance: 'books.example.test', at: AT.toISOString(), time_zone: 'Asia/Ho_Chi_Minh' };
+    expect(body).toMatchObject({ text: summary!.text, content: summary!.text, ludy: expected, crove: expected });
+    const ludy = body.ludy as { week: Record<string, unknown>; previous: Record<string, unknown> };
+    expect(ludy.week).toMatchObject({ iso_week: '2026-W42', active_users: 3 });
+    expect(ludy.previous).toMatchObject({ iso_week: '2026-W41', active_users: 2 });
+    expect(Object.keys(ludy.week)).not.toContain('org_id');
     expect(JSON.stringify(body)).not.toContain('HYPERLINK');
     expect(usageSummary(rows.slice(2), 'UTC', 'x', AT)).toBeNull();
   });

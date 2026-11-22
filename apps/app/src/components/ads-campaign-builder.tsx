@@ -68,7 +68,7 @@ import { ErrorText, Field, focusFirstInvalid } from './ui.tsx';
 const H2 = 'text-base font-semibold text-foreground';
 const H3 = 'text-sm font-medium text-foreground';
 
-// A Facebook Page of the org that a Messenger ad can open a conversation with (a channel connection).
+// A Facebook Page of the org that an ad can run as (a channel connection).
 export interface PageChoice {
   id: string;
   name: string;
@@ -215,6 +215,9 @@ export function CampaignBuilder({
   const checked = draft !== null && !dirty && !moved;
   const errors = checked ? draft.issues.filter((i) => i.severity === 'error') : [];
   const warnings = checked ? draft.issues.filter((i) => i.severity === 'warning') : [];
+  // What the checked draft says about its Page, under the Page field itself (the full list of findings is below the form).
+  const pageIssue = errors.find((i) => i.field === 'pageConnectionId');
+  const pageError = pageIssue ? (pageIssue.code === 'page_not_found' ? t('campaigns.pageNotFound') : t('campaigns.pageNeeded')) : undefined;
   const canSubmit = canManage && checked && !frozen && errors.length === 0 && currency !== null;
   const objectiveChanged = (next: AdsObjective) =>
     set({
@@ -369,28 +372,31 @@ export function CampaignBuilder({
           </div>,
         )}
 
+        {/* Every ad runs as a Facebook Page, whatever the objective: the launch stops a plan with none, so it is asked for here and judged with the plan. */}
         {section(
-          form.objective === 'messenger' ? t('campaigns.sectionPage') : t('campaigns.sectionLink'),
-          form.objective === 'messenger' ? (
-            <Field label={t('campaigns.page')} className="max-w-sm">
-              {(control) => (
-                <NativeSelect {...control} className="w-full" value={form.pageConnectionId} onChange={(e) => set({ pageConnectionId: e.target.value })}>
-                  <NativeSelectOption value="">{pages.length === 0 ? t('campaigns.pageNone') : t('campaigns.pageChoose')}</NativeSelectOption>
-                  {pages.map((p) => (
-                    <NativeSelectOption key={p.id} value={p.id}>
-                      {p.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-          ) : (
+          t('campaigns.sectionPage'),
+          <Field label={t('campaigns.page')} hint={t('campaigns.pageHint')} error={pageError} className="max-w-sm">
+            {(control) => (
+              <NativeSelect {...control} className="w-full" value={form.pageConnectionId} onChange={(e) => set({ pageConnectionId: e.target.value })}>
+                <NativeSelectOption value="">{pages.length === 0 ? t('campaigns.pageNone') : t('campaigns.pageChoose')}</NativeSelectOption>
+                {pages.map((p) => (
+                  <NativeSelectOption key={p.id} value={p.id}>
+                    {p.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>,
+        )}
+
+        {form.objective !== 'messenger' &&
+          section(
+            t('campaigns.sectionLink'),
             // Not a url field: the browser's own check would refuse a link with its own words, and this form words its problems itself.
             <Field label={<Labelled text={t('campaigns.link')} ai={ai('linkUrl')} />} error={problems.linkUrl ? problemText(problems.linkUrl, root) : undefined} className="max-w-xl">
               {(control) => <Input {...control} type="text" inputMode="url" autoComplete="off" placeholder="https://" maxLength={2000} value={form.linkUrl} onChange={(e) => set({ linkUrl: e.target.value })} />}
-            </Field>
-          ),
-        )}
+            </Field>,
+          )}
 
         {section(
           t('campaigns.variantsTitle'),

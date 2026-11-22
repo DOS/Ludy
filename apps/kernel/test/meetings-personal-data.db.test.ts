@@ -184,7 +184,8 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     await find('owner', PHONE);
     const phoneSeconds = (Date.now() - phoneStarted) / 1000;
     expect(found.meetingTextSkipped).toBe(false);
-    if (process.env.CROVE_TEST_TIMING_FILE) appendFileSync(process.env.CROVE_TEST_TIMING_FILE, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
+    const timingFile = process.env.LUDY_TEST_TIMING_FILE ?? process.env.CROVE_TEST_TIMING_FILE;
+    if (timingFile) appendFileSync(timingFile, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
     expect(found.meetingText?.find((m) => m.recorderUserId === users.recorder)?.lines).toBeGreaterThanOrEqual(3);
     // A budget for a shared runner, tightened with the prefilter of crove_kernel.text_mentions (#3832): the phone search took about 20 s on a laptop before it and about 6 s after, so a regression to the
     // regex on every line (20 s) fails the 18 s phone budget here, while a runner up to three times slower than the laptop still passes. The email search is about 2.5 s after and about 3 s before (a text

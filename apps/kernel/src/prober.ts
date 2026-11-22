@@ -18,6 +18,7 @@
 // path), and an `auth` finding goes out after PROBER_AUTH_MISSES failed answers in a row. Before, nobody learned of an
 // Auth outage until a member could not sign in.
 import { createS3Client } from '@ludy/kernel-runtime';
+import { checkEnvPair } from '@ludy/db';
 import pg from 'pg';
 import { z } from 'zod';
 import { isHostedSupabase, modulesSetting } from './config.ts';
@@ -100,7 +101,7 @@ const schema = z.object({
   // The modules the deployment runs, the API's and the worker's value (#1894): their queued jobs count in job_age
   // even when no worker records the module, so a module whose workers all stopped still alerts. Unset or empty: every
   // module, as for the API.
-  CROVE_MODULES: modulesSetting,
+  LUDY_MODULES: modulesSetting,
   // Supabase Auth's base URL, ending in /auth/v1 (#1994). Unset: PUBLIC_AUTH_URL, else PUBLIC_URL/auth/v1 (the
   // kernel's proxy, the way the app signs in). With neither, Auth is not checked.
   PROBER_AUTH_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
@@ -208,7 +209,17 @@ export interface Thresholds {
 }
 
 export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeconds: number | null = null): ProberConfig {
-  const parsed = schema.safeParse(env);
+  const modules = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
+  if (!modules.ok) {
+    throw new Error(`invalid prober configuration: ${modules.error}`);
+  }
+  const normalizedEnv: Record<string, string | undefined> = { ...env };
+  if (modules.value !== undefined) {
+    normalizedEnv.LUDY_MODULES = modules.value;
+  } else {
+    delete normalizedEnv.LUDY_MODULES;
+  }
+  const parsed = schema.safeParse(normalizedEnv);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
     throw new Error(`invalid prober configuration: ${fields}`);
@@ -239,7 +250,7 @@ export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeco
     heartbeatUrl: raw.PROBER_HEARTBEAT_URL,
     backupHeartbeatUrl: raw.BACKUP_HEARTBEAT_URL,
     statusFile: raw.PROBER_STATUS_FILE,
-    modules: raw.CROVE_MODULES,
+    modules: raw.LUDY_MODULES,
     authHealthUrl: authHealthUrl(raw),
     authAnonKey: raw.PUBLIC_AUTH_ANON_KEY,
     authMisses: raw.PROBER_AUTH_MISSES,

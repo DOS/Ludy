@@ -68,9 +68,8 @@ export function crmItems(read: EngageWakeCrm): LineWakeItem[] {
 
 // The Ads screen's flags (the same read, ads.mcp.flags) as events: a cap on course to be passed this month, and a day over its share of a cap. The cost-per-result flags are not about pace or a cap and are left to the
 // owner's Home. An org-wide flag is about the org itself, so its subject is the org's own id.
-export function adsItems(flags: readonly AdsFlag[], orgId: string, now: Date): LineWakeItem[] {
+export function adsItems(flags: readonly AdsFlag[], orgId: string): LineWakeItem[] {
   const out: LineWakeItem[] = [];
-  const month = `${vietnamDayOf(now).slice(0, 7)}-01`;
   for (const f of flags) {
     if (f.kind === 'cpr') continue;
     const subject = f.adAccountId ?? orgId;
@@ -79,6 +78,8 @@ export function adsItems(flags: readonly AdsFlag[], orgId: string, now: Date): L
     if (cap === null) continue;
     if (f.kind === 'pace') {
       const projected = wakeAmount(f.projected);
+      // The month is the one the flag judged, in the ad account's own calendar, never Vietnam's: on the first of a month here and the last of the one before there, the key still names the right month.
+      const month = f.month;
       if (projected !== null) out.push(item('ads.pace_over', subject, month, { subject_id: subject, scope, month, projected, cap, currency: currencyWord(f.currency) }));
     } else {
       const spend = wakeAmount(f.spend);
@@ -119,7 +120,7 @@ async function readPages<T>(runtime: Runtime, name: string, base: Record<string,
   return pages.length === 0 ? null : merge(pages);
 }
 
-export function engageWakeFeed(runtime: Runtime, now: () => Date = () => new Date()): LineWakeFeed {
+export function engageWakeFeed(runtime: Runtime): LineWakeFeed {
   return {
     types: ['engage.conversation_new', 'engage.conversation_unanswered', 'engage.reply_window_closing', 'engage.quote_unanswered', 'engage.booking_tomorrow', 'social.post_comment_new', 'ads.pace_over', 'ads.daily_cap_over', 'ads.monthly_cap_over'],
     read: async (grant, plan) => {
@@ -170,7 +171,7 @@ export function engageWakeFeed(runtime: Runtime, now: () => Date = () => new Dat
       if (ads) {
         const raw = await readOrNull<{ flags?: unknown }>(runtime, 'ads.mcp.flags', {}, grant, plan);
         const flags = Array.isArray(raw?.flags) ? raw.flags.map((f) => zAdsFlag.safeParse(f)).flatMap((p) => (p.success ? [p.data] : [])) : [];
-        out.push(...adsItems(flags, grant.orgId, now()));
+        out.push(...adsItems(flags, grant.orgId));
       }
       return out;
     },

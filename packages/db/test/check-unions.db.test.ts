@@ -174,6 +174,8 @@ import {
   HR_PROBATION_ROLE_TIERS,
   HR_EMPLOYEE_STATUSES,
   HR_LEAVE_ENTRY_KINDS,
+  HR_LEAVE_REQUEST_KINDS,
+  HR_LEAVE_REQUEST_STATUSES,
   HR_LINE_KINDS,
   HR_LINE_STATUSES,
   HR_RUN_STATUSES,
@@ -259,6 +261,9 @@ import {
   SIGN_SIGNATURE_KINDS,
   SIGN_FIELD_TYPES,
   SIGN_ATTACHMENT_CONTENT_TYPES,
+  SIGN_MEMBER_SIGNATURE_KINDS,
+  SIGN_ORG_STAMP_KINDS,
+  SIGN_ORG_STAMP_STATUSES,
   SIGN_AI_ANALYSIS_STATUSES,
   SIGN_ACTOR_TYPES,
   SIGN_TEMPLATE_STATUSES,
@@ -306,6 +311,8 @@ const UNIONS = unions({
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
   'crove_hr.payroll_employment.contract_form': HR_CONTRACT_FORMS,
   'crove_hr.payroll_leave_entry.kind': HR_LEAVE_ENTRY_KINDS,
+  'crove_hr.leave_request.kind': HR_LEAVE_REQUEST_KINDS,
+  'crove_hr.leave_request.status': HR_LEAVE_REQUEST_STATUSES,
   'crove_hr.payroll_line.kind': HR_LINE_KINDS,
   'crove_hr.payroll_line.status': HR_LINE_STATUSES,
   'crove_hr.payroll_run.status': HR_RUN_STATUSES,
@@ -410,6 +417,10 @@ const UNIONS = unions({
   'crove_sign.ca_signing_request.retry_safety': SIGN_CA_RETRY_SAFETIES,
   'crove_sign.ca_signing_request.sub_filter': SIGN_CA_SUBFILTERS,
   'crove_sign.envelope_obligation.status': SIGN_OBLIGATION_STATUSES,
+  'crove_sign.member_signature.kind': SIGN_MEMBER_SIGNATURE_KINDS,
+  'crove_sign.member_signature.signature_kind': SIGN_SIGNATURE_KINDS,
+  'crove_sign.org_stamp.stamp_kind': SIGN_ORG_STAMP_KINDS,
+  'crove_sign.org_stamp.status': SIGN_ORG_STAMP_STATUSES,
   'crove_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,
@@ -627,11 +638,20 @@ function allowedValues(column: string, definition: string): string[] | null | 'u
   return /= ANY \(|\bIN \(/.test(definition) || literalCompare.test(definition) ? 'unreadable' : null;
 }
 
+// The origin set of the mark's compound CHECK, or null when the definition is not that shape: `actor_origin` is one of a fixed set, and `mcp` only on a tainted row.
+const MARK_CHECK = /^CHECK \(\(\(actor_origin = ANY \(ARRAY\[(.*)\]\)\) AND \(\(actor_origin <> 'mcp'::text\) OR tainted\)\)\)$/;
+function markOrigins(definition: string): string[] | null {
+  const list = MARK_CHECK.exec(definition)?.[1];
+  return list === undefined ? null : literals(list);
+}
+
 suite('CHECK-constraint unions of schema.ts against the database', () => {
   const dbName = `crove_test_check_unions_${Date.now()}_${randomBytes(4).toString('hex')}`;
   let admin: pg.Client;
   let created = false;
   let constraints: Constraint[] = [];
+  // The mark's compound CHECK (`mcp_origin_ck`: the origin is a fixed set, and `mcp` only with `tainted`) of the tables that carry both columns; it reads two columns, so the query above, which keeps single-column CHECKs, does not see it.
+  let marks: { table: string; definition: string }[] = [];
 
   beforeAll(async () => {
     admin = new pg.Client({ connectionString: ADMIN });
@@ -658,6 +678,16 @@ suite('CHECK-constraint unions of schema.ts against the database', () => {
         [SCHEMAS],
       );
       constraints = rows;
+      const compound = await client.query<{ table: string; definition: string }>(
+        `SELECT n.nspname || '.' || c.relname AS table, pg_catalog.pg_get_constraintdef(con.oid) AS definition
+           FROM pg_catalog.pg_constraint con
+           JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE con.contype = 'c' AND con.conname = 'mcp_origin_ck' AND pg_catalog.cardinality(con.conkey) = 2 AND n.nspname = ANY($1)
+          ORDER BY 1`,
+        [SCHEMAS],
+      );
+      marks = compound.rows;
     } finally {
       await client.end();
     }
@@ -704,6 +734,31 @@ suite('CHECK-constraint unions of schema.ts against the database', () => {
       if (!seen.has(key)) problems.push(`${key}: listed in UNIONS but the database has no CHECK constraint with a fixed set on it`);
     }
     expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+  // The tables schema.ts refines `actor_origin` on beside the activity row (whose CHECK has the origin alone and is compared above): their CHECK also ties `mcp` to a tainted row.
+  it('the mark\'s compound CHECK is on each of the five tables, and its origins are the ACTOR_ORIGINS schema.ts refines the column to', () => {
+    const problems: string[] = [];
+    for (const table of ['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.conversation_note', 'crove_kernel.party']) {
+      const found = marks.find((m) => m.table === table);
+      if (!found) {
+        problems.push(`${table}: no two-column mcp_origin_ck CHECK (the migration of the mark adds it)`);
+        continue;
+      }
+      const origins = markOrigins(found.definition);
+      if (origins === null) problems.push(`${table}: cannot read mcp_origin_ck (${found.definition}); teach markOrigins() its shape`);
+      else if ([...origins].sort().join('\u0000') !== [...ACTOR_ORIGINS].sort().join('\u0000')) problems.push(`${table}: the database allows [${origins.join(', ')}], schema.ts has [${ACTOR_ORIGINS.join(', ')}]`);
+    }
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+});
+
+describe('the mark\'s compound CHECK (actor_origin, tainted)', () => {
+  it('reads the shape PostgreSQL stores and refuses the ones it does not know', () => {
+    expect(markOrigins("CHECK (((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])) AND ((actor_origin <> 'mcp'::text) OR tainted)))")).toEqual(['ui', 'mcp']);
+    expect(markOrigins("CHECK (((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])) AND (actor_origin <> 'x'::text)))")).toBeNull();
+    expect(markOrigins("CHECK ((actor_origin = ANY (ARRAY['ui'::text, 'mcp'::text])))")).toBeNull();
   });
 });
 

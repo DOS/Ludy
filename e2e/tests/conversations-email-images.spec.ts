@@ -54,7 +54,7 @@ test('a customer’s emailed photo shows in the Hộp thư thread and a PDF show
   expect(address).toMatch(/@in\.e2e\.test$/);
 
   const accepted = await page.request.post('/api/inbound/email', {
-    headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'x-crove-recipient': address, 'content-type': 'message/rfc822' },
+    headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'x-ludy-recipient': address, 'content-type': 'message/rfc822' },
     data: Buffer.from(mail(address), 'utf8'),
   });
   expect(accepted.status()).toBe(202);

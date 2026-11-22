@@ -6,7 +6,7 @@
 // Dropping on a lost stage asks for an optional reason first. Won and Lost show the deals closed in the last 30 days.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useRef, useState, type DragEvent } from 'react';
+import { useId, useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { BOARD_CLOSED_DAYS, DEAL_LOST_REASON_MAX, type Board, type BoardColumn, type Deal, type FilterAst } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -20,7 +20,7 @@ import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isDealOverdue, isEmptyBoard, moveCard, type Drop } from '../lib/deal-board.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
-import { AiWrittenBadge } from './ai-written-badge.tsx';
+import { AiWrittenBadge, isAiWritten } from './ai-written-badge.tsx';
 
 // What an empty Deals screen offers (#3647): the one action, and the way to bring customers in first. There is no deal import; the deal needs a customer, so the file is of customers.
 export function DealsEmpty({ title, hint, canEdit, onAdd }: { title: string; hint?: string | undefined; canEdit: boolean; onAdd: () => void }) {
@@ -103,6 +103,9 @@ function Card({
   const { locale } = useLocaleSetting();
   const overdue = isDealOverdue(deal);
   const step = deal.followUp ? nextStepLine(deal.followUp.reason) : null;
+  // The mark's long hint is the card's description, not part of its name (the name is its content): the button reads "title, AI-written, customer, amount" and the hint after.
+  const hintId = useId();
+  const marked = isAiWritten(deal.actorOrigin, deal.tainted);
   return (
     <li
       data-testid="deal-card"
@@ -123,6 +126,7 @@ function Card({
         role="button"
         tabIndex={0}
         data-testid="deal-card-open"
+        aria-describedby={marked ? hintId : undefined}
         onClick={onOpen}
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
@@ -136,7 +140,7 @@ function Card({
         <span data-testid="deal-title" className="block font-medium text-foreground">
           {deal.title}
         </span>
-        <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} className="mt-1" />
+        <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} className="mt-1" hintId={hintId} />
         {deal.followUp && (
           <Badge variant="warning" className="mt-1" data-testid="follow-up-badge">
             {t('followUp')}

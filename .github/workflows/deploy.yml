@@ -184,7 +184,7 @@ jobs:
           # The commit's date orders builds for the API's /readyz (worker build >= API build, #1952).
           built_at="$(git show -s --format=%cI "$SHA")"
           test -n "$built_at"
-          docker build "${labels[@]}" --build-arg "CROVE_BUILD=$SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$repo:$RELEASE" .
+          docker build "${labels[@]}" --build-arg "LUDY_BUILD=$SHA" --build-arg "LUDY_BUILD_TIME=$built_at" -t "$repo:$RELEASE" .
           docker build "${labels[@]}" -f apps/extract/Dockerfile -t "$repo-extract:$RELEASE" .
           docker build "${labels[@]}" -f apps/media/Dockerfile -t "$repo-media:$RELEASE" .
           docker push --quiet "$repo:$RELEASE"
@@ -368,24 +368,24 @@ jobs:
         env:
           ENVIRONMENT: ${{ needs.target.outputs.environment }}
           OPT_IN: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
-          MODULES: ${{ vars.DEPLOY_CROVE_MODULES }}
+          MODULES: ${{ vars.DEPLOY_LUDY_MODULES || vars.DEPLOY_CROVE_MODULES }}
         run: |
           set -euo pipefail
           if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
             echo 'enabled=false' >> "$GITHUB_OUTPUT"
             if [ -n "$MODULES" ]; then
-              echo "::notice title=Module settings ignored::DEPLOY_CROVE_MODULES is defined but DEPLOY_MODULES_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
+              echo "::notice title=Module settings ignored::DEPLOY_LUDY_MODULES is defined but DEPLOY_MODULES_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
             else
               echo 'No module settings opted in for this environment: the host env file is left alone.'
             fi
             exit 0
           fi
           if [ -z "$MODULES" ]; then
-            echo "::error::DEPLOY_MODULES_ENVIRONMENT is '$ENVIRONMENT' but DEPLOY_CROVE_MODULES is empty"
+            echo "::error::DEPLOY_MODULES_ENVIRONMENT is '$ENVIRONMENT' but DEPLOY_LUDY_MODULES is empty"
             exit 1
           fi
           case "$MODULES" in
-            *$'\n'* | *$'\r'*) echo '::error::DEPLOY_CROVE_MODULES must be one line'; exit 1 ;;
+            *$'\n'* | *$'\r'*) echo '::error::DEPLOY_LUDY_MODULES must be one line'; exit 1 ;;
           esac
           bash tools/deploy/deploy.sh check-modules "$MODULES"
           echo "Modules given: $MODULES" >> "$GITHUB_STEP_SUMMARY"
@@ -491,7 +491,7 @@ jobs:
           {
             echo "- $ACTION on the host: $HOST_OUTCOME"
             if [ "$IDP_ENABLED" = true ]; then echo '- identity provider settings: given to the deploy (the host log names what changed)'; fi
-            if [ "$MODULES_ENABLED" = true ]; then echo "- module settings: updated for CROVE_MODULES=$MODULES (when changed; see host log)"; fi
+            if [ "$MODULES_ENABLED" = true ]; then echo "- module settings: updated for LUDY_MODULES=$MODULES (when changed; see host log)"; fi
             echo "- public smoke test: ${SMOKE_OUTCOME:-not run (no DEPLOY_PUBLIC_URL)}"
             if [ "$ACTION" = deploy ]; then echo "- release: $RELEASE"; fi
           } >> "$GITHUB_STEP_SUMMARY"

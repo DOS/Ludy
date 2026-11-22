@@ -78,10 +78,10 @@ SOURCE="$1"
 ALLOW_UNSEALED="${RESTORE_ALLOW_UNSEALED:-}"
 # Also from the command only: the backup point of a run made before SNAPSHOT_AT was recorded (#2020).
 BACKUP_POINT_OVERRIDE="${RESTORE_BACKUP_POINT:-}"
-STEP="reading $CROVE_DIR/.env"
-load_env_file "$CROVE_DIR/.env"
+STEP="reading $LUDY_DIR/.env"
+load_env_file "$LUDY_DIR/.env"
 
-BACKUP_DIR="${BACKUP_DIR:-$CROVE_DIR/.data/backups}"
+BACKUP_DIR="${BACKUP_DIR:-$LUDY_DIR/.data/backups}"
 BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-crove}"
 STORAGE="${STORAGE:-local}"
 RESTORE_PRESTART="${RESTORE_PRESTART:-db}"
@@ -154,7 +154,7 @@ until mkdir "$WORK" 2>/dev/null; do
 done
 chmod 700 "$BACKUP_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
-log "restoring $SOURCE onto compose project ${COMPOSE_PROJECT_NAME:-of $CROVE_DIR} (storage $STORAGE)"
+log "restoring $SOURCE onto compose project ${COMPOSE_PROJECT_NAME:-of $LUDY_DIR} (storage $STORAGE)"
 
 # --- 1. The run ------------------------------------------------------------------------------------------------------
 STEP="fetching the run"
