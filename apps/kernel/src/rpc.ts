@@ -4631,6 +4631,9 @@ export function createRpcHandler(
       getTaskRecurrence: os.projects.getTaskRecurrence.handler(projectsQuery('projects.task.recurrence.get')),
       setTaskRecurrence: os.projects.setTaskRecurrence.handler(projectsCommand('projects.task.recurrence.set')),
       clearTaskRecurrence: os.projects.clearTaskRecurrence.handler(projectsCommand('projects.task.recurrence.clear')),
+      listDependencies: os.projects.listDependencies.handler(projectsQuery('projects.dependency.list')),
+      addDependency: os.projects.addDependency.handler(projectsCommand('projects.dependency.add')),
+      removeDependency: os.projects.removeDependency.handler(projectsCommand('projects.dependency.remove')),
     },
     sign: {
       envelope: {

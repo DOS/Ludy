@@ -214,6 +214,8 @@ export const zProjectTaskCard = z.object({
   recurrenceLastDue: zLocalDate.nullable().optional(),
   recurrenceNextAt: z.string().nullable().optional(),
   recurrenceSourceTaskId: zId.nullable().optional(),
+  openBlockerCount: z.number().int().nonnegative().optional(),
+  blockingCount: z.number().int().nonnegative().optional(),
 });
 export type ProjectTaskCard = z.infer<typeof zProjectTaskCard>;
 
@@ -254,6 +256,8 @@ export type ProjectBoard = z.infer<typeof zProjectBoard>;
 export const zProjectCandidateTask = z.object({
   id: zId,
   title: z.string(),
+  // The title is an AI coworker's text (a task made from an approved ask): the picker marks the invisible characters (#4421).
+  tainted: z.boolean(),
   status: zTaskStatus,
   assigneePositionId: zId.nullable(),
   due: z.string().nullable(),
@@ -305,6 +309,8 @@ export type ProjectWeeklyStatusInput = z.infer<typeof zProjectWeeklyStatusInput>
 export const zProjectWeeklyStatusTask = z.strictObject({
   id: zId,
   title: z.string(),
+  // The title is an AI coworker's text (a task made from an approved ask): the screen marks the invisible characters (#4421).
+  tainted: z.boolean(),
   status: zTaskStatus,
   due: z.string().nullable(),
   commentCount: z.number().int().nonnegative(),
@@ -329,6 +335,15 @@ export const zProjectWeeklyStatusTasks = z.strictObject({
 });
 export type ProjectWeeklyStatusTasks = z.infer<typeof zProjectWeeklyStatusTasks>;
 
+export const zProjectWeeklyStatusBottleneck = z.strictObject({
+  id: zId,
+  title: z.string(),
+  status: zTaskStatus,
+  due: z.string().nullable(),
+  blockedCount: z.number().int().positive(),
+});
+export type ProjectWeeklyStatusBottleneck = z.infer<typeof zProjectWeeklyStatusBottleneck>;
+
 export const zProjectWeeklyStatus = z.strictObject({
   ai: z.enum(PROJECT_WEEKLY_STATUS_STATES),
   project: z.strictObject({
@@ -345,6 +360,7 @@ export const zProjectWeeklyStatus = z.strictObject({
   }),
   counts: zProjectWeeklyStatusCounts,
   tasks: zProjectWeeklyStatusTasks,
+  bottlenecks: z.array(zProjectWeeklyStatusBottleneck).optional(),
   hiddenByEntityCount: z.number().int().nonnegative(),
   // Vy's 3 to 5 plain sentences: empty unless `ai` is 'used'.
   sentences: z.array(z.string().max(400)).max(5),
@@ -673,4 +689,75 @@ export const zProjectTaskRecurrenceClearResult = z.object({
   cleared: z.boolean(),
 });
 export type ProjectTaskRecurrenceClearResult = z.infer<typeof zProjectTaskRecurrenceClearResult>;
+
+export const PROJECT_DEPENDENCIES_MAX = 500;
+export const TASK_DEPENDENCIES_MAX = 20;
+
+export const zProjectDependencyTaskRef = z.object({
+  id: zId,
+  title: z.string(),
+  status: zTaskStatus,
+  due: z.string().nullable(),
+});
+export type ProjectDependencyTaskRef = z.infer<typeof zProjectDependencyTaskRef>;
+
+export const zProjectDependencyEdge = z.object({
+  id: zId,
+  projectId: zId,
+  blockerTaskId: zId,
+  blockedTaskId: zId,
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  blocker: zProjectDependencyTaskRef,
+  blocked: zProjectDependencyTaskRef,
+});
+export type ProjectDependencyEdge = z.infer<typeof zProjectDependencyEdge>;
+
+export const zProjectDependencyAddInput = z.strictObject({
+  projectId: zId,
+  blockerTaskId: zId,
+  blockedTaskId: zId,
+});
+export type ProjectDependencyAddInput = z.infer<typeof zProjectDependencyAddInput>;
+
+export const zProjectDependencyAddResult = z.object({
+  dependencyId: zId,
+  projectId: zId,
+  blockerTaskId: zId,
+  blockedTaskId: zId,
+  createdAt: z.string(),
+});
+export type ProjectDependencyAddResult = z.infer<typeof zProjectDependencyAddResult>;
+
+export const zProjectDependencyRemoveInput = z
+  .strictObject({
+    projectId: zId,
+    dependencyId: zId.optional(),
+    blockerTaskId: zId.optional(),
+    blockedTaskId: zId.optional(),
+  })
+  .refine(
+    (v) => v.dependencyId !== undefined || (v.blockerTaskId !== undefined && v.blockedTaskId !== undefined),
+    { message: 'Provide dependencyId or both blockerTaskId and blockedTaskId' },
+  );
+export type ProjectDependencyRemoveInput = z.infer<typeof zProjectDependencyRemoveInput>;
+
+export const zProjectDependencyRemoveResult = z.object({
+  removed: z.boolean(),
+  dependencyId: zId.nullable(),
+});
+export type ProjectDependencyRemoveResult = z.infer<typeof zProjectDependencyRemoveResult>;
+
+export const zProjectDependencyListInput = z.strictObject({
+  projectId: zId,
+  taskId: zId.optional(),
+});
+export type ProjectDependencyListInput = z.infer<typeof zProjectDependencyListInput>;
+
+export const zProjectDependencyListResult = z.object({
+  projectId: zId,
+  edges: z.array(zProjectDependencyEdge),
+  totalEdges: z.number().int().nonnegative(),
+});
+export type ProjectDependencyListResult = z.infer<typeof zProjectDependencyListResult>;
 

@@ -28,6 +28,7 @@ import { projectWeeklyStatusQueryKey } from '../lib/projects.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { installedModules } from '../lib/org-modules.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 export interface WeeklyStatusDraftState {
   title: string;
@@ -147,7 +148,7 @@ function WeeklyBucketList({
             className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-2.5 py-2 text-xs"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium text-foreground">{task.title}</span>
+              <span className="font-medium text-foreground">{taskTitleText(task)}</span>
               <div className="flex flex-wrap items-center gap-2 text-subtle-foreground tabular-nums">
                 {task.due && <span>{dueLabel(formatDate(task.due))}</span>}
                 {task.commentCount > 0 && <span>{commentLabel(task.commentCount)}</span>}
@@ -365,6 +366,22 @@ export function ProjectWeeklyStatus({
               />
             ))}
           </div>
+
+          {(data.bottlenecks ?? []).length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/15 p-3" data-testid="project-weekly-status-bottlenecks">
+              <p className="mb-2 text-xs font-semibold text-foreground">{t('bottlenecksTitle')}</p>
+              <ul className="space-y-1.5">
+                {(data.bottlenecks ?? []).map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-medium text-foreground">{item.title}</span>
+                    <Badge variant="warning" className="h-5 shrink-0 px-1.5 text-[11px] tabular-nums">
+                      {t('bottlenecksBlockedCount', { count: item.blockedCount })}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {data.hiddenByEntityCount > 0 && (
             <p className="text-xs text-subtle-foreground" data-testid="project-weekly-status-hidden-notice">

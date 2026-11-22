@@ -16,7 +16,9 @@ import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { ProjectDependencies, shouldConfirmBlockedStatusMove, splitTaskDependencies } from '../components/project-dependencies.tsx';
 import { TaskChecklistBadge, TaskChecklistSection } from '../components/task-checklist.tsx';
 import { EditTaskPanel, NewTaskPanel } from '../components/task-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
@@ -32,6 +34,7 @@ import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOpt
 import { myWorkShortcut, stepSelection } from '../lib/my-work.ts';
 import { withSearch } from '../lib/search.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
@@ -256,7 +259,7 @@ export function TasksPage() {
                 <TableRow key={task.id} data-testid="task-row" data-task-id={task.id} data-selected={selected === task.id ? 'true' : undefined} className={selected === task.id ? 'bg-muted/60' : undefined}>
                   <TableCell className="px-4">
                     <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
-                      {task.title}
+                      {taskTitleText(task)}
                     </Link>
                     {(task.checklist?.length ?? 0) > 0 && (
                       <TaskChecklistBadge
@@ -299,7 +302,7 @@ export function TasksPage() {
                   <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
                   {perms.tasks && (
                     <TableCell className="px-4">
-                      <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: task.title })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
+                      <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: taskTitleText(task) })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
                         {t('edit')}
                       </Button>
                     </TableCell>
@@ -332,9 +335,26 @@ export function TaskDetailPage() {
     enabled: projectsInstalled(),
     retry: false,
   });
+  const taskProjectsQuery = useQuery({
+    ...orpc.projects.taskProjects.queryOptions({ input: { taskIds: [id] } }),
+    enabled: projectsInstalled(),
+    retry: false,
+  });
+  const resolvedProjectId =
+    taskProjectsQuery.data?.[0]?.project.id ?? recurrenceQuery.data?.projectId ?? null;
+  const depsQuery = useQuery({
+    ...orpc.projects.listDependencies.queryOptions({ input: { projectId: resolvedProjectId ?? '', taskId: id } }),
+    enabled: projectsInstalled() && resolvedProjectId !== null,
+    retry: false,
+  });
+  const openBlockerCount = useMemo(
+    () => splitTaskDependencies(depsQuery.data?.edges ?? [], id).openBlockerCount,
+    [depsQuery.data?.edges, id],
+  );
   const perms = agentPermissions(org.data?.role);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const editing = editingTaskId === id;
+  const [pendingBlockedStatus, setPendingBlockedStatus] = useState<TaskStatus | null>(null);
   const [body, setBody] = useState('');
   const [commentKey, setCommentKey] = useState(() => crypto.randomUUID());
   const comment = useMutation(orpc.tasks.comment.mutationOptions({ onSuccess: refresh }));
@@ -379,7 +399,7 @@ export function TaskDetailPage() {
     <div className="space-y-6">
       <div>{back}</div>
       <PageHeader
-        title={task.title}
+        title={taskTitleText(task)}
         subtitle={positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}
         actions={
           perms.tasks ? (
@@ -451,7 +471,14 @@ export function TaskDetailPage() {
               className="mt-1 w-full"
               value={task.status}
               disabled={setStatus.isPending}
-              onChange={(e) => setStatus.mutate({ id: task.id, status: e.target.value as TaskStatus, idempotencyKey: crypto.randomUUID() })}
+              onChange={(e) => {
+                const nextStatus = e.target.value as TaskStatus;
+                if (shouldConfirmBlockedStatusMove(task.status, nextStatus, openBlockerCount)) {
+                  setPendingBlockedStatus(nextStatus);
+                  return;
+                }
+                setStatus.mutate({ id: task.id, status: nextStatus, idempotencyKey: crypto.randomUUID() });
+              }}
             >
               {TASK_STATUSES.map((s) => (
                 <NativeSelectOption key={s} value={s}>
@@ -463,6 +490,34 @@ export function TaskDetailPage() {
         )}
         {setStatus.error && <ErrorText>{errorMessage(setStatus.error)}</ErrorText>}
       </Card>
+
+      {pendingBlockedStatus && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingBlockedStatus(null);
+          }}
+          title={tp('dependencies.moveBlockedTitle')}
+          description={tp('dependencies.moveBlockedDesc', {
+            title: task.title,
+            count: openBlockerCount,
+          })}
+          confirm={tp('dependencies.moveBlockedConfirm')}
+          onConfirm={() => {
+            setStatus.mutate({ id: task.id, status: pendingBlockedStatus, idempotencyKey: crypto.randomUUID() });
+            setPendingBlockedStatus(null);
+          }}
+        />
+      )}
+
+      {resolvedProjectId && (
+        <ProjectDependencies
+          projectId={resolvedProjectId}
+          taskId={task.id}
+          canWrite={perms.tasks && !task.checkedOut}
+          onChanged={refresh}
+        />
+      )}
 
       {projectRecurrence && (
         <TaskRecurrenceControl
@@ -529,7 +584,7 @@ export function TaskDetailPage() {
           slug={slug}
           target={{ targetType: 'kernel.task', targetId: task.id }}
           headingId={`notes-task-${task.id}`}
-          label={tn('panel.toggleOf', { name: task.title })}
+          label={tn('panel.toggleOf', { name: taskTitleText(task) })}
           empty={tn('panel.emptyRecord')}
         />
       )}

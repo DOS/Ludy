@@ -6,7 +6,7 @@ import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { QueryClient, type QueryKey } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import type { contract } from '@ludy/kernel-contract';
+import { STREAM_HINT_MANY_ID, type contract } from '@ludy/kernel-contract';
 import {
   ACCESS_RETRY_MS,
   RECONNECT_MIN_MS,
@@ -155,6 +155,16 @@ describe('invalidateHint', () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'crm_party', id: CONTACT });
     expect(stale()).toEqual(['companyPeople', 'contactList', 'contactSearch', 'contactTimeline', 'dealBoard', 'dealGet', 'dealGetOther', 'dealList', 'dealsOfContact']);
+  });
+
+  it('a bulk crm hint (the nil id) re-reads every view of its type, whichever row a panel is about (#3423)', async () => {
+    const party = seeded();
+    await invalidateHint(party.qc, { type: 'crm_party', id: STREAM_HINT_MANY_ID });
+    expect(party.stale()).toEqual(['companyPeople', 'contactList', 'contactSearch', 'contactTimeline', 'dealBoard', 'dealGet', 'dealGetOther', 'dealList', 'dealsOfContact', 'dealsOfOtherContact', 'otherTimeline']);
+    const deal = seeded();
+    await invalidateHint(deal.qc, { type: 'crm_deal', id: STREAM_HINT_MANY_ID });
+    expect(deal.stale()).toEqual(['contactList', 'contactTimeline', 'dealBoard', 'dealGet', 'dealGetOther', 'dealList', 'dealsOfContact', 'dealsOfOtherContact', 'nextSteps', 'otherTimeline']);
+    expect(parseHintEvent(JSON.stringify({ type: 'crm_party', id: STREAM_HINT_MANY_ID }))).toEqual({ type: 'crm_party', id: STREAM_HINT_MANY_ID });
   });
 
   it('crm hints leave the finance vendors and customers, Social and the apps list alone', async () => {

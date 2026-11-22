@@ -120,6 +120,9 @@ export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];
 // crm_deal and crm_party (#3293, crm.md section 5): a deal, or a party's contact details, changed; the deal board, the deals list and the contact panels read again. The id only,
 // as every hint. The names use an underscore, not the dot of the entity types (crm.deal), because the channel payload carries no dot (social_post is the same).
 export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps', 'crm_deal', 'crm_party'] as const;
+// The id a crm_deal or crm_party hint carries when a transaction changed more than 20 deals or contacts of the org (#3423: a contact import, the org purge, a member's removal): it names no row, and a stream
+// reads it as "many changed" and re-reads every view of that type, whichever row an open panel is about. The database sends it (crove_kernel.stream_hint_bounded).
+export const STREAM_HINT_MANY_ID = '00000000-0000-0000-0000-000000000000';
 export type StreamHintType = (typeof STREAM_HINT_TYPES)[number];
 export interface StreamHint {
   type: StreamHintType;

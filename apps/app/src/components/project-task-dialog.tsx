@@ -28,6 +28,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
+import { ProjectDependencies } from './project-dependencies.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -35,6 +36,7 @@ import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { PROJECT_STATUSES, PROJECT_WEEKLY_STATUS_QUERY_PREFIX, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 export const refreshProjectQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
@@ -251,7 +253,7 @@ export function AttachTaskDialog({
                 return (
                   <li key={task.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
                     <div className="min-w-0 space-y-1">
-                      <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
+                      <p className="truncate text-sm font-medium text-foreground">{taskTitleText(task)}</p>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <Badge variant={taskStatusVariant(task.status)}>{tt(`status.${task.status}`)}</Badge>
                         {task.due && <span>{f.date(task.due)}</span>}
@@ -298,6 +300,7 @@ export function EditProjectTaskDialog({
   projectId,
   canWrite = true,
   task,
+  projectTasks,
   seats,
   open,
   onOpenChange,
@@ -306,6 +309,7 @@ export function EditProjectTaskDialog({
   projectId: string;
   canWrite?: boolean;
   task: ProjectTaskCard | null;
+  projectTasks?: readonly ProjectTaskCard[] | undefined;
   seats: readonly ProjectSeat[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -480,6 +484,13 @@ export function EditProjectTaskDialog({
             }}
           />
           {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
+          {(task.openBlockerCount ?? 0) > 0 && (
+            <Alert data-testid="edit-task-open-blockers-warning">
+              <AlertDescription>
+                {t('dependencies.moveBlockedWarning', { count: task.openBlockerCount ?? 0 })}
+              </AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
             <Button type="submit" disabled={task.checkedOut} loading={update.isPending}>
@@ -487,6 +498,13 @@ export function EditProjectTaskDialog({
             </Button>
           </DialogFooter>
         </form>
+        <ProjectDependencies
+          projectId={projectId}
+          taskId={task.id}
+          canWrite={canWrite && !task.checkedOut}
+          projectTasks={projectTasks}
+          onChanged={refreshProjectQueries}
+        />
         <TaskRecurrenceControl
           projectId={projectId}
           taskId={task.id}

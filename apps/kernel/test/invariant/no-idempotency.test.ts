@@ -76,6 +76,51 @@ function fakeDb(role: string): { db: Db; statements: string[] } {
   return { db, statements };
 }
 
+// A command that declares noIdempotency in a feature PR whose invariant change lands second, listed for a limited time so the
+// two steps can land apart (the pending pattern of the RLS matrix and of job-egress.test.ts). The exact list below stays exact:
+// a flagged command is accepted if it is pinned, or if it is pending here; a pending entry may be flagged or not yet. A pending
+// entry fails the test after its expiry date (a fixed date written here, not computed: the feature's PR moves the name into
+// the pinned list and removes it here), if its name is also pinned, or if its reason names no issue (#<number>).
+interface PendingNoIdempotency {
+  reason: string;
+  // yyyy-mm-dd; the test fails on any later day.
+  expires: string;
+}
+const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {
+  // #4348 (S3b of the marketplace push receiver, #4315): the owner's command that creates or rotates a connection's push
+  // address answers the one-time key, so a replay of a stored answer must never hand it out again. The same reason and shape
+  // as finance.bank_feed.hook_set; the runtime refuses an idempotency key on it with 400.
+  'finance.marketplace_connection.push_hook_set': {
+    reason: 'the answer of the owner command holds the one-time push address key, so it declares noIdempotency like finance.bank_feed.hook_set (#4348, #4315)',
+    expires: '2026-12-06',
+  },
+};
+
+// What is wrong between the commands that declare noIdempotency and the two lists, one line each.
+function noIdempotencyListProblems(
+  flagged: readonly string[],
+  pinned: readonly string[],
+  pending: Readonly<Record<string, PendingNoIdempotency>>,
+  today: string,
+): string[] {
+  const out: string[] = [];
+  const flaggedSet = new Set(flagged);
+  if (flaggedSet.size !== flagged.length) out.push('a command name is flagged twice');
+  for (const name of flagged) {
+    if (!pinned.includes(name) && !Object.hasOwn(pending, name)) out.push(`${name}: declares noIdempotency but is on neither the pinned list nor the pending list`);
+  }
+  for (const name of pinned) {
+    if (!flaggedSet.has(name)) out.push(`${name}: is pinned but no command of that name declares noIdempotency`);
+  }
+  for (const [name, { reason, expires }] of Object.entries(pending)) {
+    if (!/#\d+/.test(reason)) out.push(`${name}: the reason names no issue (#<number>)`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expires)) out.push(`${name}: the expiry date is not a yyyy-mm-dd date`);
+    else if (today > expires) out.push(`${name}: the pending entry expired on ${expires} (${reason}); move it to the pinned list and remove it here`);
+    if (pinned.includes(name)) out.push(`${name}: on the pinned list and the pending list; remove it from the pending list`);
+  }
+  return out;
+}
+
 describe('commands that declare noIdempotency (#3428)', () => {
   const PINNED_NO_IDEMPOTENCY_COMMANDS = [
     'finance.bank_feed.hook_set',
@@ -99,13 +144,44 @@ describe('commands that declare noIdempotency (#3428)', () => {
       bootstrap?: unknown;
     }>).filter((c) => c.noIdempotency !== undefined);
 
-    expect(flagged.map((c) => c.name).sort()).toEqual(PINNED_NO_IDEMPOTENCY_COMMANDS);
+    expect(noIdempotencyListProblems(flagged.map((c) => c.name).sort(), PINNED_NO_IDEMPOTENCY_COMMANDS, PENDING_NO_IDEMPOTENCY_COMMANDS, new Date().toISOString().slice(0, 10))).toEqual([]);
     for (const def of flagged) {
       expect(def.noIdempotency, def.name).toBe(true);
       expect(def.access, def.name).not.toBe('proposal');
       expect(def.access, def.name).not.toBe('proposal_revision');
       expect(def.bootstrap, def.name).toBeUndefined();
     }
+  });
+
+  it('reports an unlisted command, a vanished pinned one, and a pending entry that expired, names no issue or is also pinned', () => {
+    const pinned = ['a.one', 'a.two'];
+    const pending = { 'a.three': { reason: 'the one-time key (#1)', expires: '2030-01-01' } };
+    // The two accepted states: the pending command not flagged yet, and flagged.
+    expect(noIdempotencyListProblems(['a.one', 'a.two'], pinned, pending, '2029-12-31')).toEqual([]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'a.three'], pinned, pending, '2029-12-31')).toEqual([]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'a.four'], pinned, pending, '2029-12-31')).toEqual([
+      'a.four: declares noIdempotency but is on neither the pinned list nor the pending list',
+    ]);
+    expect(noIdempotencyListProblems(['a.one'], pinned, pending, '2029-12-31')).toEqual(['a.two: is pinned but no command of that name declares noIdempotency']);
+    // A name that is a property of every object is not on the pending list, and a name flagged twice is reported.
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'constructor'], pinned, pending, '2029-12-31')).toEqual([
+      'constructor: declares noIdempotency but is on neither the pinned list nor the pending list',
+    ]);
+    expect(noIdempotencyListProblems(['a.one', 'a.one', 'a.two'], pinned, pending, '2029-12-31')).toEqual(['a command name is flagged twice']);
+    // The expiry day itself is still allowed; the day after is not (checked below).
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'a.three'], pinned, pending, '2030-01-01')).toEqual([]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'a.three'], pinned, pending, '2030-01-02')).toEqual([
+      'a.three: the pending entry expired on 2030-01-01 (the one-time key (#1)); move it to the pinned list and remove it here',
+    ]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two', 'a.three'], pinned, { 'a.three': { reason: 'no issue', expires: '2030-01-01' } }, '2029-12-31')).toEqual([
+      'a.three: the reason names no issue (#<number>)',
+    ]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two'], pinned, { 'a.two': { reason: 'moved (#2)', expires: '2030-01-01' } }, '2029-12-31')).toEqual([
+      'a.two: on the pinned list and the pending list; remove it from the pending list',
+    ]);
+    expect(noIdempotencyListProblems(['a.one', 'a.two'], pinned, { 'a.three': { reason: 'bad date (#3)', expires: 'soon' } }, '2029-12-31')).toEqual([
+      'a.three: the expiry date is not a yyyy-mm-dd date',
+    ]);
   });
 
   it('refuses noIdempotency with proposal or proposal_revision access at registration', () => {

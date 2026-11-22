@@ -18,6 +18,7 @@ import { taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 // The panel's own poll (the Inbox reads its other panes every six seconds): the stream sends no hint for tasks, so another member's task shows up on the next turn.
 const TASKS_POLL_MS = 6_000;
@@ -111,7 +112,7 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
             <li key={task.id} className="flex items-center justify-between gap-2 px-2 py-1.5">
               <span className="min-w-0">
                 <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="block truncate text-link hover:underline">
-                  {task.title}
+                  {taskTitleText(task)}
                 </Link>
                 {task.tainted && (
                   <Badge variant="warning" title={tt('taintedHint')}>

@@ -11,7 +11,8 @@ export const TASK_SEARCH_MAX = 100;
 // A title of one or two letters would match half the list, so nothing is looked up until it is a little longer.
 export const TASK_SEARCH_MIN = 3;
 
-export type DuplicateTaskHit = { id: string; title: string; status: TaskStatus };
+// `tainted`: the title is an AI coworker's text (#4421), so the hint under the field marks its invisible characters.
+export type DuplicateTaskHit = { id: string; title: string; status: TaskStatus; tainted?: boolean };
 
 // A title in the form two titles are compared in.
 export function normalizeTaskTitle(title: string): string {

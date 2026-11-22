@@ -608,6 +608,12 @@ import {
   zProjectTaskRecurrenceGetInput,
   zProjectTaskRecurrenceSetInput,
   zProjectTaskRecurrenceView,
+  zProjectDependencyAddInput,
+  zProjectDependencyAddResult,
+  zProjectDependencyListInput,
+  zProjectDependencyListResult,
+  zProjectDependencyRemoveInput,
+  zProjectDependencyRemoveResult,
   zProjectTaskReorderFields,
   zProjectTaskReorderResult,
   distinctReorderTargets,
@@ -3458,6 +3464,13 @@ export const contract = {
     clearTaskRecurrence: oc
       .input(zProjectTaskRecurrenceClearInput.extend({ idempotencyKey: zId }))
       .output(zProjectTaskRecurrenceClearResult),
+    listDependencies: oc.input(zProjectDependencyListInput).output(zProjectDependencyListResult),
+    addDependency: oc
+      .input(zProjectDependencyAddInput.extend({ idempotencyKey: zId }))
+      .output(zProjectDependencyAddResult),
+    removeDependency: oc
+      .input(zProjectDependencyRemoveInput.extend({ idempotencyKey: zId }))
+      .output(zProjectDependencyRemoveResult),
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {
