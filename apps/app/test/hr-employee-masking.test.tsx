@@ -7,7 +7,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrEmployee } from '@crove/kernel-contract';
+import type { HrEmployee } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 
@@ -108,6 +108,10 @@ const EMPLOYEE: HrEmployee = {
   jobTitle: null,
   status: 'active',
   endedOn: null,
+  isForeign: false,
+  workPermitExempt: false,
+  workPermitExpiresOn: null,
+  hasWorkPermitNumber: false,
   current: null,
   hasIdentityNumber: true,
   hasAccountNumber: true,
@@ -115,6 +119,7 @@ const EMPLOYEE: HrEmployee = {
   address: '10 Đường Thử Nghiệm',
   identityNumber: SENSITIVE.identityNumber,
   accountNumber: SENSITIVE.accountNumber,
+  workPermitNumber: null,
   bankCode: 'VCB',
   birthDate: '1992-04-15',
   taxCode: SENSITIVE.taxCode,

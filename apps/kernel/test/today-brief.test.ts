@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The figures of Vy's daily brief (#2383): the Home list reduced to counts, sums per currency and due dates.
 import { describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError, checkedSentences, templateBrief, type BriefFacts, type BriefResult } from '@crove/agent';
-import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, checkedSentences, templateBrief, type BriefFacts, type BriefResult } from '@ludy/agent';
+import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
 import type { DraftTicket } from '../src/ai-draft-limit.ts';
 import { briefAnswer, briefFactsOf, vietnamDay } from '../src/today-brief.ts';
 

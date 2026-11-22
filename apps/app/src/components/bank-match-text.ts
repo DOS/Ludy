@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The words of the bank matches (#2385): why a line matched, why it needs a look, and how a posted voucher's party was found,
 // from the tags of lib/bank-groups.ts. One switch per message, so every key is a literal the typed messages can check.
-import type { BankLookWhy, BankMatchedBy, BankMatchReason } from '@crove/kernel-contract';
+import type { BankLookWhy, BankMatchedBy, BankMatchReason } from '@ludy/kernel-contract';
 import { useTranslations } from 'use-intl';
 import { matchedByTag, reasonTag, type MatchedByTag, type ReasonTag } from '../lib/bank-groups.ts';
 

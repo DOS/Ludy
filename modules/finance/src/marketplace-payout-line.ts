@@ -2,8 +2,8 @@
 // What a platform's payout makes of a bank line (#2516): a bank line of the platform's transfer settles at most one payout, and a line a payout has posted or proposed is not free for a bank voucher.
 // Apart from bank-match.ts (which imports this file, not the other way) because the bank voucher's check and the payout's own check ask the same question.
 import { sql } from 'kysely';
-import { MARKETPLACE_PAYOUT_COMMAND } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { MARKETPLACE_PAYOUT_COMMAND } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { reversedSource } from './source-entry.ts';
 

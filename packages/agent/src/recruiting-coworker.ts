@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Recruiting coworker ("Ly", COWORKER_BY_MODULE['hr'] === 'finance') screening brief (#3403 Stage 3 slice 3b-1 / #3413).
 //
-// Deterministic code in `@crove/l10n-vn` (`evaluateCandidateReadiness`) computes every readiness flag, skill count gap,
+// Deterministic code in `@ludy/l10n-vn` (`evaluateCandidateReadiness`) computes every readiness flag, skill count gap,
 // decimal-safe salary band comparison, and baseline interview questions. The model sees ONLY the pseudonymized alias
 // "C1", job opening metadata, deterministic flags, salary comparison status (no raw wage amounts), and scrubbed
 // `[UNTRUSTED_NOTES]...[/UNTRUSTED_NOTES]` snippets (`sanitizeCandidateTextForPrompt`).
@@ -12,7 +12,7 @@
 // failures, budget exhaustion, or refusals degrade cleanly to deterministic readiness notes and questions without throwing.
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { evaluateCandidateReadiness, type CandidateReadinessResult, type RecruitingStage, type WageComparison } from '@crove/l10n-vn';
+import { evaluateCandidateReadiness, type CandidateReadinessResult, type RecruitingStage, type WageComparison } from '@ludy/l10n-vn';
 import { draftLinksOutside } from './conversation.ts';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';

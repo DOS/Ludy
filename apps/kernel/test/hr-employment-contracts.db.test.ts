@@ -5,9 +5,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
   vietnamToday,
   type HrEmployee,
@@ -16,9 +16,9 @@ import {
   type HrRunSummary,
   type HrRunWritten,
   type HrWritten,
-} from '@crove/kernel-contract';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+} from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { prepareMonth, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';

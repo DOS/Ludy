@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { hostedLoginTokenOrigin, hostedLoginView } from '../src/auth-hosted-login.ts';
 import { loadConfig } from '../src/config.ts';
 import { contentSecurityPolicy, createHttpApp } from '../src/http.ts';

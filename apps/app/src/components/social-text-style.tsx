@@ -5,8 +5,8 @@
 // as 2, and WordPress, Zalo OA articles and Google Business show them as they are rather than as their own formatting.
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { hasStyledText, styleSelection, type TextStyle } from '@crove/mod-social/contract';
+import { Button } from '@ludy/ui/components/button';
+import { hasStyledText, styleSelection, type TextStyle } from '@ludy/mod-social/contract';
 
 // The style buttons, in order; Bỏ định dạng follows them.
 const STYLES: ReadonlyArray<{ style: TextStyle; glyph: string; className: string }> = [

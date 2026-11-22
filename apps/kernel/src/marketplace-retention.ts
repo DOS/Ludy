@@ -14,9 +14,9 @@
 // `disconnected: true` (the database re-checks that nothing a member imported is touched). The purge deletes the file row itself, so there the "marker" of the retention is the row's absence, and the
 // second object delete closes the same window.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
-import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_EXPIRED_DAYS, MARKETPLACE_PURGE_GRACE_DAYS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import type { BlobStore, Runtime, SystemActor } from '@ludy/kernel-runtime';
+import { MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS, MARKETPLACE_ORIGINAL_RETENTION_DAYS, MARKETPLACE_PURGE_EXPIRED_DAYS, MARKETPLACE_PURGE_GRACE_DAYS } from '@ludy/kernel-contract';
 import { opsAlert } from './ops-alert.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'finance.marketplace_retention' };

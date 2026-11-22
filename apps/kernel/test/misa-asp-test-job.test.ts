@@ -3,8 +3,8 @@
 // organization-unit catalogue (data_type 6, take 1); the access code is opened only for ASP's own provider id; a product the deployment holds no ClientID for is left alone; every state is the
 // AMIS test's (works, wrong_credentials, unreachable) and nothing but a state and ids is recorded or logged.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import type { CredentialBroker, Runtime } from '@crove/kernel-runtime';
+import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import type { CredentialBroker, Runtime } from '@ludy/kernel-runtime';
 import { runMisaAmisTest } from '../src/misa-amis-test-job.ts';
 
 const CLIENT_ID = 'planted-asp-client-id-0123456789';

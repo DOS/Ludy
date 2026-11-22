@@ -1,7 +1,7 @@
 // The tax portal reconciliation screen (issue #465): who may import a list, which sections the outcomes fall into and
 // in what order, and when to poll. The kernel decides every rule; these only arrange its answer.
 import { z } from 'zod';
-import { MAX_IMPORT_BYTES, type MissingInvoiceStatusView, type PortalListDirection, type PortalReconciliation, type ReconcileOutcome } from '@crove/kernel-contract';
+import { MAX_IMPORT_BYTES, type MissingInvoiceStatusView, type PortalListDirection, type PortalReconciliation, type ReconcileOutcome } from '@ludy/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 import { periodChoiceOf } from './vat.ts';
 

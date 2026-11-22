@@ -9,8 +9,8 @@
 // meetings.assignee.start   starts the member's own Vy run for one question (the kernel's run.start checks vy.use, the kill switches and the budget).
 // The model call, the checks on its answer and the counts-only result row are in apps/kernel (member-vy-ports.ts) and packages/agent (member-vy/meetings-assignee.ts).
 import { randomUUID } from 'node:crypto';
-import { ASSIGNEE_PEOPLE_MAX, zAskStarted, zAssigneeAsk, zAssigneeFacts, zAssigneeStatus, zBriefEmpty, type AssigneeFacts, type AssigneeStatus } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { ASSIGNEE_PEOPLE_MAX, zAskStarted, zAssigneeAsk, zAssigneeFacts, zAssigneeStatus, zBriefEmpty, type AssigneeFacts, type AssigneeStatus } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { vyReason } from './ask.ts';
 import { memberNames, seatsOf } from './results.ts';
 import { matchAssignee } from './assignee-match.ts';

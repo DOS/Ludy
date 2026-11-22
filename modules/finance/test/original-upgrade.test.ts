@@ -4,9 +4,9 @@
 // other duplicate (a posted document, a reading that is not weaker) is flagged as before, and a PDF never upgrades.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { ExtractClient } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import type { ParsedInvoice } from '@crove/l10n-vn';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { extractAndPropose } from '../src/extract.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

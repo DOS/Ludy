@@ -3,6 +3,7 @@
 // read from the ledger by account and by the platform's party (crove_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
+import { MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX } from './marketplace.ts';
 import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.optional() });
@@ -63,7 +64,7 @@ export type MarketplaceLine = z.infer<typeof zMarketplaceLine>;
 // call and no buyer data. Each item is one proposal a person can ask for (finance.marketplace_settlement.record, finance.marketplace_payout.record, finance.marketplace_fee_clearing.record); nothing
 // is posted by reading them. `postingConfirmed` is the gate: false while the accountant has not confirmed the account map of an entity in view (#2520), when every request would be refused.
 // A settlement to post: a stored settlement that stands and has no posting voucher. It posts as one voucher per month of delivery (#2516 rework slice C1), all by one proposal; `months` are those months and
-// `net` the sum of what their entries post (sales less seller discounts less refunds). A settlement with a sale that has no delivery day yet waits (`waitingLines` of them, no month), nothing to ask for.
+// `net` the sum of what their entries post (sales less seller discounts less refunds). A settlement with a sale that has no delivery day yet waits (`waitingLines` of them, no month), nothing to ask for; one whose sales lack a VAT rate for their delivery day waits too (`waitingVatMonths`).
 export const zMarketplaceSettlementToPost = z.object({
   id: zId,
   legalEntityId: zId,
@@ -75,6 +76,9 @@ export const zMarketplaceSettlementToPost = z.object({
   months: z.array(zMonth),
   net: zMoney,
   waitingLines: z.number().int().min(0),
+  // The months (YYYY-MM) of a settlement that has its delivery days but whose sales have no VAT rate row for the day they were delivered (#4303 S3b): it waits, with nothing to ask for, until the rate is
+  // entered in Settings (Kế toán). Empty when every day has a row (or the entity is not on the deduction method).
+  waitingVatMonths: z.array(zMonth),
   // A proposal for it already waits in the Inbox: the screen links to it instead of offering a second request.
   proposalId: zId.nullable(),
 });
@@ -93,6 +97,9 @@ export const zMarketplacePayoutToMatch = z.object({
   received: zMoney,
   candidates: z.array(zMarketplacePayoutCandidate),
   proposalId: zId.nullable(),
+  // The lines a person must classify before asking for the payout (#4303 S4): a line with money the report does not explain (`other`, above zero) or tax withheld from a seller that is no household
+  // (`withheld`). Empty when nothing needs it. The payout command refuses the request until every one of them is classified (finance.marketplace_payout.record, `adjustments`).
+  adjustable: z.array(z.strictObject({ lineId: zId, source: z.enum(['other', 'withheld']), amount: zMoney })).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX),
 });
 export type MarketplacePayoutToMatch = z.infer<typeof zMarketplacePayoutToMatch>;
 // A platform's fee invoice that can clear fees waiting on 1388: `clearable` is what a clearing would take now (the smaller of what the invoice still has to clear and the platform's 1388 balance).
@@ -150,6 +157,8 @@ export const zMarketplaceFeeAccrualReversal = z.object({
 export type MarketplaceFeeAccrualReversal = z.infer<typeof zMarketplaceFeeAccrualReversal>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
+  // The same gate for the sales path alone: the settlement rows follow it (a settlement entry needs no payout or fee path, #4303 S3b).
+  salesPostingConfirmed: z.boolean(),
   settlements: z.array(zMarketplaceSettlementToPost),
   payouts: z.array(zMarketplacePayoutToMatch),
   invoices: z.array(zMarketplaceInvoiceToClear),

@@ -3,7 +3,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrDepartmentView, HrEmployee, HrEmployeeSummary, LegalEntity } from '@crove/kernel-contract';
+import type { HrDepartmentView, HrEmployee, HrEmployeeSummary, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 
@@ -329,7 +329,15 @@ describe('HR departments UI panel & employee assignment (#3412)', () => {
         region: 'I',
         baseWage: '15000000.00',
         payFunction: 'admin',
+        payBasis: 'monthly',
+        hourlyRate: null,
+        pieceRate: null,
+        taxResident: true,
       },
+      isForeign: false,
+      workPermitExempt: false,
+      workPermitExpiresOn: null,
+      hasWorkPermitNumber: false,
       hasIdentityNumber: false,
       hasAccountNumber: false,
       contractAlerts: [],
@@ -396,13 +404,22 @@ describe('HR departments UI panel & employee assignment (#3412)', () => {
         region: 'I',
         baseWage: '15000000.00',
         payFunction: 'sales',
+        payBasis: 'monthly',
+        hourlyRate: null,
+        pieceRate: null,
+        taxResident: true,
       },
+      isForeign: false,
+      workPermitExempt: false,
+      workPermitExpiresOn: null,
+      hasWorkPermitNumber: false,
       hasIdentityNumber: false,
       hasAccountNumber: false,
       contractAlerts: [],
       address: null,
       identityNumber: null,
       accountNumber: null,
+      workPermitNumber: null,
       bankCode: null,
       birthDate: null,
       taxCode: null,

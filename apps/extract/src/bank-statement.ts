@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A bank statement as .xlsx or CSV (#2142): the account number above the lines and the lines under the header, read in
 // the sandbox like the tax portal's list. The columns are found by the header detection the browser import uses
-// (@crove/l10n-vn, bank-statement-sheet.ts), so a file reads the same way in both. What it returns is cells of text; the
+// (@ludy/l10n-vn, bank-statement-sheet.ts), so a file reads the same way in both. What it returns is cells of text; the
 // finance module judges them (dates, amounts, duplicates) exactly as it does a browser import's.
 //
 // A file that is no statement (another kind of workbook, a ZIP of documents, text without a date and an amount column)
 // is an answer, not a failure: recognized is false, and the worker goes on to treat the file as it did before, so an
 // archive of invoices is still opened as one. Only a statement past the line cap is flagged apart (tooMany).
-import { EXTRACT_LIMITS, type ExtractedBankStatement } from '@crove/extract-contract';
-import { findAccountNumber, findColumns, parseCsv, statementLines, type StatementCell } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, type ExtractedBankStatement } from '@ludy/extract-contract';
+import { findAccountNumber, findColumns, parseCsv, statementLines, type StatementCell } from '@ludy/l10n-vn';
 import { readSheetAt, serialToDate, XlsxError } from './xlsx.ts';
 
 const NONE: ExtractedBankStatement = { recognized: false, accountNumber: null, tooMany: false, rows: [] };

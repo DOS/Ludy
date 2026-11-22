@@ -5,8 +5,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
-import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '@crove/mod-finance';
+import { migrate } from '@ludy/db/migrate';
+import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '@ludy/mod-finance';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));

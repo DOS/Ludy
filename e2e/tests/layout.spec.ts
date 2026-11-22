@@ -100,7 +100,7 @@ async function phoneWidthProblems(page: Page, paths: readonly string[]): Promise
   const problems: string[] = [];
   for (const theme of ['light', 'dark'] as const) {
     // The theme the app reads at load (lib/theme.ts), from this browser only.
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of paths) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');

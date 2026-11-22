@@ -5,11 +5,11 @@
 // is none. The model writes the creative part only; the dates and the daily budget are the module's rules (assembleDraft), so no model ever sets spend.
 // Nothing the member wrote is logged or put in a job: ids and codes only.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { AiBudgetExhaustedError, withAiScope, type AdsCampaignWriter, type AiMeter, type CampaignDraftResult } from '@crove/agent';
-import { zAdsCampaignPlanDraft, type AdsCampaignDraftSource } from '@crove/kernel-contract';
-import type { Runtime } from '@crove/kernel-runtime';
-import { assembleDraft } from '@crove/mod-ads';
+import type { Db } from '@ludy/db';
+import { AiBudgetExhaustedError, withAiScope, type AdsCampaignWriter, type AiMeter, type CampaignDraftResult } from '@ludy/agent';
+import { zAdsCampaignPlanDraft, type AdsCampaignDraftSource } from '@ludy/kernel-contract';
+import type { Runtime } from '@ludy/kernel-runtime';
+import { assembleDraft } from '@ludy/mod-ads';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads' };

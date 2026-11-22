@@ -8,9 +8,9 @@
 // format is domain/plan-csv.ts, which the app's import reads with.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { isValidTimeZone } from './domain/queue.ts';
 import { labelsOfPosts } from './labels.ts';
 import { connectionInScope, refuseChannels } from './channel-access.ts';
@@ -173,7 +173,7 @@ export const planExport = defineCommand({
     ctx.audit({ format, days: Math.round((to.getTime() - from.getTime()) / DAY_MS), rows: plan.length, truncated, channels: connections.length, labels: labels.length });
     const month = planTime(input.from, input.timeZone).slice(0, 7);
     return {
-      filename: `crove-ke-hoach-${month}.csv`,
+      filename: `ludy-ke-hoach-${month}.csv`,
       csv: format === 'csv' ? planCsv(plan, input.timeZone) : null,
       rows: format === 'print' ? plan : null,
       truncated,

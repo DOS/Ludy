@@ -20,10 +20,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { aiRunFeature } from './fixtures/ai-run-feature.ts';
@@ -45,7 +45,7 @@ const MACHINERY = new Set([
   'crove_finance.bank_feed_hook',
   'crove_finance.bank_feed_webhook_notice',
   // #4316 (S1 of the marketplace push receiver, #4315): a marketplace connection's push hook key (only the SHA-256 of 128 random bits, never the key) and the raw pushes waiting for the worker to verify (deleted when
-  // the worker claims them and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Land before their tables (PENDING_TABLES).
+  // the worker claims them and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Their tables landed in #4316 (step 2), which removed them from PENDING_TABLES.
   'crove_finance.marketplace_hook',
   'crove_finance.marketplace_hook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
@@ -104,9 +104,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_hook',
-  'crove_finance.marketplace_hook_notice',
-  'crove_finance.marketplace_vat_rate',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -126,7 +123,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_sign.envelope_obligation',
   'crove_sign.member_signature',
   'crove_sign.org_stamp',
 ]);
@@ -1711,7 +1707,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #4316: a marketplace connection's push hook key, one per connection: the SHA-256 (hex) of 128 random bits that the route's URL carries, the dates, and the count of refused pushes. Definer-only, in MACHINERY. Its
-  // factory lands before the table (step 1 of 2), so PENDING_TABLES holds it until the migration of step 2.
+  // table landed in #4316 (step 2), which removed it from PENDING_TABLES.
   'crove_finance.marketplace_hook': {
     make: (o) => {
       const provider = `marketplace_s${marketplaceSeq++}`;
@@ -1758,7 +1754,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4303 S3a: the VAT method and rate of an entity's marketplace sales (parent #2520), one row per (org, entity, effective_from): `deduction` with a rate in percent (the output VAT on 33311 of the sales posting), or `none` with
   // no rate (a household on the percentage method, a direct-method company). A change is a new dated row. Tenant roles read and insert; nothing updates or deletes it. Its factory lands before the table (step 1 of 2),
-  // so PENDING_TABLES holds it until the migration of step 2. Each seeded row names an entity of its own.
+  // its migration (step 2) removed it from PENDING_TABLES. Each seeded row names an entity of its own.
   'crove_finance.marketplace_vat_rate': {
     make: (o) => {
       const entity = randomUUID();

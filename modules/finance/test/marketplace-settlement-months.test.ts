@@ -33,9 +33,21 @@ describe('the months of a settlement', () => {
     expect(waits.waiting).toBe(2);
   });
 
-  it('lists no month whose net is zero', () => {
-    expect(settlementMonthsOf([line('0', '2026-10-02')], '2026-10-15').months).toEqual([]);
-    expect(settlementMonthsOf([line('10000', '2026-10-02', { refund: '10000' })], '2026-10-15').months).toEqual([]);
+  it('keeps a month whose net is zero while it holds pieces: whether it has an entry is known only with the VAT rates (#4303 S3b)', () => {
+    expect(settlementMonthsOf([line('0', '2026-10-02')], '2026-10-15').months.map((m) => [m.month, m.net])).toEqual([['2026-10', '0']]);
+    expect(settlementMonthsOf([line('10000', '2026-10-02', { refund: '10000' })], '2026-10-15').months.map((m) => [m.month, m.net])).toEqual([['2026-10', '0']]);
+    expect(settlementMonthsOf([], '2026-10-15').months).toEqual([]);
+  });
+
+  it('gives each piece the day whose VAT rate applies: the delivery day of a sale and of a refund of that sale, the entry date when the line has no usable day (#4303 S3b, rule 8)', () => {
+    const rate = (r: ReturnType<typeof settlementMonthsOf>) => r.months.flatMap((m) => m.lines.map((l) => [m.month, l.sales, l.refund, l.rateDate]));
+    // A sale and the refund of it, which falls in the settlement's own month: both take the sale's delivery day.
+    expect(rate(settlementMonthsOf([line('100000', '2026-09-20', { refund: '30000' })], '2026-10-15'))).toEqual([['2026-09', '100000', '0', '2026-09-20'], ['2026-10', '0', '30000', '2026-09-20']]);
+    // A line refunded at least as much as it sold with a known delivery day (before the last day): the refund takes that day's rate, exactly where the rate changes.
+    expect(rate(settlementMonthsOf([line('100000', '2026-12-28', { refund: '100000' })], '2027-01-10'))).toEqual([['2027-01', '100000', '100000', '2026-12-28']]);
+    // No delivery day, or one after the settlement's last day: the entry's date decides (null).
+    expect(rate(settlementMonthsOf([line('100000', null, { refund: '100000' })], '2027-01-10'))).toEqual([['2027-01', '100000', '100000', null]]);
+    expect(rate(settlementMonthsOf([line('100000', '2027-01-20', { refund: '100000' })], '2027-01-10'))).toEqual([['2027-01', '100000', '100000', null]]);
   });
 
   it('dates the last day of a short month', () => {
@@ -54,11 +66,10 @@ describe('whether the posting stands', () => {
     expect(settlementPosted([{ month: null, reversed: true }])).toBe(false);
   });
 
-  it('keeps a month whose net is zero when tax was withheld on its lines, and drops it when none was', () => {
+  it('keeps a month whose net is zero whether or not tax was withheld on its lines: the entry built with the rates says what it posts', () => {
     const lines = [line('40000', '2026-11-03', { taxWithheld: '600' }), line('100000', '2026-10-05', { refund: '40000' })];
-    const kept = settlementMonthsOf(lines, '2026-11-15');
-    expect(kept.months.map((m) => [m.month, m.net])).toEqual([['2026-10', '100000'], ['2026-11', '0']]);
-    const dropped = settlementMonthsOf([line('40000', '2026-11-03'), line('100000', '2026-10-05', { refund: '40000' })], '2026-11-15');
-    expect(dropped.months.map((m) => m.month)).toEqual(['2026-10']);
+    expect(settlementMonthsOf(lines, '2026-11-15').months.map((m) => [m.month, m.net])).toEqual([['2026-10', '100000'], ['2026-11', '0']]);
+    const none = settlementMonthsOf([line('40000', '2026-11-03'), line('100000', '2026-10-05', { refund: '40000' })], '2026-11-15');
+    expect(none.months.map((m) => m.month)).toEqual(['2026-10', '2026-11']);
   });
 });

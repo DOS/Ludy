@@ -2,7 +2,7 @@
 // The pure rules of a campaign plan (W1, #2295): the days of a flight, the largest amount it can spend (decimal), what local validation says against
 // the caps in force and the switches, and the hash that binds a submitted plan.
 import { describe, expect, it } from 'vitest';
-import { zAdsCampaignPlan, type AdsCampaignPlanDraft } from '@crove/kernel-contract';
+import { zAdsCampaignPlan, type AdsCampaignPlanDraft } from '@ludy/kernel-contract';
 import { canonicalJson, completePlan, daysByMonth, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from '../src/campaign-plan.ts';
 
 const account = '0190c4a1-0000-7000-8000-000000000001';

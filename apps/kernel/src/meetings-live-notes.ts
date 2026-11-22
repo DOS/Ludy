@@ -11,8 +11,8 @@
 //   5. kernel.member_vy.run.finish closes the run.
 // It writes no meeting table: the recorder's own tick copies the result into the preview (meetings.live.tick). A piece that is gone (the final recording landed
 // and the sweep took its file) is skipped, not an error: the live notes end cleanly and the batch transcript takes over. The job is never retried by the queue.
-import { aiCost, transcribeChunks, withAiScope, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput } from '@crove/agent';
-import { AiBudgetExhaustedError } from '@crove/agent';
+import { aiCost, transcribeChunks, withAiScope, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput } from '@ludy/agent';
+import { AiBudgetExhaustedError } from '@ludy/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -24,9 +24,9 @@ import {
   type MemberVyRuntime,
   type Runtime,
   type SystemActor,
-} from '@crove/kernel-runtime';
-import { LIVE_LINE_TEXT_MAX, LIVE_WINDOW_PIECES, zLiveResult } from '@crove/kernel-contract';
-import { TRANSCRIPT_RESULT_MAX, liveContainerHeader, livePieceFile } from '@crove/mod-meetings';
+} from '@ludy/kernel-runtime';
+import { LIVE_LINE_TEXT_MAX, LIVE_WINDOW_PIECES, zLiveResult } from '@ludy/kernel-contract';
+import { TRANSCRIPT_RESULT_MAX, liveContainerHeader, livePieceFile } from '@ludy/mod-meetings';
 import { failureCode } from './meetings-transcribe.ts';
 import type { MediaMeasurer } from './meetings-measure.ts';
 

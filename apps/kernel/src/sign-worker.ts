@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Worker handlers and scheduled sweeps for @crove/mod-sign (#3323, ADR-0053).
+// Worker handlers and scheduled sweeps for @ludy/mod-sign (#3323, ADR-0053).
 // Inspect and seal jobs check runtime.appOn(orgId, 'sign', { fresh: true }) (ADR-0053 'work'); expiry and
 // cleanup sweeps run across all active orgs (ADR-0053 'keeping') so sent envelopes expire and stale secrets prune when disabled.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import {
   EXTRACT_LIMITS,
   INPUT_ERROR_CODES,
   encodePdfEmbedCmsInput,
   type ExtractClient,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   BlobIntegrityError,
   BlobTooLargeError,
@@ -23,7 +23,7 @@ import {
   type BlobStore,
   type CredentialBroker,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import {
   DEFAULT_OTP_RETENTION_HOURS,
   DEFAULT_RETENTION_DAYS,
@@ -38,7 +38,7 @@ import {
   type SignInspectJobData,
   type SignPreExpirySweepResult,
   type SignSealJobData,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import {
   CaProviderError,
   SANDBOX_CA_SECRET,
@@ -46,7 +46,7 @@ import {
   type CaProviderId,
   type CaSignSession,
   type CaSigningAdapter,
-} from '@crove/sign';
+} from '@ludy/sign';
 
 export const SIGN_ACTOR = { type: 'system' as const, component: 'sign.worker' };
 export const SIGN_EXPIRE_SWEEP_CRON = '*/5 * * * *';
@@ -248,6 +248,7 @@ export async function runSignPdfSealJob(
       eventChainTipHash: chain.tipHash,
       signers,
       events,
+      fields,
     });
     sealInputBytes = buildPdfSealInputBytes({
       sourcePdfBytes,
@@ -306,6 +307,7 @@ export async function runSignPdfSealJob(
       seq: ev.seq,
       eventType: ev.event_type,
       signerId: ev.signer_id,
+      ...(ev.host_user_id ? { hostUserId: ev.host_user_id } : {}),
       actorType: ev.actor_type,
       documentSha256: ev.document_sha256,
       prevEventHash: ev.prev_event_hash,

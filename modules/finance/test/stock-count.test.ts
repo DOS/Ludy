@@ -2,7 +2,7 @@
 // The count of stock (#2513 part b): the difference per item, what it is worth to the last dong, the shortage split at the norm, the entry that posts it and why it balances, and the items
 // that differ with no cost to price them at. Pure; the quantities are made in code.
 import { describe, expect, it } from 'vitest';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { countDescription, countDifferences, type CountItem } from '../src/domain/stock-count.ts';
 
 const item = (code: string, bookQuantity: string, countedQuantity: string, extra: Partial<CountItem> = {}): CountItem => ({

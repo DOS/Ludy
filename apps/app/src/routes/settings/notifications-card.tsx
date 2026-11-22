@@ -3,9 +3,9 @@
 // (a mute is per member and org), so the card is the tab "Thông báo của tôi". The bell's screen keeps the list and a link here. No AI acts on this card: a person switches kinds.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { MORNING_KIND } from '@crove/kernel-contract';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import { MORNING_KIND } from '@ludy/kernel-contract';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { ErrorText } from '../../components/ui.tsx';
 import { Anchor } from './frame.tsx';
 import { SETTINGS_CARD } from './tabs.ts';

@@ -3,8 +3,8 @@
 // not approved this content yet, and is not its author on a channel that wants another person's approval (#740).
 // Members and viewers decide nothing, so they get an empty list.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { decisionsOf, fourEyesOn } from './policy.ts';
 

@@ -4,8 +4,8 @@
 // (tainted) that an owner or an admin approves in Ludy, and the approval runs the original as the approver, so every check the original has (the org's lock, the launch's state, the caps and the
 // kill switch, the app gate) runs then, on what stands then. The payload is the original's own strict input, so the card shows what will happen. What can START or RAISE spend (a launch, a resume, a raise, an extension) is not here, by decision (Engage PO 2026-11-20): those commands have a preparer that builds the plan and the amount the approver signs, their database guards accept only a proposal of the original command, and a client's raw payload would skip both; a person launches from Ludy (docs/runbooks/mcp-endpoint.md).
 // The twins declare no `runsWhenOff` (the app gate's pinned list): with Ads switched off an approval is refused like any Ads command, and a person's own stop still runs.
-import { zApprovedCall } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zApprovedCall } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { adsLaunchStop } from './launch-pause.ts';
 import { adsBudgetLower, adsManageCancel, adsObjectArchive, adsObjectPause, adsScheduleShorten } from './manage.ts';
 import { OPENING_KINDS } from './manage-rules.ts';

@@ -26,8 +26,8 @@ import {
   type Check,
   type FilterAst,
   type TaskChecklistStep,
-} from '@crove/kernel-contract';
-import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { AgentScope, Database, MemberRole, TaskStatus } from '@ludy/db';
 import {
   DomainError,
   defineCommand,
@@ -39,7 +39,7 @@ import {
   agentRuntime,
   type QueryContext,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { decideAgentApproval, eligibleApprovers, type ActorRef } from './approval.ts';
 import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';

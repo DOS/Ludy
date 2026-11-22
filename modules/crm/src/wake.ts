@@ -6,9 +6,9 @@
 //   - the confirmed bookings that start tomorrow (Vietnam's calendar).
 // A read gives at most ENGAGE_WAKE_ROWS_MAX rows of each list from `offset`; the sweep asks for the next page while a list came back full. Never a customer's name, a contact, a deal's title, a quote number, a note, a guest's words or a link: the answer goes through the contract's strict schema before it leaves. It writes nothing and calls no model.
 import { sql } from 'kysely';
-import { ENGAGE_WAKE_ROWS_MAX, vietnamToday, zEngageWakeCrm, zEngageWakeCrmInput, type EngageWakeCrm } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { ENGAGE_WAKE_ROWS_MAX, vietnamToday, zEngageWakeCrm, zEngageWakeCrmInput, type EngageWakeCrm } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const DAY_MS = 86_400_000;

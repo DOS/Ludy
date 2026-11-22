@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Kanban board and responsive compact list view for a project (#2591, ADR-0048).
-import type { ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@crove/kernel-contract';
+import type { ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistBadge, TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';

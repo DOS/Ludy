@@ -3,7 +3,7 @@
 // transaction) is tested against PostgreSQL in meeting-platform-refresh.db.test.ts; here the decisions of the caller: when it asks for a renewal, what it does with each answer, and that nothing is
 // asked of a credential that is not due.
 import { describe, expect, it } from 'vitest';
-import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter } from '@crove/channel';
+import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter } from '@ludy/channel';
 import { REFRESH_HORIZON_MS, freshCredential, parseCredential, withinTimeout, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
 
 const NOW = new Date('2026-11-18T12:00:00Z');

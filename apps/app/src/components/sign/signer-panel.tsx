@@ -2,14 +2,14 @@
 // Left-rail signer roster, routing toggle, delivery/OTP settings, and active Zalo/email controls (#3325).
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
 import type { SignSignerRecord } from '../../lib/sign-api.ts';
 import {
   SIGN_DELIVERY_MODES,
@@ -44,9 +44,10 @@ export interface SignerPanelProps {
   onAddSigner: (input: AddSignerFormInput) => Promise<void>;
   onRemoveSigner: (signerId: string) => Promise<void>;
   onMoveSigner: (signerId: string, direction: -1 | 1) => Promise<void>;
-  onCopyZaloLink?: (signerId: string) => Promise<void>;
-  onRemindSigner?: (signerId: string) => Promise<void>;
-  onCorrectSigner?: (signer: SignSignerRecord) => void;
+  onCopyZaloLink?: ((signerId: string) => Promise<void>) | undefined;
+  onRemindSigner?: ((signerId: string) => Promise<void>) | undefined;
+  onCorrectSigner?: ((signer: SignSignerRecord) => void) | undefined;
+  onStartInPerson?: ((signerId: string) => void) | undefined;
 }
 
 const SIGNER_STATUS_VARIANT = {
@@ -73,6 +74,7 @@ export function SignerPanel({
   onCopyZaloLink,
   onRemindSigner,
   onCorrectSigner,
+  onStartInPerson,
 }: SignerPanelProps) {
   const t = useTranslations('sign');
   const isDraft = envelopeStatus === 'draft';
@@ -281,6 +283,19 @@ export function SignerPanel({
 
                   {canLinkOrRemind || canCorrect ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {canLinkOrRemind && onStartInPerson && signer.signerRole !== 'cc' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="max-sm:min-h-11"
+                          disabled={busy}
+                          onClick={() => onStartInPerson(signer.id)}
+                          data-testid={`signer-in-person-btn-${signer.id}`}
+                        >
+                          {t('actions.startInPerson')}
+                        </Button>
+                      ) : null}
                       {canLinkOrRemind && onCopyZaloLink && signer.signerRole !== 'cc' ? (
                         <Button
                           type="button"

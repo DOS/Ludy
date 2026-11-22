@@ -2,8 +2,8 @@
 // (Social plan §3.4). The visible provider call runs at most once per attempt unless the step is provably safe to
 // repeat. A new attempt starts only when a human retries a failed or needs_attention variant.
 
-// How a provider step behaves when repeated (declared by each adapter in @crove/channel).
-import type { RetrySafety } from '@crove/channel';
+// How a provider step behaves when repeated (declared by each adapter in @ludy/channel).
+import type { RetrySafety } from '@ludy/channel';
 
 export type { RetrySafety };
 

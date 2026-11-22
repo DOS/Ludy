@@ -3,8 +3,8 @@
 // else; with the org's switch for AI on customers' words off, or with the model off, the budget spent, the member too fast, the call failing or its answer refused, the answer names the state and
 // gives nothing to apply, never an error; and nothing the customer wrote is logged.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type QuoteSuggestRequest, type QuoteSuggestResult } from '@crove/agent';
-import type { QuoteSuggestSource } from '@crove/mod-crm';
+import { AiBudgetExhaustedError, type QuoteSuggestRequest, type QuoteSuggestResult } from '@ludy/agent';
+import type { QuoteSuggestSource } from '@ludy/mod-crm';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { quoteAi, suggestQuoteLines, type QuoteAi } from '../src/quote-ai.ts';
 

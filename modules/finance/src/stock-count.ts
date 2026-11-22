@@ -25,10 +25,10 @@ import {
   type StockCount,
   type StockCountPreviewRow,
   type StockCountProposal,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';

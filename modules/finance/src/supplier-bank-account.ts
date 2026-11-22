@@ -21,11 +21,11 @@ import {
   type SupplierBankAccount,
   type SupplierBankAccountErased,
   type SupplierBankAccountList,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];

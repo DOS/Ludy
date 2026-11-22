@@ -11,16 +11,16 @@ import {
   type ProjectWeeklyStatus as ProjectWeeklyStatusData,
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
-} from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { taskDueDay } from '../lib/agents.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';

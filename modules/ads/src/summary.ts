@@ -6,8 +6,8 @@
 // so only a day carries it.
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
-import { ADS_SUMMARY_MAX_DAYS, zAdsSummaryInput, type AdsMetric, type AdsSummary, type AdsSummaryInput } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { ADS_SUMMARY_MAX_DAYS, zAdsSummaryInput, type AdsMetric, type AdsSummary, type AdsSummaryInput } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { costPerResult, resultsText, spendText } from './domain.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;

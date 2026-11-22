@@ -25,10 +25,10 @@
 // declared (declaredAt): one recorded before was in the figures that were filed and stays in them.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { INPUT_VAT_CHECK_OUTCOMES, VAT_WARNINGS, zId, zVatPeriod, zVatReturnMark, type DocumentDirection } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money, type Money } from '@crove/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { INPUT_VAT_CHECK_OUTCOMES, VAT_WARNINGS, zId, zVatPeriod, zVatReturnMark, type DocumentDirection } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money, type Money } from '@ludy/l10n-vn';
 import {
   documentVatByRate,
   form01Indicators,

@@ -4,8 +4,8 @@
 // taint here and nothing needs AI. Saving an empty text deletes them. The notes go with the meeting (cascade: the recorder's delete, an owner's delete, the retention shred, the org purge).
 // Vy's expansion of them is a separate run of the recorder's own Vy (apps/kernel member-vy-ports.ts) and lands in a Vy result the recorder copies into their draft, as the summary does.
 // Audit rows carry the meeting id and a length, never the text.
-import { NOTES_BODY_MAX, zMeetingRef, zNotes, zNotesSave, zNotesSaved, type Notes } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { NOTES_BODY_MAX, zMeetingRef, zNotes, zNotesSave, zNotesSaved, type Notes } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { recorderMeeting } from './results.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';

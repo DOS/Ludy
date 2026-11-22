@@ -2,7 +2,7 @@
 // file is uploaded on its own (so one bad file never fails the others), then followed through files.batch until it
 // is read: a proposal, a likely duplicate, or a failure. An archive becomes the documents it held, each followed the
 // same way. No React or API imports, so it is unit tested; the Inbox wires it up.
-import { MAX_BATCH_ENTRIES, MAX_BATCH_FILES, type ArchiveEntryReason, type BatchFile, type FileStatus } from '@crove/kernel-contract';
+import { MAX_BATCH_ENTRIES, MAX_BATCH_FILES, type ArchiveEntryReason, type BatchFile, type FileStatus } from '@ludy/kernel-contract';
 import type { ProposalStatus } from './status.ts';
 
 // Files one batch may hold (files.batch answers for at most this many); a larger month goes in as ZIP archives.

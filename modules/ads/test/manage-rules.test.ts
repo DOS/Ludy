@@ -3,7 +3,7 @@
 // date may be changed to, which stop condition stops which change, and what Uy suggests. No database, no platform.
 import { committedProblems } from '../src/launch-caps.ts';
 import { describe, expect, it } from 'vitest';
-import { ADS_MANAGE_KINDS, type AdsManageKind } from '@crove/kernel-contract';
+import { ADS_MANAGE_KINDS, type AdsManageKind } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals } from '../src/domain.ts';
 import {
   OPENING_KINDS,

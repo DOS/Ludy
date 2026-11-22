@@ -1,12 +1,12 @@
 // The personal-data registry's per-row handling (#1312): a legal entity the org keeps books for (a client, a household
 // whose name and 12-digit code are a person's) is kept by law, and only the org's default entity is the org's own.
 import { describe, expect, it } from 'vitest';
-import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@crove/kernel';
-import { hrManifest } from '@crove/mod-hr';
-import { meetingsManifest } from '@crove/mod-meetings';
-import { notesManifest } from '@crove/mod-notes';
-import { projectsManifest } from '@crove/mod-projects';
-import { signManifest } from '@crove/mod-sign';
+import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@ludy/kernel';
+import { hrManifest } from '@ludy/mod-hr';
+import { meetingsManifest } from '@ludy/mod-meetings';
+import { notesManifest } from '@ludy/mod-notes';
+import { projectsManifest } from '@ludy/mod-projects';
+import { signManifest } from '@ludy/mod-sign';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
 
@@ -147,6 +147,7 @@ describe('personal-data registry: payroll people (#2530)', () => {
       'crove_hr.payroll_employee.insurance_number_sealed',
       'crove_hr.payroll_employee.national_id_sealed',
       'crove_hr.payroll_employee.tax_code_sealed',
+      'crove_hr.payroll_employee.work_permit_number_sealed',
     ]);
     for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
       expect(entries[key]?.handling, key).toBe('erase');

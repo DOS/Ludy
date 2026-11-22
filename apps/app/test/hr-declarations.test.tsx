@@ -6,7 +6,7 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrDeclarationDocument } from '@crove/kernel-contract';
+import type { HrDeclarationDocument } from '@ludy/kernel-contract';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 
 interface DrivenMutationSlot {
@@ -143,7 +143,7 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { HrDeclarationsContent, HrDeclarationsPage, isCurrentDeclarationRequest } = await import('../src/routes/hr-declarations.tsx');
 const { DataTable } = await import('../src/components/ui.tsx');
-const { TableCell, TableRow } = await import('@crove/ui/components/table');
+const { TableCell, TableRow } = await import('@ludy/ui/components/table');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 
 function resetHooks() {

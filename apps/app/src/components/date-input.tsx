@@ -5,13 +5,13 @@
 // and max for the picker but belongs to no form, so a submit never stops on that hidden field.
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { useTranslations } from 'use-intl';
-import { CalendarIcon } from '@crove/ui/components/calendar-icon';
-import { Input } from '@crove/ui/components/input';
-import { cn } from '@crove/ui/lib/utils';
+import { CalendarIcon } from '@ludy/ui/components/calendar-icon';
+import { Input } from '@ludy/ui/components/input';
+import { cn } from '@ludy/ui/lib/utils';
 import { dateFieldError, formatDateValue, parseDateText, typedValue, type DateKind } from '../lib/date-input.ts';
 
 // The form attribute of the hidden pickers: an id no element has, so they belong to no form.
-export const NO_FORM = 'crove-picker-without-form';
+export const NO_FORM = 'ludy-picker-without-form';
 
 type Passed = Pick<ComponentProps<'input'>, 'id' | 'required' | 'disabled' | 'readOnly' | 'autoFocus' | 'min' | 'max' | 'aria-label' | 'aria-labelledby' | 'aria-describedby' | 'aria-invalid'>;
 

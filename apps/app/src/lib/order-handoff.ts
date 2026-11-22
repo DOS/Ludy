@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the order screen sends to Kế toán (#2818, ADR-0050): the order's facts as `crm.salesOrders.handoff` read them, and which lines go on an invoice draft. Pure functions, so the
 // rules are tested without a screen. A percent is a string and is only looked at for a non-zero digit, never turned into a number.
-import type { SalesOrderHandoff } from '@crove/kernel-contract';
+import type { SalesOrderHandoff } from '@ludy/kernel-contract';
 
 // A discount the draft cannot take as it is (the draft holds a price after the discount).
 export const hasDiscount = (percent: string): boolean => /[1-9]/.test(percent);

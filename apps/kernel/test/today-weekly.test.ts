@@ -3,10 +3,10 @@
 // each leave the template or the figures alone. The model is a stub.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError, WeeklyWriter, templateWeekly, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
-import type { WeeklyFigures } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, WeeklyWriter, templateWeekly, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
+import type { WeeklyFigures } from '@ludy/kernel-contract';
 import type { DraftTicket } from '../src/ai-draft-limit.ts';
-import { todayWeeklyQuery } from '@crove/kernel';
+import { todayWeeklyQuery } from '@ludy/kernel';
 import { weeklyAnswer, weeklyFactsOf } from '../src/today-weekly.ts';
 
 const figures: WeeklyFigures = {

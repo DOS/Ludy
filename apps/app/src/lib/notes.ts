@@ -8,7 +8,7 @@ import {
   NOTEBOOK_STACK_MAX,
   TODO_TITLE_MAX,
   type NoteListView,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 
 // Tags as typed, separated by commas: trimmed, lower case, each once, as many as a note keeps.
 export function parseTags(input: string): string[] {

@@ -1,5 +1,5 @@
 {
-  "name": "@crove/agent",
+  "name": "@ludy/agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,13 +14,13 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "catalog:",
-    "@crove/l10n-vn": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
     "ai": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@crove/extract": "workspace:*",
-    "@crove/extract-contract": "workspace:*",
-    "@crove/media": "workspace:*"
+    "@ludy/extract": "workspace:*",
+    "@ludy/extract-contract": "workspace:*",
+    "@ludy/media": "workspace:*"
   }
 }

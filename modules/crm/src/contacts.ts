@@ -19,10 +19,10 @@ import {
   type ContactPage,
   type FilterAst,
   type SavedViewSort,
-} from '@crove/kernel-contract';
-import { filterCondition, flagIs, hasText, sortTerms, textContains, valueIs, withinLastDays, type FieldCondition } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { filterCondition, flagIs, hasText, sortTerms, textContains, valueIs, withinLastDays, type FieldCondition } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 

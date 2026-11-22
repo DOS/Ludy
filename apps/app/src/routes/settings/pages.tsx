@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ConversationRetentionCard } from '../../components/conversation-retention.tsx';
 import { EngageWakeRulesCard } from '../../components/engage-wake-rules.tsx';
 import { ExtensionDevices } from '../../components/extension-devices.tsx';
@@ -22,6 +22,7 @@ import { BankAccountNumbersCard } from '../bank-account-numbers.tsx';
 import { BankPartyRulesCard } from '../bank-party-rules.tsx';
 import { EventTypesCard } from '../event-types.tsx';
 import { IntegrationsSection } from '../integrations.tsx';
+import { MarketplaceVatRateCard } from '../marketplace-vat-rate.tsx';
 import { LegalEntitiesCard } from '../legal-entities.tsx';
 import { MisaGoodsCodesCard } from '../misa-goods-codes.tsx';
 import { WorkingHoursCard } from '../working-hours.tsx';
@@ -217,6 +218,8 @@ export function SettingsAccountingPage() {
           <Anchor id={SETTINGS_CARD.bankPartyRules}>
             <BankPartyRulesCard key={`bank-party-rules:${org.slug}`} canManage={canManage} />
           </Anchor>
+          {/* The VAT of marketplace sales (#4303): one closed line until opened, only where marketplace sales can exist. */}
+          <MarketplaceVatRateCard key={`marketplace-vat-rate:${org.slug}`} role={org.role} />
         </>
       )}
     </SettingsFrame>

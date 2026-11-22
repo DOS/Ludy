@@ -16,25 +16,26 @@ import {
   type SignCaRequestStatus,
   type SignCaSubFilter,
   type SignCaTestState,
-} from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
+} from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
 import {
   tableWrite,
   zId,
   type SignCaConnectionRecord,
   type SignCaSettingsResult,
   type SignCaSigningRequestRecord,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   defineCommand,
   defineQuery,
   type CommandContext,
   type QueryContext,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
+import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
 import { SIGNING_EVENT_WRITE } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -231,7 +232,7 @@ export const caRequestsByEnvelope = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select(['id', 'source_kind', 'created_by'])
+      .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -239,6 +240,7 @@ export const caRequestsByEnvelope = defineQuery({
       throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     }
     assertCanAccessEnvelopeRow(ctx, env);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
     const rows = await ctx.trx
       .selectFrom('crove_sign.ca_signing_request')
       .select([
@@ -455,6 +457,7 @@ export const caRequestInitiate = defineCommand({
         'title',
         'status',
         'source_kind',
+        'source_id',
         'created_by',
         'seal_status',
         'sealed_file_id',
@@ -468,6 +471,7 @@ export const caRequestInitiate = defineCommand({
       throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     }
     assertCanAccessEnvelopeRow(ctx, env);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
     if (env.status !== 'completed' || env.seal_status !== 'sealed' || !env.sealed_file_id || !env.sealed_sha256) {
       throw new DomainError(
         'SIGN_ENVELOPE_NOT_SEALED',

@@ -2,7 +2,7 @@
 // permissions it owns. A migration that adds or drops a table or column of these schemas, or a role_permission row,
 // changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is
 // internal unless the second argument of columns() classifies it.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const financeManifest = defineModule({
   id: 'finance',
@@ -56,7 +56,12 @@ export const financeManifest = defineModule({
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at', 'app_key', 'authorize_state', 'authorize_state_hash', 'authorize_expires_at', 'authorize_by', 'authorize_code_key_id', 'reauthorize_by', 'authorize_pending_at', 'seller_ref'], { authorize_code_envelope: 'sensitive' }),
       // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and times only. It outlives the connection with no connection id and the time the connection went (#4284), so a purge can find the files.
       marketplace_connection_file: columns(['org_id', 'id', 'marketplace_connection_id', 'file_id', 'created_at', 'disconnected_at']),
+      // A marketplace connection's push hook key (#4316, S1 of #4315): only the SHA-256 of the key in the address, the dates and the count of refused pushes; definer-only.
+      marketplace_hook: columns(['org_id', 'id', 'marketplace_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
+      // A raw push waiting for the worker (#4316): the dedupe key, the header as sent and the body as bytes (treated as personal data), deleted when the worker claims it or after ten minutes; definer-only.
+      marketplace_hook_notice: columns(['org_id', 'id', 'hook_id', 'dedupe_key', 'authorization_header', 'received_at'], { body: 'pii', request_url: 'pii' }),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
+      marketplace_vat_rate: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'method', 'vat_percent', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),
       // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
@@ -123,6 +128,6 @@ export const financeManifest = defineModule({
     { type: 'finance.supplier_bank_account_change', table: 'supplier_bank_account_change', legalEntityScoped: false, audit: 'command' },
     { type: 'finance.supplier_payment', table: 'supplier_payment', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.finance,
 });

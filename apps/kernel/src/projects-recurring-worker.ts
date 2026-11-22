@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Worker sweep for recurring project tasks (#2607): scans crove_projects.recurring_tasks_due and advances due series.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Actor, type Runtime } from '@crove/kernel-runtime';
-import type { ProjectRecurringAdvanceResult } from '@crove/mod-projects';
+import type { Db } from '@ludy/db';
+import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
+import type { ProjectRecurringAdvanceResult } from '@ludy/mod-projects';
 
 export const PROJECTS_RECURRING_SWEEP_MS = 15 * 60_000;
 const SWEEP_PAGE_SIZE = 100;

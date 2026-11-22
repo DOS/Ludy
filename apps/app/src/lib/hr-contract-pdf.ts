@@ -2,7 +2,7 @@
 // Deterministic client-side Labor Contract PDF 1.4 builder for Ludy Nhan su -> Ludy eSign handoff (#3553).
 // Produces a clean A4 PDF (automatically paginating before the signature block when fields are long) using built-in
 // Type1 Helvetica (WinAnsi) with zero external parser/PDF libraries. Monetary amounts stay string-based.
-import type { HrContractForm, HrContractType, HrProbationRoleTier, HrRegion } from '@crove/kernel-contract';
+import type { HrContractForm, HrContractType, HrPayBasis, HrProbationRoleTier, HrRegion } from '@ludy/kernel-contract';
 
 export interface HrContractPdfInput {
   employerName: string;
@@ -21,6 +21,9 @@ export interface HrContractPdfInput {
   fixedTermSequence?: number | null;
   region: HrRegion;
   baseWage: string;
+  payBasis?: HrPayBasis;
+  hourlyRate?: string | null;
+  pieceRate?: string | null;
   probationRoleTier?: HrProbationRoleTier | null;
   probationEndOn?: string | null;
   probationWage?: string | null;
@@ -210,7 +213,26 @@ export function buildHrContractPdfBytes(input: HrContractPdfInput): Uint8Array {
     addLine(`Lan giao ket xac dinh thoi han / Fixed-term sequence: Lan ${input.fixedTermSequence}`);
   }
   addLine(`Vung luong toi thieu / Statutory wage region: Vung ${input.region}`);
-  addLine(`Muc luong co ban / Base monthly wage: ${formatVndAmountForPdf(input.baseWage)}`, { bold: true });
+  const basis = input.payBasis ?? 'monthly';
+  const rateSpec =
+    basis === 'hourly'
+      ? {
+          line: `Don gia theo gio / Hourly wage rate: ${formatVndAmountForPdf(input.hourlyRate ?? input.baseWage)}/gio`,
+          probationSuffix: '/gio',
+          probationLabel: 'Luong thu viec / Probation hourly rate',
+        }
+      : basis === 'piece_rate'
+        ? {
+            line: `Don gia san pham / Piece-rate wage: ${formatVndAmountForPdf(input.pieceRate ?? input.baseWage)}/san pham`,
+            probationSuffix: '/san pham',
+            probationLabel: 'Luong thu viec / Probation piece rate',
+          }
+        : {
+            line: `Muc luong co ban / Base monthly wage: ${formatVndAmountForPdf(input.baseWage)}`,
+            probationSuffix: '',
+            probationLabel: 'Luong thu viec / Probation monthly wage',
+          };
+  addLine(rateSpec.line, { bold: true });
 
   const tier = probationTierLabel(input.probationRoleTier);
   if (tier || input.probationEndOn || input.probationWage) {
@@ -219,7 +241,7 @@ export function buildHrContractPdfBytes(input: HrContractPdfInput): Uint8Array {
     if (tier) addLine(`Nhom vi tri / Probation tier: ${tier}`);
     if (input.probationEndOn) addLine(`Ket thuc thu viec / Probation end date: ${input.probationEndOn}`);
     if (input.probationWage) {
-      addLine(`Luong thu viec / Probation monthly wage: ${formatVndAmountForPdf(input.probationWage)}`);
+      addLine(`${rateSpec.probationLabel}: ${formatVndAmountForPdf(input.probationWage)}${rateSpec.probationSuffix}`);
     }
   }
 

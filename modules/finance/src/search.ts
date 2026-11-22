@@ -8,9 +8,9 @@
 // are the org's.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DocumentDirection } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zId, type DocumentDirection } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

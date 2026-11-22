@@ -69,9 +69,9 @@ import {
   type TodoStoppedSibling,
   type TodoSummary,
   type TodoWritten,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { insertRecordLink, loadEnrichedLinks } from './links.ts';
 import { notesManifest } from './manifest.ts';
 
@@ -1332,7 +1332,7 @@ export const todoGet = defineQuery({
 });
 
 // The open statuses of a kernel task (ADR-0029): what My work lists. kernel.task.list answers at most this many tasks
-// (TASK_LIST_LIMIT in @crove/kernel), the newest first.
+// (TASK_LIST_LIMIT in @ludy/kernel), the newest first.
 const KERNEL_TASK_LIST_LIMIT = 200;
 const OPEN_TASK_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review'] as const;
 // The most open to-dos My work shows, as the app's list.

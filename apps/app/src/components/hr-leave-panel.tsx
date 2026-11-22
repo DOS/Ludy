@@ -10,14 +10,14 @@ import {
   type HrLeaveBalanceAsk,
   type HrLeaveCategory,
   type HrLeaveEntryKind,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
@@ -187,6 +187,18 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
               <dt className="text-xs text-subtle-foreground">{t('leave.personalPaidDays')}</dt>
               <dd className="tabular-nums">{data.balance.personalPaidDays}</dd>
             </div>
+            <div>
+              <dt className="text-xs text-subtle-foreground">{t('leave.sicknessBhxhDays')}</dt>
+              <dd className="tabular-nums" data-testid="hr-leave-sickness-bhxh">
+                {data.balance.sicknessBhxhDays}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-subtle-foreground">{t('leave.maternityBhxhDays')}</dt>
+              <dd className="tabular-nums" data-testid="hr-leave-maternity-bhxh">
+                {data.balance.maternityBhxhDays}
+              </dd>
+            </div>
           </dl>
 
           <form
@@ -232,13 +244,13 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                   id={`hr-leave-days-${employeeId}`}
                   className="w-24"
                   inputMode="decimal"
-                  step={kind === 'opening_balance' ? '0.01' : '0.5'}
+                  step={kind === 'unpaid_leave' ? '0.5' : '0.01'}
                   value={days}
                   onChange={(ev) => setDays(normalizeLeaveDaysInput(ev.target.value))}
                   data-testid="hr-leave-days"
                 />
               </div>
-              <label className="flex items-center gap-2 pb-2 text-sm">
+              <label className="flex items-center gap-2 pb-2 text-sm max-md:min-h-11">
                 <input
                   type="checkbox"
                   checked={approved}

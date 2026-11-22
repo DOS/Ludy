@@ -2,8 +2,8 @@
 // Why a bank feed pull stopped (#4244): a failure becomes a closed kind and, for a page with a line it cannot store, that
 // line's position. The error's own text never leaves the classifier.
 import { describe, expect, it } from 'vitest';
-import { TingeeError } from '@crove/bank-feed';
-import { DomainError } from '@crove/kernel-runtime';
+import { TingeeError } from '@ludy/bank-feed';
+import { DomainError } from '@ludy/kernel-runtime';
 import { classifyBankFeedFailure } from '../src/bank-feed-sync.ts';
 
 describe('classifyBankFeedFailure', () => {

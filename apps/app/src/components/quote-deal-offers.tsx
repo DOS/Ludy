@@ -5,9 +5,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { Deal, QuoteSummary } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import type { Deal, QuoteSummary } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
 import { refreshDeals } from './deal-form.tsx';
 import { quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText } from './ui.tsx';

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pure Quick Add helpers for personal to-dos (#3556, #3558): payload building, dismissed-span tracking,
 // recurrence chip labels, and the global Alt+Q capture shortcut guard.
-import { NOTE_TAGS_MAX, NOTE_TAG_MAX, TODO_TITLE_MAX, type TodoCreateInput, type TodoPriority } from '@crove/kernel-contract';
+import { NOTE_TAGS_MAX, NOTE_TAG_MAX, TODO_TITLE_MAX, type TodoCreateInput, type TodoPriority } from '@ludy/kernel-contract';
 import {
   buildTitleWithoutSpans,
   type TodoQuickAddRecurrence,
   type TodoQuickAddResult,
   type TodoQuickAddToken,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 
 export interface QuickCaptureKeyLike {
   key: string;

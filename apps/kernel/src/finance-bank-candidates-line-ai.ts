@@ -7,9 +7,9 @@
 // The sentence is read, never written: it picks nothing, changes no ranking and makes no voucher, and it is not a command; a person chooses and a person approves the voucher. A line that is not open, has one
 // candidate that stands out, none at all, or an amount with fractions of a dong answers `none` with no call. When there is no model, the AI budget is spent, the member's calls are too frequent, the call fails
 // or its text is refused, the answer names the state (`ai`) with no words and the screen shows the line as it is. An answer is kept for a while by its facts. A failure is named, never quoted.
-import { Decimal } from '@crove/l10n-vn';
-import { AiBudgetExhaustedError, bankCandidatesLineFactsText, type BankCandidatesLineFacts, type InboxReader } from '@crove/agent';
-import type { BankCandidatesLine, BankLineVoucher } from '@crove/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
+import { AiBudgetExhaustedError, bankCandidatesLineFactsText, type BankCandidatesLineFacts, type InboxReader } from '@ludy/agent';
+import type { BankCandidatesLine, BankLineVoucher } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface BankCandidatesLineAi {

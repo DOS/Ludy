@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { MEETING_SUMMARY_TEMPLATES, SUMMARY_TEMPLATE_SECTIONS, sectionsToText, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, SUMMARY_TEMPLATE_SECTIONS, sectionsToText, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@ludy/kernel-contract';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';

@@ -2,10 +2,10 @@
 // The yearly rule of the household tax as S2a, S2b and the 01/CNKD show it (#3710 slice 3, plan docs/plan/stock-and-marketplaces.md section 8.5, research 2026-11-18 B1 and B2), shared so the three cannot disagree.
 // The rule itself is `domain/household-annual.ts`; this file reads the dated rows it needs (the threshold, the VAT and PIT cuts) on the period's last day, runs the rule on the year-to-date revenue at that day and on
 // the year-to-date revenue before the period, and builds the `yearToDate` block of the contract. Nothing here is a constant: the threshold and the cuts are rows with an effective date, a source and a status.
-import type { HouseholdTrade, HouseholdVatCutAnswer, HouseholdYearToDate } from '@crove/kernel-contract';
-import { HOUSEHOLD_TRADES } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import type { HouseholdTrade, HouseholdVatCutAnswer, HouseholdYearToDate } from '@ludy/kernel-contract';
+import { HOUSEHOLD_TRADES } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { annualTax, periodTax } from './domain/household-annual.ts';
 import { pickInForce } from './domain/household-rules.ts';
 import { reductionInForce } from './household-vat-cut.ts';

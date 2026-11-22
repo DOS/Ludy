@@ -3,7 +3,7 @@
 // the window a sync reads and the day before which every day is final, and the cost per result. No database and no
 // network here. Money is a decimal string and every sum goes through decimal.js (AGENTS.md "Money").
 import { Decimal } from 'decimal.js';
-import { ADS_BACKFILL_MONTHS, zonedDate } from '@crove/kernel-contract';
+import { ADS_BACKFILL_MONTHS, zonedDate } from '@ludy/kernel-contract';
 
 const DAY_MS = 86_400_000;
 

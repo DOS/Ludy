@@ -1,6 +1,6 @@
 // The team report on the Metrics tab (#1058): the period picked as the instants the server takes, a review time in the
 // unit that reads best, and the name of the file saved.
-import { TEAM_REPORT_DST_SLACK_MS, TEAM_REPORT_MAX_DAYS } from '@crove/mod-social/contract';
+import { TEAM_REPORT_DST_SLACK_MS, TEAM_REPORT_MAX_DAYS } from '@ludy/mod-social/contract';
 import { reportPeriod } from './social-report.ts';
 import { brandFileName } from '../i18n/brand.ts';
 
@@ -26,4 +26,4 @@ export function durationOf(seconds: number): { unit: DurationUnit; value: number
 }
 
 // The file's name, with the days picked, prefixed by the product name (BRAND_NAME, #1045).
-export const teamFilename = (from: string, to: string) => brandFileName(`crove-nhom-${from}-den-${to}.csv`);
+export const teamFilename = (from: string, to: string) => brandFileName(`ludy-nhom-${from}-den-${to}.csv`);

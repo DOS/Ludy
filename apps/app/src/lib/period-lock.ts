@@ -1,5 +1,5 @@
 // Period lock (#329) on the ledger screen: who may lock and unlock, and months as YYYY-MM. Today and this month in
-// Vietnam come from @crove/kernel-contract (vietnamToday, vietnamMonth), the helper the kernel shares (#560); here they
+// Vietnam come from @ludy/kernel-contract (vietnamToday, vietnamMonth), the helper the kernel shares (#560); here they
 // read the browser's clock and only shape the hints, since the kernel decides by the database clock.
 // Who may lock (finance.period.lock: owners and admins); the kernel checks again. Who may unlock an entity's months
 // the period lock state says (unlockable, #1507: owners, and the unlock permission org-wide or for that entity).

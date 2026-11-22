@@ -2,8 +2,8 @@
 // (#314), opened into files of its own. Shared by files.recent and files.batch.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { EDITOR_ROLES } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, REEXTRACT_STALE_MINUTES, STALE_RUN_ERROR, voidedProposals } from './extraction.ts';
 import { isArchiveType } from './files.ts';
@@ -230,7 +230,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     .where('f.org_id', '=', ctx.orgId)
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
     // uploaded as one and read. Encrypted meeting media (#2576) eSign artifacts (#3323) and the signed agreement of an invoice correction (#2504) are never accounting documents.
-    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement']), eb('e.status', 'is not', null)]));
+    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement']), eb('e.status', 'is not', null)]));
   if ('ids' in filter) query = query.where('f.id', 'in', [...filter.ids]);
   else if ('staged' in filter) query = query.where(sql<boolean>`(e.statement ->> 'state') = 'staged'`).orderBy('f.created_at', 'desc').limit(filter.staged);
   else query = query.orderBy('f.created_at', 'desc').limit(filter.recent);

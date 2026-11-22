@@ -36,21 +36,21 @@ import {
   type TodoSourceNote,
   type TodoStep,
   type TodoSummary,
-} from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
-import { RepeatIcon } from '@crove/ui/components/repeat-icon';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
-import { cn } from '@crove/ui/lib/utils';
+} from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
+import { RepeatIcon } from '@ludy/ui/components/repeat-icon';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { cn } from '@ludy/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { MyWorkVyPlannerPanel, MyWorkVyPlannerTrigger } from '../components/my-work-vy-planner.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
@@ -176,7 +176,7 @@ export function TodoRecurrenceBadge({ recurrence }: { recurrence: TodoRecurrence
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0] as const;
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
-const TODO_DRAG_MIME = 'application/x-crove-todo';
+const TODO_DRAG_MIME = 'application/x-ludy-todo';
 
 /** Recurrence selector in the personal to-do editor (#3557). */
 export function TodoRecurrenceField({ value, onChange }: { value: TodoRecurrence | null; onChange: (next: TodoRecurrence | null) => void }) {

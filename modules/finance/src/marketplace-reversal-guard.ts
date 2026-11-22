@@ -8,8 +8,8 @@
 //   reversed while other months stand (the settlement is then half reversed: the payout stays refused until the rest is reversed too).
 // Every other entry gets no note and no refusal. Facts only: nothing is written and no model is asked.
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
-import { DomainError } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 import { reversedSource } from './source-entry.ts';

@@ -23,8 +23,8 @@ import {
   type BriefDeal,
   type BriefFacts,
   type BriefStatus,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { vyReason } from './ask.ts';
 import { openItemsOf, previousMeetingOf } from './series.ts';
 import { isSummaryEnabled } from './summary-run.ts';

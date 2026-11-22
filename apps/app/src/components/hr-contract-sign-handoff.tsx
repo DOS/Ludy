@@ -7,9 +7,9 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { z } from 'zod';
-import type { HrCandidateView, HrEmploymentView, SignEnvelopeBySourceItem } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import type { HrCandidateView, HrEmploymentView, SignEnvelopeBySourceItem } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
 import { resolveUnfinishedEnvelopeId, signEnvelopePollMs, useSignAppEnabled } from './quote-sign-handoff.tsx';
 import { ErrorText } from './ui.tsx';
 import { client, clientForOrg, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
@@ -267,6 +267,9 @@ export async function performHrContractSignHandoff({
           fixedTermSequence: source.employment.fixedTermSequence,
           region: source.employment.region,
           baseWage: source.employment.baseWage,
+          payBasis: source.employment.payBasis,
+          hourlyRate: source.employment.hourlyRate,
+          pieceRate: source.employment.pieceRate,
           probationRoleTier: source.employment.probationRoleTier,
           probationEndOn: source.employment.probationEndOn,
           probationWage: source.employment.probationWage,

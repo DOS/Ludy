@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { brandSlug } from '@crove/kernel-contract';
+import { brandSlug } from '@ludy/kernel-contract';
 import { ORG_SLUG, attachmentDisposition } from '../src/attachment.ts';
 
 describe('attachmentDisposition', () => {

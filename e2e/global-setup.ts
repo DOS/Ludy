@@ -17,5 +17,5 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     if ((await ok(`${baseURL}/readyz`)) && (await ok(`${baseURL}/auth/v1/health`)) && (await ok(`${MAILPIT_URL}/api/v1/info`))) return;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error(`Crove at ${baseURL} is not ready after ${TIMEOUT_MS / 1000} s; start it with: pnpm --filter @crove/e2e stack:up`);
+  throw new Error(`Crove at ${baseURL} is not ready after ${TIMEOUT_MS / 1000} s; start it with: pnpm --filter @ludy/e2e stack:up`);
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The first rule that joins two apps (docs/plan/vy.md, capability C4, slice V4): a deal won with no sales invoice after 7 days, shown on Home as a
-// flag. The kernel owns the join and the rule; each line owns its own read (the signals contract of @crove/kernel-contract signals.ts):
+// flag. The kernel owns the join and the rule; each line owns its own read (the signals contract of @ludy/kernel-contract signals.ts):
 //   - Engage's CRM answers `crm.signals.won_deals`: the won deals the member can open;
 //   - Accounting answers `finance.signals.sales`: the parties with a sales invoice the member can open, and the date of the latest one.
 // Both run through ctx.query, in the member's own transaction and role, so each line's own rules decide what the member sees and no table of either
@@ -40,9 +40,9 @@ import {
   zFinanceSupplierBankChangeSignals,
   zFinanceSupplierPaymentsWaitingSignals,
   type TodayItem,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const DAY_MS = 86_400_000;

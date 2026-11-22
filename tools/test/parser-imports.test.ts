@@ -221,11 +221,11 @@ describe('parsers stay in crove-extract', () => {
     }
     const names = new Set(packages.values());
     // The walk covers the workspace packages and the libraries they load (a broken walk finds nothing).
-    for (const name of ['@crove/kernel-server', '@crove/mod-finance', '@crove/l10n-vn', '@crove/extract-contract', 'pg', 'hono', 'exceljs']) {
+    for (const name of ['@ludy/kernel-server', '@ludy/mod-finance', '@ludy/l10n-vn', '@ludy/extract-contract', 'pg', 'hono', 'exceljs']) {
       expect(names.has(name), name).toBe(true);
     }
     // crove-extract itself is a devDependency (the database tests start it); it is never in the kernel image.
-    expect(names.has('@crove/extract')).toBe(false);
+    expect(names.has('@ludy/extract')).toBe(false);
   });
 
   it('the image check looks for the same parser packages', () => {

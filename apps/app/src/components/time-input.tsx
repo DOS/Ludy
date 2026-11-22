@@ -5,9 +5,9 @@
 // hidden native input that belongs to no form.
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { useTranslations } from 'use-intl';
-import { ClockIcon } from '@crove/ui/components/clock-icon';
-import { Input } from '@crove/ui/components/input';
-import { cn } from '@crove/ui/lib/utils';
+import { ClockIcon } from '@ludy/ui/components/clock-icon';
+import { Input } from '@ludy/ui/components/input';
+import { cn } from '@ludy/ui/lib/utils';
 import { NO_FORM } from './date-input.tsx';
 import { formatTimeValue, parseTimeText, typedValue } from '../lib/date-input.ts';
 

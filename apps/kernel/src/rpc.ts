@@ -1,24 +1,24 @@
-// oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
+// oRPC implementation of @ludy/kernel-contract. Handlers only call the runtime (execute/query).
 import { randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
-import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank-feed';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
+import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-feed';
 import { RateLimiter } from './rate-limit.ts';
-import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
-import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import { assertSignCaProviderAllowed } from '@crove/mod-sign';
-import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@crove/sign';
-import type { SignCaConnectionRecord, SignCaSettingsResult } from '@crove/kernel-contract';
-import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
+import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
+import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
+import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
+import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
+import type { SignCaConnectionRecord, SignCaSettingsResult } from '@ludy/kernel-contract';
+import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
-import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
+import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -31,9 +31,9 @@ import {
   type SchedulingReader,
   type SocialWriter,
   type WriterChannel,
-} from '@crove/agent';
-import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@crove/mod-social/contract';
-import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@crove/mod-social';
+} from '@ludy/agent';
+import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@ludy/mod-social/contract';
+import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@ludy/mod-social';
 import {
   TODAY_WEEKLY_READ,
   clientOverviews,
@@ -50,13 +50,13 @@ import {
   type DirectMail,
   type IntentSource,
   type OrgSummary,
-} from '@crove/kernel';
+} from '@ludy/kernel';
 import type { z } from 'zod';
-import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@crove/kernel-contract';
-import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
-import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
+import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
+import type { ProjectWeeklyStatusSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
@@ -66,7 +66,7 @@ import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
-import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
+import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
 import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
@@ -78,6 +78,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   compareSignPdfVersions,
   proposeEnvelopeAnalysis,
+  proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
   signAi,
   type SignAi,
@@ -85,7 +86,7 @@ import {
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
-import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
@@ -98,7 +99,7 @@ import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line
 import { misaAmisPreview } from './misa-amis-preview.ts';
 import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
-import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
@@ -173,10 +174,10 @@ interface CreatedInvite {
   acceptPath: string;
 }
 
-// Reads the days and times a client's message asks for (SchedulingReader in @crove/agent, #1440).
+// Reads the days and times a client's message asks for (SchedulingReader in @ludy/agent, #1440).
 export type BookingReader = Pick<SchedulingReader, 'read'>;
 
-// Drafts Social posts with the deployment's model (SocialWriter in @crove/agent); unset: AI drafting is off.
+// Drafts Social posts with the deployment's model (SocialWriter in @ludy/agent); unset: AI drafting is off.
 export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
   Partial<Pick<SocialWriter, 'hashtags' | 'ideas' | 'summary'>> & {
     // An image's alt text from its stored bytes (#817), when the deployment's model takes images (AI_VISION), within
@@ -572,7 +573,11 @@ export function createRpcHandler(
     conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
     suggestionBudget(),
   );
-  const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
+  const signCoworker = signAi(
+    signAiReader ?? null,
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+  );
   const signAcceptanceCoworker = signAcceptanceAi(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
     suggestionBudget(),
@@ -589,7 +594,7 @@ export function createRpcHandler(
   };
   // Demo comments of the offline sandbox, by org, for the per-org cap on the intake they share.
   const sandboxStamps = new Map<string, number[]>();
-  // Every model call a handler makes counts against the org's AI budget (@crove/agent's metered(), #2382): the scope names
+  // Every model call a handler makes counts against the org's AI budget (@ludy/agent's metered(), #2382): the scope names
   // the org and the meter that asks in this member's own authority.
   const inOrg = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) =>
     guard(async () => {
@@ -3651,6 +3656,16 @@ export function createRpcHandler(
           }),
         ),
       },
+      // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated rows. Every role reads; the command checks owner or admin itself (R1, audited).
+      vatRates: {
+        list: os.marketplace.vatRates.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_vat_rate.list', input, { actor, orgId }))),
+        set: os.marketplace.vatRates.set.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.marketplace_vat_rate.set', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+      },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
@@ -4567,6 +4582,7 @@ export function createRpcHandler(
         reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
         create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
         correct_recipient: os.sign.signer.correct_recipient.handler(signNoIdempotencyCommand('sign.signer.correct_recipient')),
+        start_in_person: os.sign.signer.start_in_person.handler(signNoIdempotencyCommand('sign.signer.start_in_person')),
       },
       field: {
         set: os.sign.field.set.handler(signCommand('sign.field.set')),
@@ -4762,6 +4778,27 @@ export function createRpcHandler(
         ),
         list_requests: os.sign.ca.list_requests.handler(signQuery('sign.ca.requests.by_envelope')),
         initiate_request: os.sign.ca.initiate_request.handler(signCommand('sign.ca.request.initiate')),
+      },
+      obligation: {
+        get: os.sign.obligation.get.handler(signQuery('sign.obligation.get')),
+        renewals_list: os.sign.obligation.renewals_list.handler(signQuery('sign.obligation.renewals_list')),
+        extract: os.sign.obligation.extract.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeObligations({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.pages ? { pages: input.pages } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        upsert: os.sign.obligation.upsert.handler(signCommand('sign.obligation.upsert')),
+        dismiss_proposal: os.sign.obligation.dismiss_proposal.handler(signCommand('sign.obligation.dismiss_proposal')),
+        complete_item: os.sign.obligation.complete_item.handler(signCommand('sign.obligation.complete_item')),
       },
     },
   });

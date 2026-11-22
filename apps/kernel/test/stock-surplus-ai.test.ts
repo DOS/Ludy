@@ -2,8 +2,8 @@
 // The accounting coworker's explanation of a count's surplus, on the API side (#3712 slice 2b): the code's facts always come back untouched, the model is asked once with the facts only (no party id,
 // no voucher, no proposal), a text is kept, and every state with no text (no model, a spent budget, too many calls, a failed or refused call) is named, never quoted, so the screen works with AI off.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type StockSurplusFacts, type StockSurplusResult } from '@crove/agent';
-import type { StockSurplusSource } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type StockSurplusFacts, type StockSurplusResult } from '@ludy/agent';
+import type { StockSurplusSource } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { STOCK_SURPLUS_KEEP_MS, STOCK_SURPLUS_REFUSED_KEEP_MS, explainSurplus, stockSurplusAi, stockSurplusFacts } from '../src/stock-surplus-ai.ts';
 

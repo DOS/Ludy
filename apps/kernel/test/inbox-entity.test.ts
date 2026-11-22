@@ -2,8 +2,8 @@
 // entity through one helper, from the same kinds only (an invoice, a cash voucher, a general journal voucher), and fall
 // back to the proposal's own entity.
 import { describe, expect, it } from 'vitest';
-import { JOURNAL_VOUCHER_KIND, VOUCHER_KIND } from '@crove/kernel-contract';
-import { revisionLegalEntity } from '@crove/kernel';
+import { JOURNAL_VOUCHER_KIND, VOUCHER_KIND } from '@ludy/kernel-contract';
+import { revisionLegalEntity } from '@ludy/kernel';
 
 const OWN = '11111111-1111-4111-8111-111111111111';
 const NAMED = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

@@ -3,10 +3,10 @@
 import { useQueries } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { MAX_BATCH_FILES } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { MAX_BATCH_FILES } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ClientError, errorMessage, orpc, queryClient, uploadDocument } from '../lib/api.ts';
 import {
   INTAKE_CONCURRENCY,

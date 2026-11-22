@@ -9,7 +9,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { join, relative } from 'node:path';
-import { createMediaClient, type MediaClient } from '@crove/media/client';
+import { createMediaClient, type MediaClient } from '@ludy/media/client';
 import {
   scoreTranscript,
   transcribeChunks,

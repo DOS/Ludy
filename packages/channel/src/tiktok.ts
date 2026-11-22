@@ -56,7 +56,7 @@ export function tiktokModeOf(settings: Readonly<Record<string, unknown>> | undef
 // TikTok labels it as AI-generated. commercial is the disclosure turned on: it needs yourBrand or brandedContent, or
 // the post is refused, as TikTok's sharing guidelines require. Branded content cannot be SELF_ONLY. A variant without
 // settings.tiktok sends none of these fields, exactly as before. Inbox mode takes none: the creator sets them in TikTok.
-// The domain's tiktokDisclosureOf in @crove/mod-social reads the same value.
+// The domain's tiktokDisclosureOf in @ludy/mod-social reads the same value.
 export interface TikTokDisclosure {
   commercial: boolean;
   yourBrand: boolean;

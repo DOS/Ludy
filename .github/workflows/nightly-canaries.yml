@@ -41,7 +41,7 @@ jobs:
 
       # The unit project also holds the web and media suites, so their dependencies are installed as ci.yml's unit job does.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "@ludy/web" --filter "@ludy/media..." --filter "ludy-monorepo"
 
       - name: Bun version
         run: bun --version
@@ -68,7 +68,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "ludy-monorepo"
 
       # Installed outside the workspace, so package.json and pnpm-lock.yaml stay untouched.
       - name: Install typescript@next
@@ -77,7 +77,7 @@ jobs:
           "$RUNNER_TEMP/ts-next/node_modules/.bin/tsc" --version
 
       - name: Typecheck every package with typescript@next
-        run: pnpm -r --filter="!@crove/web" exec "$RUNNER_TEMP/ts-next/node_modules/.bin/tsc" --noEmit -p tsconfig.json
+        run: pnpm -r --filter="!@ludy/web" exec "$RUNNER_TEMP/ts-next/node_modules/.bin/tsc" --noEmit -p tsconfig.json
 
       - name: Lockfile is unchanged
         run: git diff --exit-code -- pnpm-lock.yaml package.json

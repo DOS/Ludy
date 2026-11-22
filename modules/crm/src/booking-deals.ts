@@ -2,9 +2,9 @@
 // Dy's suggestion of a deal for a booking (#3103, docs/plan/calendar.md "Deal links"). The rule is fixed and runs here, with no model: a booking that has no deal yet is
 // offered the guest's open deals, found by the guest's contact (the booking's contact is the deal's contact), by email (the same address, compared without case) or by phone
 // (the same number by phoneKey, so +84 and 0 are one number). Only deals in an open stage are offered; a person decides, and the suggestion changes nothing by itself.
-import { BOOKING_DEAL_SUGGESTIONS_MAX, phoneKey, type BookingDealMatch, type BookingDealSuggestion } from '@crove/kernel-contract';
+import { BOOKING_DEAL_SUGGESTIONS_MAX, phoneKey, type BookingDealMatch, type BookingDealSuggestion } from '@ludy/kernel-contract';
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 // What of a booking the rule reads: its contact and the guest's own email and phone (null once an erasure cleared them).
 export interface MatchBooking {

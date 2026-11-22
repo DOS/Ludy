@@ -2,8 +2,8 @@
 // The confirmed column mapping (#4037): what the header row alone decides, by the refusal names of the full check (`checkColumnMapping`, #4038), and the contract's list of fields against the
 // standard fields of an order line.
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnProfile, zMarketplaceColumnsConfirm, type MarketplaceColumnEntry } from '@crove/kernel-contract';
-import { ORDER_FIELDS } from '@crove/l10n-vn';
+import { MARKETPLACE_COLUMN_FIELDS, zMarketplaceColumnProfile, zMarketplaceColumnsConfirm, type MarketplaceColumnEntry } from '@ludy/kernel-contract';
+import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkColumnProfileHeader } from '../src/marketplace-column-profile.ts';
 
 const col = (index: number, header: string, field: MarketplaceColumnEntry['field']): MarketplaceColumnEntry => ({ index, header, field });

@@ -9,8 +9,8 @@
 // commitment, so two launches approved together serialise and the second sees the first. The database holds the ledger itself (crove_ads.launch_guard): a row exists
 // only for an approved plan, its commitment only shortens, and a state moves only along its graph.
 import { sql } from 'kysely';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
-import type { AdsLaunchObjectView, AdsLaunchView } from '@crove/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
+import type { AdsLaunchObjectView, AdsLaunchView } from '@ludy/kernel-contract';
 import { addDays } from './domain.ts';
 import { committedProblems, type Commitment, type CommittedCap, type CommittedPlan } from './launch-caps.ts';
 

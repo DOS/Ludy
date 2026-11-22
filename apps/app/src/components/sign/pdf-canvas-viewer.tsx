@@ -2,7 +2,7 @@
 // Multi-page pure-JS PDF canvas viewer with an exact normalized [0..1] overlay frame (#3325).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { loadPdfDocument, PDF_UNSUPPORTED_IMAGE_DECODER_ERROR, type PdfDocumentHandle } from '../../lib/sign-pdf.ts';
 import { ErrorText, RowsSkeleton } from '../ui.tsx';
 

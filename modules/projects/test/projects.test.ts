@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Manifest, column classification and command/query contract checks for @crove/mod-projects (#2591).
-import { MODULE_SCREENS } from '@crove/kernel-contract';
+// Manifest, column classification and command/query contract checks for @ludy/mod-projects (#2591).
+import { MODULE_SCREENS } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { projectsCommands, projectsManifest, projectsQueries } from '../src/index.ts';
 
-describe('@crove/mod-projects (#2591)', () => {
+describe('@ludy/mod-projects (#2591)', () => {
   it('registers manifest tables, column classes, entity metadata and screen definitions', () => {
     expect(projectsManifest.id).toBe('projects');
     expect(projectsManifest.dependsOn).toEqual(['kernel']);

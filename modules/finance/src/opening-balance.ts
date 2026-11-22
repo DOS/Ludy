@@ -16,8 +16,8 @@
 // force is refused (BEFORE_OPENING_BALANCE), and the opening entry takes the org's period_lock row FOR UPDATE, so an
 // import and a posting in flight wait for each other and the second is refused if it breaks the rule.
 import { sql } from 'kysely';
-import { zOpeningBalanceImport, type OpeningBalanceImport } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zOpeningBalanceImport, type OpeningBalanceImport } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { chartOfAccounts } from './accounts.ts';
 import { OPENING_BALANCE_SOURCE, checkOpeningBalance, type LedgerFacts, type OpeningCheck, type OpeningParty } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';

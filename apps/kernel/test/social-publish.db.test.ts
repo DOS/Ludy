@@ -6,12 +6,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BlueskyPublisher, FacebookPagePublisher, SandboxPublisher, TelegramPublisher, TikTokPublisher, YouTubePublisher, type Publisher, type PublishInput, type PublishResult, type ReconcileInput, type ReconcileResult, type RetrySafety } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { BlobIntegrityError, CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
-import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPublishJob, runThreadJob, METRICS_INTERVAL_SECONDS, socialCommands, socialQueries, STORY_EXPIRED_KEY, STORY_FINAL_KEY, storyCapture, sweepMetrics, type BeginResult, type MetricsRow, type PostView } from '@crove/mod-social';
+import { BlueskyPublisher, FacebookPagePublisher, SandboxPublisher, TelegramPublisher, TikTokPublisher, YouTubePublisher, type Publisher, type PublishInput, type PublishResult, type ReconcileInput, type ReconcileResult, type RetrySafety } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { BlobIntegrityError, CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@ludy/kernel-runtime';
+import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPublishJob, runThreadJob, METRICS_INTERVAL_SECONDS, socialCommands, socialQueries, STORY_EXPIRED_KEY, STORY_FINAL_KEY, storyCapture, sweepMetrics, type BeginResult, type MetricsRow, type PostView } from '@ludy/mod-social';
 import { shortLinkTarget } from '../src/short-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

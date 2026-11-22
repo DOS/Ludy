@@ -134,7 +134,7 @@ export interface OutsideRouteDeclaration {
 }
 
 // A module's screens and menu items. They are data with no server code, so the app's bundle reads them from
-// @crove/kernel-contract (MODULE_SCREENS in screens.ts) and each module's manifest names its own entry there.
+// @ludy/kernel-contract (MODULE_SCREENS in screens.ts) and each module's manifest names its own entry there.
 export interface ModuleScreens {
   readonly routes: readonly RouteDeclaration[];
   // Its screens outside /o/$slug, when it has any.

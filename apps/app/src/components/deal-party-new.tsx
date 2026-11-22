@@ -9,10 +9,10 @@
 import { useMutation } from '@tanstack/react-query';
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { normalizeTaxCode, type PartyChoice } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import { normalizeTaxCode, type PartyChoice } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
 import { refreshParties } from './party-edit.tsx';
 import { ErrorText, Field, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

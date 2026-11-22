@@ -9,10 +9,10 @@
 // (#1320). So a task's comment and an escalation's title and reason carry the type, times and counts only, never the
 // visitor's name or contact; the task points at the booking (its source ref), which its host finds in Lịch hẹn.
 import { z } from 'zod';
-import { CALENDAR_RANGE_MAX_DAYS, freeSlots, teamSlots, zId, zonedDate, zonedInstant, zoneOffsetMs, type Interval, type WorkingHours } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { busyOf, workingHoursOf } from '@crove/kernel';
-import { DomainError, defineQuery, type AgentProgram, type QueryContext } from '@crove/kernel-runtime';
+import { CALENDAR_RANGE_MAX_DAYS, freeSlots, teamSlots, zId, zonedDate, zonedInstant, zoneOffsetMs, type Interval, type WorkingHours } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { busyOf, workingHoursOf } from '@ludy/kernel';
+import { DomainError, defineQuery, type AgentProgram, type QueryContext } from '@ludy/kernel-runtime';
 
 export const SCHEDULER_TEMPLATE = 'crm.scheduler';
 // Tasks one run handles at most; the rest wait for the next run.

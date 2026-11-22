@@ -3,8 +3,8 @@
 // - taxOn: revenue times a percentage, rounded to a whole dong; a period with net returns owes nothing (it never goes negative).
 // - splitAmount: one entry's net amount shared between trades by signed weights (the lines the entry is built from), so the parts always add up to the amount exactly: every part but the largest is
 //   rounded to the money scale, and the largest takes what is left. With no usable weight the whole amount is `unassigned`; the code never guesses a trade.
-import { HOUSEHOLD_TRADES, type HouseholdTrade } from '@crove/kernel-contract';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { HOUSEHOLD_TRADES, type HouseholdTrade } from '@ludy/kernel-contract';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 
 export function taxOn(revenue: string, percent: string): string {
   const base = money(revenue);

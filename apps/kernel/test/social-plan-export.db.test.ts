@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PlanRow, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PlanRow, type PostView } from '@ludy/mod-social';
 import { parseCsv } from '../../app/src/lib/bank-statement.ts';
 import { importRows } from '../../app/src/lib/social-import.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -156,7 +156,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const file = await exportPlan(a, a.member, { ...range, timeZone: 'Asia/Ho_Chi_Minh' });
     expect(file.truncated).toBe(false);
     expect(file.rows).toBeNull();
-    expect(file.filename).toBe(`crove-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
+    expect(file.filename).toBe(`ludy-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
     expect(file.csv?.startsWith('\uFEFF')).toBe(true);
     const day = (offset: number) => new Date(base.getTime() + offset * DAY).toISOString().slice(0, 10);
     expect(lines(file.csv)).toEqual([

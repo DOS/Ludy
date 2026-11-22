@@ -4,7 +4,7 @@
 // `not_recognized`, and no token, secret, address or TikTok sentence in any error. No call to TikTok: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { signTiktokRequest } from '../src/marketplace-tiktok-sign.ts';
 import { TIKTOK_API_HOST, TIKTOK_HOSTS, TiktokApiError, parseTiktokSecret, testTiktokConnection, tiktokCaller, tiktokShops } from '../src/marketplace-tiktok.ts';

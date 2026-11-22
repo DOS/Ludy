@@ -3,8 +3,8 @@
 // waiting asks no model, the model is asked once with four facts, an answer is kept, and every state with no text (no model, a spent budget, too many calls, a failed or refused call) is named and never
 // quoted. The facts always come back, so the screen never shows less than the books hold.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type SupplierPayableLineFacts, type SupplierPayableLineResult } from '@crove/agent';
-import type { SupplierPayable, SupplierPayableList } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type SupplierPayableLineFacts, type SupplierPayableLineResult } from '@ludy/agent';
+import type { SupplierPayable, SupplierPayableList } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import {
   SUPPLIER_PAYABLE_LINE_KEEP_MS,

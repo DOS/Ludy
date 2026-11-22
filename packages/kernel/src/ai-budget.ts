@@ -7,7 +7,7 @@
 // read, so the numbers cannot disagree. The month is the calendar month in Asia/Ho_Chi_Minh.
 //
 // The worker (as the system) and the API (as the member who asked) ask the check before a model call and record what it
-// used after (@crove/agent's metered(), through the AiMeter the caller's scope carries): one pair of definitions each,
+// used after (@ludy/agent's metered(), through the AiMeter the caller's scope carries): one pair of definitions each,
 // since the API cannot enter the system context. At 100% of a hard-stop budget that covers the call the check says no;
 // calls in flight finish, so a budget can be passed by what was running. Nothing else is gated: posting, reading,
 // approving, exports and the deterministic checks never ask.
@@ -21,8 +21,8 @@ import {
   defineCommand,
   defineQuery,
   type CommandContext,
-} from "@crove/kernel-runtime";
-import type { AgentScope, MemberRole } from "@crove/db";
+} from "@ludy/kernel-runtime";
+import type { AgentScope, MemberRole } from "@ludy/db";
 import { notifyMembers, ownersAndAdmins } from "./notifications.ts";
 
 export const AI_BUDGET_NOTICE = "kernel.ai_budget";

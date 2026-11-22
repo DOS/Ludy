@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Deterministic Vietnamese Labor Contract PDF renderer (Labor Code 2019 Art. 21, #3548).
-// Pure function of its input: formats amounts through decimal.js (`money()` from @crove/l10n-vn),
+// Pure function of its input: formats amounts through decimal.js (`money()` from @ludy/l10n-vn),
 // renders zero em dashes, and leaves clean two-column signature boxes ready for Ludy eSign.
-import type { HrContractForm, HrPayFunction, HrProbationRoleTier, HrRegion } from '@crove/kernel-contract';
+import type { HrContractForm, HrPayBasis, HrPayFunction, HrProbationRoleTier, HrRegion } from '@ludy/kernel-contract';
 import {
   Decimal,
   compareCalendarDates,
@@ -10,7 +10,7 @@ import {
   deriveFixedTermEndDateIso,
   money,
   parseIsoCalendarDate,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import { contractFonts, type FontSet, type FontWeight } from './pdf/fonts.ts';
 import { A4_HEIGHT, A4_WIDTH, PdfDocument, type PdfPage, type Rgb } from './pdf/writer.ts';
 
@@ -54,6 +54,9 @@ export interface LaborContractTerms {
   probationWage?: string | null;
   probationPct?: string | null;
   baseWage: string;
+  payBasis?: HrPayBasis;
+  hourlyRate?: string | null;
+  pieceRate?: string | null;
   allowances?: readonly LaborContractAllowance[];
   region: HrRegion;
   payFunction: HrPayFunction;
@@ -365,7 +368,38 @@ function renderTermAndProbation(w: ContractWriter, doc: LaborContractDocument): 
   if (effectiveEnd) {
     w.bullet('Ngày kết thúc hợp đồng', vnDate(effectiveEnd) || effectiveEnd);
   }
+  renderProbationClause(w, doc);
+}
 
+function contractRateSpec(terms: LaborContractTerms): { rate: string; unit: string; label: string; basisNoun: string } {
+  const basis = terms.payBasis ?? 'monthly';
+  if (basis === 'hourly') {
+    return {
+      rate: terms.hourlyRate ?? terms.baseWage,
+      unit: 'VND/giờ',
+      label: 'Đơn giá tiền lương theo giờ',
+      basisNoun: 'đơn giá giờ',
+    };
+  }
+  if (basis === 'piece_rate') {
+    return {
+      rate: terms.pieceRate ?? terms.baseWage,
+      unit: 'VND/sản phẩm',
+      label: 'Đơn giá tiền lương theo sản phẩm',
+      basisNoun: 'đơn giá sản phẩm',
+    };
+  }
+  return {
+    rate: terms.baseWage,
+    unit: 'VND/tháng',
+    label: 'Mức lương cơ bản theo công việc / chức danh',
+    basisNoun: 'mức lương cơ bản',
+  };
+}
+
+function renderProbationClause(w: ContractWriter, doc: LaborContractDocument): void {
+  const { terms } = doc;
+  const rateSpec = contractRateSpec(terms);
   const hasProbation = Boolean(terms.probationEndOn || terms.probationWage || terms.probationPct || terms.probationRoleTier);
   if (!hasProbation) {
     w.bullet('Thử việc', 'Không áp dụng thử việc');
@@ -381,19 +415,20 @@ function renderTermAndProbation(w: ContractWriter, doc: LaborContractDocument): 
   }
   const pct =
     terms.probationPct?.trim() ||
-    (terms.probationWage ? computeProbationPct(terms.probationWage, terms.baseWage) : null);
+    (terms.probationWage ? computeProbationPct(terms.probationWage, rateSpec.rate) : null);
   if (terms.probationWage) {
-    parts.push(`lương thử việc: ${vnMoney(terms.probationWage)} VND/tháng${pct ? ` (${pct}% mức lương cơ bản, tối thiểu 85% theo Điều 26 Bộ luật Lao động 2019)` : ''}`);
+    parts.push(`lương thử việc: ${vnMoney(terms.probationWage)} ${rateSpec.unit}${pct ? ` (${pct}% ${rateSpec.basisNoun}, tối thiểu 85% theo Điều 26 Bộ luật Lao động 2019)` : ''}`);
   } else if (pct) {
-    parts.push(`hưởng ${pct}% mức lương cơ bản của công việc (tối thiểu 85% theo Điều 26 Bộ luật Lao động 2019)`);
+    parts.push(`hưởng ${pct}% ${rateSpec.basisNoun} của công việc (tối thiểu 85% theo Điều 26 Bộ luật Lao động 2019)`);
   }
   w.bullet('Thỏa thuận thử việc', parts.join('; '));
 }
 
 function renderCompensationAndBenefits(w: ContractWriter, doc: LaborContractDocument): void {
   const { terms } = doc;
+  const rateSpec = contractRateSpec(terms);
   w.sectionHeading('Điều 3. Tiền lương, phụ cấp và chế độ thanh toán');
-  w.bullet('Mức lương cơ bản theo công việc / chức danh', `${vnMoney(terms.baseWage)} VND/tháng`);
+  w.bullet(rateSpec.label, `${vnMoney(rateSpec.rate)} ${rateSpec.unit}`);
   w.bullet('Vùng lương tối thiểu áp dụng', `Vùng ${terms.region}`);
   w.bullet('Bộ phận / khoản mục hạch toán', PAY_FUNCTION_LABELS[terms.payFunction]);
 

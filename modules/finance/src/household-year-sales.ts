@@ -4,7 +4,7 @@
 // which a busy shop passes within a year, while this reads only the revenue lines and has no such cap. The match of the account is the book's own: 511, any code that starts with it, and the org's
 // sub-accounts whose root is 511 (the same notion as `accountLedgerOf(..., '511')`).
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 

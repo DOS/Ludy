@@ -3,8 +3,8 @@
 // sends exactly what was stored, so the card shows exactly that: a control character, a bidirectional embedding, override or isolate or a zero-width mark is NOT dropped (the customer would then read something
 // other than what the approver read) but written out as a visible marker, <U+202E>. Each value is cut to a bounded length.
 import { sql, type Transaction } from 'kysely';
-import { isEngageProposalKind, type EngageProposalView } from '@crove/kernel-contract';
-import type { Database } from '@crove/db';
+import { isEngageProposalKind, type EngageProposalView } from '@ludy/kernel-contract';
+import type { Database } from '@ludy/db';
 
 const MAX_FIELDS = 40;
 const VALUE_MAX = 8000;

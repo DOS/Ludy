@@ -3,7 +3,7 @@
 // contain it, and the one with the same title is shown under the field ("Đã có việc này") before anything is saved. The search is
 // loose (a part of a word matches), so the answer is checked here against the whole title, ignoring case, spacing and the
 // decomposed or composed form of a Vietnamese letter. No browser or API imports, so it is unit tested directly.
-import type { FilterAst } from '@crove/kernel-contract';
+import type { FilterAst } from '@ludy/kernel-contract';
 import { OPEN_TASK_STATUSES, type TaskStatus } from './agents.ts';
 
 // The tasks search takes a value of at most this many characters (the filter's own limit); a longer title is not looked up.

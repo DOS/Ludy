@@ -10,9 +10,9 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // A viewer holds no feature's permission, so none may connect a device.

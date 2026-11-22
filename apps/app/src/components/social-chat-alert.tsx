@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SOCIAL_CHAT_ALERT_KINDS, SOCIAL_CHAT_ALERT_TARGETS } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { SOCIAL_CHAT_ALERT_KINDS, SOCIAL_CHAT_ALERT_TARGETS } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 

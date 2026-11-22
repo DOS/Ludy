@@ -2,45 +2,17 @@
 // Hash-chained signing audit ledger for crove_sign.signing_event (#3323, ADR-0013). Every mutation on an envelope or
 // signer appends an event whose SHA-256 hash commits deterministically to the canonical event record and prev_event_hash.
 import { createHash } from 'node:crypto';
-import type { Database, SignActorType } from '@crove/db';
+import type { Database, SignActorType } from '@ludy/db';
+import { SIGN_EVENT_TYPES, type SignEventType } from '@ludy/kernel-contract';
 import type { Kysely } from 'kysely';
 
-export const SIGN_EVENT_TYPES = [
-  'envelope_created',
-  'document_inspected',
-  'document_inspect_failed',
-  'envelope_updated',
-  'envelope_shared_summary_updated',
-  'signer_added',
-  'signer_removed',
-  'signers_reordered',
-  'fields_set',
-  'envelope_sent',
-  'link_created',
-  'signer_reminded',
-  'signer_pre_expiry_reminded',
-  'signer_corrected',
-  'signer_delegated',
-  'signer_viewed',
-  'signer_otp_verified',
-  'signer_signed',
-  'signer_declined',
-  'envelope_decline_acknowledged',
-  'envelope_completed',
-  'envelope_voided',
-  'envelope_expired',
-  'envelope_sealed',
-  'envelope_seal_failed',
-  'ca_requested',
-  'ca_completed',
-  'ca_failed',
-] as const;
-export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
+export { SIGN_EVENT_TYPES, type SignEventType };
 
 export interface SigningEventHashInput {
   orgId: string;
   envelopeId: string;
   signerId: string | null;
+  hostUserId?: string | null;
   seq: number;
   eventType: string;
   actorType: SignActorType;
@@ -59,6 +31,7 @@ export interface SigningEventChainRow {
   org_id: string;
   envelope_id: string;
   signer_id: string | null;
+  host_user_id?: string | null;
   seq: number;
   event_type: string;
   actor_type: SignActorType;
@@ -77,6 +50,7 @@ export interface AppendSigningEventInput {
   orgId: string;
   envelopeId: string;
   signerId?: string | null;
+  hostUserId?: string | null;
   eventType: string;
   actorType: SignActorType;
   actorId?: string | null;
@@ -157,6 +131,7 @@ export function computeSigningEventHash(input: SigningEventHashInput): string {
     orgId: input.orgId,
     envelopeId: input.envelopeId,
     signerId: input.signerId,
+    ...(input.hostUserId ? { hostUserId: input.hostUserId } : {}),
     seq: input.seq,
     eventType: input.eventType,
     actorType: input.actorType,
@@ -196,11 +171,13 @@ export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSig
   const prevEventHash = latest ? latest.event_hash : null;
   const occurredAtIso = input.occurredAt.toISOString();
   const payloadObj = input.payloadJson ?? {};
+  const hostUserId = input.hostUserId ?? null;
 
   const eventHash = computeSigningEventHash({
     orgId: input.orgId,
     envelopeId: input.envelopeId,
     signerId: input.signerId ?? null,
+    hostUserId,
     seq,
     eventType: input.eventType,
     actorType: input.actorType,
@@ -220,6 +197,7 @@ export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSig
       org_id: input.orgId,
       envelope_id: input.envelopeId,
       signer_id: input.signerId ?? null,
+      host_user_id: hostUserId,
       seq,
       event_type: input.eventType,
       actor_type: input.actorType,
@@ -275,6 +253,7 @@ export function verifyEventChain(events: readonly SigningEventChainRow[]): Verif
       orgId: row.org_id,
       envelopeId: row.envelope_id,
       signerId: row.signer_id,
+      hostUserId: row.host_user_id ?? null,
       seq: row.seq,
       eventType: row.event_type,
       actorType: row.actor_type,

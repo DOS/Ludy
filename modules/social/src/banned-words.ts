@@ -15,9 +15,9 @@
 // Matching is the pure domain/banned-words.ts, the same in the app. Crove ships no list of its own.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialBannedWordLevel } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialBannedWordLevel } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { effectiveContent } from './domain/approval.ts';
 import {
   BANNED_PHRASE_MAX,
@@ -274,7 +274,7 @@ export function bannedForView(check: BannedCheck, post: PostContent, v: VariantR
   }
 }
 
-// The level lists of this module and of the table's refinement in @crove/db must stay the same.
+// The level lists of this module and of the table's refinement in @ludy/db must stay the same.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const levelsAgree: Same<BannedWordLevel, SocialBannedWordLevel> = true;
 void levelsAgree;

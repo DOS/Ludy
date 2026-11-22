@@ -3,7 +3,7 @@
 // SME zero-setup default: employees can stay unassigned (department_id NULL) and run payroll with zero department setup.
 // Owners and admins only, in the commands/queries and in the database's RESTRICTIVE owner_admin and le_scope policies.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   tableWrite,
   zHrDepartmentAdd,
@@ -12,9 +12,9 @@ import {
   zHrDepartmentRef,
   type HrDepartmentView,
   type HrDepartmentWritten,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { sum, toMoney } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { sum, toMoney } from '@ludy/l10n-vn';
 import { resolveEntity, vietnamDay } from './employees.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate } from './payroll-dates.ts';

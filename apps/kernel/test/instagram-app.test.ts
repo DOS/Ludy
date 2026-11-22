@@ -3,7 +3,7 @@
 // which app the Instagram dialog names, and that the webhook and the data deletion callback also take what the Instagram app signs.
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { acceptFacebookWebhook } from '../src/facebook-webhook.ts';
 import { channelConnectors, channelPublishers, instagramMetaApp, metaConversationSecrets, metaWriteAppShared } from '../src/kernel.ts';

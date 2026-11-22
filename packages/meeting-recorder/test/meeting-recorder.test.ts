@@ -3,9 +3,12 @@
 // gate, the timer that stops while paused, and a recording that survives a reload because every chunk is on the device.
 import { describe, expect, it } from 'vitest';
 import {
+  LEGACY_RECORDINGS_DB_NAME,
+  RECORDINGS_DB_NAME,
   assembleRecording,
   beginRecording,
   createClock,
+  createIndexedDbChunkStore,
   formatClock,
   lengthSecondsOf,
   pickRecorderMime,
@@ -268,5 +271,213 @@ describe('prepareCapture (setup order and cleanup, issue #2581 review finding 1)
     const { deps, log } = rig({ failAt });
     expect(await prepareCapture(deps)).toMatchObject({ status: 'failed', reason: 'setup' });
     expect(log).toContain('track.stop');
+  });
+});
+
+interface FakeDbData {
+  recordings: Map<string, RecordingMeta>;
+  chunks: Map<string, { id: string; seq: number; chunk: Blob }>;
+}
+
+function createFakeIdbFactory(initial: Record<string, FakeDbData> = {}, options: { failWriteOn?: string } = {}) {
+  const databases = new Map<string, FakeDbData>();
+  for (const [name, content] of Object.entries(initial)) {
+    databases.set(name, {
+      recordings: new Map(content.recordings),
+      chunks: new Map(content.chunks),
+    });
+  }
+  const deleted: string[] = [];
+
+  const toReq = <T>(work: () => T): IDBRequest<T> => {
+    const req = { result: undefined as unknown as T, error: null, onsuccess: null as (() => void) | null, onerror: null as (() => void) | null };
+    queueMicrotask(() => {
+      req.result = work();
+      req.onsuccess?.();
+    });
+    return req as unknown as IDBRequest<T>;
+  };
+
+  const open = (name: string) => {
+    const existed = databases.has(name);
+    let data = databases.get(name);
+    if (!data) {
+      data = { recordings: new Map(), chunks: new Map() };
+      databases.set(name, data);
+    }
+    const storeNames = new Set(['recordings', 'chunks']);
+    const db = {
+      onversionchange: null as (() => void) | null,
+      close: () => undefined,
+      objectStoreNames: { contains: (s: string) => (existed ? storeNames.has(s) : false) },
+      createObjectStore: (s: string) => {
+        storeNames.add(s);
+        return {};
+      },
+      transaction: (_stores: string[], mode?: IDBTransactionMode) => {
+        let pending = 0;
+        const shouldFailWrite = mode === 'readwrite' && options.failWriteOn === name;
+        const tx = {
+          oncomplete: null as (() => void) | null,
+          onerror: null as (() => void) | null,
+          onabort: null as (() => void) | null,
+          error: null as DOMException | Error | null,
+          objectStore: (storeName: string) => {
+            const finishSoon = <T>(work: () => T): IDBRequest<T> => {
+              pending++;
+              const req = toReq(() => {
+                if (shouldFailWrite) {
+                  pending--;
+                  if (pending === 0) {
+                    tx.error = new Error('QuotaExceededError');
+                    queueMicrotask(() => tx.onabort?.());
+                  }
+                  return undefined as unknown as T;
+                }
+                const res = work();
+                pending--;
+                if (pending === 0) queueMicrotask(() => tx.oncomplete?.());
+                return res;
+              });
+              return req;
+            };
+            return {
+              getAll: (range?: { lower?: [string, number]; upper?: [string, number] }) =>
+                finishSoon(() => {
+                  if (storeName === 'recordings') return [...data!.recordings.values()];
+                  const all = [...data!.chunks.values()];
+                  if (range && Array.isArray(range.lower) && Array.isArray(range.upper)) {
+                    const targetId = range.lower[0];
+                    return all.filter((c) => c.id === targetId).sort((a, b) => a.seq - b.seq);
+                  }
+                  return all;
+                }),
+              put: (value: RecordingMeta | { id: string; seq: number; chunk: Blob }) =>
+                finishSoon(() => {
+                  if (storeName === 'recordings') {
+                    const m = value as RecordingMeta;
+                    data!.recordings.set(m.id, m);
+                  } else {
+                    const c = value as { id: string; seq: number; chunk: Blob };
+                    data!.chunks.set(`${c.id}:${c.seq}`, c);
+                  }
+                  return undefined;
+                }),
+            };
+          },
+        };
+        return tx as unknown as IDBTransaction;
+      },
+    };
+    const req = { result: db, error: null, onupgradeneeded: null as (() => void) | null, onsuccess: null as (() => void) | null, onerror: null as (() => void) | null };
+    queueMicrotask(() => {
+      if (!existed) req.onupgradeneeded?.();
+      req.onsuccess?.();
+    });
+    return req as unknown as IDBOpenDBRequest;
+  };
+
+  const factory = {
+    open,
+    databases: async () => [...databases.keys()].map((name) => ({ name, version: 1 })),
+    deleteDatabase: (name: string) => {
+      deleted.push(name);
+      databases.delete(name);
+      return toReq(() => undefined) as unknown as IDBOpenDBRequest;
+    },
+    bound: (lower: unknown, upper: unknown) => ({ lower, upper }),
+  };
+
+  return { factory: factory as unknown as IDBFactory, databases, deleted };
+}
+
+describe('createIndexedDbChunkStore legacy migration (#3966)', () => {
+  it('migrates legacy crove-meeting-recordings to ludy-meeting-recordings without overwriting existing entries', async () => {
+    const originalKeyRange = globalThis.IDBKeyRange;
+    const legacyMeta: RecordingMeta = {
+      id: 'rec-legacy',
+      scope: 'acme:u1',
+      meetingId: 'm-legacy',
+      title: 'Cuộc họp cũ',
+      kind: 'audio',
+      mimeType: 'audio/webm',
+      startedAt: 100,
+      elapsedMs: 5000,
+      chunkCount: 1,
+      updatedAt: 200,
+    };
+    const conflictLegacy: RecordingMeta = { ...legacyMeta, id: 'rec-new', title: 'Should not overwrite', startedAt: 150 };
+    const currentMeta: RecordingMeta = { ...legacyMeta, id: 'rec-new', title: 'Existing Ludy recording', startedAt: 200 };
+    const legacyBlob = new Blob(['legacy-chunk']);
+    const newBlob = new Blob(['new-chunk']);
+
+    const fake = createFakeIdbFactory({
+      [LEGACY_RECORDINGS_DB_NAME]: {
+        recordings: new Map([
+          ['rec-legacy', legacyMeta],
+          ['rec-new', conflictLegacy],
+        ]),
+        chunks: new Map([
+          ['rec-legacy:0', { id: 'rec-legacy', seq: 0, chunk: legacyBlob }],
+          ['rec-new:0', { id: 'rec-new', seq: 0, chunk: new Blob(['stale-chunk']) }],
+        ]),
+      },
+      [RECORDINGS_DB_NAME]: {
+        recordings: new Map([['rec-new', currentMeta]]),
+        chunks: new Map([['rec-new:0', { id: 'rec-new', seq: 0, chunk: newBlob }]]),
+      },
+    });
+    globalThis.IDBKeyRange = { bound: (lower: unknown, upper: unknown) => ({ lower, upper }) } as unknown as typeof IDBKeyRange;
+    try {
+      const store = createIndexedDbChunkStore(fake.factory);
+      const list = await store.list('acme:u1');
+      expect(list.map((m) => [m.id, m.title])).toEqual([
+        ['rec-legacy', 'Cuộc họp cũ'],
+        ['rec-new', 'Existing Ludy recording'],
+      ]);
+      expect(await store.chunks('rec-legacy')).toEqual([legacyBlob]);
+      expect(await store.chunks('rec-new')).toEqual([newBlob]);
+      expect(fake.deleted).toEqual([LEGACY_RECORDINGS_DB_NAME]);
+    } finally {
+      globalThis.IDBKeyRange = originalKeyRange;
+    }
+  });
+
+  it('keeps crove-meeting-recordings intact when writing to ludy-meeting-recordings fails', async () => {
+    const originalKeyRange = globalThis.IDBKeyRange;
+    const legacyMeta: RecordingMeta = {
+      id: 'rec-keep',
+      scope: 'acme:u1',
+      meetingId: 'm-keep',
+      title: 'Bản ghi quan trọng',
+      kind: 'audio',
+      mimeType: 'audio/webm',
+      startedAt: 100,
+      elapsedMs: 5000,
+      chunkCount: 1,
+      updatedAt: 200,
+    };
+    const fake = createFakeIdbFactory(
+      {
+        [LEGACY_RECORDINGS_DB_NAME]: {
+          recordings: new Map([['rec-keep', legacyMeta]]),
+          chunks: new Map([['rec-keep:0', { id: 'rec-keep', seq: 0, chunk: new Blob(['important']) }]]),
+        },
+        [RECORDINGS_DB_NAME]: {
+          recordings: new Map(),
+          chunks: new Map(),
+        },
+      },
+      { failWriteOn: RECORDINGS_DB_NAME },
+    );
+    globalThis.IDBKeyRange = { bound: (lower: unknown, upper: unknown) => ({ lower, upper }) } as unknown as typeof IDBKeyRange;
+    try {
+      const store = createIndexedDbChunkStore(fake.factory);
+      expect(await store.list('acme:u1')).toEqual([]);
+      expect(fake.deleted).toEqual([]);
+      expect(fake.databases.get(LEGACY_RECORDINGS_DB_NAME)?.recordings.has('rec-keep')).toBe(true);
+    } finally {
+      globalThis.IDBKeyRange = originalKeyRange;
+    }
   });
 });

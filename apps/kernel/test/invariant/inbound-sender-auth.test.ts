@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Who a customer mail is from (#2439, security review of #2528): one mailbox only, and a sender is verified only on the word of our own receiving server.
 import { describe, expect, it } from 'vitest';
-import { isMailAddress } from '@crove/kernel-contract';
+import { isMailAddress } from '@ludy/kernel-contract';
 import { conversationEventOf, senderVerified } from '../../src/inbound.ts';
 
 const SERVER = 'mx.example.test';

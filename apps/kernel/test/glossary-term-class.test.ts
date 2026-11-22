@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { INVISIBLE_PATTERN, glossaryTermProblem, zGlossaryAdd } from '@crove/kernel-contract';
+import { INVISIBLE_PATTERN, glossaryTermProblem, zGlossaryAdd } from '@ludy/kernel-contract';
 
 const read = (name: string) => readFileSync(fileURLToPath(new URL(`../../../supabase/migrations/${name}`, import.meta.url)), 'utf8');
 const CLASS = /'(\[\\u0001-[^']*\])'/g;

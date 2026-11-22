@@ -4,7 +4,7 @@
 // for and none kept even when an answer carries one; the stage table and THE STOCK RULE (a system or Ops cancellation after pickup stays `shipped`, never `cancelled`); the window cuts and the cursor; and every
 // hostile page refused as `not_recognized` with nothing stored.
 import { describe, expect, it } from 'vitest';
-import { MarketplaceProviderError, parseMarketplaceOrderPage } from '@crove/mod-finance';
+import { MarketplaceProviderError, parseMarketplaceOrderPage } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { SHOPEE_HOSTS, ShopeeApiError, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, shopeeShopInfo, testShopeeConnection } from '../src/marketplace-shopee.ts';
 import { SHOPEE_ORDER_STAGE, shopeeMarketplace } from '../src/marketplace-shopee-orders.ts';

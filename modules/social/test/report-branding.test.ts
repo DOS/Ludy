@@ -1,6 +1,6 @@
 // White-label client reports (#1053): the rules a brand's logo and accent meet, the same in the command and the form.
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_BRAND_ACCENT_INPUT_MAX, SOCIAL_BRAND_LOGO_INPUT_MAX, SOCIAL_BRAND_NAME_MAX, zSocialReportBrandingSave } from '@crove/kernel-contract';
+import { SOCIAL_BRAND_ACCENT_INPUT_MAX, SOCIAL_BRAND_LOGO_INPUT_MAX, SOCIAL_BRAND_NAME_MAX, zSocialReportBrandingSave } from '@ludy/kernel-contract';
 import { zReportBrandingSave } from '../src/report-branding.ts';
 import {
   accentContrast,

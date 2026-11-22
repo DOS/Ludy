@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { AUDIT_CSV_HEAD, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { AUDIT_EXPORT_LIMIT, AUDIT_PAGE_SIZE, type AuditEntry, type AuditExport, type AuditFilter, type AuditPage } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { AUDIT_CSV_HEAD, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { AUDIT_EXPORT_LIMIT, AUDIT_PAGE_SIZE, type AuditEntry, type AuditExport, type AuditFilter, type AuditPage } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

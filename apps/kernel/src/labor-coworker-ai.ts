@@ -3,12 +3,12 @@
 //
 // Reads a sanitized snapshot through the audited sensitive query `hr.payroll.labor_check.read` (owner/admin only,
 // zero sealed-column decryption, zero MFA step-up required), delegates deterministic + optional pseudonymized
-// compliance review to @crove/agent (`reviewLaborCompliance` / `InboxReader.laborCheck`), records an audit row
+// compliance review to @ludy/agent (`reviewLaborCompliance` / `InboxReader.laborCheck`), records an audit row
 // `{ kind, checked }` (no PII) via `hr.payroll.labor_check.audit`, and always returns exact deterministic counts
 // and findings even when AI is off, over budget, unavailable, or its text is refused.
-import { AiBudgetExhaustedError, reviewLaborCompliance, type InboxReader, type LaborComplianceInput, type LaborComplianceResult } from '@crove/agent';
-import type { HrLaborCheckAsk, HrLaborCheckKind, HrLaborCheckResult } from '@crove/kernel-contract';
-import type { HrLaborCheckSnapshot } from '@crove/mod-hr';
+import { AiBudgetExhaustedError, reviewLaborCompliance, type InboxReader, type LaborComplianceInput, type LaborComplianceResult } from '@ludy/agent';
+import type { HrLaborCheckAsk, HrLaborCheckKind, HrLaborCheckResult } from '@ludy/kernel-contract';
+import type { HrLaborCheckSnapshot } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface LaborCheckAi {

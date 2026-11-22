@@ -11,9 +11,9 @@
 // limited to some channels (#1081) gets the figures of those channels only.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { OverviewContribution } from '@crove/kernel';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { OverviewContribution } from '@ludy/kernel';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { ATTENTION_CHANNEL_STATUSES } from './attention-inbox.ts';
 import { channelScope, connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
 import { approvalsInRound } from './domain/approval.ts';

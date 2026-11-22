@@ -10,7 +10,7 @@
 // Returned without content (rejected): encrypted entries, compression other than stored or deflate, nested archives,
 // entries larger than a document may be, and entries whose size or CRC-32 does not match their bytes.
 import { crc32, inflateRawSync } from 'node:zlib';
-import { EXTRACT_LIMITS, type ArchiveRejection, type ExtractedArchive } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, type ArchiveRejection, type ExtractedArchive } from '@ludy/extract-contract';
 
 export class ArchiveError extends Error {
   constructor(message: string) {

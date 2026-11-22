@@ -6,17 +6,18 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingMinutesSignHandoff, type MeetingSignMemberInfo } from './meeting-minutes-sign-handoff.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
@@ -516,6 +517,7 @@ export function MeetingResults({
   visibility,
   slug,
   minutesLink,
+  signInfo,
 }: {
   meetingId: string;
   readers: readonly string[];
@@ -526,6 +528,15 @@ export function MeetingResults({
   visibility?: MeetingVisibility;
   slug?: string;
   minutesLink?: ReactNode;
+  signInfo?: {
+    startedAt: string | null;
+    createdAt: string;
+    endedAt: string | null;
+    recorderUserId: string;
+    companyName: string;
+    orgMembers: readonly MeetingSignMemberInfo[];
+    canEdit?: boolean;
+  };
 }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -593,6 +604,28 @@ export function MeetingResults({
           </section>
         )}
         {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
+        {signInfo && (published !== null || items.some((i) => i.stage === 'published')) && (
+          <MeetingMinutesSignHandoff
+            source={{
+              meeting: {
+                id: meetingId,
+                title,
+                startedAt: signInfo.startedAt,
+                createdAt: signInfo.createdAt,
+                endedAt: signInfo.endedAt,
+                recorderUserId: signInfo.recorderUserId,
+                readers,
+                summaryTemplate: template,
+                minutesTemplate,
+                isRecorder,
+              },
+              results: data,
+              companyName: signInfo.companyName,
+              orgMembers: signInfo.orgMembers,
+            }}
+            {...(signInfo.canEdit !== undefined ? { canEdit: signInfo.canEdit } : {})}
+          />
+        )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
         {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (

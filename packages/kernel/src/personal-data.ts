@@ -15,7 +15,7 @@
 // - hashed: a keyed hash, not the value; kept so a suppression still holds after the address itself is gone.
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   FOLLOWUP_MAIL_SOURCE,
   NOTE_BODY_MAX,
@@ -32,8 +32,8 @@ import {
   type PersonalDataErasure,
   type PersonalDataNotice,
   type PersonalDataResult,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -324,6 +324,16 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: deleted when the worker claims it, and any notice older than ten minutes by the next claim or the nightly sweep; also deleted by an erasure whose value its text mentions, and with the connection and the org",
   },
+  // The raw body of a marketplace push waiting for the worker (#4316, S1 of #4315): ids, statuses and times in the subscribed order, return and authorization topics, but a seller can subscribe chat or address topics, so
+  // it is treated as personal data. A claim deletes it when the worker takes it; any push older than ten minutes is deleted by the next claim or the nightly sweep; it is never logged, is deleted by an erasure that its text
+  // mentions, and goes with the hook, the connection and the org.
+  'crove_finance.marketplace_hook_notice.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through crove_finance.personal_data_erase_marketplace_hook_notice.
+    machinery: true,
+    reason: "The raw body of a marketplace's signed push, which holds ids, statuses and times (and could hold a buyer's message or address if a seller subscribed such a topic): deleted when the worker claims it, and any push older than ten minutes by the next claim or the nightly sweep; also deleted by an erasure whose value its text mentions, and with the hook, the connection and the org",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -524,6 +534,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.work_permit_expires_on': { kind: 'other', handling: 'erase', reason: "A foreign employee's work permit expiry date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
   'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
@@ -586,6 +597,11 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
   },
+  'crove_sign.envelope_obligation.counterparty_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -616,6 +632,10 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   'crove_hr.payroll_employee.bank_account_sealed': {
     handling: 'shred',
     reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.work_permit_number_sealed': {
+    handling: 'shred',
+    reason: "A foreign employee's work permit number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
   'crove_finance.supplier_bank_account.account_holder_sealed': {
     handling: 'shred',
@@ -1392,6 +1412,11 @@ export const personalDataErase = defineCommand({
     const { rows: hookNotices } = await sql<{ rows: number }>`
       SELECT crove_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('crove_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
+
+    // The raw body of a marketplace push that waits for the worker (#4316): the same, deleted when its text mentions the value.
+    const { rows: marketplaceNotices } = await sql<{ rows: number }>`
+      SELECT crove_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('crove_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value

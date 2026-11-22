@@ -4,12 +4,12 @@
 // The legal entity is not chosen by the caller; the answer exists only when the grant sees the whole org (a partial view is refused with SIGNAL_PARTIAL_VIEW,
 // as the signals are), because a total of part of the books would read as the total of all. The screen's figures are those of ONE legal entity, so an org with more than
 // one entity is refused the same way: one entity's cash must never read as the org's. Read only; money stays a decimal string in VND.
-import type { MemberRole } from '@crove/db';
-import { zOverviewRange, type FinanceOverview, type OverviewFigure } from '@crove/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { zOverviewRange, type FinanceOverview, type OverviewFigure } from '@ludy/kernel-contract';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { overviewFigure } from './domain/overview.ts';
 import { wholeOrgEntity } from './mcp-whole-org.ts';
 import { financeOverview } from './overview.ts';

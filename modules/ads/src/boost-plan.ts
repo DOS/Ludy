@@ -3,7 +3,7 @@
 // audience preset become the plan of a draft. No database and no model: the same answers always give the same plan, and the same local validation
 // (campaign-plan.ts) judges it as any other draft. Money is a decimal string and every division goes through decimal.js (AGENTS.md "Money").
 import { Decimal } from 'decimal.js';
-import { ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostDraft, type AdsBoostGoal, type AdsCallToAction, type AdsCampaignPlanDraft, type AdsObjective, type AdsTargeting } from '@crove/kernel-contract';
+import { ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostDraft, type AdsBoostGoal, type AdsCallToAction, type AdsCampaignPlanDraft, type AdsObjective, type AdsTargeting } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals } from './domain.ts';
 
 // A goal is one of the objectives of the first slice: Traffic, Engagement, Messenger.

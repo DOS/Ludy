@@ -24,10 +24,10 @@ import {
   restoreAliases,
   type InboxReader,
   type PayrollSheetLine,
-} from '@crove/agent';
-import { Decimal } from '@crove/l10n-vn';
-import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/agent';
+import { Decimal } from '@ludy/l10n-vn';
+import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface PayrollAi {
@@ -114,6 +114,9 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
         insuredAboveCap: insuredAboveCap(l.breakdown),
         cashPaymentOverLimit: false,
         annualLeaveExceeded,
+        workPermitExpiring: l.flags.includes('work_permit_expiring'),
+        bhxhSuspendedRegime: l.flags.includes('bhxh_suspended_regime'),
+        nonResidentFlatPit: l.flags.includes('non_resident_flat_pit'),
       },
     };
   });
@@ -274,7 +277,16 @@ export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: 
       if (isForbiddenError(error)) ticket.refund?.();
       throw error;
     }
-    const request = { language, figures: payrollFiguresOf(slip.figures, slip.breakdown), dependentsCounted: dependentsCountedOf(slip.breakdown) };
+    const breakdown = (slip.breakdown ?? {}) as { tax?: { mode?: unknown }; insurance?: { suspended?: unknown } };
+    const taxMode = typeof breakdown.tax?.mode === 'string' ? breakdown.tax.mode : undefined;
+    const insuranceSuspended = typeof breakdown.insurance?.suspended === 'string' ? breakdown.insurance.suspended : null;
+    const request = {
+      language,
+      figures: payrollFiguresOf(slip.figures, slip.breakdown),
+      dependentsCounted: dependentsCountedOf(slip.breakdown),
+      ...(taxMode !== undefined ? { taxMode } : {}),
+      ...(insuranceSuspended !== null ? { insuranceSuspended } : {}),
+    };
     const forbidden = [slip.employeeName, slip.employerName].filter((v) => v.trim() !== '');
     const answer = await runModel('explain', () => reader.payrollExplain(request, { forbidden }));
     if ('state' in answer) return none(answer.state);

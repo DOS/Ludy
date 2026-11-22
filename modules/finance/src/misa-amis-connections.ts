@@ -10,10 +10,10 @@
 // No query, audit fact or error carries the access code, the integrator's ClientID or MISA's own text: only ids and states. The connection's opaque org_company_code (what AMIS is told and what a
 // later slice's callback finds the organisation by) is not in any answer either.
 import { z } from 'zod';
-import { zChannelConnect } from '@crove/kernel';
-import { MISA_AMIS_UNIT_ALIASES_MAX, zId, zMisaAmisConnectionRecordTest, zMisaAmisDefaultItem, zMisaAmisUnitAlias, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zChannelConnect } from '@ludy/kernel';
+import { MISA_AMIS_UNIT_ALIASES_MAX, zId, zMisaAmisConnectionRecordTest, zMisaAmisDefaultItem, zMisaAmisUnitAlias, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { normalizeUnitName } from './misa-amis-matching.ts';
 
