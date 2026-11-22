@@ -284,9 +284,9 @@ export const vi = {
         dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới, hoặc đã quá giờ, mà vẫn chưa được duyệt',
       },
       wake: {
-        unanswered: '{count, plural, other {# hội thoại}} đã chờ quá {hours, plural, other {# giờ}} mà chưa được trả lời',
-        replyWindow: '{count, plural, other {# hội thoại}} sắp hết thời hạn trả lời của nền tảng (trong {hours, plural, other {# giờ}})',
-        postComments: '{count, plural, other {# bình luận mới}} dưới bài đã đăng chưa được trả lời',
+        unanswered: '{count, plural, other {#{plus} hội thoại}} đã chờ quá {hours, plural, other {# giờ}} mà chưa được trả lời',
+        replyWindow: '{count, plural, other {#{plus} hội thoại}} sắp hết thời hạn trả lời của nền tảng (trong {hours, plural, other {# giờ}})',
+        postComments: '{count, plural, other {#{plus} bình luận mới}} dưới bài đã đăng chưa được trả lời',
       },
       conversations: {
         unanswered: '{count, plural, other {# tin nhắn của khách}} đang chờ bạn trả lời',

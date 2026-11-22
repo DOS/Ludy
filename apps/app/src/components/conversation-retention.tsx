@@ -21,6 +21,8 @@ export function ConversationRetentionCard() {
   const current = useQuery(orpc.conversations.retention.queryOptions({ input: {} }));
   const [asking, setAsking] = useState<Months | undefined>(undefined);
   const set = useMutation({
+    // Saves run one after another, so a second change made while one is saving is never lost or reordered.
+    scope: { id: 'conversation-retention' },
     mutationFn: (retentionMonths: Months) => client.conversations.setRetention({ retentionMonths }),
     onSuccess: () => {
       setAsking(undefined);
@@ -40,18 +42,22 @@ export function ConversationRetentionCard() {
     );
   }
   if (!current.data) return null;
+  // While a save is out, the select shows the value being saved (not the old one) and stays enabled: a disabled select drops the keyboard's focus, and the 44 px height holds on a phone.
+  const shownMonths = set.isPending && set.variables !== undefined ? set.variables : current.data.retentionMonths;
+  const value = shownMonths === null ? 'keep' : String(shownMonths);
+  // A shorter choice than the one on show asks first; one against the saved value alone would ask again for a change that is longer than the one in flight.
   const choose = (next: Months) => {
-    if (monthsOf(next) < monthsOf(current.data.retentionMonths)) setAsking(next);
+    if (monthsOf(next) < monthsOf(shownMonths)) setAsking(next);
     else set.mutate(next);
   };
-  const value = current.data.retentionMonths === null ? 'keep' : String(current.data.retentionMonths);
   return (
     <Card className="block space-y-3 p-4" data-testid="conversation-retention">
       {heading}
       <NativeSelect
         aria-label={t('retention.title')}
         value={value}
-        disabled={set.isPending}
+        aria-busy={set.isPending}
+        className="w-full md:w-fit [&_select]:h-11 md:[&_select]:h-8"
         data-testid="conversation-retention-select"
         onChange={(e) => choose(e.target.value === 'keep' ? null : (Number(e.target.value) as 6 | 12 | 24))}
       >
