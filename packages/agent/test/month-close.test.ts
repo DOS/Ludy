@@ -59,7 +59,7 @@ describe('checkMonthCloseNote: the note', () => {
     for (const text of ['Do one thing first.', 'Start with the twentieth item.', 'This is the fourth step.', 'Check it twice.', 'The eleventh item waits.']) {
       expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
     }
-    for (const text of ['Start with this one, then the bank lines.', 'Do the last one after the others.', 'Lock the period once the lines are booked.', 'No one step depends on the others.', 'Start with the first, then the second.']) {
+    for (const text of ['Start with this one, then the bank lines.', 'Do the last one after the others.', 'Once the lines are booked, lock the period.', 'No one step depends on the others.', 'Start with the first, then the second.']) {
       expect(check(text).kind, text).toBe('note');
     }
   });
@@ -103,11 +103,47 @@ describe('checkMonthCloseNote: the note', () => {
     expect(check('Hãy đảm bảo các dòng sao kê đã được hạch toán rồi mới khóa sổ.').kind).toBe('note');
     expect(check('Sau khi các dòng sao kê hạch toán xong, hãy chuẩn bị tờ khai.').kind).toBe('note');
     expect(check('Khi các dòng đã được ghi, hãy khóa sổ.').kind).toBe('note');
-    expect(check('Lock the period once everything is done.').kind).toBe('note');
+    expect(check('Once everything is done, lock the period.').kind).toBe('note');
     // A promise and a plain done claim are still refused.
     expect(check('Tôi đảm bảo mọi thứ đúng.')).toEqual({ kind: 'none', code: 'PROMISE' });
     expect(check('Các dòng đã được ghi.')).toEqual({ kind: 'none', code: 'PROMISE' });
     expect(check('Everything is done.')).toEqual({ kind: 'none', code: 'PROMISE' });
+  });
+
+  it('refuses a done claim that only has a condition word somewhere in its clause: the clause itself must START with the condition', () => {
+    for (const text of [
+      'I checked when you asked and everything is done.',
+      'Khi nãy mọi bút toán đã được ghi.',
+      'As before everything is done.',
+      'Once you check\u2014everything is done.',
+      'Once you check \u2013 everything is done.',
+      'Review the proposals before the VAT return is filed.',
+      'Lock the period once everything is done.',
+      'Lúc nãy mọi bút toán đã được ghi.',
+      'Once you check, everything is done.',
+    ]) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
+    }
+    // The same words in a clause that starts with the condition stay allowed, the dash included.
+    expect(check('Once the lines are booked, lock the period.').kind).toBe('note');
+    expect(check('After you check\u2014lock the period.').kind).toBe('note');
+  });
+
+  it('refuses "I ensure" and "we ensure" as a promise, and keeps "Ensure ..." at the start of a clause as an instruction', () => {
+    for (const text of ['I ensure the lines are posted.', 'We ensure everything is right.', 'I ensure it.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
+    }
+    expect(check('Ensure the bank lines are booked, then lock the period.').kind).toBe('note');
+    expect(check('Tôi đảm bảo mọi thứ đúng.')).toEqual({ kind: 'none', code: 'PROMISE' });
+  });
+
+  it('refuses number words written together: mườihai, mườimột, muời, twentyfive, onehundred, twothousand', () => {
+    for (const text of ['Còn mườihai dòng.', 'Còn mườimột dòng.', 'Còn muời dòng.', 'Còn haimươi dòng.', 'Còn mộttrăm dòng.', 'Còn hainghìn dòng.', 'Còn bangàn dòng.', 'Còn mộttriệu dòng.', 'Còn twentyfive lines.', 'Còn onehundred lines.', 'Còn twothousand lines.', 'About fiftyfive lines wait.', 'A million lines wait.']) {
+      expect(check(text), text).toEqual(expect.objectContaining({ kind: 'none' }));
+    }
+    // An ordinary Vietnamese or English word that holds none of them stays.
+    expect(check('Các đề xuất đang chờ duyệt trước.').kind).toBe('note');
+    expect(check('Start with the thirsty accountant.').kind).toBe('note');
   });
 
   it('refuses a look-alike letter of another script and an invisible filler, which could hide a word', () => {
@@ -118,7 +154,7 @@ describe('checkMonthCloseNote: the note', () => {
 
   it('keeps an ordering rationale that says what must come first ("once ... are booked", "before ... is filed")', () => {
     expect(check('Book the bank lines first. Once they are booked the VAT return can be prepared.').kind).toBe('note');
-    expect(check('Review the proposals before the VAT return is filed.').kind).toBe('note');
+    expect(check('Before the VAT return is filed, review the proposals.').kind).toBe('note');
     expect(check('Sau khi các dòng sao kê được hạch toán, hãy chuẩn bị tờ khai.').kind).toBe('note');
     // The same words as a statement that something is done are still refused.
     expect(check('The VAT return is filed.')).toEqual({ kind: 'none', code: 'PROMISE' });

@@ -78,10 +78,10 @@ const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u
 
 // A Vietnamese number said in words, anywhere in the note: this note is given no figure at all, so every exact number is refused (the shared check only catches one next to a unit). A
 // vague quantity ("một số", "nhiều", "vài") is no figure and stays allowed; a ten or a pair ("chục", "đôi") is a number.
-const VI_NUMBER = /(?<![\p{L}])(?:hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|trăm|nghìn|ngàn|triệu|tỷ|chục|đôi|một(?!\s+(?:số|chút|cách|khi|lần\s+nữa)))(?![\p{L}])/iu;
+const VI_NUMBER = /(?<![\p{L}])(?:hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mốt|lăm|tỷ|chục|đôi|một(?!\s+(?:số|chút|cách|khi|lần\s+nữa)))(?![\p{L}])|mười|mươi|muời|trăm|nghìn|ngàn|triệu/iu;
 // English number words the shared check stops short of (it ends at twelve and twenty): every exact number is refused here, as the note is given no figure at all.
 const EN_NUMBER = [
-  /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds|thousands|millions|billions|dozens|couple|pair|pairs|score|scores|handful)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|dozens|couple|pair|pairs|score|scores|handful)(?![\p{L}])|(?<![\p{L}])(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)|hundred|thousand|million|billion/iu,
   // "one" is a number too, except where it stands for a thing ("no one", "this one", "the last one", "one of them", "one by one"), as "một" is allowed before "số" and "chút" above.
   /(?<!\b(?:no|any|every|the|this|that|each|another|last|first|other|next|same|only|which)\s)(?<![\p{L}])one(?!\s+(?:of|another|by)\b)(?![\p{L}])/iu,
   // The ordinals from the fourth up (first, second and third only put things in order), and the counts of times ("once" alone is also "when", so it stays allowed).
@@ -101,31 +101,29 @@ const DATE_WORDS = [
   /(?<![\p{L}])(?:(?:by|before)\s+(?:the\s+)?end\s+of|end\s+of\s+(?:the\s+)?(?:day|week|month|quarter|year))(?![\p{L}])/iu,
   /(?<![\p{L}])(?:cuối\s+(?:ngày|quý|năm)|trước\s+cuối)(?![\p{L}])/iu,
 ];
-// A promise, or a claim that a step was done: what the note must never say, in either language. The promise words are refused wherever they stand.
+// A promise, or a claim that a step was done: what the note must never say, in either language. The promise words are refused wherever they stand: "I ensure", "we ensure" and "tôi đảm bảo"
+// are a promise in the first person, while "Ensure ..." and "Hãy đảm bảo ..." at the start of a clause is an instruction.
 const PROMISE_WORDS = [
   /(?<![\p{L}])(?:sẽ|cam kết|hứa|đang được)(?![\p{L}])|(?<![\p{L}])(?<!hãy\s)(?:đảm bảo|bảo đảm)(?![\p{L}])/iu,
   /(?<![\p{L}])(?:will|shall|promise|promised|guarantee|guaranteed|ensured|already|going\s+to)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:i|we)\s+(?:will\s+)?ensures?(?![\p{L}])/iu,
   /\p{L}['’]ll(?![\p{L}])/iu,
 ];
-// Words that say a step is done: refused too, except in a clause that opens with a condition or a time ("sau khi ... xong", "khi ... đã được ghi", "once all are done"), which says what
-// must come first and not that a step was done.
+// Words that say a step is done: refused too, except in a clause that STARTS with a condition ("Sau khi ... xong", "Khi ... đã được ghi", "Once all are done, ..."), which says what must come first
+// and not that a step was done.
 const DONE_WORDS = [/(?<![\p{L}])(?:đã|xong|hoàn tất|hoàn thành)(?![\p{L}])/iu, /(?<![\p{L}])(?:done|completed|finished)(?![\p{L}])/iu];
 // A step said to be in a done state ("is filed", "has been posted"); "not yet filed" and "to be booked" say what is left, so they stay allowed.
 const DONE_STATE = /(?<![\p{L}])(?:has|have|had|was|were|is|are|been|just|now)\s+(?:been\s+)?(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected)(?![\p{L}])/iu;
 // A clause that ends in a bare participle ("Posted.", "All the lines are posted") or in "rồi" (Vietnamese for "already, done": "Duyệt rồi.", "được duyệt rồi") says a step is done. "not yet
 // filed", "still booked" and "to be booked" end the same way but say what is left, so a word before it that negates or marks the future spares it.
 const DONE_FINAL = /(?<!(?:^|[^\p{L}])(?:not|yet|still|never|be|being|to)\s)(?<![\p{L}])(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected|rồi)\s*$/iu;
-// A condition or a time word, or "make sure" (a check to make before the next step): a done word after it in its own clause says what must come first, not that a step was done.
-const CONDITIONAL = /(?<![\p{L}])(?:once|before|after|until|when|if|unless|while|as soon as|make sure|be sure|ensure|check that|verify that|sau khi|trước khi|khi|nếu|cho đến khi|hãy đảm bảo|hãy chắc chắn)(?![\p{L}])/iu;
+// What a clause that sets a condition STARTS with: a condition or a time word, or "make sure" (a check to make before the next step). A condition word further into a clause ("I checked when you
+// asked and everything is done") spares nothing, and "khi nãy" or "lúc nãy" (a moment ago), "as before" and "already" are no condition.
+const CONDITION_START = /^\s*(?:once|when|after|if|unless|until|before|while|as soon as|make sure|be sure|ensure(?!d)|check that|verify that|sau khi|trước khi|khi(?!\s+nãy)|nếu|cho đến khi|hãy đảm bảo|hãy chắc chắn)(?![\p{L}])/iu;
 function promised(read: string): boolean {
   if (PROMISE_WORDS.some((word) => word.test(read))) return true;
-  // The done words count only where no condition or time word comes before them in their own clause.
-  return read.split(/[,;:.!?]\s*/u).some((clause) =>
-    [...DONE_WORDS, DONE_STATE, DONE_FINAL].some((word) => {
-      const done = word.exec(clause);
-      return done !== null && !CONDITIONAL.test(clause.slice(0, done.index));
-    }),
-  );
+  // A clause ends at a comma, a semicolon, a colon, a stop, and a dash with or without spaces; the done words count in every clause that does not start with a condition.
+  return read.split(/[,;:.!?–—]\s*|\s-\s/u).some((clause) => !CONDITION_START.test(clause) && [...DONE_WORDS, DONE_STATE, DONE_FINAL].some((word) => word.test(clause)));
 }
 // Markdown, a list marker, a heading, a table bar, a quote, a code mark, or an emoji.
 const FORMATTED = /[*_#`>|[\]{}<]|(?:^|\s)[-\u2022\u00b7\u2013\u2014]\s|\p{Extended_Pictographic}/u;

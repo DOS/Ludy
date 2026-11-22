@@ -8,7 +8,7 @@ import { sql } from 'kysely';
 import { zFinanceMonthCloseInput, type FinanceMonthCloseInput, type MonthClose, type VatFilingPeriod } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { MARKETPLACE_PAYOUT_COMMAND, MARKETPLACE_SETTLEMENT_COMMAND, PAYROLL_PAYMENT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND, VOUCHER_COMMAND } from '@ludy/kernel-contract';
+import { MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX, MARKETPLACE_PAYOUT_COMMAND, MARKETPLACE_SETTLEMENT_COMMAND, PAYROLL_PAYMENT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND, VOUCHER_COMMAND } from '@ludy/kernel-contract';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { declaringPeriods, vatPeriod } from './domain/vat-return.ts';
@@ -129,13 +129,14 @@ async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBoun
 // waiting on a pending proposal is left out, because that proposal is counted in the first item. Still to post: no posting voucher, and, as facts reads it, something the record command
 // would post (a delivery month with an entry that is not empty and has its VAT rate) or sales that wait for their delivery day: a settlement of zero net posts nothing and is not one.
 // Still to record: its posting stands (it has vouchers and none is reversed), no payout voucher names it, and the payout command would take it (a receivable above zero, money received above
-// zero, and nothing unexplained that a person cannot classify), because it refuses the others and no one can clear them.
+// zero, nothing unexplained that a person cannot classify, and none of the lines it would ask a person to classify holds a fraction of a dong or is too many for one request: the worklist's
+// adjustableOf rule), because it refuses the others and no one can clear them. A proposal's settlement id is compared without case, as the worklist's pendingOf does.
 async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const standing = sql`s.org_id = ${ctx.orgId}::uuid AND s.legal_entity_id = ${entity}::uuid AND s.period_end >= ${b.from}::date AND s.period_end <= ${b.last}::date
     AND s.reversal_of IS NULL
     AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
   const pending = (command: string) =>
-    sql`NOT EXISTS (SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND p.payload->>'settlementId' = s.id::text)`;
+    sql`NOT EXISTS (SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND pg_catalog.lower(p.payload->>'settlementId') = pg_catalog.lower(s.id::text))`;
   const candidates = (
     await sql<{ id: string; period_end: string }>`
       SELECT s.id, s.period_end::text AS period_end FROM crove_finance.channel_settlement s
@@ -154,9 +155,21 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
       if (offered.months.length > 0 || m.waiting > 0) toPost += 1;
     }
   }
+  // The lines a person must classify before the payout (adjustableOf): the other amounts above zero, only when the settlement's other amounts add up to something, and the tax withheld when the seller
+  // is no household. The settlement is not offered when one of them holds a fraction of a dong (an adjustment is whole dong), or when they come to more than one request carries.
+  const household = (await sql<{ kind: string }>`SELECT kind FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND id = ${entity}::uuid`.execute(ctx.trx)).rows[0]?.kind === 'household';
   const { rows } = await sql<{ n: string }>`
     SELECT pg_catalog.count(*)::text AS n FROM (
-      SELECT s.id FROM crove_finance.channel_settlement s
+      SELECT s.id,
+        pg_catalog.sum(l.sales - l.seller_discount - l.refund) AS receivable,
+        pg_catalog.sum(l.net) AS received,
+        pg_catalog.sum(l.other) AS other_sum,
+        pg_catalog.min(l.other) AS other_min,
+        pg_catalog.count(*) FILTER (WHERE l.other > 0) AS other_lines,
+        pg_catalog.count(*) FILTER (WHERE l.other > 0 AND l.other <> pg_catalog.trunc(l.other)) AS other_fraction,
+        pg_catalog.count(*) FILTER (WHERE l.tax_withheld > 0) AS tax_lines,
+        pg_catalog.count(*) FILTER (WHERE l.tax_withheld > 0 AND l.tax_withheld <> pg_catalog.trunc(l.tax_withheld)) AS tax_fraction
+      FROM crove_finance.channel_settlement s
       JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
       WHERE ${standing}
         AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
@@ -164,8 +177,11 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
         AND ${pending(MARKETPLACE_PAYOUT_COMMAND)}
       GROUP BY s.id
-      HAVING pg_catalog.sum(l.sales - l.seller_discount - l.refund) > 0 AND pg_catalog.sum(l.net) > 0 AND (pg_catalog.sum(l.other) = 0 OR pg_catalog.min(l.other) >= 0)
-    ) payable`.execute(ctx.trx);
+    ) x
+    WHERE x.receivable > 0 AND x.received > 0 AND (x.other_sum = 0 OR x.other_min >= 0)
+      AND NOT (x.other_sum <> 0 AND x.other_fraction > 0)
+      AND NOT (NOT ${household}::boolean AND x.tax_fraction > 0)
+      AND (CASE WHEN x.other_sum <> 0 THEN x.other_lines ELSE 0 END + CASE WHEN ${household}::boolean THEN 0 ELSE x.tax_lines END) <= ${MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX}::int`.execute(ctx.trx);
   return toPost + Number(rows[0]?.n ?? 0);
 }
 

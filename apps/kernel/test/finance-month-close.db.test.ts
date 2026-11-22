@@ -370,7 +370,7 @@ suite('the month-close checklist', () => {
   });
 
   // A settlement of one line with a delivery day, so its entry is known: sales, refund and net as given; a reversal of another settlement when `reversalOf` names it.
-  async function deliveredSettlement(platform: string, start: string, end: string, line: { sales: number; refund?: number; commission?: number; other?: number }, reversalOf: string | null = null): Promise<string> {
+  async function deliveredSettlement(platform: string, start: string, end: string, line: { sales: number; refund?: number; commission?: number; other?: number; tax?: number }, reversalOf: string | null = null): Promise<string> {
     return admin(async (a) => {
       await a.query('BEGIN');
       const id = randomUUID();
@@ -384,12 +384,13 @@ suite('the month-close checklist', () => {
       const refund = line.refund ?? 0;
       const commission = line.commission ?? 0;
       const other = line.other ?? 0;
-      const net = line.sales - commission - refund + other;
+      const tax = line.tax ?? 0;
+      const net = line.sales - commission - refund - tax + other;
       const sign = reversalOf ? -1 : 1;
       await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * net, reversalOf]);
       await a.query(
-        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, commission, other, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-        [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, refund, commission, other, net, reversalOf !== null],
+        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, commission, other, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+        [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, refund, commission, other, tax, net, reversalOf !== null],
       );
       await a.query('COMMIT');
       return id;
@@ -417,5 +418,22 @@ suite('the month-close checklist', () => {
     expect(count(await close('2026-09'), 'marketplace')).toBe(2);
     await deliveredSettlement('tiktok_shop', '2026-09-05', '2026-09-06', { sales: 10000, commission: 1000 }, wrong);
     expect(count(await close('2026-09'), 'marketplace')).toBe(1);
+  });
+
+  it('compares a pending proposal\'s settlement id without case, and leaves out a payout the worklist would not offer for a fraction of a dong of tax withheld', async () => {
+    const real = await deliveredSettlement('shopee', '2026-07-01', '2026-07-05', { sales: 10000, commission: 1000 });
+    await voucherOf(real);
+    expect(count(await close('2026-07'), 'marketplace')).toBe(1);
+    // A payload that keeps the id in capitals still holds the payout (the worklist's pendingOf lowers both sides).
+    await proposal('finance.marketplace_payout.record', 'finance.journal_voucher', { settlementId: real.toUpperCase() }, '2026-07-20T03:00:00Z');
+    expect(count(await close('2026-07'), 'marketplace')).toBe(0);
+    // A seller that is no household must classify the tax withheld in whole dong: a fraction of a dong makes the worklist leave the settlement out, so it is not counted here either.
+    const fraction = await deliveredSettlement('shopee', '2026-07-06', '2026-07-10', { sales: 10000, tax: 100.5 });
+    await voucherOf(fraction);
+    expect(count(await close('2026-07'), 'marketplace')).toBe(0);
+    // Whole dong of tax withheld is something a person classifies: it is counted.
+    const whole = await deliveredSettlement('lazada', '2026-07-11', '2026-07-15', { sales: 10000, tax: 100 });
+    await voucherOf(whole);
+    expect(count(await close('2026-07'), 'marketplace')).toBe(1);
   });
 });
