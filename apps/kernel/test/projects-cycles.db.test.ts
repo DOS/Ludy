@@ -33,7 +33,7 @@ import type {
 } from '@ludy/kernel-contract';
 import { CredentialVault, LocalDiskStore, Runtime, type AgentActor, parseVaultKey } from '@ludy/kernel-runtime';
 import { financeCommands } from '@ludy/mod-finance';
-import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
+import { projectsCommands, projectsQueries, type ProjectCycleSummarySource } from '@ludy/mod-projects';
 import { memberMeter } from '../src/ai-meter.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -391,6 +391,14 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       cycleFilter: { mode: 'active' },
     });
     expect(activeBoard.tasks.map((t) => t.id).sort()).toEqual([tDone, tOpen].sort());
+
+    await expect(
+      exec(owner.userId, orgId, 'projects.cycle.complete', {
+        projectId,
+        cycleId: s1.id,
+        carryover: { mode: 'none' },
+      }),
+    ).rejects.toMatchObject({ code: 'CYCLE_OPEN_TASKS_EXIST', status: 409 });
 
     const doneRes = await exec<ProjectCycleCompleteResult>(owner.userId, orgId, 'projects.cycle.complete', {
       projectId,
@@ -805,5 +813,65 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     );
     expect(completeAfterRelease.cycle.status).toBe('completed');
     expect(completeAfterRelease.carriedOverCount).toBe(1);
+
+    // mode='none' succeeds with zero unfinished tasks, and cycle_summary_source filters tainted tasks in SQL.
+    const { cycle: cleanCycle } = await exec<ProjectCycleMutateResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.create',
+      { projectId, name: 'Clean Completed Cycle' },
+    );
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.start', { projectId, cycleId: cleanCycle.id });
+    const { taskId: cleanTaskId } = await exec<{ taskId: string }>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.task.create',
+      {
+        projectId,
+        title: 'Clean finished task for summary',
+        assigneePositionId: null,
+        status: 'done',
+        cycleId: cleanCycle.id,
+      },
+    );
+    const { taskId: taintedTaskId } = await exec<{ taskId: string }>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.task.create',
+      {
+        projectId,
+        title: 'Tainted AI title ignored by Vy source',
+        assigneePositionId: null,
+        status: 'done',
+        cycleId: cleanCycle.id,
+      },
+    );
+    const taintAdmin = new pg.Client({ connectionString: adminUrl });
+    await taintAdmin.connect();
+    try {
+      await taintAdmin.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [
+        guardOrg.orgId,
+        taintedTaskId,
+      ]);
+    } finally {
+      await taintAdmin.end();
+    }
+
+    const sourceWithTaint = await query<ProjectCycleSummarySource>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle_summary_source',
+      { projectId, cycleId: cleanCycle.id },
+    );
+    expect(sourceWithTaint.tasks.map((t) => t.id)).toEqual([cleanTaskId]);
+
+    const noneCompleteRes = await exec<ProjectCycleCompleteResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.complete',
+      { projectId, cycleId: cleanCycle.id, carryover: { mode: 'none' } },
+    );
+    expect(noneCompleteRes.cycle.status).toBe('completed');
+    expect(noneCompleteRes.carriedOverCount).toBe(0);
   });
 });

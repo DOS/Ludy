@@ -1120,6 +1120,7 @@ export const zProjectCycleStartInput = z.strictObject({
 export type ProjectCycleStartInput = z.infer<typeof zProjectCycleStartInput>;
 
 export const zProjectCycleCarryover = z.discriminatedUnion('mode', [
+  z.strictObject({ mode: z.literal('none') }),
   z.strictObject({ mode: z.literal('backlog') }),
   z.strictObject({ mode: z.literal('cycle'), targetCycleId: zId }),
 ]);

@@ -366,6 +366,21 @@ export function ProjectDetailPage() {
     ...orpc.projects.listCycles.queryOptions({ input: { projectId: id } }),
     enabled: cyclesEnabled,
   });
+  const validCycleFilter: ProjectCycleFilter =
+    cycleFilter.mode === 'cycle' &&
+    cyclesQuery.data &&
+    !cyclesQuery.data.cycles.some((c) => c.id === cycleFilter.cycleId)
+      ? { mode: 'all' }
+      : cycleFilter;
+  useEffect(() => {
+    if (
+      cycleFilter.mode === 'cycle' &&
+      cyclesQuery.data &&
+      !cyclesQuery.data.cycles.some((c) => c.id === cycleFilter.cycleId)
+    ) {
+      setCycleFilter({ mode: 'all' });
+    }
+  }, [cyclesQuery.data, cycleFilter]);
   const validMetricsCycleId =
     selectedMetricsCycleId && cyclesQuery.data
       ? cyclesQuery.data.cycles.some((c) => c.id === selectedMetricsCycleId)
@@ -464,7 +479,7 @@ export function ProjectDetailPage() {
     .filter((item) => item.status === 'done')
     .map((item) => ({ id: item.id, title: item.title, tainted: item.tainted }));
   const doneCount = completedTasks.length;
-  const boardFiltered = Boolean(positionId) || applied.all.length > 0 || cycleFilter.mode !== 'all';
+  const boardFiltered = Boolean(positionId) || applied.all.length > 0 || validCycleFilter.mode !== 'all';
   const pct = projectCompletionPct(openCount, doneCount);
   const showSeatHint = hasUnseatedTeamMembers(board);
 
@@ -562,8 +577,12 @@ export function ProjectDetailPage() {
           pointsEnabled={pointsEnabled}
           cycles={cyclesQuery.data?.cycles ?? []}
           backlogTaskCount={cyclesQuery.data?.backlogTaskCount ?? 0}
+          cyclesError={cyclesQuery.isError ? cyclesQuery.error : undefined}
+          onRetryCycles={() => void cyclesQuery.refetch()}
           metrics={cycleMetricsQuery.data}
-          cycleFilter={cycleFilter}
+          metricsError={cycleMetricsQuery.isError ? cycleMetricsQuery.error : undefined}
+          onRetryMetrics={() => void cycleMetricsQuery.refetch()}
+          cycleFilter={validCycleFilter}
           selectedMetricsCycleId={validMetricsCycleId}
           onSelectMetricsCycleId={setSelectedMetricsCycleId}
           onCycleFilterChange={setCycleFilter}
@@ -790,15 +809,15 @@ export function ProjectDetailPage() {
             done,
           ) => {
             const selectedFilterCycle =
-              cycleFilter.mode === 'cycle'
-                ? (cyclesQuery.data?.cycles ?? []).find((c) => c.id === cycleFilter.cycleId)
+              validCycleFilter.mode === 'cycle'
+                ? (cyclesQuery.data?.cycles ?? []).find((c) => c.id === validCycleFilter.cycleId)
                 : undefined;
             const autoCycleId =
               !cyclesEnabled
                 ? undefined
-                : cycleFilter.mode === 'cycle' && selectedFilterCycle?.status !== 'completed'
-                  ? cycleFilter.cycleId
-                  : cycleFilter.mode === 'active' && board.activeCycle
+                : validCycleFilter.mode === 'cycle' && selectedFilterCycle && selectedFilterCycle.status !== 'completed'
+                  ? selectedFilterCycle.id
+                  : validCycleFilter.mode === 'active' && board.activeCycle
                     ? board.activeCycle.id
                     : undefined;
             createTask.mutate(

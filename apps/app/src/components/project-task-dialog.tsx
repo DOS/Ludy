@@ -18,7 +18,7 @@ import {
   type TaskChecklistStep,
 } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -350,7 +350,19 @@ export function EditProjectTaskDialog({
   const [titleError, setTitleError] = useState(false);
   const [stepError, setStepError] = useState(false);
   const [pointsError, setPointsError] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [recurrenceOverride, setRecurrenceOverride] = useState<ProjectTaskRecurrenceView | null>(null);
+
+  const activeSessionRef = useRef<string | null>(null);
+  const committedPatchBaselineRef = useRef({
+    title: '',
+    description: '',
+    assignee: '',
+    dueOn: '',
+    checklistJson: '[]',
+  });
+  const committedCycleRef = useRef<string | null>(null);
+  const committedPointsRef = useRef<number | null>(null);
 
   const update = useMutation(orpc.tasks.update.mutationOptions());
   const setTaskCycle = useMutation(orpc.projects.setTaskCycle.mutationOptions());
@@ -358,20 +370,38 @@ export function EditProjectTaskDialog({
 
   useEffect(() => {
     if (open && task) {
+      const initialDueOn = taskDueDay(task.due, tz);
+      const initialCycle = task.cycleId ?? null;
+      const initialPoints = task.storyPoints ?? null;
+      const normalizedList = normalizeChecklistSteps((task.checklist ?? []).map((s) => ({ ...s })));
+      activeSessionRef.current = task.id;
+      committedPatchBaselineRef.current = {
+        title: task.title,
+        description: task.description ?? '',
+        assignee: task.assigneePositionId ?? '',
+        dueOn: initialDueOn,
+        checklistJson: serializeTaskChecklist(normalizedList),
+      };
+      committedCycleRef.current = initialCycle;
+      committedPointsRef.current = initialPoints;
+
       setTitle(task.title);
       setDescription(task.description ?? '');
       setAssignee(task.assigneePositionId ?? '');
-      setDueOn(taskDueDay(task.due, tz));
-      setCycleId(task.cycleId ?? '');
-      setPointsText(task.storyPoints === null || task.storyPoints === undefined ? '' : String(task.storyPoints));
+      setDueOn(initialDueOn);
+      setCycleId(initialCycle ?? '');
+      setPointsText(initialPoints === null ? '' : String(initialPoints));
       setChecklist((task.checklist ?? []).map((s) => ({ ...s })));
       setTitleError(false);
       setStepError(false);
       setPointsError(false);
+      setIsSaving(false);
       setRecurrenceOverride(null);
       update.reset();
       setTaskCycle.reset();
       setTaskPoints.reset();
+    } else {
+      activeSessionRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
@@ -385,7 +415,7 @@ export function EditProjectTaskDialog({
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (task.checkedOut || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending) return;
+    if (task.checkedOut || isSaving || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending) return;
     const nextTitle = title.trim();
     if (!nextTitle) {
       setTitleError(true);
@@ -401,18 +431,18 @@ export function EditProjectTaskDialog({
     }
     const nextDesc = description.trim() ? description.trim() : null;
     const nextAssignee = assignee || null;
-    const initialDueOn = taskDueDay(task.due, tz);
     const nextChecklist = normalizeChecklistSteps(checklist);
-    const checklistChanged = serializeTaskChecklist(nextChecklist) !== serializeTaskChecklist(task.checklist ?? []);
+    const nextChecklistJson = serializeTaskChecklist(nextChecklist);
+    const baseline = committedPatchBaselineRef.current;
     const patch = {
-      ...(nextTitle !== task.title ? { title: nextTitle } : {}),
-      ...(description !== (task.description ?? '') ? { description: nextDesc } : {}),
-      ...(nextAssignee !== task.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
-      ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
-      ...(checklistChanged ? { checklist: nextChecklist } : {}),
+      ...(nextTitle !== baseline.title ? { title: nextTitle } : {}),
+      ...(description !== baseline.description ? { description: nextDesc } : {}),
+      ...(nextAssignee !== baseline.assignee ? { assigneePositionId: nextAssignee } : {}),
+      ...(dueOn !== baseline.dueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
+      ...(nextChecklistJson !== baseline.checklistJson ? { checklist: nextChecklist } : {}),
     };
     const nextCycleId = cycleId || null;
-    const cycleChanged = cyclesEnabled && nextCycleId !== (task.cycleId ?? null);
+    const cycleChanged = cyclesEnabled && nextCycleId !== committedCycleRef.current;
     const trimmedPts = pointsText.trim();
     let nextPoints: number | null = null;
     if (pointsEnabled && trimmedPts !== '') {
@@ -427,40 +457,67 @@ export function EditProjectTaskDialog({
       }
       nextPoints = parsedPts;
     }
-    const pointsChanged = pointsEnabled && nextPoints !== (task.storyPoints ?? null);
+    const pointsChanged = pointsEnabled && nextPoints !== committedPointsRef.current;
 
     if (Object.keys(patch).length === 0 && !cycleChanged && !pointsChanged) {
       onOpenChange(false);
       return;
     }
 
+    update.reset();
+    setTaskCycle.reset();
+    setTaskPoints.reset();
+    setTitleError(false);
+    setStepError(false);
+    setPointsError(false);
+
+    const submitTaskId = task.id;
     const runFollowups = async () => {
       let anyWriteSucceeded = false;
+      setIsSaving(true);
       try {
         if (Object.keys(patch).length > 0) {
-          await update.mutateAsync({ id: task.id, ...patch, idempotencyKey: crypto.randomUUID() });
+          await update.mutateAsync({ id: submitTaskId, ...patch, idempotencyKey: crypto.randomUUID() });
           anyWriteSucceeded = true;
+          if (activeSessionRef.current === submitTaskId) {
+            committedPatchBaselineRef.current = {
+              title: nextTitle,
+              description,
+              assignee: nextAssignee ?? '',
+              dueOn,
+              checklistJson: nextChecklistJson,
+            };
+          }
         }
         if (cycleChanged) {
           await setTaskCycle.mutateAsync({
             projectId,
-            taskId: task.id,
+            taskId: submitTaskId,
             cycleId: nextCycleId,
             idempotencyKey: crypto.randomUUID(),
           });
           anyWriteSucceeded = true;
+          if (activeSessionRef.current === submitTaskId) {
+            committedCycleRef.current = nextCycleId;
+          }
         }
         if (pointsChanged) {
           await setTaskPoints.mutateAsync({
             projectId,
-            taskId: task.id,
+            taskId: submitTaskId,
             storyPoints: nextPoints,
             idempotencyKey: crypto.randomUUID(),
           });
           anyWriteSucceeded = true;
+          if (activeSessionRef.current === submitTaskId) {
+            committedPointsRef.current = nextPoints;
+          }
         }
-        onOpenChange(false);
+        if (activeSessionRef.current === submitTaskId) {
+          onOpenChange(false);
+        }
       } finally {
+        setIsSaving(false);
         if (anyWriteSucceeded) await refreshProjectQueries();
       }
     };
@@ -468,7 +525,13 @@ export function EditProjectTaskDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && isSaving) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent closeLabel={tc('close')} data-testid="edit-project-task-dialog">
         <DialogHeader>
           <DialogTitle>{t('modals.editTaskTitle')}</DialogTitle>
@@ -619,11 +682,11 @@ export function EditProjectTaskDialog({
             </Alert>
           )}
           <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
+            <DialogClose render={<Button type="button" variant="outline" disabled={isSaving} />}>{tc('cancel')}</DialogClose>
             <Button
               type="submit"
-              disabled={task.checkedOut}
-              loading={update.isPending || setTaskCycle.isPending || setTaskPoints.isPending}
+              disabled={task.checkedOut || isSaving}
+              loading={isSaving || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending}
             >
               {t('modals.saveTask')}
             </Button>

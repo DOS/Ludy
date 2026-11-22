@@ -9,7 +9,7 @@ import {
   type TaskChecklistStep,
 } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
-import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -274,12 +274,30 @@ function StoryPointsChip({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [invalid, setInvalid] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
 
-  if (!pointsEnabled) return null;
-
-  const editable = canEdit && !task.checkedOut && onSetTaskPoints !== undefined;
+  const editable = pointsEnabled && canEdit && !task.checkedOut && onSetTaskPoints !== undefined;
   const hasPoints = task.storyPoints !== null && task.storyPoints !== undefined;
   const label = hasPoints ? t('cycles.pointsChip', { points: task.storyPoints! }) : t('cycles.setPointsShort');
+
+  useEffect(() => {
+    if (!editable) {
+      restoreFocusRef.current = false;
+      setEditing(false);
+      setDraft('');
+      setInvalid(false);
+    }
+  }, [editable]);
+
+  useEffect(() => {
+    if (!editing && editable && restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [editing, editable]);
+
+  if (!pointsEnabled) return null;
 
   if (!editable) {
     if (!hasPoints) return null;
@@ -293,6 +311,7 @@ function StoryPointsChip({
   if (!editing) {
     return (
       <button
+        ref={triggerRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -318,6 +337,7 @@ function StoryPointsChip({
       setInvalid(true);
       return;
     }
+    restoreFocusRef.current = true;
     setInvalid(false);
     onSetTaskPoints(task.id, parsed.value);
     setEditing(false);
@@ -331,6 +351,7 @@ function StoryPointsChip({
       onKeyDown={(e: KeyboardEvent<HTMLFormElement>) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
+          restoreFocusRef.current = true;
           setInvalid(false);
           setEditing(false);
         }

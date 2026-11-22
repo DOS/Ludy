@@ -59,6 +59,13 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
       zProjectCycleCompleteInput.safeParse({
         projectId: '00000000-0000-4000-8000-000000000001',
         cycleId: '00000000-0000-4000-8000-000000000002',
+        carryover: { mode: 'none' },
+      }).success,
+    ).toBe(true);
+    expect(
+      zProjectCycleCompleteInput.safeParse({
+        projectId: '00000000-0000-4000-8000-000000000001',
+        cycleId: '00000000-0000-4000-8000-000000000002',
         carryover: { mode: 'backlog' },
       }).success,
     ).toBe(true);
@@ -163,6 +170,22 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
     expect(series.every((d) => d.remainingTasks === null && d.remainingPoints === null)).toBe(true);
     expect(series[0]?.idealRemainingPoints).toBe(3);
     expect(series[2]?.idealRemainingPoints).toBe(0);
+  });
+
+  it('does not clamp tasks created after endsOn backward into Day-1 burndown scope', () => {
+    const series = computeCycleBurndown(
+      [
+        { status: 'todo', storyPoints: 3, createdAt: '2027-02-01T02:00:00Z', updatedAt: '2027-02-01T02:00:00Z' },
+        { status: 'todo', storyPoints: 8, createdAt: '2027-02-10T02:00:00Z', updatedAt: '2027-02-10T02:00:00Z' },
+      ],
+      '2027-02-01',
+      '2027-02-05',
+      'active',
+      null,
+      '2027-02-05T10:00:00Z',
+    );
+    expect(series).toHaveLength(5);
+    expect(series.every((d) => d.remainingTasks === 1 && d.remainingPoints === 3)).toBe(true);
   });
 
   it('keeps actual remaining null for all days when a cycle was completed before its startsOn date', () => {

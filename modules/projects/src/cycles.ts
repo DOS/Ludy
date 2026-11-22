@@ -62,6 +62,8 @@ const cycleInvalidRange = () =>
   new DomainError('CYCLE_INVALID_RANGE', 400, `Khoảng ngày chu kỳ phải hợp lệ và không vượt quá ${PROJECT_CYCLE_MAX_DAYS} ngày`);
 const cycleInvalidCarryover = () => new DomainError('CYCLE_INVALID_CARRYOVER', 400, 'Chu kỳ đích chuyển việc không hợp lệ');
 const cycleTargetNotUpcoming = () => new DomainError('CYCLE_TARGET_NOT_UPCOMING', 409, 'Chu kỳ đích phải ở trạng thái sắp tới');
+const cycleOpenTasksExist = () =>
+  new DomainError('CYCLE_OPEN_TASKS_EXIST', 409, 'Chu kỳ vẫn còn việc chưa hoàn thành, vui lòng chọn nơi chuyển tiếp');
 
 interface RawCycleRow {
   id: string;
@@ -292,8 +294,9 @@ export function computeCycleBurndown(
 
   const normalized = scoped.map((t) => {
     const rawCreated = vietnamToday(new Date(t.createdAt));
-    // Tasks created outside a backfilled historical window count as part of committed Day 1 scope.
-    const effectiveCreated = rawCreated < startsOn || rawCreated > endsOn ? startsOn : rawCreated;
+    // Tasks created before cycle start belong to Day 1 committed scope; tasks created after endsOn
+    // keep their actual date so future-created work never fabricates points on earlier days.
+    const effectiveCreated = rawCreated < startsOn ? startsOn : rawCreated;
     const rawDone = t.status === 'done' ? vietnamToday(new Date(t.updatedAt)) : null;
     // If a cycle closed over a retroactive past window, reflect tasks finished when the cycle closed.
     const effectiveDone =
@@ -627,7 +630,7 @@ async function assertCycleTasksAccessibleAndFree(
   cycleId: string,
   now: Date,
   leaseFilter: 'all' | 'open',
-): Promise<void> {
+): Promise<{ openCount: number }> {
   const cycleLinks = await trx
     .selectFrom('crove_projects.project_task')
     .select('task_id')
@@ -637,7 +640,7 @@ async function assertCycleTasksAccessibleAndFree(
     .orderBy('task_id', 'asc')
     .forUpdate()
     .execute();
-  if (cycleLinks.length === 0) return;
+  if (cycleLinks.length === 0) return { openCount: 0 };
 
   const visibleTasks = await trx
     .selectFrom('crove_projects.project_task as pt')
@@ -660,12 +663,16 @@ async function assertCycleTasksAccessibleAndFree(
     );
   }
 
+  let openCount = 0;
   for (const row of visibleTasks) {
-    if (leaseFilter === 'open' && (row.status === 'done' || row.status === 'cancelled')) {
+    const isTerminal = row.status === 'done' || row.status === 'cancelled';
+    if (!isTerminal) openCount += 1;
+    if (leaseFilter === 'open' && isTerminal) {
       continue;
     }
     assertTaskLeaseFree(row.checkout_run_id, row.lock_expires_at, now);
   }
+  return { openCount };
 }
 
 export const projectCycleDelete = defineCommand({
@@ -785,21 +792,28 @@ export const projectCycleComplete = defineCommand({
       targetCycleId = target.id;
     }
 
-    await assertCycleTasksAccessibleAndFree(ctx.trx, ctx.orgId, project.id, cycle.id, ctx.now, 'open');
+    const { openCount } = await assertCycleTasksAccessibleAndFree(ctx.trx, ctx.orgId, project.id, cycle.id, ctx.now, 'open');
+    if (input.carryover.mode === 'none' && openCount > 0) {
+      throw cycleOpenTasksExist();
+    }
 
-    const { rows: movedRows } = await sql<{ task_id: string }>`
-      UPDATE crove_projects.project_task pt
-         SET cycle_id = ${targetCycleId}::uuid
-       WHERE pt.org_id = ${ctx.orgId}::uuid
-         AND pt.project_id = ${project.id}::uuid
-         AND pt.cycle_id = ${cycle.id}::uuid
-         AND EXISTS (
-           SELECT 1 FROM crove_kernel.task t
-            WHERE t.org_id = pt.org_id
-              AND t.id = pt.task_id
-              AND t.status NOT IN ('done', 'cancelled')
-         )
-      RETURNING pt.task_id`.execute(ctx.trx);
+    let carriedOverCount = 0;
+    if (input.carryover.mode !== 'none' && openCount > 0) {
+      const { rows: movedRows } = await sql<{ task_id: string }>`
+        UPDATE crove_projects.project_task pt
+           SET cycle_id = ${targetCycleId}::uuid
+         WHERE pt.org_id = ${ctx.orgId}::uuid
+           AND pt.project_id = ${project.id}::uuid
+           AND pt.cycle_id = ${cycle.id}::uuid
+           AND EXISTS (
+             SELECT 1 FROM crove_kernel.task t
+              WHERE t.org_id = pt.org_id
+                AND t.id = pt.task_id
+                AND t.status NOT IN ('done', 'cancelled')
+           )
+        RETURNING pt.task_id`.execute(ctx.trx);
+      carriedOverCount = movedRows.length;
+    }
 
     const completed = await ctx.trx
       .updateTable('crove_projects.project_cycle')
@@ -819,7 +833,7 @@ export const projectCycleComplete = defineCommand({
       cycleId: completed.id,
       carryoverMode: input.carryover.mode,
       targetCycleId,
-      carriedOverCount: movedRows.length,
+      carriedOverCount,
     });
     await ctx.emit('projects.cycle.completed', {
       projectId: project.id,
@@ -830,7 +844,7 @@ export const projectCycleComplete = defineCommand({
     const totals = await cycleTaskTotalsMap(ctx.trx, ctx.orgId, project.id, [completed.id]);
     return {
       cycle: formatCycleRow(completed, totals.get(completed.id) ?? ZERO_TOTALS),
-      carriedOverCount: movedRows.length,
+      carriedOverCount,
       targetCycleId,
     };
   },
@@ -1071,9 +1085,11 @@ export const projectCycleSummarySource = defineQuery({
         .where('pt.project_id', '=', project.id)
         .where('pt.cycle_id', '=', selected.id)
         .where('t.status', '<>', 'cancelled')
+        .where('t.tainted', '=', false)
         .orderBy(sql`CASE t.status WHEN 'done' THEN 1 ELSE 0 END`, 'asc')
         .orderBy(sql`t.due ASC NULLS LAST`)
         .orderBy('t.updated_at', 'desc')
+        .orderBy('t.id', 'asc')
         .limit(PROJECT_WEEKLY_STATUS_BUCKET_LIMIT + 1)
         .execute();
 

@@ -12,7 +12,7 @@ import type {
   ProjectCycleVelocityPoint,
   ProjectStatus,
 } from '@ludy/kernel-contract';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -269,8 +269,8 @@ function CycleFormDialog({
 
 export type CycleCarryoverSelection = 'none' | 'backlog' | 'cycle';
 
-export function initialCarryoverSelection(openTasks: number): CycleCarryoverSelection {
-  return openTasks > 0 ? 'none' : 'backlog';
+export function initialCarryoverSelection(_openTasks: number): CycleCarryoverSelection {
+  return 'none';
 }
 
 export function validateCompleteCycleCarryover(
@@ -281,6 +281,9 @@ export function validateCompleteCycleCarryover(
 ):
   | { ok: true; carryover: ProjectCycleCarryover }
   | { ok: false; reason: 'pickRequired' | 'pickAgain'; clearTarget: boolean } {
+  if (openTasks === 0 && mode === 'none') {
+    return { ok: true, carryover: { mode: 'none' } };
+  }
   if (openTasks > 0 && mode === 'none') {
     return { ok: false, reason: 'pickRequired', clearTarget: false };
   }
@@ -375,42 +378,46 @@ function CompleteCycleDialog({
             <p className="text-muted-foreground tabular-nums">{t('cycles.complete.doneKeptCount', { count: cycle.doneTasks })}</p>
           </div>
 
-          <fieldset className="space-y-2">
-            <legend className="text-xs font-medium text-foreground">{t('cycles.complete.choiceLabel')}</legend>
-            <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground">
-              <input
-                type="radio"
-                name={`carryover-mode-${cycle.id}`}
-                value="backlog"
-                checked={mode === 'backlog'}
-                onChange={() => {
-                  setMode('backlog');
-                  setSelectionError(null);
-                }}
-              />
-              <span>{t('cycles.complete.moveToBacklog')}</span>
-            </label>
-            <label
-              className={`flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs ${
-                canMoveToCycle ? 'cursor-pointer text-foreground' : 'cursor-not-allowed text-muted-foreground opacity-60'
-              }`}
-            >
-              <input
-                type="radio"
-                name={`carryover-mode-${cycle.id}`}
-                value="cycle"
-                disabled={!canMoveToCycle}
-                checked={mode === 'cycle'}
-                onChange={() => {
-                  setMode('cycle');
-                  setSelectionError(null);
-                }}
-              />
-              <span>{t('cycles.complete.moveToCycle')}</span>
-            </label>
-          </fieldset>
+          {cycle.openTasks === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('cycles.complete.noUnfinishedNote')}</p>
+          ) : (
+            <fieldset className="space-y-2">
+              <legend className="text-xs font-medium text-foreground">{t('cycles.complete.choiceLabel')}</legend>
+              <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground">
+                <input
+                  type="radio"
+                  name={`carryover-mode-${cycle.id}`}
+                  value="backlog"
+                  checked={mode === 'backlog'}
+                  onChange={() => {
+                    setMode('backlog');
+                    setSelectionError(null);
+                  }}
+                />
+                <span>{t('cycles.complete.moveToBacklog')}</span>
+              </label>
+              <label
+                className={`flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs ${
+                  canMoveToCycle ? 'cursor-pointer text-foreground' : 'cursor-not-allowed text-muted-foreground opacity-60'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`carryover-mode-${cycle.id}`}
+                  value="cycle"
+                  disabled={!canMoveToCycle}
+                  checked={mode === 'cycle'}
+                  onChange={() => {
+                    setMode('cycle');
+                    setSelectionError(null);
+                  }}
+                />
+                <span>{t('cycles.complete.moveToCycle')}</span>
+              </label>
+            </fieldset>
+          )}
 
-          {mode === 'cycle' && canMoveToCycle && (
+          {cycle.openTasks > 0 && mode === 'cycle' && canMoveToCycle && (
             <div className="space-y-1.5">
               <Label htmlFor={`carryover-target-${cycle.id}`}>{t('cycles.complete.targetCycleLabel')}</Label>
               <NativeSelect
@@ -434,7 +441,9 @@ function CompleteCycleDialog({
             </div>
           )}
 
-          {!canMoveToCycle && <p className="text-xs text-muted-foreground">{t('cycles.complete.noUpcomingForCarryover')}</p>}
+          {cycle.openTasks > 0 && !canMoveToCycle && (
+            <p className="text-xs text-muted-foreground">{t('cycles.complete.noUpcomingForCarryover')}</p>
+          )}
           {selectionError && <ErrorText>{t(`cycles.complete.${selectionError}`)}</ErrorText>}
           {completeCycle.error && <ErrorText>{errorMessage(completeCycle.error)}</ErrorText>}
 
@@ -710,6 +719,10 @@ export function buildCycleSummaryQueryOptions<TOptions extends Record<string, un
   };
 }
 
+export function shouldKeepSummaryStaleAfterFetch(invalidatedAtStart: number, latestInvalidation: number): boolean {
+  return latestInvalidation > invalidatedAtStart;
+}
+
 function CycleSummaryBlock({
   slug,
   projectId,
@@ -730,16 +743,42 @@ function CycleSummaryBlock({
   const [isSummaryStale, setIsSummaryStale] = useState(() =>
     Boolean(queryClient.getQueryState(summaryKey)?.isInvalidated),
   );
+  const lastInvalidationSeqRef = useRef(0);
+  const fetchStartSeqRef = useRef(0);
+  const prevInvalidatedRef = useRef(Boolean(queryClient.getQueryState(summaryKey)?.isInvalidated));
 
   useEffect(() => {
     setRequested(false);
   }, [projectId, cycleId, language]);
 
   useEffect(() => {
-    setIsSummaryStale(Boolean(queryClient.getQueryState(JSON.parse(serializedKey) as typeof summaryKey)?.isInvalidated));
+    const initialInvalidated = Boolean(
+      queryClient.getQueryState(JSON.parse(serializedKey) as typeof summaryKey)?.isInvalidated,
+    );
+    prevInvalidatedRef.current = initialInvalidated;
+    setIsSummaryStale(initialInvalidated);
+
     return queryClient.getQueryCache().subscribe((event) => {
-      if (JSON.stringify(event.query.queryKey) === serializedKey) {
-        setIsSummaryStale(Boolean(event.query.state.isInvalidated));
+      const keyJson = JSON.stringify(event.query.queryKey);
+      const isSummaryQuery = keyJson === serializedKey;
+      const isProjectMutationInvalidation =
+        event.type === 'updated' &&
+        event.action.type === 'invalidate' &&
+        Array.isArray(event.query.queryKey) &&
+        event.query.queryKey[0] === 'projects';
+
+      if (isSummaryQuery) {
+        const nextInvalidated = Boolean(event.query.state.isInvalidated);
+        if (nextInvalidated && !prevInvalidatedRef.current) {
+          lastInvalidationSeqRef.current += 1;
+          setIsSummaryStale(true);
+        } else if (!nextInvalidated && prevInvalidatedRef.current) {
+          setIsSummaryStale(shouldKeepSummaryStaleAfterFetch(fetchStartSeqRef.current, lastInvalidationSeqRef.current));
+        }
+        prevInvalidatedRef.current = nextInvalidated;
+      } else if (isProjectMutationInvalidation) {
+        lastInvalidationSeqRef.current += 1;
+        setIsSummaryStale(true);
       }
     });
   }, [queryClient, serializedKey]);
@@ -754,7 +793,13 @@ function CycleSummaryBlock({
 
   const triggerSummary = () => {
     setRequested(true);
-    void query.refetch();
+    const startSeq = lastInvalidationSeqRef.current;
+    fetchStartSeqRef.current = startSeq;
+    void query.refetch().then((res) => {
+      if (!res.error) {
+        setIsSummaryStale(shouldKeepSummaryStaleAfterFetch(startSeq, lastInvalidationSeqRef.current));
+      }
+    });
   };
 
   return (
@@ -830,7 +875,11 @@ export function ProjectCyclesPanel({
   pointsEnabled,
   cycles,
   backlogTaskCount,
+  cyclesError,
+  onRetryCycles,
   metrics,
+  metricsError,
+  onRetryMetrics,
   cycleFilter,
   selectedMetricsCycleId,
   onSelectMetricsCycleId,
@@ -843,7 +892,11 @@ export function ProjectCyclesPanel({
   pointsEnabled: boolean;
   cycles: readonly ProjectCycle[];
   backlogTaskCount: number;
+  cyclesError?: unknown;
+  onRetryCycles?: (() => void) | undefined;
   metrics: ProjectCycleMetrics | undefined;
+  metricsError?: unknown;
+  onRetryMetrics?: (() => void) | undefined;
   cycleFilter: ProjectCycleFilter;
   selectedMetricsCycleId: string;
   onSelectMetricsCycleId: (id: string) => void;
@@ -923,6 +976,18 @@ export function ProjectCyclesPanel({
       </div>
 
       {mutationError && <ErrorText>{errorMessage(mutationError)}</ErrorText>}
+      {cyclesError !== undefined && cyclesError !== null && (
+        <Alert className="border-destructive/30 bg-destructive/5" data-testid="cycles-load-error">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
+            <span>{t('cycles.cyclesLoadError')}</span>
+            {onRetryCycles && (
+              <Button type="button" size="sm" variant="outline" className="min-h-11 md:min-h-8" onClick={onRetryCycles}>
+                {t('cycles.retryLoad')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {activeCycle && (
         <div className="rounded-lg border border-border bg-muted/25 p-3" data-testid="active-cycle-card">
@@ -1085,6 +1150,19 @@ export function ProjectCyclesPanel({
         </div>
       )}
 
+      {metricsError !== undefined && metricsError !== null && (
+        <Alert className="border-destructive/30 bg-destructive/5" data-testid="cycle-metrics-load-error">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
+            <span>{t('cycles.metrics.loadError')}</span>
+            {onRetryMetrics && (
+              <Button type="button" size="sm" variant="outline" className="min-h-11 md:min-h-8" onClick={onRetryMetrics}>
+                {t('cycles.retryLoad')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {metrics && (
         <CycleMetricsSection
           metrics={metrics}
@@ -1135,9 +1213,17 @@ export function ProjectCyclesPanel({
         disabled={deleteCycle.isPending}
         onConfirm={() => {
           if (!deletingCycle) return;
+          const deletedId = deletingCycle.id;
           deleteCycle.mutate(
-            { projectId, cycleId: deletingCycle.id, idempotencyKey: crypto.randomUUID() },
-            { onSuccess: () => setDeletingCycle(null) },
+            { projectId, cycleId: deletedId, idempotencyKey: crypto.randomUUID() },
+            {
+              onSuccess: () => {
+                setDeletingCycle(null);
+                if (cycleFilter.mode === 'cycle' && cycleFilter.cycleId === deletedId) {
+                  onCycleFilterChange({ mode: 'all' });
+                }
+              },
+            },
           );
         }}
       />

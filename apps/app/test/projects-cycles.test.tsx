@@ -76,9 +76,11 @@ const { parseStoryPointsDraft } = await import('../src/components/project-board.
 const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 const { ProjectDetailPage } = await import('../src/routes/projects.tsx');
 const {
+  ProjectCyclesPanel,
   buildBurndownPolylinePoints,
   buildCycleSummaryQueryOptions,
   initialCarryoverSelection,
+  shouldKeepSummaryStaleAfterFetch,
   validateCompleteCycleCarryover,
 } = await import('../src/components/project-cycles.tsx');
 
@@ -380,9 +382,9 @@ describe('Projects cycles UI & accessibility (#4361)', () => {
     expect(html).not.toContain('pts/cycle');
   });
 
-  it('requires explicit carryover choice when open tasks remain, revalidates target cycle, and preserves points on badInput', () => {
+  it('requires explicit carryover choice when open tasks remain, supports mode=none with 0 open tasks, revalidates target cycle, and preserves points on badInput', () => {
     expect(initialCarryoverSelection(2)).toBe('none');
-    expect(initialCarryoverSelection(0)).toBe('backlog');
+    expect(initialCarryoverSelection(0)).toBe('none');
 
     const upcoming = sampleCycle({ id: '00000000-0000-4000-8000-000000000022', status: 'upcoming', number: 2 });
     expect(validateCompleteCycleCarryover(2, 'none', upcoming.id, [upcoming])).toEqual({
@@ -399,6 +401,10 @@ describe('Projects cycles UI & accessibility (#4361)', () => {
       ok: true,
       carryover: { mode: 'cycle', targetCycleId: upcoming.id },
     });
+    expect(validateCompleteCycleCarryover(0, 'none', '', [])).toEqual({
+      ok: true,
+      carryover: { mode: 'none' },
+    });
     expect(validateCompleteCycleCarryover(0, 'backlog', '', [])).toEqual({
       ok: true,
       carryover: { mode: 'backlog' },
@@ -410,7 +416,35 @@ describe('Projects cycles UI & accessibility (#4361)', () => {
     expect(parseStoryPointsDraft('101', false)).toEqual({ valid: false });
   });
 
-  it('keeps Vy cycle summary strictly on-demand across refreshProjectQueries invalidations', async () => {
+  it('keeps Vy cycle summary strictly on-demand across refreshProjectQueries invalidations and renders cycle/metrics errors with retry', async () => {
+    expect(shouldKeepSummaryStaleAfterFetch(0, 1)).toBe(true);
+    expect(shouldKeepSummaryStaleAfterFetch(1, 1)).toBe(false);
+
+    const errorHtml = renderToStaticMarkup(
+      wrap(
+        'en',
+        <ProjectCyclesPanel
+          slug="demo-org"
+          projectId={PROJECT_ID}
+          projectStatus="active"
+          canManage={true}
+          pointsEnabled={false}
+          cycles={[]}
+          backlogTaskCount={0}
+          cyclesError={new Error('cycles failed')}
+          onRetryCycles={() => undefined}
+          metrics={undefined}
+          metricsError={new Error('metrics failed')}
+          onRetryMetrics={() => undefined}
+          cycleFilter={{ mode: 'all' }}
+          selectedMetricsCycleId=""
+          onSelectMetricsCycleId={() => undefined}
+          onCycleFilterChange={() => undefined}
+        />,
+      ),
+    );
+    expect(errorHtml).toContain('cycles-load-error');
+    expect(errorHtml).toContain('cycle-metrics-load-error');
     const metricsRes: ProjectCycleMetrics = {
       projectId: PROJECT_ID,
       selectedCycle: sampleCycle(),
