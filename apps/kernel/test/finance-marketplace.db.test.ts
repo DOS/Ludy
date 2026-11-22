@@ -267,8 +267,9 @@ suite('marketplace order reports (#2515)', () => {
     const yes = await execute<{ moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, o.member);
     expect(yes.moveId).not.toBeNull();
     await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
+    // databaseToday() resolves today in Asia/Ho_Chi_Minh, which diverges from UTC CURRENT_DATE between 17:00 and 24:00 UTC.
     const back = await rows<{ one: boolean; today: boolean; order_attempt: number }>(
-      "SELECT (quantity = 1) AS one, (move_date = CURRENT_DATE) AS today, order_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'",
+      "SELECT (quantity = 1) AS one, (move_date = (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS today, order_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'",
       [o.orgId, n2],
     );
     expect(back).toEqual([{ one: true, today: true, order_attempt: 1 }]);
