@@ -115,8 +115,8 @@ async function contributorRows(ctx: QueryContext, entity: string, month: string,
     ),
     ranked AS (
       SELECT a.*,
-        (CASE WHEN p.against = 'previous' THEN pg_catalog.coalesce(a.m_net, 0) - pg_catalog.coalesce(a.p_net, 0)
-              ELSE pg_catalog.coalesce(a.m_net, 0) - pg_catalog.coalesce(a.a_sum, 0) / 3 END) * p.dir AS moved
+        (CASE WHEN p.against = 'previous' THEN COALESCE(a.m_net, 0) - COALESCE(a.p_net, 0)
+              ELSE COALESCE(a.m_net, 0) - COALESCE(a.a_sum, 0) / 3 END) * p.dir AS moved
       FROM agg a JOIN picked p ON p.line_code = a.line_code
     ),
     top AS (
@@ -128,7 +128,7 @@ async function contributorRows(ctx: QueryContext, entity: string, month: string,
       FROM src s WHERE s.line_code IN (SELECT line_code FROM picked) GROUP BY s.line_code
     )
     SELECT p.line_code, t.party_id, t.entry_id, pg_catalog.to_char(t.entry_date, 'YYYY-MM-DD') AS entry_date, t.source_type, t.description, t.m_net, t.p_net, t.a_sum, t.vouchers,
-      pg_catalog.coalesce(tt.line_vouchers, 0) AS line_vouchers
+      COALESCE(tt.line_vouchers, 0) AS line_vouchers
     FROM picked p
     LEFT JOIN top t ON t.line_code = p.line_code AND t.rk <= ${EXPENSE_VARIANCE_CONTRIBUTORS}
     LEFT JOIN totals tt ON tt.line_code = p.line_code
@@ -154,7 +154,8 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
   if (input.month >= today.slice(0, 7)) throw monthNotEnded();
   const basis = basisMonths(input.month);
   const months = [...basis.average, input.month];
-  const [books, amounts] = await Promise.all([booksRows(ctx, entity), monthlyAmounts(ctx, entity, months)]);
+  const books = await booksRows(ctx, entity);
+  const amounts = await monthlyAmounts(ctx, entity, months);
   const result = buildExpenseVariance(input.month, amounts, books);
   const window = { from: monthBounds(basis.average[0] ?? basis.previous).from, to: monthBounds(input.month).to };
   const any = await ctx.trx
