@@ -613,6 +613,24 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, o.empBId]),
     );
 
+    // Non-run employee (empC, ended before 2026-09 and excluded from draft pay lines) with a Sunday missing_checkout MUST NOT block rollup!
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         SELECT org_id, legal_entity_id, id, '2026-09-20', '2026-09-20T01:30:00Z', 'web', 'missing_checkout'
+         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+        [o.orgId, empCId],
+      ),
+    );
+    const ignoredOutOfRun = await o.exec<HrAttendanceRollupResult>(o.owner, 'hr.attendance.rollup_to_payroll', {
+      runId: run.runId,
+      allowIncomplete: true,
+    });
+    expect(ignoredOutOfRun.missingCheckoutCount).toBe(1); // Only empB's 2026-09-14 row counts, not empC's Sunday row
+    await withAdmin((c) =>
+      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, empCId]),
+    );
+
     // Also verify adjust clearing checkedOutAt resets worked_minutes to null, and note-only edit preserves credited minutes
     const tempAdj = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
       employeeId: o.empBId,

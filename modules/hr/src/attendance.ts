@@ -241,13 +241,23 @@ export function computeEmployeeAttendanceRollup(args: {
       const extraMins = Math.max(0, mins - REGULAR_SHIFT_MINUTES);
       normalRegularMinutes += regularMins;
 
-      const totalNight = e.checkedInAt && e.checkedOutAt ? Math.min(mins, nightOverlapMinutes(e.checkedInAt, e.checkedOutAt)) : 0;
-      const otStart = e.checkedInAt ? new Date(e.checkedInAt.getTime() + REGULAR_SHIFT_MINUTES * 60_000) : null;
-      const otNight =
-        extraMins > 0 && otStart && e.checkedOutAt
-          ? Math.min(extraMins, nightOverlapMinutes(otStart, e.checkedOutAt))
+      const regularEnd =
+        e.checkedInAt && e.checkedOutAt
+          ? new Date(Math.min(e.checkedOutAt.getTime(), e.checkedInAt.getTime() + regularMins * 60_000))
+          : null;
+      const ordNight =
+        regularMins > 0 && e.checkedInAt && regularEnd
+          ? Math.min(regularMins, nightOverlapMinutes(e.checkedInAt, regularEnd))
           : 0;
-      const ordNight = Math.max(0, totalNight - otNight);
+      const otStart = e.checkedInAt ? new Date(e.checkedInAt.getTime() + REGULAR_SHIFT_MINUTES * 60_000) : null;
+      const otEnd =
+        extraMins > 0 && otStart && e.checkedOutAt
+          ? new Date(Math.min(e.checkedOutAt.getTime(), otStart.getTime() + extraMins * 60_000))
+          : null;
+      const otNight =
+        extraMins > 0 && otStart && otEnd
+          ? Math.min(extraMins, nightOverlapMinutes(otStart, otEnd))
+          : 0;
       ordinaryNightMinutes += ordNight;
       otMinutes['normal_day:night'] += otNight;
       otMinutes['normal_day:day'] += Math.max(0, extraMins - otNight);
@@ -990,16 +1000,27 @@ export const attendanceRollupToPayroll = defineCommand({
     userOf(ctx.actor);
     const { payRun, byLineId, people } = await lockDraftLines(ctx, parsed.runId);
     const { start, end } = monthRange(payRun.month);
+    const payableEmpIds = [
+      ...new Set(
+        [...byLineId.values()]
+          .filter((lineRow) => lineRow.kind === 'pay' && people.has(lineRow.employee_id))
+          .map((lineRow) => lineRow.employee_id),
+      ),
+    ];
 
-    const logRows = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
-      .select(['employee_id', 'work_date', 'checked_in_at', 'checked_out_at', 'worked_minutes', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', payRun.legal_entity_id)
-      .where('work_date', '>=', start)
-      .where('work_date', '<=', end)
-      .orderBy('work_date', 'asc')
-      .execute();
+    const logRows =
+      payableEmpIds.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_hr.attendance_log')
+            .select(['employee_id', 'work_date', 'checked_in_at', 'checked_out_at', 'worked_minutes', 'status'])
+            .where('org_id', '=', ctx.orgId)
+            .where('legal_entity_id', '=', payRun.legal_entity_id)
+            .where('employee_id', 'in', payableEmpIds)
+            .where('work_date', '>=', start)
+            .where('work_date', '<=', end)
+            .orderBy('work_date', 'asc')
+            .execute();
 
     const logsByEmp = new Map<string, AttendanceRollupEntry[]>();
     let missingCheckoutCount = 0;
@@ -1041,15 +1062,19 @@ export const attendanceRollupToPayroll = defineCommand({
       );
     }
 
-    const leaveRows = await ctx.trx
-      .selectFrom('crove_hr.payroll_leave_entry')
-      .select(['employee_id', 'kind', 'days'])
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', payRun.legal_entity_id)
-      .where('month', '=', payRun.month)
-      .where('kind', 'in', ['annual_leave', 'personal_paid'])
-      .where('approved', '=', true)
-      .execute();
+    const leaveRows =
+      payableEmpIds.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_hr.payroll_leave_entry')
+            .select(['employee_id', 'kind', 'days'])
+            .where('org_id', '=', ctx.orgId)
+            .where('legal_entity_id', '=', payRun.legal_entity_id)
+            .where('employee_id', 'in', payableEmpIds)
+            .where('month', '=', payRun.month)
+            .where('kind', 'in', ['annual_leave', 'personal_paid'])
+            .where('approved', '=', true)
+            .execute();
     const paidLeaveByEmp = new Map<string, ReturnType<typeof money>>();
     for (const lr of leaveRows) {
       const prev = paidLeaveByEmp.get(lr.employee_id) ?? money('0');

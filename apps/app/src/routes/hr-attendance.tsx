@@ -3,7 +3,7 @@
 // deterministic anomalies + Ly narration, manual adjustment, and 1-click rollup into draft payroll.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_ATTENDANCE_METHODS,
@@ -78,6 +78,26 @@ function toVnTimeInput(iso: string | null | undefined): string {
   return new Date(ms + VN_OFFSET_MS).toISOString().slice(11, 16);
 }
 
+/** Accepts an async QR rotation response only when the page is still focused on that legal entity. */
+export function shouldApplyRotatedQr(currentEntityId: string, rotatedEntityId: string): boolean {
+  return !currentEntityId || currentEntityId === rotatedEntityId;
+}
+
+/** Resets entity-scoped transient admin panel state whenever the active legal entity selector changes. */
+export function entitySwitchResetState(nextEntityId: string) {
+  return {
+    selectedEntityId: nextEntityId,
+    rotatedQr: null as HrAttendanceQrRotateResult | null,
+    copiedUrl: false,
+    lyBrief: null as HrAttendanceAnomaliesBrief | null,
+    rollupResult: null as HrAttendanceRollupResult | null,
+    adjustOpen: false,
+    editingRow: null as HrAdminAttendanceRow | null,
+    adjNote: '',
+    adjEmpId: '',
+  };
+}
+
 export function HrAttendancePage() {
   const { slug } = useParams({ strict: false }) as { slug?: string };
   const t = useTranslations('hrAttendance');
@@ -138,11 +158,15 @@ export function HrAttendancePage() {
     await queryClient.invalidateQueries({ queryKey: orpc.hr.self.attendance.key() });
   };
 
+  const activeEntityIdRef = useRef('');
+
   const rotateQr = useMutation({
     ...orpc.hr.attendance.qr.rotate.mutationOptions(),
     onSuccess: async (data) => {
-      setRotatedQr(data);
-      setCopiedUrl(false);
+      if (shouldApplyRotatedQr(activeEntityIdRef.current, data.legalEntityId)) {
+        setRotatedQr(data);
+        setCopiedUrl(false);
+      }
       await refreshAttendance();
     },
   });
@@ -175,6 +199,7 @@ export function HrAttendancePage() {
   const data = listQ.data;
   const entities = entitiesQ.data ?? [];
   const activeEntityId = selectedEntityId || data?.legalEntityId || '';
+  activeEntityIdRef.current = activeEntityId;
   const scopedEmployees: readonly HrEmployeeSummary[] = (employeesQ.data ?? []).filter(
     (e) => (e.status === 'active' || e.id === adjEmpId) && (!activeEntityId || e.legalEntityId === activeEntityId),
   );
@@ -225,12 +250,15 @@ export function HrAttendancePage() {
     );
   }
 
-  const checkInLink =
-    rotatedQr && slug && typeof window !== 'undefined'
-      ? `${window.location.origin}/o/${slug}/hr/my#qr=${encodeURIComponent(rotatedQr.secret)}`
-      : rotatedQr?.secret ?? '';
+  const visibleRotatedQr =
+    rotatedQr && shouldApplyRotatedQr(activeEntityId, rotatedQr.legalEntityId) ? rotatedQr : null;
 
-  const qrSvg = rotatedQr ? buildSafeQrSvg(checkInLink, rotatedQr.secret) : null;
+  const checkInLink =
+    visibleRotatedQr && slug && typeof window !== 'undefined'
+      ? `${window.location.origin}/o/${slug}/hr/my#qr=${encodeURIComponent(visibleRotatedQr.secret)}`
+      : visibleRotatedQr?.secret ?? '';
+
+  const qrSvg = visibleRotatedQr ? buildSafeQrSvg(checkInLink, visibleRotatedQr.secret) : null;
 
   const openNewAdjust = () => {
     if (adjustOpen && editingRow === null) {
@@ -280,10 +308,16 @@ export function HrAttendancePage() {
                     id="hr-attendance-entity"
                     value={activeEntityId}
                     onChange={(e) => {
-                      setSelectedEntityId(e.target.value);
-                      setRotatedQr(null);
-                      setLyBrief(null);
-                      setRollupResult(null);
+                      const next = entitySwitchResetState(e.target.value);
+                      setSelectedEntityId(next.selectedEntityId);
+                      setRotatedQr(next.rotatedQr);
+                      setCopiedUrl(next.copiedUrl);
+                      setLyBrief(next.lyBrief);
+                      setRollupResult(next.rollupResult);
+                      setAdjustOpen(next.adjustOpen);
+                      setEditingRow(next.editingRow);
+                      setAdjNote(next.adjNote);
+                      setAdjEmpId(next.adjEmpId);
                     }}
                     className={PHONE_SELECT_TARGET}
                     data-testid="hr-attendance-entity"
@@ -358,7 +392,7 @@ export function HrAttendancePage() {
 
         {rotateQr.error && <ErrorText>{errorMessage(rotateQr.error)}</ErrorText>}
 
-        {rotatedQr && qrSvg && (
+        {visibleRotatedQr && qrSvg && (
           <div
             className="flex flex-wrap items-center gap-6 rounded-lg border border-border bg-muted/20 p-4 print:border-0 print:bg-transparent print:p-0"
             data-testid="hr-attendance-qr-poster"
@@ -379,7 +413,7 @@ export function HrAttendancePage() {
               <div>
                 <div className="text-xs text-muted-foreground">{t('qrSecretLabel')}</div>
                 <code className="block break-all rounded bg-muted px-2 py-1 text-xs" data-testid="hr-attendance-qr-secret">
-                  {rotatedQr.secret}
+                  {visibleRotatedQr.secret}
                 </code>
               </div>
               <div>

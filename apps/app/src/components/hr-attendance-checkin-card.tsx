@@ -130,8 +130,9 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
   const data: HrSelfAttendanceListResult | undefined = listQ.data;
   const today = data?.today ?? '';
   const todayLog = data?.todayLog ?? null;
-  const openLog = data?.openLog ?? null;
-  const activeOpenLog = openLog ?? (todayLog && todayLog.checkedOutAt === null ? todayLog : null);
+  const openLog = data?.openLog;
+  const activeOpenLog =
+    openLog !== undefined ? openLog : todayLog && todayLog.checkedOutAt === null ? todayLog : null;
   const logs = data?.logs ?? [];
   const summary = data?.summary;
   const pending = checkInWeb.isPending || checkInQr.isPending || checkOut.isPending;

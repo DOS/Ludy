@@ -231,4 +231,68 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     expect(rollup.workedHours).toBe('12.5');
     expect(rollup.overtimeHours).toBe('0');
   });
+
+  it('bounds ordinary night hours strictly to regular interval and separates night overtime on capped durations', () => {
+    const baseInputs = zHrPayrollInputs.parse({});
+    // Shift 14:00-01:00+1d ICT (660m wall clock: regular 14:00-23:00 has 60m night 22:00-23:00; OT 23:00-01:00 has 120m night).
+    // When workedMinutes is capped to 600m (540m regular + 60m OT), ordNight must stay 60m (1h), NOT 120m!
+    const cappedRollup = computeEmployeeAttendanceRollup({
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2026-09-10',
+          checkedInAt: new Date('2026-09-10T07:00:00Z'),
+          checkedOutAt: new Date('2026-09-10T18:00:00Z'),
+          workedMinutes: 600,
+          status: 'adjusted',
+        },
+      ],
+    });
+    expect(cappedRollup.nightHours).toBe('1');
+    expect(cappedRollup.overtimeHours).toBe('1');
+    expect(cappedRollup.overtime).toEqual([{ dayKind: 'normal_day', night: true, hours: '1' }]);
+
+    // Fully credited 660m preserves 60m (1h) ordinary night + 120m (2h) night OT
+    const fullRollup = computeEmployeeAttendanceRollup({
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2026-09-10',
+          checkedInAt: new Date('2026-09-10T07:00:00Z'),
+          checkedOutAt: new Date('2026-09-10T18:00:00Z'),
+          workedMinutes: 660,
+          status: 'present',
+        },
+      ],
+    });
+    expect(fullRollup.nightHours).toBe('1');
+    expect(fullRollup.overtimeHours).toBe('2');
+    expect(fullRollup.overtime).toEqual([{ dayKind: 'normal_day', night: true, hours: '2' }]);
+
+    // Truncated 300m shift stays inside 14:00-19:00 before 22:00, so zero night hours
+    const truncatedRollup = computeEmployeeAttendanceRollup({
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2026-09-10',
+          checkedInAt: new Date('2026-09-10T07:00:00Z'),
+          checkedOutAt: new Date('2026-09-10T18:00:00Z'),
+          workedMinutes: 300,
+          status: 'adjusted',
+        },
+      ],
+    });
+    expect(truncatedRollup.nightHours).toBe('0');
+    expect(truncatedRollup.overtimeHours).toBe('0');
+    expect(truncatedRollup.overtime).toEqual([]);
+  });
 });

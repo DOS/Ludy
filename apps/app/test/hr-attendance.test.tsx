@@ -14,7 +14,11 @@ import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { HrAttendancePage } from '../src/routes/hr-attendance.tsx';
+import {
+  HrAttendancePage,
+  entitySwitchResetState,
+  shouldApplyRotatedQr,
+} from '../src/routes/hr-attendance.tsx';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -324,5 +328,68 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
       expect(html).not.toContain('data-testid="hr-attendance-qr-rotate"');
       expect(html).not.toContain('data-testid="hr-attendance-rollup-btn"');
     }
+  });
+
+  it('guards stale async QR rotation across entity switches, resets open adjustment drafts on entity change, and respects explicit null openLog', () => {
+    expect(shouldApplyRotatedQr('le-1', 'le-1')).toBe(true);
+    expect(shouldApplyRotatedQr('', 'le-1')).toBe(true);
+    expect(shouldApplyRotatedQr('le-2', 'le-1')).toBe(false);
+
+    expect(entitySwitchResetState('le-2')).toEqual({
+      selectedEntityId: 'le-2',
+      rotatedQr: null,
+      copiedUrl: false,
+      lyBrief: null,
+      rollupResult: null,
+      adjustOpen: false,
+      editingRow: null,
+      adjNote: '',
+      adjEmpId: '',
+    });
+
+    // Explicit openLog: null (ended employee) must not fall back to todayLog checkout button
+    const endedRes: HrSelfAttendanceListResult = {
+      employeeId: '00000000-0000-7000-8000-000000000010',
+      legalEntityId: '00000000-0000-7000-8000-000000000001',
+      month,
+      today: `${month}-22`,
+      todayLog: {
+        id: '00000000-0000-7000-8000-000000000099',
+        legalEntityId: '00000000-0000-7000-8000-000000000001',
+        employeeId: '00000000-0000-7000-8000-000000000010',
+        workDate: `${month}-22`,
+        checkedInAt: `${month}-22T01:30:00.000Z`,
+        checkedOutAt: null,
+        checkInMethod: 'web',
+        workedMinutes: null,
+        status: 'missing_checkout',
+        note: null,
+        anomalies: [],
+        updatedAt: `${month}-22T01:30:00.000Z`,
+      },
+      openLog: null,
+      logs: [],
+      summary: {
+        presentDays: 0,
+        halfDays: 0,
+        missingCheckoutDays: 1,
+        adjustedDays: 0,
+        totalWorkedMinutes: 0,
+      },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], endedRes);
+    const endedHtml = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(endedHtml).not.toContain('data-testid="hr-my-checkout-btn"');
+
+    // Multi-entity admin view renders legal entity switcher
+    cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'owner' }] });
+    cache.current.setQueryData(['legalEntities', 'list', {}], [
+      { id: '00000000-0000-7000-8000-000000000010', name: 'Chi nhánh HCM', isDefault: true },
+      { id: '00000000-0000-7000-8000-000000000011', name: 'Chi nhánh HN', isDefault: false },
+    ]);
+    const multiEntityHtml = wrap(<HrAttendancePage />, 'vi');
+    expect(multiEntityHtml).toContain('data-testid="hr-attendance-entity"');
+    expect(multiEntityHtml).toContain('Chi nhánh HCM');
+    expect(multiEntityHtml).toContain('Chi nhánh HN');
   });
 });
