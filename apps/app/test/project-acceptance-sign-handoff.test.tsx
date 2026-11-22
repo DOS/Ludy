@@ -158,6 +158,7 @@ const {
   ProjectAcceptanceDialogBody,
   ProjectAcceptanceSignHandoff,
   buildDeterministicDeliverables,
+  completedTasksOfBoard,
   createProjectAcceptanceHandoffAttempt,
   performProjectAcceptanceSignHandoff,
 } = await import('../src/components/project-acceptance-sign-handoff.tsx');
@@ -690,5 +691,15 @@ describe('the handover copy of completed task titles (#4421)', () => {
     ]);
     expect(rows.map((r) => r.text)).toEqual(['Giao hàng\u27e8U+202E\u27e9 xong\u27e8U+200B\u27e9', 'Lắp đặt\u202e', 'Nghiệm thu']);
     expect(rows.every((r) => r.proposedByAi === false)).toBe(true);
+  });
+
+  it('keeps the taint when a filtered board is read again for the done tasks, so that path marks the title too', () => {
+    const done = completedTasksOfBoard([
+      { id: '01900000-0000-7000-8000-000000000221', title: 'Bàn giao\u202e', status: 'done', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000222', title: 'Đang làm', status: 'in_progress', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000223', title: 'Xong\u202e', status: 'done', tainted: false },
+    ]);
+    expect(done.map((t) => t.id)).toEqual(['01900000-0000-7000-8000-000000000221', '01900000-0000-7000-8000-000000000223']);
+    expect(buildDeterministicDeliverables(done).map((r) => r.text)).toEqual(['Bàn giao\u27e8U+202E\u27e9', 'Xong\u202e']);
   });
 });

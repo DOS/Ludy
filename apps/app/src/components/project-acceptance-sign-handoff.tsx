@@ -174,6 +174,11 @@ export function canCreateInvoiceFromAcceptance(
   );
 }
 
+// The done tasks of a board read as the handover's completed tasks, each with the taint of its title (#4421): a filtered or truncated board is read again for them, and the copy then marks the title the same way.
+export function completedTasksOfBoard(tasks: readonly { id: string; title: string; status: string; tainted: boolean }[]): ProjectAcceptanceCompletedTask[] {
+  return tasks.filter((task) => task.status === 'done').map((task) => ({ id: task.id, title: task.title, tainted: task.tainted }));
+}
+
 export function buildDeterministicDeliverables(
   completedTasks: readonly ProjectAcceptanceCompletedTask[],
 ): EditableAcceptanceDeliverable[] {
@@ -448,9 +453,7 @@ export function ProjectAcceptanceDialogBody({
 
   const effectiveCompletedTasks = useMemo<readonly ProjectAcceptanceCompletedTask[]>(() => {
     if (shouldFetchDoneTasks && doneTasksQuery.data?.tasks) {
-      return doneTasksQuery.data.tasks
-        .filter((task) => task.status === 'done')
-        .map((task) => ({ id: task.id, title: task.title }));
+      return completedTasksOfBoard(doneTasksQuery.data.tasks);
     }
     return completedTasks;
   }, [shouldFetchDoneTasks, doneTasksQuery.data, completedTasks]);
