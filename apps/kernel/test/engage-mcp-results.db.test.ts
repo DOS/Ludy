@@ -622,6 +622,8 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       const owner = users.owner as string;
       const first = await channel(orgs.a, owner, `Trang${'\u200b'} Cà phê\n${CANARY}`, 'facebook_page', 'fb-page-111');
       const second = await channel(orgs.a, owner, 'Trang A', 'facebook_page', 'fb-page-222');
+      // A Page whose own name starts like an ad account's fallback name keeps all of it (only an ad account's made-up name loses its platform id).
+      const lookalike = await channel(orgs.a, owner, 'Meta ad account East', 'facebook_page', 'fb-page-555');
       const revoked = await channel(orgs.a, owner, 'Trang đã thu hồi', 'facebook_page', 'fb-page-333');
       await sqlAdmin(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgs.a, revoked]);
       const notAPage = await channel(orgs.a, owner, 'Kênh khác', 'sandbox');
@@ -629,10 +631,10 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       const got = await pages();
       expect(Object.keys(got).sort()).toEqual(['pages', 'truncated']);
       expect(got.truncated).toBe(false);
-      expect(got.pages.map((p) => p.id).sort()).toEqual([first, second].sort());
+      expect(got.pages.map((p) => p.id).sort()).toEqual([first, second, lookalike].sort());
       for (const page of got.pages) expect(Object.keys(page).sort()).toEqual(['id', 'name']);
       // Every name is one plain line (the invisible and line-breaking characters are gone); the Page's own words stay data.
-      expect(got.pages.map((p) => p.name).sort()).toEqual(['Trang A', `Trang Cà phê ${CANARY}`]);
+      expect(got.pages.map((p) => p.name).sort()).toEqual(['Meta ad account East', 'Trang A', `Trang Cà phê ${CANARY}`]);
       const json = JSON.stringify(got);
       expect(json).not.toMatch(HIDDEN);
       for (const id of [revoked, notAPage, foreign]) expect(json).not.toContain(id);

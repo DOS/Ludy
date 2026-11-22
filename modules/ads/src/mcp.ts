@@ -208,7 +208,7 @@ export interface McpAdsPage {
   name: string;
 }
 
-// `ludy_ads_pages`: the org's active Facebook Pages, the ones an ad can run as (the same rows the campaign builder and the boost offer), as an id and a plain-line name each. It exists so an AI coworker has an id
+// `ludy_ads_pages`: the org's active Facebook Pages (a Page's name is its own words, so only cut to one plain line: `nameLine`'s ad-account fallback rule is not applied), the ones an ad can run as (the same rows the campaign builder and the boost offer), as an id and a plain-line name each. It exists so an AI coworker has an id
 // for `pageConnectionId` of a campaign draft: the draft check (`page_not_found`, `ADS_DRAFT_REFERENCE`) still decides whether the Page is the org's and active. Read only, a company grant's alone.
 export const mcpAdsPages = defineQuery({
   name: 'ads.mcp.pages',
@@ -227,7 +227,7 @@ export const mcpAdsPages = defineQuery({
       .orderBy('id')
       .limit(MCP_ADS_PAGES + 1)
       .execute();
-    const pages = rows.slice(0, MCP_ADS_PAGES).map((p): McpAdsPage => ({ id: p.id, name: nameLine(p.display_name) }));
+    const pages = rows.slice(0, MCP_ADS_PAGES).map((p): McpAdsPage => ({ id: p.id, name: plainLine(p.display_name, NAME_MAX) }));
     return { pages, truncated: rows.length > pages.length };
   },
 });
