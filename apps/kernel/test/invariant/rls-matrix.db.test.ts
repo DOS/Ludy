@@ -125,6 +125,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_period_item',
   'crove_hr.attendance_log',
   'crove_hr.attendance_qr_config',
+  'crove_hr.onboarding_submission',
+  'crove_hr.overtime_request',
+  'crove_hr.probation_review',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -189,6 +192,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.job_opening', () => 'false'], // HR, as above.
   ['crove_hr.leave_request', () => 'false'], // HR, as above.
+  ['crove_hr.onboarding_submission', () => 'false'], // HR, as above.
+  ['crove_hr.overtime_request', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
@@ -196,6 +201,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.payroll_leave_entry', () => 'false'], // HR, as above.
   ['crove_hr.payroll_line', () => 'false'], // HR, as above.
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
+  ['crove_hr.probation_review', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
   ['crove_kernel.calendar_event_link', () => 'false'], // Reads through the member's own connection.
   ['crove_kernel.conversation', () => 'false'], // The inbox is read per member.
@@ -306,6 +312,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.department', 'false'],
   ['crove_hr.job_opening', 'false'],
   ['crove_hr.leave_request', 'false'],
+  ['crove_hr.onboarding_submission', 'false'],
+  ['crove_hr.overtime_request', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
@@ -315,6 +323,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
+  ['crove_hr.probation_review', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
   // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
   ['crove_kernel.meeting_platform_recording', 'false'],
@@ -2268,6 +2277,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4448: employee self-service onboarding confirmation checklist (owner/admin and linked employee in a user context; system and agent contexts read and write none).
+  'crove_hr.onboarding_submission': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, status: 'pending' },
+      };
+    },
+  },
+  // #4448: employee overtime request with 2-level approval (owner/admin, linked employee, and L1 department manager in a user context; system and agent contexts read and write none).
+  'crove_hr.overtime_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const month = payrollMonth();
+      const workDate = `${month}-02`;
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, month, work_date: workDate, hours: '2', day_type: 'weekday' },
+      };
+    },
+  },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {
     update: { set: 'name = name' },
@@ -2361,6 +2394,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.payroll_run': {
     update: { set: 'working_days = working_days' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
+  },
+  // #4448: end-of-probation evaluation with Projects evidence snapshot (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.probation_review': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const month = payrollMonth();
+      const day = `${month}-01`;
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, period_start: day, period_end: day, decision: 'pass' },
+      };
+    },
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
