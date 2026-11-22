@@ -1441,6 +1441,16 @@ export type ProjectsProjectCycleTable = Refine<
   }
 >;
 
+export const ROADMAP_ANNOUNCEMENT_STATUSES = ['draft', 'published'] as const;
+export type RoadmapAnnouncementStatus = (typeof ROADMAP_ANNOUNCEMENT_STATUSES)[number];
+
+export type ProjectsRoadmapAnnouncementTable = Refine<
+  G.ProjectsRoadmapAnnouncementTable,
+  {
+    status: Generated<RoadmapAnnouncementStatus>;
+  }
+>;
+
 export type ProjectsRoadmapItemTable = Refine<
   G.ProjectsRoadmapItemTable,
   {
@@ -1683,6 +1693,7 @@ type Refined = Tables<{
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_column': ProjectsProjectColumnTable;
   'crove_projects.project_cycle': ProjectsProjectCycleTable;
+  'crove_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;

@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
-import { isMailAddress, zId } from '@ludy/kernel-contract';
+import { ROADMAP_SHIPPED_MAIL_SOURCE, ROADMAP_SHIPPED_MAIL_TEMPLATE, isMailAddress, zId } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -726,5 +726,57 @@ export const queueMemberMail = defineCommand({
   },
 });
 
-export const mailCommands = [recordDirectMail, addMailSuppression, liftMailSuppression, recordMailEvent, beginQueuedMail, recordQueuedMail];
+export const queueRoadmapShippedMail = defineCommand({
+  name: 'kernel.mail.roadmap_shipped.queue',
+  input: z.object({
+    announcementId: zId,
+    subscriberId: zId,
+    to: z.string().trim().min(3).max(320),
+    subject: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line'),
+    payload: z.record(z.string().max(64), z.unknown()).refine((p) => Buffer.byteLength(JSON.stringify(p), 'utf8') <= MAIL_PAYLOAD_MAX_BYTES, 'too large'),
+  }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ status: 'queued' | 'suppressed' | 'already_queued'; messageId: string }> => {
+    requireSystem(ctx);
+    const to = input.to.trim().toLowerCase();
+    if (!isMailAddress(to)) {
+      throw new DomainError('VALIDATION', 422, 'Địa chỉ email người nhận không hợp lệ');
+    }
+    const hash = await mailAddressHash(ctx, to);
+    const existing = await ctx.trx
+      .selectFrom('ludy_kernel.mail_message')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('source', '=', ROADMAP_SHIPPED_MAIL_SOURCE)
+      .where('source_id', '=', input.announcementId)
+      .where('to_hash', '=', hash)
+      .executeTakeFirst();
+    if (existing) {
+      ctx.audit({ announcementId: input.announcementId, subscriberId: input.subscriberId, messageId: existing.id, outcome: 'already_queued' });
+      return { status: 'already_queued', messageId: existing.id };
+    }
+
+    const mail = await createMailMessage(ctx, {
+      stream: 'marketing',
+      source: ROADMAP_SHIPPED_MAIL_SOURCE,
+      sourceId: input.announcementId,
+      templateKey: ROADMAP_SHIPPED_MAIL_TEMPLATE,
+      to,
+      subject: input.subject,
+      payload: input.payload,
+      status: 'queued',
+    });
+    ctx.audit({ announcementId: input.announcementId, subscriberId: input.subscriberId, messageId: mail.id, outcome: mail.status });
+    return { status: mail.status === 'queued' ? 'queued' : 'suppressed', messageId: mail.id };
+  },
+});
+
+export const mailCommands = [recordDirectMail, addMailSuppression, liftMailSuppression, recordMailEvent, beginQueuedMail, recordQueuedMail, queueRoadmapShippedMail];
 export const mailQueries = [directMailGet];

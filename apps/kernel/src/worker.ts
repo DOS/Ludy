@@ -25,7 +25,7 @@ import { archiveSource, expandArchive, recordArchiveFailure, type ArchiveSource 
 import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.ts';
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
-import { sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
+import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -1096,7 +1096,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // time with a gap. Without a mailer (tests, an embedder) queued mail stays queued.
   const mail = deps.mail;
   if (mail) {
-    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, store: deps.store, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
+    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, store: deps.store, ...(deps.channels?.broker ? { broker: deps.channels.broker } : {}), publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
     const sendMail = async (job: { data: MailJob; retryCount: number } | undefined, gap: number) => {
       if (!job) return;
       const label = job.data.messageId.slice(0, 8);
@@ -2129,6 +2129,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (!deps.runtime.installed('meetings') || !wakeBroker || wakeBroker.id === 'none') return;
       const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
       if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
+      return;
+    }
+    if (job.data.type === ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT) {
+      if (!deps.runtime.installed('projects')) return;
+      const done = await dispatchRoadmapAnnouncementNotifications({ workerDb: deps.workerDb, runtime: deps.runtime, broker: deps.channels?.broker }, { orgId: job.data.orgId, eventId: job.data.eventId });
+      if (done.queued > 0 || done.skipped > 0) console.log(`[projects-roadmap-notify] ${job.data.eventId.slice(0, 8)} queued ${done.queued}, skipped ${done.skipped}`);
       return;
     }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
@@ -3436,6 +3442,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // The minutes of an org-visible meeting were published (#3803): one notify job per event, which stores the wake-ups for the company grants that stand.
               // Match QUEUES.mcpWake and QUEUES.mcpWakeSweep: when no credential key is configured, skip relaying minutes wakes so deliveries are not stored or queued past the 24h window (#4354).
               if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
+                await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
+                  singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
+                  retryLimit: NOTIFY_RETRY_LIMIT,
+                  retryDelay: 20,
+                  retryBackoff: true,
+                });
+              }
+              if (row.type === ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT && deps.runtime.installed('projects')) {
                 await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
                   singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
                   retryLimit: NOTIFY_RETRY_LIMIT,

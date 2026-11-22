@@ -11,6 +11,10 @@ export const ROADMAP_ITEM_TITLE_MAX = 200;
 export const ROADMAP_ITEM_SUMMARY_MAX = 4000;
 export const ROADMAP_ITEM_CATEGORY_MAX = 60;
 export const ROADMAP_DISPLAY_NAME_MAX = 80;
+export const ROADMAP_ANNOUNCEMENT_TITLE_MAX = 200;
+export const ROADMAP_ANNOUNCEMENT_BODY_MAX = 12000;
+export const ROADMAP_ANNOUNCEMENT_LINKED_ITEMS_MAX = 20;
+export const ROADMAP_ANNOUNCEMENTS_LIMIT = 100;
 export const ROADMAP_EMBED_ORIGINS_MAX = 20;
 export const ROADMAP_BOARDS_LIMIT = 50;
 export const ROADMAP_ITEMS_LIMIT = 200;
@@ -34,6 +38,10 @@ export const zRoadmapItemStage = z.enum(ROADMAP_ITEM_STAGES);
 
 export const ROADMAP_BOARD_STAGES = ['planned', 'in_progress', 'shipped'] as const;
 export type RoadmapBoardStage = (typeof ROADMAP_BOARD_STAGES)[number];
+
+export const ROADMAP_ANNOUNCEMENT_STATUSES = ['draft', 'published'] as const;
+export type RoadmapAnnouncementStatus = (typeof ROADMAP_ANNOUNCEMENT_STATUSES)[number];
+export const zRoadmapAnnouncementStatus = z.enum(ROADMAP_ANNOUNCEMENT_STATUSES);
 
 /** Validates and normalizes an HTTPS-only embed origin (no wildcards, no paths, no queries, no credentials). */
 export function normalizeRoadmapEmbedOrigin(raw: string): string | null {
@@ -125,6 +133,23 @@ export const zRoadmapPublicBoardInfo = z.strictObject({
 });
 export type RoadmapPublicBoardInfo = z.infer<typeof zRoadmapPublicBoardInfo>;
 
+export const zRoadmapPublicAnnouncementLinkedItem = z.strictObject({
+  id: zId,
+  publicTitle: z.string(),
+  stage: zRoadmapItemStage,
+  category: z.string().nullable(),
+});
+export type RoadmapPublicAnnouncementLinkedItem = z.infer<typeof zRoadmapPublicAnnouncementLinkedItem>;
+
+export const zRoadmapPublicAnnouncement = z.strictObject({
+  id: zId,
+  title: z.string(),
+  bodyMd: z.string(),
+  publishedAt: z.string(),
+  linkedItems: z.array(zRoadmapPublicAnnouncementLinkedItem),
+});
+export type RoadmapPublicAnnouncement = z.infer<typeof zRoadmapPublicAnnouncement>;
+
 export const zRoadmapPublicViewResult = z.strictObject({
   board: zRoadmapPublicBoardInfo,
   viewer: z.strictObject({
@@ -133,6 +158,7 @@ export const zRoadmapPublicViewResult = z.strictObject({
     notifyOnShip: z.boolean(),
   }),
   items: z.array(zRoadmapPublicItem),
+  announcements: z.array(zRoadmapPublicAnnouncement),
 });
 export type RoadmapPublicViewResult = z.infer<typeof zRoadmapPublicViewResult>;
 
@@ -185,7 +211,7 @@ export type RoadmapPublicSubmitIdeaResult = z.infer<typeof zRoadmapPublicSubmitI
 export const zRoadmapPublicVoteInput = z
   .strictObject({
     itemId: zId.optional(),
-    action: z.enum(['vote', 'unvote', 'toggle', 'unsubscribe']).default('toggle'),
+    action: z.enum(['vote', 'unvote', 'toggle', 'subscribe', 'unsubscribe']).default('toggle'),
     notifyOnShip: z.boolean().optional(),
     unsubscribeToken: z.string().trim().min(16).max(256).optional(),
   })
@@ -193,6 +219,12 @@ export const zRoadmapPublicVoteInput = z
     if (v.action === 'unsubscribe') {
       if (!v.unsubscribeToken) {
         ctx.addIssue({ code: 'custom', path: ['unsubscribeToken'], message: 'unsubscribeToken is required' });
+      }
+      return;
+    }
+    if (v.action === 'subscribe') {
+      if (typeof v.notifyOnShip !== 'boolean') {
+        ctx.addIssue({ code: 'custom', path: ['notifyOnShip'], message: 'notifyOnShip is required' });
       }
       return;
     }
@@ -279,6 +311,30 @@ export const zRoadmapBoardListResult = z.strictObject({
 });
 export type RoadmapBoardListResult = z.infer<typeof zRoadmapBoardListResult>;
 
+export const zRoadmapAnnouncementLinkedItem = z.strictObject({
+  id: zId,
+  publicTitle: z.string(),
+  stage: zRoadmapItemStage,
+  moderationStatus: zRoadmapItemModerationStatus,
+  voteCount: z.number().int().nonnegative(),
+});
+export type RoadmapAnnouncementLinkedItem = z.infer<typeof zRoadmapAnnouncementLinkedItem>;
+
+export const zRoadmapAnnouncement = z.strictObject({
+  id: zId,
+  boardId: zId,
+  title: z.string(),
+  bodyMd: z.string(),
+  status: zRoadmapAnnouncementStatus,
+  publishedAt: z.string().nullable(),
+  linkedItemIds: z.array(zId),
+  linkedItems: z.array(zRoadmapAnnouncementLinkedItem),
+  notificationsSentAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type RoadmapAnnouncement = z.infer<typeof zRoadmapAnnouncement>;
+
 export const zRoadmapBoardDetailInput = z.strictObject({
   boardId: zId,
 });
@@ -287,6 +343,8 @@ export type RoadmapBoardDetailInput = z.infer<typeof zRoadmapBoardDetailInput>;
 export const zRoadmapBoardDetailResult = z.strictObject({
   board: zRoadmapBoardSummary,
   items: z.array(zRoadmapAdminItem),
+  announcements: z.array(zRoadmapAnnouncement),
+  activeSubscriberCount: z.number().int().nonnegative(),
   canWrite: z.boolean(),
   canManageBoard: z.boolean(),
 });
@@ -359,8 +417,88 @@ export const zRoadmapItemSyncStageInput = z.strictObject({
 });
 export type RoadmapItemSyncStageInput = z.input<typeof zRoadmapItemSyncStageInput>;
 
+export const zRoadmapAnnouncementCreateInput = z.strictObject({
+  boardId: zId,
+  title: zCleanLine(ROADMAP_ANNOUNCEMENT_TITLE_MAX),
+  bodyMd: zCleanLine(ROADMAP_ANNOUNCEMENT_BODY_MAX),
+  linkedItemIds: z.array(zId).max(ROADMAP_ANNOUNCEMENT_LINKED_ITEMS_MAX).optional(),
+});
+export type RoadmapAnnouncementCreateInput = z.input<typeof zRoadmapAnnouncementCreateInput>;
+
+export const zRoadmapAnnouncementUpdateInput = z.strictObject({
+  announcementId: zId,
+  title: zCleanLine(ROADMAP_ANNOUNCEMENT_TITLE_MAX).optional(),
+  bodyMd: zCleanLine(ROADMAP_ANNOUNCEMENT_BODY_MAX).optional(),
+  linkedItemIds: z.array(zId).max(ROADMAP_ANNOUNCEMENT_LINKED_ITEMS_MAX).optional(),
+});
+export type RoadmapAnnouncementUpdateInput = z.input<typeof zRoadmapAnnouncementUpdateInput>;
+
+export const zRoadmapAnnouncementPublishInput = z.strictObject({
+  announcementId: zId,
+});
+export type RoadmapAnnouncementPublishInput = z.infer<typeof zRoadmapAnnouncementPublishInput>;
+
+export const zRoadmapAnnouncementDeleteInput = z.strictObject({
+  announcementId: zId,
+});
+export type RoadmapAnnouncementDeleteInput = z.infer<typeof zRoadmapAnnouncementDeleteInput>;
+
+export const zRoadmapAnnouncementSendNotificationsInput = z.strictObject({
+  announcementId: zId,
+});
+export type RoadmapAnnouncementSendNotificationsInput = z.infer<typeof zRoadmapAnnouncementSendNotificationsInput>;
+
+export const zRoadmapAnnouncementSendNotificationsResult = z.strictObject({
+  announcement: zRoadmapAnnouncement,
+  eligibleCount: z.number().int().nonnegative(),
+  queuedDispatch: z.boolean(),
+});
+export type RoadmapAnnouncementSendNotificationsResult = z.infer<typeof zRoadmapAnnouncementSendNotificationsResult>;
+
+// Vy AI-native Slice 2 schemas (#4400)
+export const ROADMAP_AI_STATES = ['used', 'off', 'paused', 'budget', 'busy', 'refused', 'empty', 'failed'] as const;
+export type RoadmapAiState = (typeof ROADMAP_AI_STATES)[number];
+
+export const zRoadmapDedupeInput = z.strictObject({
+  boardId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type RoadmapDedupeInput = z.input<typeof zRoadmapDedupeInput>;
+
+export const zRoadmapDedupeSuggestion = z.strictObject({
+  sourceItemId: zId,
+  targetItemId: zId,
+  reason: z.string(),
+  confidence: z.enum(['high', 'medium', 'low']),
+});
+export type RoadmapDedupeSuggestion = z.infer<typeof zRoadmapDedupeSuggestion>;
+
+export const zRoadmapDedupeResult = z.strictObject({
+  ai: z.enum(ROADMAP_AI_STATES),
+  suggestions: z.array(zRoadmapDedupeSuggestion),
+  inspectedCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type RoadmapDedupeResult = z.infer<typeof zRoadmapDedupeResult>;
+
+export const zRoadmapChangelogDraftInput = z.strictObject({
+  boardId: zId,
+  itemIds: z.array(zId).min(1).max(ROADMAP_ANNOUNCEMENT_LINKED_ITEMS_MAX),
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type RoadmapChangelogDraftInput = z.input<typeof zRoadmapChangelogDraftInput>;
+
+export const zRoadmapChangelogDraftResult = z.strictObject({
+  ai: z.enum(ROADMAP_AI_STATES),
+  title: z.string().nullable(),
+  bodyMd: z.string().nullable(),
+});
+export type RoadmapChangelogDraftResult = z.infer<typeof zRoadmapChangelogDraftResult>;
+
 export const ROADMAP_MAIL_SOURCE = 'projects.roadmap.otp_request';
 export const ROADMAP_OTP_MAIL_TEMPLATE = 'projects.roadmap_otp';
+export const ROADMAP_SHIPPED_MAIL_SOURCE = 'projects.roadmap.announcement.send_notifications';
+export const ROADMAP_SHIPPED_MAIL_TEMPLATE = 'projects.roadmap_shipped';
 
 export const zRoadmapOtpMailPayload = z.strictObject({
   lang: z.enum(['vi', 'en']).default('vi'),
@@ -371,3 +509,15 @@ export const zRoadmapOtpMailPayload = z.strictObject({
   expiresAt: z.string().min(1).max(80),
 });
 export type RoadmapOtpMailPayload = z.infer<typeof zRoadmapOtpMailPayload>;
+
+export const zRoadmapShippedMailPayload = z.strictObject({
+  lang: z.enum(['vi', 'en']).default('vi'),
+  orgName: z.string().trim().min(1).max(200),
+  orgSlug: z.string().trim().min(1).max(63),
+  boardId: zId,
+  boardSlug: z.string().trim().min(1).max(63),
+  boardTitle: z.string().trim().min(1).max(ROADMAP_TITLE_MAX),
+  announcementId: zId,
+  subscriberId: zId,
+});
+export type RoadmapShippedMailPayload = z.infer<typeof zRoadmapShippedMailPayload>;

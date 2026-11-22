@@ -26,6 +26,8 @@ const ENGAGE: Record<string, string> = {
   ludy_ads_today: 'ads.mcp.today',
   ludy_ads_launches: 'ads.mcp.launches',
   ludy_bookings_list: 'crm.mcp.bookings',
+  ludy_projects_roadmap_ideas: 'projects.mcp.roadmap_ideas',
+  ludy_projects_roadmap_demand_summary: 'projects.mcp.roadmap_demand_summary',
 };
 // What a member-bound grant is offered of them: the records every role reads in the app (the database narrows the conversations to the member's rights). The results of Social and Ads and the guests' bookings
 // are a company grant's alone.
