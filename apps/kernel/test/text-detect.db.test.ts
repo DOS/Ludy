@@ -110,6 +110,12 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
       { kind: 'bank_account', start_pos: 18, end_pos: 26, match_text: '12345678' },
       { kind: 'phone', start_pos: 44, end_pos: 56, match_text: '0912 345 678' },
     ]);
+
+    const nfdTin = 'TIN So\u0302\u0301: 12345678, So\u0302\u0301 MST: 5900000018, THO\u0302NG TIN So\u0302\u0301 12345678.';
+    expect(await detect(nfdTin)).toEqual([
+      { kind: 'tax_code', start_pos: 11, end_pos: 19, match_text: '12345678' },
+      { kind: 'tax_code', start_pos: 31, end_pos: 41, match_text: '5900000018' },
+    ]);
   });
 
   it('agrees with ludy_kernel.text_mentions on detected emails and non-international digit values', async () => {
@@ -147,6 +153,23 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
 
     // Literal mark replacement: regex replacement sequences (\1, \&) stay literal.
     expect(await redactSpans('Mail ab@x.example.', [6], ['email'], ['R&D \\1 \\&'])).toBe('Mail R&D \\1 \\&.');
+
+    // Recall follow-up spans (#4375): URL stays intact while trailing phone, TIN Số, and punycode email redact cleanly.
+    const recallText = 'Link https://zoom.us/j/84212345678 0912345678, TIN Số: 12345678, mail hoa@xn--ng-jia.xn--vermgensberater-ctb.';
+    const recallFound = await detect(recallText);
+    expect(recallFound.map((r) => ({ kind: r.kind, matchText: r.match_text }))).toEqual([
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'email', matchText: 'hoa@xn--ng-jia.xn--vermgensberater-ctb' },
+    ]);
+    expect(
+      await redactSpans(
+        recallText,
+        recallFound.map((r) => r.start_pos),
+        recallFound.map((r) => r.kind),
+        recallFound.map((r) => MARK_BY_KIND[r.kind]),
+      ),
+    ).toBe('Link https://zoom.us/j/84212345678 [đã ẩn: số điện thoại], TIN Số: [đã ẩn: mã số thuế], mail [đã ẩn: email].');
 
     // Empty selection or NULL text returns text/NULL after validating args.
     expect(await redactSpans(text, [], [], [])).toBe(text);
@@ -281,6 +304,26 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
     const tChainedHttp = performance.now();
     expect(await detect(chainedHttp)).toEqual([]);
     expect(performance.now() - tChainedHttp).toBeLessThan(2500);
+
+    const urlSpacePhones100k = 'https://zoom.us/j/84212345678 0912345678\n'.repeat(2400);
+    const tUrlPhones = performance.now();
+    expect(await detect(urlSpacePhones100k)).toHaveLength(2400);
+    expect(performance.now() - tUrlPhones).toBeLessThan(2500);
+
+    const chainedHttpTrailingPhone = 'https://'.repeat(12000) + '/0912345678 0912345678';
+    const tChainedHttpPhone = performance.now();
+    expect(await detect(chainedHttpTrailingPhone)).toHaveLength(1);
+    expect(performance.now() - tChainedHttpPhone).toBeLessThan(2500);
+
+    const punycode100k = 'hoa@example.xn--vermgensberater-ctb, '.repeat(2700);
+    const tPunycode = performance.now();
+    expect(await detect(punycode100k)).toHaveLength(2700);
+    expect(performance.now() - tPunycode).toBeLessThan(2500);
+
+    const repeatedH = 'h'.repeat(50000);
+    const tRepeatedH = performance.now();
+    expect(await detect(repeatedH)).toEqual([]);
+    expect(performance.now() - tRepeatedH).toBeLessThan(2500);
   });
 
   it('normalizes Vietnamese labels (SĐT, ĐỒNG, VNĐ) identically in a C-collation database', async () => {
@@ -308,7 +351,7 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
 
       const { rows } = await cClient.query<DetectRow>(
         'SELECT kind, start_pos, end_pos, match_text FROM ludy_kernel.text_detect($1)',
-        ['SĐT 84.912.345.678, Sđt 84.912.345.678, 15000000 ĐỒNG, SĐT 0912 345 678 ĐỒNG Ý CHƯA, VNĐ 123456789, STK VNĐ 12345678, ĐIỆN THOẠI +84 912 345 678.'],
+        ['SĐT 84.912.345.678, Sđt 84.912.345.678, 15000000 ĐỒNG, SĐT 0912 345 678 ĐỒNG Ý CHƯA, VNĐ 123456789, STK VNĐ 12345678, ĐIỆN THOẠI +84 912 345 678, TIN Số: 12345678, TIN So\u0302\u0301: 12345678, Số MST: 5900000018, THÔNG TIN Số 12345678.'],
       );
       expect(rows.map((r) => ({ kind: r.kind, matchText: r.match_text }))).toEqual([
         { kind: 'phone', matchText: '84.912.345.678' },
@@ -316,6 +359,9 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
         { kind: 'phone', matchText: '0912 345 678' },
         { kind: 'bank_account', matchText: '12345678' },
         { kind: 'phone', matchText: '+84 912 345 678' },
+        { kind: 'tax_code', matchText: '12345678' },
+        { kind: 'tax_code', matchText: '12345678' },
+        { kind: 'tax_code', matchText: '5900000018' },
       ]);
     } finally {
       if (cClient) await cClient.end();
