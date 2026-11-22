@@ -23,6 +23,7 @@ import {
   zSignSignerCorrectRecipientInput,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext, type ErrorStatus } from '@ludy/kernel-runtime';
+import { assertCanUseProjectAcceptanceSource } from './acceptance.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
@@ -194,6 +195,7 @@ export const envelopeCreate = defineCommand({
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     assertValidEnvelopeExpiry(expiresAt, ctx.now);
     await assertCanCreateMeetingMinutesEnvelope(ctx, input.sourceKind, sourceId);
+    await assertCanUseProjectAcceptanceSource(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
     if (input.sourceKind === 'hr_contract' || input.sourceKind === 'meeting_minutes') {

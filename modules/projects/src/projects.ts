@@ -35,6 +35,7 @@ import {
   type ProjectTaskCard,
   type ProjectTaskProjectEntry,
   type ProjectTaskReorderResult,
+  type ProjectVisibility,
 } from '@ludy/kernel-contract';
 import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@ludy/kernel';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
@@ -47,18 +48,21 @@ import {
   READERS,
   WRITERS,
   assertCanManage,
+  assertCanSetPrivateVisibility,
   assertNotArchived,
   assertOrgMembers,
   canManageProject,
   canWriteProject,
   countHiddenProjectTasks,
   descriptionOf,
+  ensurePrivateMembers,
   loadOrgMembers,
   loadProject,
   loadProjectSeatsAndProfiles,
   loadProjectTaskCounts,
   memberProfilesMap,
   ownerDisplayName,
+  resolveCreateMemberIds,
   taskNotFound,
   userOf,
 } from './shared.ts';
@@ -80,13 +84,25 @@ export const projectCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project', ['org_id', 'name', 'description', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at']),
+    tableWrite(TABLES, 'crove_projects', 'project', [
+      'org_id',
+      'name',
+      'description',
+      'owner_user_id',
+      'status',
+      'visibility',
+      'created_by',
+      'created_at',
+      'updated_at',
+    ]),
     tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
   ],
   handler: async (ctx, input): Promise<{ projectId: string }> => {
     const userId = userOf(ctx.actor);
     const ownerUserId = input.ownerUserId ?? userId;
-    const memberIds = input.memberUserIds !== undefined ? [...new Set(input.memberUserIds)] : [...new Set([ownerUserId, userId])];
+    const visibility = input.visibility ?? 'org';
+    assertCanSetPrivateVisibility(ctx, ownerUserId, userId, visibility);
+    const memberIds = resolveCreateMemberIds(visibility, input.memberUserIds, userId, ownerUserId);
     const checkIds = [...new Set([ownerUserId, ...memberIds])];
     const orgRoles = await assertOrgMembers(ctx.trx, ctx.orgId, checkIds);
     if (orgRoles.get(ownerUserId) === 'viewer') {
@@ -101,6 +117,7 @@ export const projectCreate = defineCommand({
         description,
         owner_user_id: ownerUserId,
         status: 'active',
+        visibility,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -127,6 +144,7 @@ export const projectCreate = defineCommand({
       name: auditValue(PROJECT, 'name', input.name),
       description: auditValue(PROJECT, 'description', description),
       ownerUserId,
+      visibility,
       memberCount: memberIds.length,
     });
     await ctx.emit('projects.project.created', { projectId: created.id, ownerUserId });
@@ -145,11 +163,13 @@ export const projectUpdate = defineCommand({
     tableWrite(TABLES, 'crove_projects', 'project', [
       'name',
       'description',
+      'visibility',
       'cycles_enabled',
       'cycle_duration_weeks',
       'points_enabled',
       'updated_at',
     ]),
+    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string }> => {
@@ -160,23 +180,39 @@ export const projectUpdate = defineCommand({
 
     const nextName = input.name ?? row.name;
     const nextDescription = input.description !== undefined ? descriptionOf(input.description) : row.description;
+    const nextVisibility = input.visibility ?? row.visibility;
     const nextCyclesEnabled = input.cyclesEnabled ?? row.cycles_enabled;
     const nextCycleDurationWeeks = input.cycleDurationWeeks ?? row.cycle_duration_weeks;
     const nextPointsEnabled = input.pointsEnabled ?? row.points_enabled;
     const changed = [
       ...(nextName !== row.name ? ['name'] : []),
       ...(nextDescription !== row.description ? ['description'] : []),
+      ...(nextVisibility !== row.visibility ? ['visibility'] : []),
       ...(nextCyclesEnabled !== row.cycles_enabled ? ['cyclesEnabled'] : []),
       ...(nextCycleDurationWeeks !== row.cycle_duration_weeks ? ['cycleDurationWeeks'] : []),
       ...(nextPointsEnabled !== row.points_enabled ? ['pointsEnabled'] : []),
     ];
 
     if (changed.length > 0) {
+      if (row.visibility !== 'private' && nextVisibility === 'private') {
+        const { rows: accRows } = await sql<{ has_acceptance: boolean }>`
+          SELECT crove_projects.has_project_acceptance_envelope(${ctx.orgId}::uuid, ${row.id}::uuid) AS has_acceptance
+        `.execute(ctx.trx);
+        if (accRows[0]?.has_acceptance) {
+          throw new DomainError(
+            'PROJECT_PRIVATE_ACCEPTANCE_EXISTS',
+            409,
+            'Dự án đã có biên bản nghiệm thu eSign chia sẻ nên không thể chuyển sang riêng tư',
+          );
+        }
+        await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [userId, row.owner_user_id], ctx.now);
+      }
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({
           name: nextName,
           description: nextDescription,
+          visibility: nextVisibility,
           cycles_enabled: nextCyclesEnabled,
           cycle_duration_weeks: nextCycleDurationWeeks,
           points_enabled: nextPointsEnabled,
@@ -192,6 +228,7 @@ export const projectUpdate = defineCommand({
       changed,
       ...(input.name !== undefined ? { name: auditValue(PROJECT, 'name', nextName) } : {}),
       ...(input.description !== undefined ? { description: auditValue(PROJECT, 'description', nextDescription) } : {}),
+      ...(input.visibility !== undefined ? { visibility: nextVisibility } : {}),
       ...(input.cyclesEnabled !== undefined ? { cyclesEnabled: nextCyclesEnabled } : {}),
       ...(input.cycleDurationWeeks !== undefined ? { cycleDurationWeeks: nextCycleDurationWeeks } : {}),
       ...(input.pointsEnabled !== undefined ? { pointsEnabled: nextPointsEnabled } : {}),
@@ -268,7 +305,10 @@ export const projectSetOwner = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['owner_user_id', 'updated_at'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project', ['owner_user_id', 'updated_at']),
+    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; ownerUserId: string }> => {
     const userId = userOf(ctx.actor);
@@ -282,6 +322,9 @@ export const projectSetOwner = defineCommand({
     }
 
     if (row.owner_user_id !== input.ownerUserId) {
+      if (row.visibility === 'private') {
+        await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [input.ownerUserId], ctx.now);
+      }
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({ owner_user_id: input.ownerUserId, updated_at: ctx.now })
@@ -347,6 +390,13 @@ export const projectMemberRemove = defineCommand({
     const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertCanManage(ctx, row, userId);
     assertNotArchived(row);
+    if (row.owner_user_id !== null && input.userId === row.owner_user_id) {
+      throw new DomainError(
+        'PROJECT_OWNER_CANNOT_REMOVE',
+        409,
+        'Không thể gỡ người phụ trách chính khỏi dự án; hãy đổi người phụ trách trước',
+      );
+    }
 
     const deleted = await ctx.trx
       .deleteFrom('crove_projects.project_member')
@@ -663,6 +713,7 @@ export const projectList = defineQuery({
         'p.description',
         'p.owner_user_id',
         'p.status',
+        'p.visibility',
         'p.cycles_enabled',
         'p.cycle_duration_weeks',
         'p.points_enabled',
@@ -721,6 +772,7 @@ export const projectList = defineQuery({
         ownerUserId: r.owner_user_id,
         ownerName: ownerDisplayName(profiles, r.owner_user_id),
         status: r.status as ProjectStatus,
+        visibility: r.visibility as ProjectVisibility,
         cyclesEnabled: r.cycles_enabled,
         cycleDurationWeeks: r.cycle_duration_weeks,
         pointsEnabled: r.points_enabled,
@@ -752,6 +804,7 @@ export const projectGet = defineQuery({
       ownerUserId: row.owner_user_id,
       ownerName: ownerDisplayName(profiles, row.owner_user_id),
       status: row.status,
+      visibility: row.visibility,
       cyclesEnabled: row.cycles_enabled,
       cycleDurationWeeks: row.cycle_duration_weeks,
       pointsEnabled: row.points_enabled,
@@ -807,6 +860,7 @@ export const projectBoard = defineQuery({
       ownerUserId: row.owner_user_id,
       ownerName: ownerDisplayName(profiles, row.owner_user_id),
       status: row.status,
+      visibility: row.visibility,
       cyclesEnabled: row.cycles_enabled,
       cycleDurationWeeks: row.cycle_duration_weeks,
       pointsEnabled: row.points_enabled,

@@ -27,6 +27,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { VisibilityIcon } from '@ludy/ui/components/visibility-icon';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
 import { ProjectTimelineView } from '../components/project-timeline.tsx';
 import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
@@ -110,9 +111,15 @@ function ProjectCardItem({ slug, project }: { slug: string; project: ProjectSumm
           <div className="space-y-2">
             <div className="flex items-start justify-between gap-2">
               <h2 className="min-w-0 break-words text-base font-semibold tracking-tight text-foreground">{project.name}</h2>
-              <Badge variant={projectStatusVariant(project.status)} className="shrink-0">
-                {t(`status.${project.status}`)}
-              </Badge>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {project.visibility === 'private' && (
+                  <Badge variant="secondary" className="gap-1" data-testid="project-private-badge">
+                    <VisibilityIcon shared={false} className="size-3" />
+                    {t('visibility.privateBadge')}
+                  </Badge>
+                )}
+                <Badge variant={projectStatusVariant(project.status)}>{t(`status.${project.status}`)}</Badge>
+              </div>
             </div>
             {project.description && (
               <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{project.description}</p>
@@ -143,8 +150,11 @@ function ProjectCardItem({ slug, project }: { slug: string; project: ProjectSumm
                 </span>
               </span>
               <span className="inline-flex shrink-0 items-center gap-2 tabular-nums">
-                {project.memberCount > 0 && (
-                  <span className="inline-flex items-center gap-1">
+                {(project.memberCount > 0 || project.visibility === 'private') && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-foreground"
+                    data-testid="project-member-count-pill"
+                  >
                     <ProjectIcon name="users" className="size-3.5" />
                     {t('card.membersCount', { count: String(project.memberCount) })}
                   </span>
@@ -497,6 +507,7 @@ export function ProjectDetailPage() {
   const { project, seats, members, tasks, hiddenByEntityCount } = board;
   const currentUserId = me.data?.userId ?? null;
   const otherMemberCount = countOtherProjectMembers(members, currentUserId);
+  const projectMemberCount = members.filter((m) => m.onProject).length;
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
   const completedTasks = tasks
     .filter((item) => item.status === 'done')
@@ -523,12 +534,14 @@ export function ProjectDetailPage() {
           subtitle={project.description ?? undefined}
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <ProjectAcceptanceSignHandoff
-                project={{ id: project.id, name: project.name, status: project.status }}
-                completedTasks={completedTasks}
-                boardFiltered={boardFiltered}
-                canEdit={project.canWrite}
-              />
+              {project.visibility !== 'private' && (
+                <ProjectAcceptanceSignHandoff
+                  project={{ id: project.id, name: project.name, status: project.status }}
+                  completedTasks={completedTasks}
+                  boardFiltered={boardFiltered}
+                  canEdit={project.canWrite}
+                />
+              )}
               {project.canWrite && project.status !== 'archived' && (
                 <Button
                   variant="outline"
@@ -545,7 +558,7 @@ export function ProjectDetailPage() {
                   {t('detail.addExisting')}
                 </Button>
               )}
-              {project.canWrite && (
+              {project.canWrite && project.visibility !== 'private' && (
                 <Button variant="outline" onClick={() => setSaveTemplateOpen(true)} data-testid="save-as-template-button">
                   <ProjectIcon name="template" />
                   {t('detail.saveAsTemplate')}
@@ -567,6 +580,16 @@ export function ProjectDetailPage() {
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <Badge variant={projectStatusVariant(project.status)}>{t(`status.${project.status}`)}</Badge>
+          {project.visibility === 'private' && (
+            <Badge variant="secondary" className="gap-1" data-testid="project-detail-private-badge">
+              <VisibilityIcon shared={false} className="size-3" />
+              {t('visibility.privateBadge')}
+            </Badge>
+          )}
+          <Badge variant="outline" className="gap-1 tabular-nums" data-testid="project-detail-members-pill">
+            <ProjectIcon name="users" className="size-3" />
+            {t('card.membersCount', { count: String(projectMemberCount) })}
+          </Badge>
           <span className="inline-flex items-center gap-1">
             <ProjectIcon name="user" className="size-3.5" />
             <span>{project.ownerName ? t('card.owner', { name: project.ownerName }) : t('card.noOwner')}</span>
@@ -586,6 +609,7 @@ export function ProjectDetailPage() {
         slug={slug}
         projectId={project.id}
         projectStatus={project.status}
+        projectVisibility={project.visibility}
         canManage={project.canManage}
         otherMemberCount={otherMemberCount}
       />

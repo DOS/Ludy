@@ -15,6 +15,7 @@ import {
   type ProjectStatus,
   type ProjectTaskCard,
   type ProjectTaskRecurrenceView,
+  type ProjectVisibility,
   type TaskChecklistStep,
 } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
@@ -31,6 +32,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Textarea } from '@ludy/ui/components/textarea';
+import { VisibilityIcon } from '@ludy/ui/components/visibility-icon';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
@@ -79,6 +81,54 @@ export function memberLabel(m: { displayName: string | null; email: string | nul
   return m.displayName?.trim() || m.email?.trim() || m.userId.slice(0, 8);
 }
 
+export function ProjectVisibilityField({
+  id,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  id: string;
+  value: ProjectVisibility;
+  onChange: (next: ProjectVisibility) => void;
+  disabled?: boolean | undefined;
+}) {
+  const t = useTranslations('projects');
+  const isPrivate = value === 'private';
+
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1.5">
+        <Label htmlFor={id}>{t('visibility.label')}</Label>
+        <NativeSelect
+          id={id}
+          className="min-h-11 w-full"
+          disabled={disabled}
+          value={value}
+          onChange={(e) => onChange(e.target.value as ProjectVisibility)}
+          data-testid="project-visibility-select"
+        >
+          <NativeSelectOption value="org">{t('visibility.org')}</NativeSelectOption>
+          <NativeSelectOption value="private">{t('visibility.private')}</NativeSelectOption>
+        </NativeSelect>
+      </div>
+      <Alert
+        className={isPrivate ? 'border-border bg-muted/40' : 'border-primary/25 bg-primary/5'}
+        data-testid="project-visibility-notice"
+        data-visibility={value}
+      >
+        {isPrivate ? (
+          <VisibilityIcon shared={false} className="text-foreground" />
+        ) : (
+          <NavIcon name="info" className="text-primary" />
+        )}
+        <AlertDescription className="text-xs leading-relaxed text-foreground">
+          {isPrivate ? t('privateVisibilityNotice') : t('visibilityNotice')}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+}
+
 export function CreateProjectDialog({
   open,
   onOpenChange,
@@ -92,6 +142,7 @@ export function CreateProjectDialog({
   const tc = useTranslations('common');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState<ProjectVisibility>('org');
   const [nameError, setNameError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
 
@@ -101,6 +152,7 @@ export function CreateProjectDialog({
     if (open) {
       setName('');
       setDescription('');
+      setVisibility('org');
       setNameError(false);
       setIdemKey(crypto.randomUUID());
       create.reset();
@@ -123,6 +175,7 @@ export function CreateProjectDialog({
       {
         name: trimmedName,
         ...(trimmedDesc ? { description: trimmedDesc } : {}),
+        visibility,
         idempotencyKey: idemKey,
       },
       {
@@ -143,12 +196,7 @@ export function CreateProjectDialog({
           <DialogDescription>{t('createSubtitle')}</DialogDescription>
         </DialogHeader>
         <form noValidate onSubmit={submit} className="space-y-4">
-          <Alert className="border-primary/25 bg-primary/5" data-testid="project-visibility-notice">
-            <NavIcon name="info" className="text-primary" />
-            <AlertDescription className="text-xs leading-relaxed text-foreground">
-              {t('visibilityNotice')}
-            </AlertDescription>
-          </Alert>
+          <ProjectVisibilityField id="create-project-visibility" value={visibility} onChange={setVisibility} />
           <div className="space-y-1.5">
             <Label htmlFor={nameField.id}>{t('modals.createNameLabel')}</Label>
             <Input
@@ -740,6 +788,7 @@ export function ProjectSettingsDialog({
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? '');
+  const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility);
   const [cyclesEnabled, setCyclesEnabled] = useState(project.cyclesEnabled ?? false);
   const [cycleDurationWeeks, setCycleDurationWeeks] = useState(project.cycleDurationWeeks ?? 2);
   const [pointsEnabled, setPointsEnabled] = useState(project.pointsEnabled ?? false);
@@ -763,6 +812,7 @@ export function ProjectSettingsDialog({
     if (open) {
       setName(project.name);
       setDescription(project.description ?? '');
+      setVisibility(project.visibility);
       setCyclesEnabled(project.cyclesEnabled ?? false);
       setCycleDurationWeeks(project.cycleDurationWeeks ?? 2);
       setPointsEnabled(project.pointsEnabled ?? false);
@@ -775,7 +825,7 @@ export function ProjectSettingsDialog({
       archive.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, project.id]);
+  }, [open, project.id, project.visibility]);
 
   const editable = project.canManage && project.status !== 'archived';
   const nameField = fieldControl(`settings-project-name-${project.id}`, { error: nameError });
@@ -796,6 +846,7 @@ export function ProjectSettingsDialog({
       projectId: project.id,
       name: trimmed,
       description: nextDesc,
+      visibility,
       cyclesEnabled,
       cycleDurationWeeks,
       pointsEnabled,
@@ -808,8 +859,14 @@ export function ProjectSettingsDialog({
       <DialogContent closeLabel={tc('close')} className="sm:max-w-lg" data-testid="project-settings-dialog">
         <DialogHeader>
           <DialogTitle>{t('modals.editProjectTitle')}</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="flex flex-wrap items-center gap-2">
             <Badge variant={projectStatusVariant(project.status)}>{t(`status.${project.status}`)}</Badge>
+            {project.visibility === 'private' && (
+              <Badge variant="secondary" className="gap-1">
+                <VisibilityIcon shared={false} className="size-3" />
+                {t('visibility.privateBadge')}
+              </Badge>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -843,6 +900,12 @@ export function ProjectSettingsDialog({
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+            <ProjectVisibilityField
+              id={`settings-visibility-${project.id}`}
+              value={visibility}
+              onChange={setVisibility}
+              disabled={!editable || update.isPending}
+            />
             <div className="space-y-3 rounded-lg border border-border bg-muted/25 p-3">
               <p className="text-xs font-semibold text-foreground">{t('cycles.settingsHeading')}</p>
               <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
@@ -893,7 +956,7 @@ export function ProjectSettingsDialog({
             </div>
             {editable && (
               <div className="flex justify-end">
-                <Button type="submit" size="sm" loading={update.isPending}>
+                <Button type="submit" size="sm" className="min-h-11" loading={update.isPending}>
                   {t('modals.saveDetails')}
                 </Button>
               </div>
@@ -905,7 +968,7 @@ export function ProjectSettingsDialog({
               <Label htmlFor={`settings-status-${project.id}`}>{t('modals.statusLabel')}</Label>
               <NativeSelect
                 id={`settings-status-${project.id}`}
-                className="w-full"
+                className="min-h-11 w-full"
                 disabled={!project.canManage || setStatus.isPending}
                 value={project.status}
                 onChange={(e) =>
@@ -927,7 +990,7 @@ export function ProjectSettingsDialog({
               <Label htmlFor={`settings-owner-${project.id}`}>{t('modals.ownerLabel')}</Label>
               <NativeSelect
                 id={`settings-owner-${project.id}`}
-                className="w-full"
+                className="min-h-11 w-full"
                 disabled={!editable || setOwner.isPending}
                 value={project.ownerUserId ?? ''}
                 onChange={(e) => {
@@ -955,16 +1018,26 @@ export function ProjectSettingsDialog({
             <p className="text-xs font-medium text-foreground">
               {t('modals.membersLabel', { count: String(projectMemberCount) })}
             </p>
+            {(visibility === 'private' || project.visibility === 'private') && (
+              <p className="text-xs text-muted-foreground" data-testid="project-private-members-hint">
+                {t('modals.privateMembersHint')}
+              </p>
+            )}
             <ul className="max-h-48 divide-y overflow-y-auto rounded-lg border">
               {members.map((m) => {
                 const adding = addMember.isPending && addMember.variables?.userId === m.userId;
                 const removing = removeMember.isPending && removeMember.variables?.userId === m.userId;
+                const isProjectOwner = project.ownerUserId !== null && m.userId === project.ownerUserId;
                 return (
                   <li key={m.userId} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                     <div className="min-w-0">
                       <p className="truncate font-medium text-foreground">{memberLabel(m)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {m.onProject ? t('modals.memberInProject') : t('modals.memberNotInProject')}
+                        {isProjectOwner
+                          ? t('modals.memberOwnerHint')
+                          : m.onProject
+                            ? t('modals.memberInProject')
+                            : t('modals.memberNotInProject')}
                       </p>
                     </div>
                     {editable &&
@@ -973,6 +1046,8 @@ export function ProjectSettingsDialog({
                           type="button"
                           size="sm"
                           variant="ghost"
+                          className="min-h-11 shrink-0"
+                          disabled={isProjectOwner}
                           loading={removing}
                           onClick={() =>
                             removeMember.mutate({
@@ -989,6 +1064,7 @@ export function ProjectSettingsDialog({
                           type="button"
                           size="sm"
                           variant="outline"
+                          className="min-h-11 shrink-0"
                           loading={adding}
                           onClick={() =>
                             addMember.mutate({

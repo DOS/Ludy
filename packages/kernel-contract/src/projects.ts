@@ -78,6 +78,10 @@ export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as con
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const zProjectStatus = z.enum(PROJECT_STATUSES);
 
+export const PROJECT_VISIBILITIES = ['org', 'private'] as const;
+export type ProjectVisibility = (typeof PROJECT_VISIBILITIES)[number];
+export const zProjectVisibility = z.enum(PROJECT_VISIBILITIES);
+
 // Board columns are the five open/done statuses; cancelled sits behind a filter (ADR-0048 point 2).
 export const BOARD_TASK_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
 export type BoardTaskStatus = (typeof BOARD_TASK_STATUSES)[number];
@@ -243,6 +247,7 @@ export const zProjectCreate = z.strictObject({
   description: zProjectDescription.nullable().optional(),
   ownerUserId: zId.optional(),
   memberUserIds: z.array(zId).max(200).optional(),
+  visibility: zProjectVisibility.optional(),
 });
 export type ProjectCreateInput = z.infer<typeof zProjectCreate>;
 
@@ -253,6 +258,7 @@ export const zProjectUpdate = z.strictObject({
   projectId: zId,
   name: zProjectName.optional(),
   description: zProjectDescription.nullable().optional(),
+  visibility: zProjectVisibility.optional(),
   cyclesEnabled: z.boolean().optional(),
   cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
   pointsEnabled: z.boolean().optional(),
@@ -324,6 +330,7 @@ export const zProjectSummary = z.object({
   ownerUserId: zId.nullable(),
   ownerName: z.string().nullable(),
   status: zProjectStatus,
+  visibility: zProjectVisibility,
   cyclesEnabled: z.boolean().optional(),
   cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
   pointsEnabled: z.boolean().optional(),
@@ -343,6 +350,7 @@ export const zProjectDetail = z.object({
   ownerUserId: zId.nullable(),
   ownerName: z.string().nullable(),
   status: zProjectStatus,
+  visibility: zProjectVisibility,
   cyclesEnabled: z.boolean().optional(),
   cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
   pointsEnabled: z.boolean().optional(),
@@ -867,6 +875,7 @@ export const zProjectCreateFromTemplateFields = z.strictObject({
   language: z.enum(['vi', 'en']).default('vi'),
   ownerUserId: zId.optional(),
   memberUserIds: z.array(zId).max(200).optional(),
+  visibility: zProjectVisibility.optional(),
 });
 export const validTemplateCreateFromSource = (v: {
   templateId?: string | undefined;

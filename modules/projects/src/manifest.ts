@@ -15,6 +15,7 @@ export const projectsManifest = defineModule({
           'id',
           'owner_user_id',
           'status',
+          'visibility',
           'is_template',
           'cycles_enabled',
           'cycle_duration_weeks',

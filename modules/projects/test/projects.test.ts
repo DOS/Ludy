@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Manifest, column classification and command/query contract checks for @ludy/mod-projects (#2591).
 import { MODULE_SCREENS } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { describe, expect, it } from 'vitest';
 import { hasDependencyPath, projectsCommands, projectsManifest, projectsQueries } from '../src/index.ts';
+import { assertCanSetPrivateVisibility, canManageProject, resolveCreateMemberIds } from '../src/shared.ts';
 
 describe('@ludy/mod-projects (#2591)', () => {
   it('registers manifest tables, column classes, entity metadata and screen definitions', () => {
@@ -38,6 +40,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.is_template).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project.visibility).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.cycles_enabled).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.cycle_duration_weeks).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.points_enabled).toBe('internal');
@@ -188,5 +191,24 @@ describe('@ludy/mod-projects (#2591)', () => {
     ];
     expect(hasDependencyPath(diamond, D, C)).toBe(false);
     expect(hasDependencyPath(diamond, B, A)).toBe(false);
+  });
+
+  it('prevents self-lockout on private project creation and gates private visibility ownership (#2604)', () => {
+    expect(resolveCreateMemberIds('private', [], 'u-creator', 'u-owner')).toEqual(['u-creator', 'u-owner']);
+    expect(resolveCreateMemberIds('private', ['u-other'], 'u-creator', 'u-creator')).toEqual(['u-other', 'u-creator']);
+    expect(resolveCreateMemberIds('org', [], 'u-creator', 'u-owner')).toEqual([]);
+
+    expect(canManageProject('owner', 'u1', 'u2')).toBe(true);
+    expect(canManageProject('admin', 'u1', 'u2')).toBe(true);
+    expect(canManageProject('member', 'u1', 'u1')).toBe(true);
+    expect(canManageProject('member', 'u1', 'u2')).toBe(false);
+    expect(canManageProject('viewer', 'u1', 'u1')).toBe(false);
+
+    const memberCtx = { role: 'member' } as unknown as CommandContext;
+    const adminCtx = { role: 'admin' } as unknown as CommandContext;
+    expect(() => assertCanSetPrivateVisibility(memberCtx, 'u1', 'u1', 'private')).not.toThrow();
+    expect(() => assertCanSetPrivateVisibility(adminCtx, 'u2', 'u1', 'private')).not.toThrow();
+    expect(() => assertCanSetPrivateVisibility(memberCtx, 'u2', 'u1', 'org')).not.toThrow();
+    expect(() => assertCanSetPrivateVisibility(memberCtx, 'u2', 'u1', 'private')).toThrow(DomainError);
   });
 });

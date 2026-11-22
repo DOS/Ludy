@@ -2,7 +2,7 @@
 // Shared database loaders and permission checks for the projects module.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
-import type { ProjectSeat, ProjectSeatHolder, ProjectStatus } from '@ludy/kernel-contract';
+import type { ProjectSeat, ProjectSeatHolder, ProjectStatus, ProjectVisibility } from '@ludy/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -16,6 +16,7 @@ export interface ProjectRow {
   description: string | null;
   owner_user_id: string | null;
   status: ProjectStatus;
+  visibility: ProjectVisibility;
   cycles_enabled: boolean;
   cycle_duration_weeks: number;
   points_enabled: boolean;
@@ -61,6 +62,54 @@ export function assertCanManage(ctx: CommandContext, row: ProjectRow, userId: st
   }
 }
 
+/** Rejects setting private visibility on creation unless caller is org owner/admin or project owner. */
+export function assertCanSetPrivateVisibility(
+  ctx: CommandContext,
+  ownerUserId: string | null,
+  userId: string,
+  visibility: ProjectVisibility,
+): void {
+  if (visibility === 'private' && !canManageProject(ctx.role, userId, ownerUserId)) {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ người phụ trách dự án, quản trị viên hoặc chủ sở hữu mới được đặt chế độ riêng tư');
+  }
+}
+
+/** Deduplicates initial member IDs and auto-includes creator and owner for private projects to prevent self-lockout. */
+export function resolveCreateMemberIds(
+  visibility: ProjectVisibility,
+  memberUserIds: readonly string[] | undefined,
+  creatorUserId: string,
+  ownerUserId: string,
+): string[] {
+  const base = memberUserIds !== undefined ? [...new Set(memberUserIds)] : [...new Set([ownerUserId, creatorUserId])];
+  if (visibility !== 'private') return base;
+  return [...new Set([...base, creatorUserId, ownerUserId])];
+}
+
+/** Idempotently inserts missing project_member rows (used on org -> private transition and private owner changes). */
+export async function ensurePrivateMembers(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  userIds: ReadonlyArray<string | null | undefined>,
+  now: Date,
+): Promise<void> {
+  const unique = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (unique.length === 0) return;
+  await trx
+    .insertInto('crove_projects.project_member')
+    .values(
+      unique.map((uid) => ({
+        org_id: orgId,
+        project_id: projectId,
+        user_id: uid,
+        created_at: now,
+      })),
+    )
+    .onConflict((oc) => oc.columns(['org_id', 'project_id', 'user_id']).doNothing())
+    .execute();
+}
+
 export function assertNotArchived(row: Pick<ProjectRow, 'status'>): void {
   if (row.status === 'archived') {
     throw new DomainError('PROJECT_ARCHIVED', 409, 'Dự án đã lưu trữ nên không thể chỉnh sửa');
@@ -76,6 +125,7 @@ export async function loadProject(trx: Trx, orgId: string, projectId: string, lo
       'description',
       'owner_user_id',
       'status',
+      'visibility',
       'cycles_enabled',
       'cycle_duration_weeks',
       'points_enabled',
@@ -89,7 +139,7 @@ export async function loadProject(trx: Trx, orgId: string, projectId: string, lo
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   if (!row) throw projectNotFound();
-  return { ...row, status: row.status as ProjectStatus };
+  return { ...row, status: row.status as ProjectStatus, visibility: row.visibility as ProjectVisibility };
 }
 
 export async function memberProfilesMap(trx: Trx, userIds: readonly string[]): Promise<Map<string, MemberProfile>> {

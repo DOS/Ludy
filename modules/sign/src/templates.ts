@@ -22,6 +22,7 @@ import {
 } from '@ludy/kernel-contract';
 import { tableWrite } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { assertCanUseProjectAcceptanceSource } from './acceptance.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import {
@@ -1632,6 +1633,7 @@ export const templateInstantiate = defineCommand({
     }
     assertCanCreateEnvelopeForSource(ctx, sourceKind);
     await assertCanCreateMeetingMinutesEnvelope(ctx, sourceKind, sourceId);
+    await assertCanUseProjectAcceptanceSource(ctx, sourceKind, sourceId);
 
     const tpl = await ctx.trx
       .selectFrom('crove_sign.template')

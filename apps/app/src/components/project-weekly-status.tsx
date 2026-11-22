@@ -8,6 +8,7 @@ import { useTranslations } from 'use-intl';
 import {
   NOTE_TITLE_MAX,
   PROJECT_WEEKLY_STATUS_SUMMARY_MAX,
+  type ProjectVisibility,
   type ProjectWeeklyStatus as ProjectWeeklyStatusData,
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
@@ -168,6 +169,7 @@ export function ProjectWeeklyStatus({
   slug,
   projectId,
   projectStatus,
+  projectVisibility,
   canManage = false,
   otherMemberCount,
   notesEnabled,
@@ -177,6 +179,7 @@ export function ProjectWeeklyStatus({
   slug: string;
   projectId: string;
   projectStatus?: string | undefined;
+  projectVisibility?: ProjectVisibility | undefined;
   canManage?: boolean | undefined;
   otherMemberCount?: number | undefined;
   notesEnabled?: boolean | undefined;
@@ -184,6 +187,7 @@ export function ProjectWeeklyStatus({
   defaultComposerOpen?: boolean | undefined;
 }) {
   const t = useTranslations('projects.weeklyStatus');
+  const tProjects = useTranslations('projects');
   const f = useFormat();
   const { locale } = useLocaleSetting();
   const language: 'vi' | 'en' = locale === 'en' ? 'en' : 'vi';
@@ -557,6 +561,12 @@ export function ProjectWeeklyStatus({
 
                     {shareNote.error ? <ErrorText>{errorMessage(shareNote.error)}</ErrorText> : null}
                     {sendMail.error ? <ErrorText>{errorMessage(sendMail.error)}</ErrorText> : null}
+
+                    {notesOn && projectVisibility === 'private' && (
+                      <p className="text-xs text-muted-foreground" data-testid="project-weekly-status-private-note-hint">
+                        {tProjects('visibility.weeklyNotePrivateHint')}
+                      </p>
+                    )}
 
                     <div className="flex flex-wrap items-center gap-2">
                       {notesOn ? (

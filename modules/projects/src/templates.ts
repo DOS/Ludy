@@ -26,6 +26,7 @@ import {
   type ProjectTemplateListResult,
   type ProjectTemplateSummary,
   type ProjectTemplateTaskItem,
+  type ProjectVisibility,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
@@ -34,9 +35,11 @@ import {
   READERS,
   WRITERS,
   assertCanManage,
+  assertCanSetPrivateVisibility,
   assertOrgMembers,
   descriptionOf,
   loadProject,
+  resolveCreateMemberIds,
   userOf,
   type ProjectRow,
 } from './shared.ts';
@@ -343,7 +346,14 @@ export const projectTemplateCreate = defineCommand({
     let items: ProjectTemplateTaskItem[] = [];
 
     if (input.sourceProjectId !== undefined) {
-      await loadProject(ctx.trx, ctx.orgId, input.sourceProjectId, false);
+      const source = await loadProject(ctx.trx, ctx.orgId, input.sourceProjectId, false);
+      if (source.visibility === 'private') {
+        throw new DomainError(
+          'PROJECT_PRIVATE_TEMPLATE_FORBIDDEN',
+          422,
+          'Dự án riêng tư không thể lưu thành mẫu dùng chung cho toàn công ty',
+        );
+      }
       // Query crove_kernel.task directly in caller's ctx.trx so le_scope RLS hides out-of-entity tasks from snapshot.
       const rows = await ctx.trx
         .selectFrom('crove_projects.project_task as pt')
@@ -447,6 +457,7 @@ export const projectTemplateArchive = defineCommand({
         'description',
         'owner_user_id',
         'status',
+        'visibility',
         'cycles_enabled',
         'cycle_duration_weeks',
         'points_enabled',
@@ -462,7 +473,11 @@ export const projectTemplateArchive = defineCommand({
     if (!row) {
       throw new DomainError('PROJECT_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu dự án này');
     }
-    const projectRow: ProjectRow = { ...row, status: row.status as ProjectStatus };
+    const projectRow: ProjectRow = {
+      ...row,
+      status: row.status as ProjectStatus,
+      visibility: row.visibility as ProjectVisibility,
+    };
     assertCanManage(ctx, projectRow, userId);
 
     if (projectRow.status !== 'archived') {
@@ -525,8 +540,9 @@ export const projectCreateFromTemplate = defineCommand({
     }
 
     const ownerUserId = input.ownerUserId ?? userId;
-    const memberIds =
-      input.memberUserIds !== undefined ? [...new Set(input.memberUserIds)] : [...new Set([ownerUserId, userId])];
+    const visibility = input.visibility ?? 'org';
+    assertCanSetPrivateVisibility(ctx, ownerUserId, userId, visibility);
+    const memberIds = resolveCreateMemberIds(visibility, input.memberUserIds, userId, ownerUserId);
     const checkIds = [...new Set([ownerUserId, ...memberIds])];
     const orgRoles = await assertOrgMembers(ctx.trx, ctx.orgId, checkIds);
     if (orgRoles.get(ownerUserId) === 'viewer') {
@@ -564,6 +580,7 @@ export const projectCreateFromTemplate = defineCommand({
         description: projectDescription,
         owner_user_id: ownerUserId,
         status: 'active',
+        visibility,
         is_template: false,
         template_tasks: '[]',
         created_by: userId,
@@ -610,6 +627,7 @@ export const projectCreateFromTemplate = defineCommand({
       description: auditValue(PROJECT, 'description', projectDescription),
       templateId: input.templateId ?? null,
       builtinKey: input.builtinKey ?? null,
+      visibility,
       taskCount: taskIds.length,
     });
     await ctx.emit('projects.project.created', { projectId: created.id, ownerUserId });
