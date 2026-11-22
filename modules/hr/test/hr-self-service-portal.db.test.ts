@@ -668,6 +668,12 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       days: '1.0',
       reason: 'Lý do riêng chờ duyệt L1',
     });
+    const subPendingNoNoteForErase = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
+      startOn: '2026-04-23',
+      endOn: '2026-04-23',
+      kind: 'annual_leave',
+      days: '1.0',
+    });
     const subPendingFinalForErase = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
       startOn: '2026-04-21',
       endOn: '2026-04-21',
@@ -713,12 +719,13 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       `SELECT id, status, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
       [empStaff],
     );
-    expect(dbNotes.rows).toHaveLength(4);
+    expect(dbNotes.rows).toHaveLength(5);
     for (const row of dbNotes.rows) {
       expect(row.reason).toBeNull();
       expect(row.decision_note).toBeNull();
     }
     expect(dbNotes.rows.find((r) => r.id === subPendingForErase.requestId)?.status).toBe('cancelled');
+    expect(dbNotes.rows.find((r) => r.id === subPendingNoNoteForErase.requestId)?.status).toBe('cancelled');
     expect(dbNotes.rows.find((r) => r.id === subPendingFinalForErase.requestId)?.status).toBe('cancelled');
     expect(dbNotes.rows.find((r) => r.id === subApproved.requestId)?.status).toBe('approved');
     expect(dbNotes.rows.find((r) => r.id === subCancel.requestId)?.status).toBe('cancelled');
@@ -728,7 +735,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       o.exec(o.manager, 'hr.leave_request.approve_l1', { requestId: subPendingForErase.requestId, note: 'Stale L1 approve' }),
     ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
     await expect(
-      o.exec(o.manager, 'hr.leave_request.reject', { requestId: subPendingForErase.requestId, note: 'Stale L1 reject' }),
+      o.exec(o.manager, 'hr.leave_request.reject', { requestId: subPendingNoNoteForErase.requestId, note: 'Stale L1 reject' }),
     ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
     await expect(
       o.exec(o.owner, 'hr.leave_request.approve_l1', { requestId: subPendingForErase.requestId, note: 'Stale owner L1' }),
@@ -753,7 +760,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       scope: 'team',
     });
     const erasedTeamRows = teamAfterErase.filter((r) => r.employeeId === empStaff);
-    expect(erasedTeamRows).toHaveLength(4);
+    expect(erasedTeamRows).toHaveLength(5);
     for (const row of erasedTeamRows) {
       expect(row.employeeName).toBe('');
       expect(row.reason).toBeNull();
@@ -762,7 +769,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
 
     const adminQueueAfterErase = await o.query<HrLeaveRequestView[]>(o.owner, 'hr.leave_request.list', {});
     const erasedAdminRows = adminQueueAfterErase.filter((r) => r.employeeId === empStaff);
-    expect(erasedAdminRows).toHaveLength(4);
+    expect(erasedAdminRows).toHaveLength(5);
     for (const row of erasedAdminRows) {
       expect(row.employeeName).toBe('');
       expect(row.reason).toBeNull();
@@ -771,7 +778,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     const erasedAdminByEmp = await o.query<HrLeaveRequestView[]>(o.owner, 'hr.leave_request.list', {
       employeeId: empStaff,
     });
-    expect(erasedAdminByEmp).toHaveLength(4);
+    expect(erasedAdminByEmp).toHaveLength(5);
     for (const row of erasedAdminByEmp) {
       expect(row.employeeName).toBe('');
       expect(row.reason).toBeNull();

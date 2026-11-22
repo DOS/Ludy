@@ -786,13 +786,8 @@ export const employeeErase = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
-    await ctx.trx
-      .updateTable('crove_hr.leave_request')
-      .set({ reason: null, decision_note: null, updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('employee_id', '=', input.employeeId)
-      .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
-      .execute();
+    // Cancel non-terminal requests first so their row locks serialize ahead of any concurrent L1 transition
+    // even when reason and decision_note start NULL, then wipe free-text PII notes across every request row.
     const cancelledRequests = await ctx.trx
       .updateTable('crove_hr.leave_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
@@ -800,6 +795,13 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where('status', 'in', ['pending_l1', 'pending_final'])
       .returning('id')
+      .execute();
+    await ctx.trx
+      .updateTable('crove_hr.leave_request')
+      .set({ reason: null, decision_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
     const { rows } = await sql<{ n: number }>`SELECT crove_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);

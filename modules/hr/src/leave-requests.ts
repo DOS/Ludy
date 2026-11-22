@@ -779,8 +779,10 @@ async function transitionLeaveRequestGuarded(
   trx: QueryContext['trx'],
   opts: {
     orgId: string;
+    callerUserId: string;
     role: MemberRole;
     employeeId: string;
+    departmentId: string | null;
     requestId: string;
     allowedStatuses: readonly ('pending_l1' | 'pending_final')[];
     currentStatus: 'pending_l1' | 'pending_final' | 'approved' | 'rejected' | 'cancelled';
@@ -810,6 +812,12 @@ async function transitionLeaveRequestGuarded(
     .returning('id')
     .executeTakeFirst();
   if (!updated) {
+    if (opts.role !== 'owner' && opts.role !== 'admin') {
+      await assertL1Authority(trx, opts.orgId, opts.callerUserId, {
+        employee_id: opts.employeeId,
+        department_id: opts.departmentId,
+      });
+    }
     await assertEmployeeNotErasedForLeaveRequest(trx, opts.orgId, opts.role, opts.employeeId, opts.requestId);
     throw invalidState(opts.invalidStateMessage);
   }
@@ -845,8 +853,10 @@ export const leaveRequestApproveL1 = defineCommand({
     const role = await assertL1Authority(ctx.trx, ctx.orgId, callerUserId, existing);
     await transitionLeaveRequestGuarded(ctx.trx, {
       orgId: ctx.orgId,
+      callerUserId,
       role,
       employeeId: existing.employee_id,
+      departmentId: existing.department_id,
       requestId: existing.id,
       allowedStatuses: ['pending_l1'],
       currentStatus: existing.status,
@@ -1075,8 +1085,10 @@ export const leaveRequestReject = defineCommand({
       selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, existing.employee_id, true);
       await transitionLeaveRequestGuarded(ctx.trx, {
         orgId: ctx.orgId,
+        callerUserId,
         role,
         employeeId: existing.employee_id,
+        departmentId: existing.department_id,
         requestId: existing.id,
         allowedStatuses: ['pending_l1', 'pending_final'],
         currentStatus: existing.status,
@@ -1094,8 +1106,10 @@ export const leaveRequestReject = defineCommand({
       // DB hr_leave_request_update WITH CHECK requires L1 fields (and NULL final fields) when a member L1 manager rejects.
       await transitionLeaveRequestGuarded(ctx.trx, {
         orgId: ctx.orgId,
+        callerUserId,
         role,
         employeeId: existing.employee_id,
+        departmentId: existing.department_id,
         requestId: existing.id,
         allowedStatuses: ['pending_l1'],
         currentStatus: existing.status,
