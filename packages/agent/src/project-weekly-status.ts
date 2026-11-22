@@ -177,6 +177,12 @@ function groupIntegerDigits(digits: string, separator: string): string {
   return out;
 }
 
+function trimTrailingZeros(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 48) end--;
+  return s.slice(0, end);
+}
+
 /** Deterministic string formatting for decimal values without converting large money strings through IEEE-754 Number. */
 function decimalStringForms(raw: string, language: 'vi' | 'en'): string[] {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(raw.trim());
@@ -186,7 +192,7 @@ function decimalStringForms(raw: string, language: 'vi' | 'en'): string[] {
   const groupSep = language === 'vi' ? '.' : ',';
   const decSep = language === 'vi' ? ',' : '.';
   const groupedInt = groupIntegerDigits(intPart, groupSep);
-  const trimmedFrac = fracPart.replace(/0+$/, '');
+  const trimmedFrac = trimTrailingZeros(fracPart);
   const forms = new Set<string>();
   if (trimmedFrac.length === 0) {
     forms.add(intPart);
@@ -210,7 +216,7 @@ function formatPrimaryDecimal(raw: string, language: 'vi' | 'en'): string {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(raw.trim());
   if (!m) return raw;
   const intPart = m[1]!;
-  const fracPart = (m[2] ?? '').replace(/0+$/, '');
+  const fracPart = trimTrailingZeros(m[2] ?? '');
   const groupSep = language === 'vi' ? '.' : ',';
   const decSep = language === 'vi' ? ',' : '.';
   const grouped = groupIntegerDigits(intPart, groupSep);

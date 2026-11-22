@@ -24,6 +24,12 @@ export function isValidHourlyRateInput(raw: string): boolean {
   return HOURLY_RATE_PATTERN.test(trimmed);
 }
 
+function trimTrailingZeros(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 48) end--;
+  return s.slice(0, end);
+}
+
 /** Format a decimal string cleanly using pure string grouping so large amounts never suffer JS Number precision loss. */
 export function formatDecimalMoney(raw: string, locale: 'vi' | 'en', keepZeroDecimals = false): string {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(raw.trim());
@@ -36,7 +42,7 @@ export function formatDecimalMoney(raw: string, locale: 'vi' | 'en', keepZeroDec
   if (keepZeroDecimals && fracPart.length > 0) {
     return `${grouped}${decSep}${fracPart}`;
   }
-  const trimmedFrac = fracPart.replace(/0+$/, '');
+  const trimmedFrac = trimTrailingZeros(fracPart);
   return trimmedFrac ? `${grouped}${decSep}${trimmedFrac}` : grouped;
 }
 

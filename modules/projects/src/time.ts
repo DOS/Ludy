@@ -185,15 +185,20 @@ export function projectTimeCsvCell(value: string | null): string {
 }
 
 function buildCsvSlug(name: string): string {
-  const normalized = name
+  const dashed = name
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/đ/g, 'd')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-  return normalized || 'project';
+    .replace(/[^a-z0-9]+/g, '-');
+  let start = 0;
+  let end = dashed.length;
+  while (start < end && dashed[start] === '-') start++;
+  while (end > start && dashed[end - 1] === '-') end--;
+  const normalized = dashed.slice(start, end).slice(0, 40);
+  let clippedEnd = normalized.length;
+  while (clippedEnd > 0 && normalized[clippedEnd - 1] === '-') clippedEnd--;
+  return normalized.slice(0, clippedEnd) || 'project';
 }
 
 function formatDateInZone(value: Date | string, timeZone: string): string {

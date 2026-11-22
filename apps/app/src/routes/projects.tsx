@@ -670,21 +670,24 @@ export function ProjectDetailPage() {
       )}
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <Tabs value={view} onValueChange={(next) => handleViewChange(next as ProjectViewMode)}>
-          <TabsList aria-label={t('detail.viewSwitchLabel')}>
-            <TabsTrigger value="board" data-testid="view-toggle-board" className="min-h-11 gap-1.5 sm:min-h-9">
+        <Tabs value={view} onValueChange={(next) => handleViewChange(next as ProjectViewMode)} className="w-full min-w-0 sm:w-auto">
+          <TabsList
+            aria-label={t('detail.viewSwitchLabel')}
+            className="flex h-auto w-full max-w-full flex-wrap justify-start gap-1 group-data-horizontal/tabs:h-auto sm:w-fit"
+          >
+            <TabsTrigger value="board" data-testid="view-toggle-board" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="board" className="size-3.5" />
               <span>{t('detail.viewBoard')}</span>
             </TabsTrigger>
-            <TabsTrigger value="list" data-testid="view-toggle-list" className="min-h-11 gap-1.5 sm:min-h-9">
+            <TabsTrigger value="list" data-testid="view-toggle-list" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="list" className="size-3.5" />
               <span>{t('detail.viewList')}</span>
             </TabsTrigger>
-            <TabsTrigger value="timeline" data-testid="view-toggle-timeline" className="min-h-11 gap-1.5 sm:min-h-9">
+            <TabsTrigger value="timeline" data-testid="view-toggle-timeline" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="calendar" className="size-3.5" />
               <span>{t('detail.viewTimeline')}</span>
             </TabsTrigger>
-            <TabsTrigger value="time" data-testid="view-toggle-time" className="min-h-11 gap-1.5 sm:min-h-9">
+            <TabsTrigger value="time" data-testid="view-toggle-time" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
               <ProjectIcon name="clock" className="size-3.5" />
               <span>{t('detail.viewTime')}</span>
             </TabsTrigger>
