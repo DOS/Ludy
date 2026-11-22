@@ -71,10 +71,74 @@ function cleanControlChars(text: string): string {
   return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ' ');
 }
 
+function isAsciiAlphaCode(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiAlnumCode(code: number): boolean {
+  return isAsciiAlphaCode(code) || (code >= 48 && code <= 57);
+}
+
+function isEmailLocalCharCode(code: number): boolean {
+  return isAsciiAlnumCode(code) || code === 46 || code === 95 || code === 37 || code === 43 || code === 45;
+}
+
+function isEmailDomainCharCode(code: number): boolean {
+  return isAsciiAlnumCode(code) || code === 46 || code === 45;
+}
+
+function isValidEmailDomain(domain: string): boolean {
+  if (domain.length < 4 || domain.length > 253) return false;
+  const lastDot = domain.lastIndexOf('.');
+  if (lastDot <= 0) return false;
+  const tld = domain.slice(lastDot + 1);
+  if (tld.length < 2 || tld.length > 24) return false;
+  for (let i = 0; i < tld.length; i += 1) {
+    if (!isAsciiAlphaCode(tld.charCodeAt(i))) return false;
+  }
+  const labels = domain.slice(0, lastDot).split('.');
+  for (const label of labels) {
+    if (label.length === 0 || label.length > 63) return false;
+    if (label.charCodeAt(0) === 45 || label.charCodeAt(label.length - 1) === 45) return false;
+  }
+  return true;
+}
+
 function extractEmail(text: string): string | null {
-  const match = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}/);
-  if (!match) return null;
-  return match[0].toLowerCase().slice(0, 254);
+  // Scan linearly around '@' so untrusted CV text without '@' or with repeated prefixes stays O(n) (no CWE-1333 ReDoS).
+  let pos = 0;
+  while (pos < text.length) {
+    const at = text.indexOf('@', pos);
+    if (at === -1) return null;
+
+    let localStart = at;
+    while (localStart > 0 && at - localStart < 64 && isEmailLocalCharCode(text.charCodeAt(localStart - 1))) {
+      localStart -= 1;
+    }
+    if (localStart === at || (localStart > 0 && isEmailLocalCharCode(text.charCodeAt(localStart - 1)))) {
+      pos = at + 1;
+      continue;
+    }
+
+    let domainEnd = at + 1;
+    while (domainEnd < text.length && domainEnd - (at + 1) <= 253 && isEmailDomainCharCode(text.charCodeAt(domainEnd))) {
+      domainEnd += 1;
+    }
+    if (domainEnd < text.length && isEmailDomainCharCode(text.charCodeAt(domainEnd))) {
+      pos = at + 1;
+      continue;
+    }
+    while (domainEnd > at + 1 && (text.charCodeAt(domainEnd - 1) === 46 || text.charCodeAt(domainEnd - 1) === 45)) {
+      domainEnd -= 1;
+    }
+
+    const domain = text.slice(at + 1, domainEnd);
+    if (isValidEmailDomain(domain)) {
+      return text.slice(localStart, domainEnd).toLowerCase().slice(0, 254);
+    }
+    pos = at + 1;
+  }
+  return null;
 }
 
 function extractVnPhone(text: string): string | null {
@@ -95,6 +159,7 @@ function extractVnPhone(text: string): string | null {
 
 function extractDisplayName(lines: readonly string[], email: string | null): string | null {
   for (const rawLine of lines.slice(0, 20)) {
+    if (rawLine.length > 500) continue;
     const labelMatch = rawLine.match(/^(?:họ\s*(?:và\s*)?tên|full\s*name|họ\s*tên|name|ứng\s*viên|candidate)\s*[:-]\s*(.+)$/i);
     const candidate = (labelMatch ? labelMatch[1] : rawLine)?.trim() ?? '';
     if (!candidate) continue;

@@ -567,8 +567,12 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     // Worker executes real crove-extract pdf_text sandbox parser
     await drainQueuedCvJobs(o.orgId);
 
-    const pdfReady = await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${opening.openingId}`);
+    const [pdfReady, pdfConcurrentPoll] = await Promise.all([
+      httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${opening.openingId}`),
+      httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${opening.openingId}`),
+    ]);
     expect(pdfReady.status).toBe(200);
+    expect(pdfConcurrentPoll.status).toBe(200);
     expect(pdfReady.body.status).toBe('ready');
     if (pdfReady.body.status !== 'ready') throw new Error('expected ready');
     expect(pdfReady.body.draft.ai).toEqual({ ok: false, reason: 'ai_off' });
@@ -588,22 +592,23 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(candidatesBeforeSave).toHaveLength(0);
 
     // 2. AI ON path: DOCX upload through real crove-extract docx_text + metered Ly (`hr.cv_extract`)
+    const cvExtractSpy = vi.fn(() =>
+      metered('hr.cv_extract', async () => ({
+        output: {
+          displayName: 'Phạm Quang Huy',
+          email: 'huy.pham@example.com',
+          phone: '0987654321',
+          yearsExperience: 6,
+          matchedSkills: ['Thuế GTGT', 'MISA AMIS', 'Excel'],
+          summary: 'Ứng viên có 6 năm kinh nghiệm kế toán thuế và MISA AMIS.',
+        },
+        usage: { inputTokens: 150, outputTokens: 60 },
+      })),
+    );
     const reader = new InboxReader(
       { baseURL: 'https://ai.local/v1', apiKey: 'test', model: 'test-model' },
       {
-        cvExtract: vi.fn(() =>
-          metered('hr.cv_extract', async () => ({
-            output: {
-              displayName: 'Phạm Quang Huy',
-              email: 'huy.pham@example.com',
-              phone: '0987654321',
-              yearsExperience: 6,
-              matchedSkills: ['Thuế GTGT', 'MISA AMIS', 'Excel'],
-              summary: 'Ứng viên có 6 năm kinh nghiệm kế toán thuế và MISA AMIS.',
-            },
-            usage: { inputTokens: 150, outputTokens: 60 },
-          })),
-        ),
+        cvExtract: cvExtractSpy,
       },
     ) as unknown as ConversationReader;
 
@@ -680,9 +685,32 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(memberUpload.status).toBe(403);
     await expect(store.get(unauthKey)).rejects.toThrow();
 
-    // Verify repeated poll stays idempotent (200 ready) and cross-opening/invalid override fails 422
+    // Verify repeated & concurrent polls stay idempotent (single AI charge + single audit row) and cross-opening/invalid override fails 422
     const pdfRepeatPoll = await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${opening.openingId}`);
     expect(pdfRepeatPoll.status).toBe(200);
+    const docxRepeatPolls = await Promise.all([
+      httpAiOn.pollCv(o.owner, docxReady.body.jobId, `?openingId=${opening.openingId}&lang=vi`),
+      httpAiOn.pollCv(o.owner, docxReady.body.jobId, `?openingId=${opening.openingId}&lang=vi`),
+    ]);
+    expect(docxRepeatPolls.map((r) => r.status)).toEqual([200, 200]);
+    expect(cvExtractSpy).toHaveBeenCalledTimes(1);
+    const repeatUsageRows = await withAdmin((c) =>
+      c.query<{ count: string }>(
+        `SELECT pg_catalog.count(*)::text AS count FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'hr.cv_extract'`,
+        [o.orgId],
+      ),
+    );
+    expect(Number(repeatUsageRows.rows[0]?.count ?? 0)).toBe(1);
+    const auditCounts = await withAdmin((c) =>
+      c.query<{ job_id: string; count: string }>(
+        `SELECT detail ->> 'jobId' AS job_id, pg_catalog.count(*)::text AS count
+         FROM crove_kernel.audit_event
+         WHERE org_id = $1 AND command = 'hr.recruiting.cv_extract.audit'
+         GROUP BY 1`,
+        [o.orgId],
+      ),
+    );
+    expect(auditCounts.rows.map((r) => Number(r.count))).toEqual([1, 1]);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${randomUUID()}`)).status).toBe(422);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, '?openingId=not-a-uuid')).status).toBe(422);
 

@@ -72,4 +72,18 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
     expect(fbNoSlotsEn).toContain('Facebook Page');
     expect(fbNoSlotsEn).toContain('two or three times');
   });
+
+  it('extracts emails linearly without ReDoS on 200k-char adversarial inputs (CWE-1333)', () => {
+    const inputs = ['a'.repeat(200_000), 'a.a.'.repeat(50_000), '@'.repeat(50_000), `${'a'.repeat(30)}@invalid.c `.repeat(4_000)];
+    for (const input of inputs) {
+      const startMs = performance.now();
+      const extracted = extractCvFieldsDeterministically(input);
+      const elapsedMs = performance.now() - startMs;
+      expect(extracted.email).toBeNull();
+      expect(elapsedMs).toBeLessThan(100);
+    }
+
+    const trailedEmail = extractCvFieldsDeterministically(`${'a'.repeat(50_000)}\nEmail: ung.vien+hr@example.com.`);
+    expect(trailedEmail.email).toBe('ung.vien+hr@example.com');
+  });
 });

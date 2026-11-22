@@ -301,10 +301,16 @@ export function EngageInvitePanel({
 
   const handleCopy = async () => {
     if (!messageText) return;
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(messageText).catch(() => undefined);
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      setCopied(false);
+      return;
     }
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(messageText);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
   };
 
   return (
@@ -395,6 +401,9 @@ export function EngageInvitePanel({
           <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => void handleCopy()} data-testid="hr-engage-draft-copy">
             {copied ? t('engageInvite.copied') : t('engageInvite.copy')}
           </Button>
+          <span className="sr-only" aria-live="polite">
+            {copied ? t('engageInvite.copied') : ''}
+          </span>
         </div>
       )}
     </section>

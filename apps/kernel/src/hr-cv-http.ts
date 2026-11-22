@@ -29,6 +29,42 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 const DEFAULT_CV_WAIT_MS = 1_500;
 const POLL_INTERVAL_MS = 250;
 const HR_CV_RESULT_MAX_BYTES = 2 * 1024 * 1024;
+const FINALIZED_DRAFT_TTL_MS = 10 * 60 * 1_000;
+const FINALIZED_DRAFT_MAX_ENTRIES = 500;
+
+interface CachedFinalizedDraft {
+  expiresAt: number;
+  response: HrCvExtractResponse;
+}
+
+interface RuntimeFinalizeCache {
+  entries: Map<string, CachedFinalizedDraft>;
+  inflight: Map<string, Promise<HrCvExtractResponse>>;
+}
+
+const finalizeCacheByRuntime = new WeakMap<Runtime, RuntimeFinalizeCache>();
+
+function getRuntimeFinalizeCache(runtime: Runtime): RuntimeFinalizeCache {
+  let state = finalizeCacheByRuntime.get(runtime);
+  if (!state) {
+    state = { entries: new Map(), inflight: new Map() };
+    finalizeCacheByRuntime.set(runtime, state);
+  }
+  return state;
+}
+
+function pruneExpiredCacheEntries(entries: Map<string, CachedFinalizedDraft>, now: number): void {
+  for (const [key, entry] of entries) {
+    if (entry.expiresAt <= now) {
+      entries.delete(key);
+    }
+  }
+  while (entries.size >= FINALIZED_DRAFT_MAX_ENTRIES) {
+    const oldestKey = entries.keys().next().value;
+    if (oldestKey === undefined) break;
+    entries.delete(oldestKey);
+  }
+}
 
 function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
   if (bytes.byteLength < signature.length) return false;
@@ -140,60 +176,92 @@ async function finalizeExtractedResult(deps: {
   cvAi: RecruitingCvAi;
   runInAiScope: <T>(fn: () => Promise<T>) => Promise<T>;
 }): Promise<HrCvExtractResponse> {
-  let bytes: Uint8Array;
-  try {
-    bytes = await readVerified(
-      deps.store,
-      { key: deps.resultKey, generation: null, sha256: deps.resultSha256 },
-      HR_CV_RESULT_MAX_BYTES,
-    );
-  } catch (error) {
-    if (error instanceof BlobNotFoundError) {
-      throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Kết quả tách CV đã hết hạn, vui lòng tải lại tệp');
+  const effectiveAi = deps.useAi && deps.cvAi.aiEnabled && Boolean(deps.cvAi.reader);
+  const cacheKey = `${deps.orgId}:${deps.context.jobId}:${deps.resultSha256}:${deps.context.openingId ?? ''}:${deps.lang}:${effectiveAi ? '1' : '0'}`;
+  const state = getRuntimeFinalizeCache(deps.runtime);
+  const now = Date.now();
+  const cached = state.entries.get(cacheKey);
+  if (cached) {
+    if (cached.expiresAt > now) {
+      return structuredClone(cached.response);
     }
-    throw error;
+    state.entries.delete(cacheKey);
   }
 
-  let parsed: HrCvExtractStoredResult;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes)) as HrCvExtractStoredResult;
-  } catch {
-    throw new DomainError('HR_CV_EXTRACT_FAILED', 500, 'Không đọc được kết quả tách CV');
+  const existingInflight = state.inflight.get(cacheKey);
+  if (existingInflight) {
+    return structuredClone(await existingInflight);
   }
 
-  if (!parsed.ok || typeof parsed.text !== 'string') {
-    throw new DomainError(parsed.errorCode ?? 'HR_CV_EXTRACT_FAILED', 422, parsed.errorMessage ?? 'Không đọc được nội dung tệp CV');
-  }
+  const run = (async (): Promise<HrCvExtractResponse> => {
+    let bytes: Uint8Array;
+    try {
+      bytes = await readVerified(
+        deps.store,
+        { key: deps.resultKey, generation: null, sha256: deps.resultSha256 },
+        HR_CV_RESULT_MAX_BYTES,
+      );
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) {
+        throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Kết quả tách CV đã hết hạn, vui lòng tải lại tệp');
+      }
+      throw error;
+    }
 
-  const draft = await deps.runInAiScope(() =>
-    buildCvExtractDraft({
-      text: parsed.text as string,
-      sourceKind: parsed.kind,
-      openingId: deps.context.openingId,
-      openingTitle: deps.context.openingTitle,
-      requiredSkills: deps.context.requiredSkills,
-      lang: deps.lang,
-      propose: (proposeInput) => proposeCvDraftWithLy(deps.cvAi, deps.orgId, deps.actor.userId, proposeInput, deps.useAi),
-    }),
-  );
+    let parsed: HrCvExtractStoredResult;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(bytes)) as HrCvExtractStoredResult;
+    } catch {
+      throw new DomainError('HR_CV_EXTRACT_FAILED', 500, 'Không đọc được kết quả tách CV');
+    }
 
-  await deps.runtime.execute(
-    'hr.recruiting.cv_extract.audit',
-    {
+    if (!parsed.ok || typeof parsed.text !== 'string') {
+      throw new DomainError(parsed.errorCode ?? 'HR_CV_EXTRACT_FAILED', 422, parsed.errorMessage ?? 'Không đọc được nội dung tệp CV');
+    }
+
+    const draft = await deps.runInAiScope(() =>
+      buildCvExtractDraft({
+        text: parsed.text as string,
+        sourceKind: parsed.kind,
+        openingId: deps.context.openingId,
+        openingTitle: deps.context.openingTitle,
+        requiredSkills: deps.context.requiredSkills,
+        lang: deps.lang,
+        propose: (proposeInput) => proposeCvDraftWithLy(deps.cvAi, deps.orgId, deps.actor.userId, proposeInput, deps.useAi),
+      }),
+    );
+
+    await deps.runtime.execute(
+      'hr.recruiting.cv_extract.audit',
+      {
+        jobId: deps.context.jobId,
+        openingId: deps.context.openingId,
+        kind: parsed.kind,
+        extractedChars: draft.extractedChars,
+        aiReason: draft.ai.reason,
+      },
+      { actor: deps.actor, orgId: deps.orgId },
+    );
+
+    const response: HrCvExtractResponse = {
+      status: 'ready',
       jobId: deps.context.jobId,
-      openingId: deps.context.openingId,
-      kind: parsed.kind,
-      extractedChars: draft.extractedChars,
-      aiReason: draft.ai.reason,
-    },
-    { actor: deps.actor, orgId: deps.orgId },
-  );
+      draft,
+    };
+    pruneExpiredCacheEntries(state.entries, Date.now());
+    state.entries.set(cacheKey, {
+      expiresAt: Date.now() + FINALIZED_DRAFT_TTL_MS,
+      response,
+    });
+    return response;
+  })();
 
-  return {
-    status: 'ready',
-    jobId: deps.context.jobId,
-    draft,
-  };
+  state.inflight.set(cacheKey, run);
+  try {
+    return structuredClone(await run);
+  } finally {
+    state.inflight.delete(cacheKey);
+  }
 }
 
 export async function handleHrCvExtractUpload(deps: {
