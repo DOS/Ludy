@@ -94,23 +94,28 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
 
   const activeSchemas = new Map<DbSchemaDomain, string>();
   const transitionedDomains: string[] = [];
+  const untransitionedDomains: string[] = [];
   for (const domain of DB_SCHEMA_DOMAINS) {
     if (presentSchemas.has(`ludy_${domain}`)) {
       activeSchemas.set(domain, `ludy_${domain}`);
       transitionedDomains.push(domain);
     } else {
       activeSchemas.set(domain, `crove_${domain}`);
+      untransitionedDomains.push(domain);
     }
   }
 
   const activeRoles = new Map<DbRoleName, string>();
   const transitionedRoles: string[] = [];
+  const untransitionedRoles: string[] = [];
   for (const r of DB_ROLE_NAMES) {
-    if (isKernelLudy && presentRoles.has(`ludy_${r}`)) {
+    // auth_reader_select is an RLS policy name on auth.*, not a role in pg_roles, so it transitions with ludy_kernel.
+    if (isKernelLudy && (r === 'auth_reader_select' || presentRoles.has(`ludy_${r}`))) {
       activeRoles.set(r, `ludy_${r}`);
       transitionedRoles.push(r);
     } else {
       activeRoles.set(r, `crove_${r}`);
+      untransitionedRoles.push(r);
     }
   }
 
@@ -173,6 +178,13 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
   const ddlWatchRe = isKernelLudy ? /\bcrove_ddl_watch(_drop)?\b/g : null;
   const tryRunRe = isKernelLudy ? /\bcrove_try_run_/g : null;
 
+  const toCroveSchemaRe = untransitionedDomains.length > 0 ? new RegExp(`\\bludy_(${untransitionedDomains.join('|')})\\b`, 'g') : null;
+  const toCroveRoleRe = !isKernelLudy && untransitionedRoles.length > 0 ? new RegExp(`\\bludy_(${untransitionedRoles.join('|')})\\b`, 'g') : null;
+  const toCroveGucRe = !isKernelLudy ? new RegExp(`\\bludy\\.(${DB_GUC_NAMES.join('|')})(?!\\.)\\b`, 'g') : null;
+  const toCroveStreamRe = !isKernelLudy ? /\bludy_stream\b/g : null;
+  const toCroveDdlWatchRe = !isKernelLudy ? /\bludy_ddl_watch(_drop)?\b/g : null;
+  const toCroveTryRunRe = !isKernelLudy ? /\bludy_try_run_/g : null;
+
   const revSchemaRe = transitionedDomains.length > 0 ? new RegExp(`\\bludy_(${transitionedDomains.join('|')})\\b`, 'g') : null;
   const revRoleRe = transitionedRoles.length > 0 ? new RegExp(`\\bludy_(${transitionedRoles.join('|')})\\b`, 'g') : null;
   const revGucRe = isKernelLudy ? new RegExp(`\\bludy\\.(${DB_GUC_NAMES.join('|')})(?!\\.)\\b`, 'g') : null;
@@ -193,7 +205,6 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
   };
 
   const rewriteSql = (sql: string): string => {
-    if (!hasTransitions) return sql;
     let out = sql;
     if (schemaRe) out = out.replace(schemaRe, 'ludy_$1');
     if (roleRe) out = out.replace(roleRe, 'ludy_$1');
@@ -201,6 +212,12 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
     if (streamRe) out = out.replace(streamRe, 'ludy_stream');
     if (ddlWatchRe) out = out.replace(ddlWatchRe, (_m, drop: string | undefined) => `ludy_ddl_watch${drop ?? ''}`);
     if (tryRunRe) out = out.replace(tryRunRe, 'ludy_try_run_');
+    if (toCroveSchemaRe) out = out.replace(toCroveSchemaRe, 'crove_$1');
+    if (toCroveRoleRe) out = out.replace(toCroveRoleRe, 'crove_$1');
+    if (toCroveGucRe) out = out.replace(toCroveGucRe, 'crove.$1');
+    if (toCroveStreamRe) out = out.replace(toCroveStreamRe, 'crove_stream');
+    if (toCroveDdlWatchRe) out = out.replace(toCroveDdlWatchRe, (_m, drop: string | undefined) => `crove_ddl_watch${drop ?? ''}`);
+    if (toCroveTryRunRe) out = out.replace(toCroveTryRunRe, 'crove_try_run_');
     return out;
   };
 
@@ -290,19 +307,19 @@ export function rewriteConnectionString(connectionString: string, ids: DbIdentif
 
 export function rewriteCatalogParam(val: unknown, ids: DbIdentifiers): unknown {
   if (typeof val === 'string') {
-    if (val.startsWith('crove_')) {
-      const suffix = val.slice('crove_'.length);
+    if (val.startsWith('crove_') || val.startsWith('ludy_')) {
+      const suffix = val.slice(val.indexOf('_') + 1);
       if (SCHEMA_SET.has(suffix)) return ids.schema(suffix as DbSchemaDomain);
       if (ROLE_SET.has(suffix)) return ids.role(suffix as DbRoleName);
-    } else if (val.startsWith('crove.')) {
-      const gucSuffix = val.slice('crove.'.length);
+    } else if (val.startsWith('crove.') || val.startsWith('ludy.')) {
+      const gucSuffix = val.slice(val.indexOf('.') + 1);
       if (GUC_SET.has(gucSuffix)) return ids.guc(gucSuffix as DbGucName);
     }
     const dot = val.indexOf('.');
     if (dot > 0) {
       const head = val.slice(0, dot);
-      if (head.startsWith('crove_')) {
-        const domain = head.slice('crove_'.length);
+      if (head.startsWith('crove_') || head.startsWith('ludy_')) {
+        const domain = head.slice(head.indexOf('_') + 1);
         if (SCHEMA_SET.has(domain)) return `${ids.schema(domain as DbSchemaDomain)}.${val.slice(dot + 1)}`;
       }
     }
@@ -338,28 +355,28 @@ export function canonicalizeCatalogRows(result: unknown, ids: DbIdentifiers): un
 function rewriteQueryArgs(args: unknown[], ids: DbIdentifiers, canonicalizeCatalog: boolean): { isCatalog: boolean } {
   const first = args[0];
   let rawSql = '';
-  let isCatalog = false;
+  let matchesCatalog = false;
   if (typeof first === 'string') {
     rawSql = first;
-    isCatalog = canonicalizeCatalog && ids.hasTransitions && IS_CATALOG_QUERY_RE.test(rawSql);
+    matchesCatalog = canonicalizeCatalog && IS_CATALOG_QUERY_RE.test(rawSql);
     args[0] = ids.rewriteSql(rawSql);
-    if (isCatalog && Array.isArray(args[1])) {
+    if (matchesCatalog && Array.isArray(args[1])) {
       args[1] = args[1].map((v) => rewriteCatalogParam(v, ids));
     }
   } else if (first && typeof first === 'object' && 'text' in first && typeof (first as { text: unknown }).text === 'string') {
     const cfg = first as { text: string; values?: unknown[] };
     rawSql = cfg.text;
-    isCatalog = canonicalizeCatalog && ids.hasTransitions && IS_CATALOG_QUERY_RE.test(rawSql);
+    matchesCatalog = canonicalizeCatalog && IS_CATALOG_QUERY_RE.test(rawSql);
     args[0] = {
       ...cfg,
       text: ids.rewriteSql(rawSql),
-      ...(isCatalog && Array.isArray(cfg.values) ? { values: cfg.values.map((v) => rewriteCatalogParam(v, ids)) } : {}),
+      ...(matchesCatalog && Array.isArray(cfg.values) ? { values: cfg.values.map((v) => rewriteCatalogParam(v, ids)) } : {}),
     };
-    if (isCatalog && Array.isArray(args[1])) {
+    if (matchesCatalog && Array.isArray(args[1])) {
       args[1] = args[1].map((v) => rewriteCatalogParam(v, ids));
     }
   }
-  return { isCatalog };
+  return { isCatalog: matchesCatalog && ids.hasTransitions };
 }
 
 function invokeWrappedQuery(

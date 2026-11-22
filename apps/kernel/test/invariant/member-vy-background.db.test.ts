@@ -2170,7 +2170,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ok: false,
         code: "42501",
         message: "AGENT_FORBIDDEN",
-        detail: table,
+        detail: dbIds ? dbIds.table(table) : table,
       });
     }
   });
