@@ -464,7 +464,7 @@ export function ProjectDetailPage() {
     .filter((item) => item.status === 'done')
     .map((item) => ({ id: item.id, title: item.title, tainted: item.tainted }));
   const doneCount = completedTasks.length;
-  const boardFiltered = Boolean(positionId) || applied.all.length > 0;
+  const boardFiltered = Boolean(positionId) || applied.all.length > 0 || cycleFilter.mode !== 'all';
   const pct = projectCompletionPct(openCount, doneCount);
   const showSeatHint = hasUnseatedTeamMembers(board);
 
@@ -856,7 +856,7 @@ export function ProjectDetailPage() {
         projectId={project.id}
         canWrite={project.canWrite}
         task={editingTask ? (board.tasks.find((item) => item.id === editingTask.id) ?? editingTask) : null}
-        projectTasks={positionId || applied.all.length > 0 ? undefined : board.tasks}
+        projectTasks={boardFiltered ? undefined : board.tasks}
         seats={seats}
         cyclesEnabled={cyclesEnabled}
         pointsEnabled={pointsEnabled}

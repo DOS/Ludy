@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Opt-in Sprints / Cycles management, deterministic burndown/velocity charts + semantic tables,
 // human carryover completion modal, and Vy cycle summary card (#4361, docs/plan/projects-v2.md section 4.1).
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   ProjectCycle,
   ProjectCycleBurndownPoint,
@@ -43,14 +43,19 @@ function cycleStatusVariant(status: ProjectCycle['status']): 'default' | 'succes
   return 'outline';
 }
 
-export function buildBurndownPolylinePoints(
+export interface SvgCoord {
+  x: number;
+  y: number;
+}
+
+export function buildBurndownSeriesCoords(
   burndown: readonly ProjectCycleBurndownPoint[],
   usePoints: boolean,
   series: 'ideal' | 'actual',
   width: number,
   height: number,
-): string {
-  if (burndown.length === 0) return '';
+): SvgCoord[] {
+  if (burndown.length === 0) return [];
   const padX = 8;
   const padY = 8;
   const innerW = Math.max(1, width - padX * 2);
@@ -64,7 +69,7 @@ export function buildBurndownPolylinePoints(
     }),
   );
 
-  const coords: string[] = [];
+  const coords: SvgCoord[] = [];
   const stepX = burndown.length > 1 ? innerW / (burndown.length - 1) : 0;
   for (let i = 0; i < burndown.length; i += 1) {
     const point = burndown[i];
@@ -78,11 +83,23 @@ export function buildBurndownPolylinePoints(
           ? point.remainingPoints
           : point.remainingTasks;
     if (rawVal === null) continue;
-    const x = padX + (burndown.length > 1 ? i * stepX : innerW / 2);
-    const y = padY + innerH - (rawVal / maxVal) * innerH;
-    coords.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    const x = Number((padX + (burndown.length > 1 ? i * stepX : innerW / 2)).toFixed(1));
+    const y = Number((padY + innerH - (rawVal / maxVal) * innerH).toFixed(1));
+    coords.push({ x, y });
   }
-  return coords.join(' ');
+  return coords;
+}
+
+export function buildBurndownPolylinePoints(
+  burndown: readonly ProjectCycleBurndownPoint[],
+  usePoints: boolean,
+  series: 'ideal' | 'actual',
+  width: number,
+  height: number,
+): string {
+  return buildBurndownSeriesCoords(burndown, usePoints, series, width, height)
+    .map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+    .join(' ');
 }
 
 function CycleFormDialog({
@@ -250,6 +267,33 @@ function CycleFormDialog({
   );
 }
 
+export type CycleCarryoverSelection = 'none' | 'backlog' | 'cycle';
+
+export function initialCarryoverSelection(openTasks: number): CycleCarryoverSelection {
+  return openTasks > 0 ? 'none' : 'backlog';
+}
+
+export function validateCompleteCycleCarryover(
+  openTasks: number,
+  mode: CycleCarryoverSelection,
+  targetCycleId: string,
+  upcomingCycles: readonly ProjectCycle[],
+):
+  | { ok: true; carryover: ProjectCycleCarryover }
+  | { ok: false; reason: 'pickRequired' | 'pickAgain'; clearTarget: boolean } {
+  if (openTasks > 0 && mode === 'none') {
+    return { ok: false, reason: 'pickRequired', clearTarget: false };
+  }
+  if (mode === 'cycle') {
+    const exists = targetCycleId !== '' && upcomingCycles.some((u) => u.id === targetCycleId);
+    if (!exists) {
+      return { ok: false, reason: 'pickAgain', clearTarget: true };
+    }
+    return { ok: true, carryover: { mode: 'cycle', targetCycleId } };
+  }
+  return { ok: true, carryover: { mode: 'backlog' } };
+}
+
 function CompleteCycleDialog({
   open,
   onOpenChange,
@@ -267,19 +311,21 @@ function CompleteCycleDialog({
 }) {
   const t = useTranslations('projects');
   const tc = useTranslations('common');
-  const [mode, setMode] = useState<'backlog' | 'cycle'>('backlog');
+  const [mode, setMode] = useState<CycleCarryoverSelection>('none');
   const [targetCycleId, setTargetCycleId] = useState('');
+  const [selectionError, setSelectionError] = useState<'pickRequired' | 'pickAgain' | null>(null);
 
   const completeCycle = useMutation(orpc.projects.completeCycle.mutationOptions({ onSuccess: refreshProjectQueries }));
 
   useEffect(() => {
-    if (open) {
-      setMode('backlog');
+    if (open && cycle) {
+      setMode(initialCarryoverSelection(cycle.openTasks));
       const nextUpcoming = upcomingCycles.reduce<ProjectCycle | null>(
         (best, c) => (!best || c.number < best.number ? c : best),
         null,
       );
       setTargetCycleId(nextUpcoming?.id ?? '');
+      setSelectionError(null);
       completeCycle.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,15 +334,23 @@ function CompleteCycleDialog({
   if (!cycle) return null;
 
   const canMoveToCycle = upcomingCycles.length > 0;
+  const selectedTargetValid = upcomingCycles.some((u) => u.id === targetCycleId);
+  const validation = validateCompleteCycleCarryover(cycle.openTasks, mode, targetCycleId, upcomingCycles);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const carryover: ProjectCycleCarryover =
-      mode === 'cycle' && targetCycleId ? { mode: 'cycle', targetCycleId } : { mode: 'backlog' };
+    const check = validateCompleteCycleCarryover(cycle.openTasks, mode, targetCycleId, upcomingCycles);
+    if (!check.ok) {
+      if (check.clearTarget) setTargetCycleId('');
+      setSelectionError(check.reason);
+      return;
+    }
+    setSelectionError(null);
     completeCycle.mutate(
       {
         projectId,
         cycleId: cycle.id,
-        carryover,
+        carryover: check.carryover,
         idempotencyKey: crypto.randomUUID(),
       },
       {
@@ -329,7 +383,10 @@ function CompleteCycleDialog({
                 name={`carryover-mode-${cycle.id}`}
                 value="backlog"
                 checked={mode === 'backlog'}
-                onChange={() => setMode('backlog')}
+                onChange={() => {
+                  setMode('backlog');
+                  setSelectionError(null);
+                }}
               />
               <span>{t('cycles.complete.moveToBacklog')}</span>
             </label>
@@ -344,7 +401,10 @@ function CompleteCycleDialog({
                 value="cycle"
                 disabled={!canMoveToCycle}
                 checked={mode === 'cycle'}
-                onChange={() => setMode('cycle')}
+                onChange={() => {
+                  setMode('cycle');
+                  setSelectionError(null);
+                }}
               />
               <span>{t('cycles.complete.moveToCycle')}</span>
             </label>
@@ -356,9 +416,15 @@ function CompleteCycleDialog({
               <NativeSelect
                 id={`carryover-target-${cycle.id}`}
                 className="w-full max-md:[&>select]:h-11"
-                value={targetCycleId}
-                onChange={(e) => setTargetCycleId(e.target.value)}
+                value={selectedTargetValid ? targetCycleId : ''}
+                onChange={(e) => {
+                  setTargetCycleId(e.target.value);
+                  setSelectionError(null);
+                }}
               >
+                {!selectedTargetValid && (
+                  <NativeSelectOption value="">{t('cycles.complete.selectTargetPlaceholder')}</NativeSelectOption>
+                )}
                 {upcomingCycles.map((u) => (
                   <NativeSelectOption key={u.id} value={u.id}>
                     {t('cycles.cycleLabel', { number: u.number, name: u.name })}
@@ -369,11 +435,12 @@ function CompleteCycleDialog({
           )}
 
           {!canMoveToCycle && <p className="text-xs text-muted-foreground">{t('cycles.complete.noUpcomingForCarryover')}</p>}
+          {selectionError && <ErrorText>{t(`cycles.complete.${selectionError}`)}</ErrorText>}
           {completeCycle.error && <ErrorText>{errorMessage(completeCycle.error)}</ErrorText>}
 
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
-            <Button type="submit" loading={completeCycle.isPending} disabled={mode === 'cycle' && !targetCycleId}>
+            <Button type="submit" loading={completeCycle.isPending} disabled={!validation.ok}>
               {t('cycles.complete.submit')}
             </Button>
           </DialogFooter>
@@ -400,8 +467,10 @@ function CycleMetricsSection({
   const f = useFormat();
   const [showTable, setShowTable] = useState(false);
 
-  const idealCoords = buildBurndownPolylinePoints(metrics.burndown, pointsEnabled, 'ideal', 320, 110);
-  const actualCoords = buildBurndownPolylinePoints(metrics.burndown, pointsEnabled, 'actual', 320, 110);
+  const idealSeries = buildBurndownSeriesCoords(metrics.burndown, pointsEnabled, 'ideal', 320, 110);
+  const actualSeries = buildBurndownSeriesCoords(metrics.burndown, pointsEnabled, 'actual', 320, 110);
+  const idealCoords = idealSeries.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const actualCoords = actualSeries.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
   const maxVelocity = Math.max(
     1,
     ...metrics.velocity.map((v: ProjectCycleVelocityPoint) => (pointsEnabled ? v.committedPoints : v.totalTasks)),
@@ -414,10 +483,14 @@ function CycleMetricsSection({
           <h4 className="text-xs font-semibold text-foreground">{t('cycles.metrics.title')}</h4>
           {metrics.velocity.length > 0 && (
             <span className="text-[11px] text-muted-foreground tabular-nums">
-              {t('cycles.metrics.avgVelocity', {
-                tasks: metrics.averageVelocityTasks,
-                points: metrics.averageVelocityPoints,
-              })}
+              {pointsEnabled
+                ? t('cycles.metrics.avgVelocity', {
+                    tasks: metrics.averageVelocityTasks,
+                    points: metrics.averageVelocityPoints,
+                  })
+                : t('cycles.metrics.avgVelocityTasksOnly', {
+                    tasks: metrics.averageVelocityTasks,
+                  })}
             </span>
           )}
         </div>
@@ -469,7 +542,7 @@ function CycleMetricsSection({
               data-testid="cycle-burndown-svg"
             >
               <line x1="8" y1="102" x2="312" y2="102" stroke="currentColor" strokeWidth="1" className="text-border" />
-              {idealCoords && (
+              {idealSeries.length >= 2 && (
                 <polyline
                   fill="none"
                   stroke="currentColor"
@@ -479,13 +552,32 @@ function CycleMetricsSection({
                   points={idealCoords}
                 />
               )}
-              {actualCoords && (
+              {idealSeries.length === 1 && idealSeries[0] && (
+                <circle
+                  cx={idealSeries[0].x}
+                  cy={idealSeries[0].y}
+                  r="3"
+                  fill="currentColor"
+                  className="text-muted-foreground"
+                />
+              )}
+              {actualSeries.length >= 2 && (
                 <polyline
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
                   className="text-primary"
                   points={actualCoords}
+                />
+              )}
+              {actualSeries.length === 1 && actualSeries[0] && (
+                <circle
+                  cx={actualSeries[0].x}
+                  cy={actualSeries[0].y}
+                  r="3.5"
+                  fill="currentColor"
+                  className="text-primary"
+                  data-testid="cycle-burndown-single-point"
                 />
               )}
             </svg>
@@ -598,6 +690,26 @@ function CycleMetricsSection({
   );
 }
 
+export function buildCycleSummaryQueryOptions<TOptions extends Record<string, unknown>>(
+  baseOptions: TOptions,
+  slug: string,
+  projectId: string,
+  cycleId: string | null,
+  language: 'vi' | 'en',
+) {
+  return {
+    ...baseOptions,
+    queryKey: projectCycleSummaryQueryKey(slug, projectId, cycleId, language),
+    enabled: false as const,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false as const,
+    refetchOnReconnect: false as const,
+    refetchOnMount: false as const,
+    retry: false as const,
+  };
+}
+
 function CycleSummaryBlock({
   slug,
   projectId,
@@ -610,23 +722,40 @@ function CycleSummaryBlock({
   const t = useTranslations('projects');
   const { locale } = useLocaleSetting();
   const language = locale === 'en' ? 'en' : 'vi';
+  const queryClient = useQueryClient();
   const [requested, setRequested] = useState(false);
+
+  const summaryKey = projectCycleSummaryQueryKey(slug, projectId, cycleId, language);
+  const serializedKey = JSON.stringify(summaryKey);
+  const [isSummaryStale, setIsSummaryStale] = useState(() =>
+    Boolean(queryClient.getQueryState(summaryKey)?.isInvalidated),
+  );
 
   useEffect(() => {
     setRequested(false);
-  }, [projectId, cycleId]);
+  }, [projectId, cycleId, language]);
+
+  useEffect(() => {
+    setIsSummaryStale(Boolean(queryClient.getQueryState(JSON.parse(serializedKey) as typeof summaryKey)?.isInvalidated));
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (JSON.stringify(event.query.queryKey) === serializedKey) {
+        setIsSummaryStale(Boolean(event.query.state.isInvalidated));
+      }
+    });
+  }, [queryClient, serializedKey]);
 
   const summaryOptions = orpc.projects.cycleSummary.queryOptions({
     input: { projectId, ...(cycleId ? { cycleId } : {}), language },
   });
-  const query = useQuery({
-    ...summaryOptions,
-    queryKey: projectCycleSummaryQueryKey(slug, projectId, cycleId, language),
-    enabled: requested,
-  });
+  const query = useQuery(buildCycleSummaryQueryOptions(summaryOptions, slug, projectId, cycleId, language));
 
   const data: ProjectCycleSummary | undefined =
     requested && !query.isPlaceholderData && !query.error ? query.data : undefined;
+
+  const triggerSummary = () => {
+    setRequested(true);
+    void query.refetch();
+  };
 
   return (
     <div className="space-y-2 border-t border-border/70 pt-3" data-testid="cycle-summary-card">
@@ -637,13 +766,7 @@ function CycleSummaryBlock({
             size="sm"
             variant="outline"
             loading={requested && query.isFetching}
-            onClick={() => {
-              if (!requested) {
-                setRequested(true);
-              } else {
-                void query.refetch();
-              }
-            }}
+            onClick={triggerSummary}
             className="min-h-11 gap-1.5 md:min-h-8"
             data-testid="ask-vy-cycle-summary"
           >
@@ -658,16 +781,23 @@ function CycleSummaryBlock({
         </div>
       </div>
 
-      {requested && query.isPending && <p className="text-xs text-muted-foreground">{t('cycles.summary.loading')}</p>}
+      {requested && query.isFetching && query.isPending && (
+        <p className="text-xs text-muted-foreground">{t('cycles.summary.loading')}</p>
+      )}
       {requested && query.error && (
         <Alert className="border-destructive/30 bg-destructive/5">
           <AlertDescription className="flex items-center justify-between gap-2 text-xs text-foreground">
             <span>{t('cycles.summary.loadError')}</span>
-            <Button type="button" size="sm" variant="outline" className="min-h-11 md:min-h-8" onClick={() => void query.refetch()}>
+            <Button type="button" size="sm" variant="outline" className="min-h-11 md:min-h-8" onClick={triggerSummary}>
               {t('cycles.summary.retry')}
             </Button>
           </AlertDescription>
         </Alert>
+      )}
+      {data && isSummaryStale && (
+        <p className="text-[11px] text-warning" data-testid="cycle-summary-stale">
+          {t('cycles.summary.staleNotice')}
+        </p>
       )}
       {data && data.ai === 'used' && data.sentences.length > 0 && (
         <div className="space-y-1.5 rounded-lg border border-border bg-muted/25 p-3">

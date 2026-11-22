@@ -50,11 +50,13 @@ import {
 } from '../lib/projects.ts';
 import { taskTitleHidden, taskTitleText } from '../lib/task-title.ts';
 
-export const refreshProjectQueries = () => {
-  void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
-  void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
-  void queryClient.invalidateQueries({ queryKey: PROJECT_WEEKLY_STATUS_QUERY_PREFIX });
-  void queryClient.invalidateQueries({ queryKey: PROJECT_CYCLE_SUMMARY_QUERY_PREFIX });
+export const refreshProjectQueries = async () => {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: orpc.projects.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.tasks.key() }),
+    queryClient.invalidateQueries({ queryKey: PROJECT_WEEKLY_STATUS_QUERY_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: PROJECT_CYCLE_SUMMARY_QUERY_PREFIX }),
+  ]);
 };
 
 export function seatOptionLabel(
@@ -349,7 +351,6 @@ export function EditProjectTaskDialog({
   const [stepError, setStepError] = useState(false);
   const [pointsError, setPointsError] = useState(false);
   const [recurrenceOverride, setRecurrenceOverride] = useState<ProjectTaskRecurrenceView | null>(null);
-  const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
 
   const update = useMutation(orpc.tasks.update.mutationOptions());
   const setTaskCycle = useMutation(orpc.projects.setTaskCycle.mutationOptions());
@@ -368,7 +369,6 @@ export function EditProjectTaskDialog({
       setStepError(false);
       setPointsError(false);
       setRecurrenceOverride(null);
-      setIdemKey(crypto.randomUUID());
       update.reset();
       setTaskCycle.reset();
       setTaskPoints.reset();
@@ -385,7 +385,7 @@ export function EditProjectTaskDialog({
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (task.checkedOut) return;
+    if (task.checkedOut || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending) return;
     const nextTitle = title.trim();
     if (!nextTitle) {
       setTitleError(true);
@@ -435,27 +435,34 @@ export function EditProjectTaskDialog({
     }
 
     const runFollowups = async () => {
-      if (Object.keys(patch).length > 0) {
-        await update.mutateAsync({ id: task.id, ...patch, idempotencyKey: idemKey });
+      let anyWriteSucceeded = false;
+      try {
+        if (Object.keys(patch).length > 0) {
+          await update.mutateAsync({ id: task.id, ...patch, idempotencyKey: crypto.randomUUID() });
+          anyWriteSucceeded = true;
+        }
+        if (cycleChanged) {
+          await setTaskCycle.mutateAsync({
+            projectId,
+            taskId: task.id,
+            cycleId: nextCycleId,
+            idempotencyKey: crypto.randomUUID(),
+          });
+          anyWriteSucceeded = true;
+        }
+        if (pointsChanged) {
+          await setTaskPoints.mutateAsync({
+            projectId,
+            taskId: task.id,
+            storyPoints: nextPoints,
+            idempotencyKey: crypto.randomUUID(),
+          });
+          anyWriteSucceeded = true;
+        }
+        onOpenChange(false);
+      } finally {
+        if (anyWriteSucceeded) await refreshProjectQueries();
       }
-      if (cycleChanged) {
-        await setTaskCycle.mutateAsync({
-          projectId,
-          taskId: task.id,
-          cycleId: nextCycleId,
-          idempotencyKey: crypto.randomUUID(),
-        });
-      }
-      if (pointsChanged) {
-        await setTaskPoints.mutateAsync({
-          projectId,
-          taskId: task.id,
-          storyPoints: nextPoints,
-          idempotencyKey: crypto.randomUUID(),
-        });
-      }
-      refreshProjectQueries();
-      onOpenChange(false);
     };
     void runFollowups().catch(() => undefined);
   };

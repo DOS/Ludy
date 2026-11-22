@@ -241,6 +241,24 @@ function QuickAddTask({
   );
 }
 
+export function parseStoryPointsDraft(
+  draft: string,
+  badInput: boolean,
+): { valid: true; value: number | null } | { valid: false } {
+  if (badInput) return { valid: false };
+  const trimmed = draft.trim();
+  if (trimmed === '') return { valid: true, value: null };
+  const parsed = Number(trimmed);
+  if (
+    Number.isInteger(parsed) &&
+    parsed >= PROJECT_TASK_STORY_POINTS_MIN &&
+    parsed <= PROJECT_TASK_STORY_POINTS_MAX
+  ) {
+    return { valid: true, value: parsed };
+  }
+  return { valid: false };
+}
+
 function StoryPointsChip({
   task,
   pointsEnabled,
@@ -291,28 +309,18 @@ function StoryPointsChip({
     );
   }
 
-  const commit = (e: FormEvent) => {
+  const commit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    const trimmed = draft.trim();
-    if (trimmed === '') {
-      setInvalid(false);
-      onSetTaskPoints(task.id, null);
-      setEditing(false);
+    const badInput = Boolean(e.currentTarget.querySelector('input')?.validity.badInput);
+    const parsed = parseStoryPointsDraft(draft, badInput);
+    if (!parsed.valid) {
+      setInvalid(true);
       return;
     }
-    const parsed = Number(trimmed);
-    if (
-      Number.isInteger(parsed) &&
-      parsed >= PROJECT_TASK_STORY_POINTS_MIN &&
-      parsed <= PROJECT_TASK_STORY_POINTS_MAX
-    ) {
-      setInvalid(false);
-      onSetTaskPoints(task.id, parsed);
-      setEditing(false);
-      return;
-    }
-    setInvalid(true);
+    setInvalid(false);
+    onSetTaskPoints(task.id, parsed.value);
+    setEditing(false);
   };
 
   return (

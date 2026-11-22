@@ -37,7 +37,7 @@ import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { memberMeter } from '../src/ai-meter.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { ExportSealer } from '../src/export-seal.ts';
+import { ExportSealer, exportAad } from '../src/export-seal.ts';
 import { createHttpApp } from '../src/http.ts';
 import { runOrgExport } from '../src/org-export.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
@@ -548,7 +548,16 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, orgId, {
       now: () => generatedAt,
     });
-    expect(exported.parts.some((p) => p.table === 'projects.project_cycle')).toBe(true);
+    const cyclePart = exported.parts.find((p) => p.table === 'projects.project_cycle');
+    expect(cyclePart).toBeDefined();
+    if (!cyclePart) throw new Error('missing projects.project_cycle export part');
+    const rawCycles = await store.get(cyclePart.key);
+    const decodedCycles = new TextDecoder()
+      .decode(sealer.open(rawCycles, exportAad(orgId, cyclePart), 'aes-256-gcm'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { id: string });
+    expect(decodedCycles.map((r) => r.id)).toEqual(expect.arrayContaining([s1.id, s2.id]));
     await rt.execute('kernel.org.offboard', { confirmSlug: orgSlug }, { actor: asMfa(owner.userId), orgId });
     const purgeAdmin = new pg.Client({ connectionString: adminUrl });
     await purgeAdmin.connect();
@@ -579,5 +588,222 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     } finally {
       await verifyAdmin.end();
     }
+  });
+
+  it('refuses cycle delete and complete on checked-out agent leases (409 TASK_CHECKED_OUT) and le_scope hidden tasks (403 FORBIDDEN)', async () => {
+    const guardOwner = await newPerson('cycle-guard-owner');
+    const branchManager = await newPerson('cycle-branch-mgr');
+    const guardOrg = await createOrg(rt, asUser(guardOwner.userId), 'Cycle Guards Org');
+
+    const inv = await rt.execute<{ acceptPath: string }>(
+      'kernel.member.invite.create',
+      { email: branchManager.email, role: 'member' },
+      { actor: asMfa(guardOwner.userId), orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.executeOrgless(
+      'kernel.member.invite.accept',
+      { token: inv.acceptPath.split('#')[1] },
+      { actor: asUser(branchManager.userId) },
+    );
+
+    const installed = await rt.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant', displayName: 'Cycle Guard Bot' },
+      { actor: asMfa(guardOwner.userId), orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    let defaultEntityId = '';
+    let branchEntityId = '';
+    let hiddenUpcomingTaskId = '';
+    let hiddenActiveTaskId = '';
+    const guardAdmin = new pg.Client({ connectionString: adminUrl });
+    await guardAdmin.connect();
+    try {
+      defaultEntityId = (
+        await guardAdmin.query<{ id: string }>(
+          'SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default',
+          [guardOrg.orgId],
+        )
+      ).rows[0]?.id as string;
+      branchEntityId = (
+        await guardAdmin.query<{ id: string }>(
+          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+           VALUES ($1, 'Chi nhánh Guard', 'branch', $2) RETURNING id`,
+          [guardOrg.orgId, guardOwner.userId],
+        )
+      ).rows[0]?.id as string;
+      await guardAdmin.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+         VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [guardOrg.orgId, branchManager.userId, branchEntityId, guardOwner.userId],
+      );
+      hiddenUpcomingTaskId = (
+        await guardAdmin.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Việc trụ sở ẩn upcoming', 'human', 'user', $2) RETURNING id`,
+          [guardOrg.orgId, defaultEntityId],
+        )
+      ).rows[0]?.id as string;
+      hiddenActiveTaskId = (
+        await guardAdmin.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Việc trụ sở ẩn active', 'human', 'user', $2) RETURNING id`,
+          [guardOrg.orgId, defaultEntityId],
+        )
+      ).rows[0]?.id as string;
+    } finally {
+      await guardAdmin.end();
+    }
+
+    const { projectId } = await exec<{ projectId: string }>(guardOwner.userId, guardOrg.orgId, 'projects.project.create', {
+      name: 'Dự án kiểm tra guard',
+      ownerUserId: branchManager.userId,
+    });
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.project.update', {
+      projectId,
+      cyclesEnabled: true,
+    });
+
+    const { cycle: upcomingLe } = await exec<ProjectCycleMutateResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.create',
+      { projectId, name: 'LE Upcoming' },
+    );
+    const { cycle: activeLe } = await exec<ProjectCycleMutateResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.create',
+      { projectId, name: 'LE Active' },
+    );
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.start', { projectId, cycleId: activeLe.id });
+
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.task.add', { projectId, taskId: hiddenUpcomingTaskId });
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.task.set_cycle', {
+      projectId,
+      taskId: hiddenUpcomingTaskId,
+      cycleId: upcomingLe.id,
+    });
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.task.add', { projectId, taskId: hiddenActiveTaskId });
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.task.set_cycle', {
+      projectId,
+      taskId: hiddenActiveTaskId,
+      cycleId: activeLe.id,
+    });
+
+    // Entity-scoped project manager gets 403 FORBIDDEN rather than detaching/closing le_scope-hidden tasks.
+    await expect(
+      exec(branchManager.userId, guardOrg.orgId, 'projects.cycle.delete', { projectId, cycleId: upcomingLe.id }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await expect(
+      exec(branchManager.userId, guardOrg.orgId, 'projects.cycle.complete', {
+        projectId,
+        cycleId: activeLe.id,
+        carryover: { mode: 'backlog' },
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+    // Unrestricted owner can delete upcoming and complete active cleanly once visible.
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.delete', { projectId, cycleId: upcomingLe.id });
+    const completedHiddenRes = await exec<ProjectCycleCompleteResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.complete',
+      { projectId, cycleId: activeLe.id, carryover: { mode: 'backlog' } },
+    );
+    expect(completedHiddenRes.cycle.status).toBe('completed');
+    expect(completedHiddenRes.carriedOverCount).toBe(1);
+
+    // Checked-out lease tests for cycle.delete (all tasks) and cycle.complete (open tasks).
+    const { cycle: leaseUpcoming } = await exec<ProjectCycleMutateResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.create',
+      { projectId, name: 'Lease Upcoming' },
+    );
+    const { cycle: leaseActive } = await exec<ProjectCycleMutateResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.create',
+      { projectId, name: 'Lease Active' },
+    );
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.start', { projectId, cycleId: leaseActive.id });
+
+    const { taskId: tLeaseUp } = await exec<{ taskId: string }>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.task.create',
+      {
+        projectId,
+        title: 'Task đang checkout trong cycle sắp tới',
+        assigneePositionId: installed.positionId,
+        cycleId: leaseUpcoming.id,
+      },
+    );
+    const { taskId: tLeaseAct } = await exec<{ taskId: string }>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.task.create',
+      {
+        projectId,
+        title: 'Task đang checkout trong cycle đang chạy',
+        assigneePositionId: installed.positionId,
+        cycleId: leaseActive.id,
+      },
+    );
+
+    const startedRun = await workerRt.execute<{ runId: string | null }>(
+      'kernel.agent.run.start',
+      { agentId: installed.agentId },
+      { actor: { type: 'system', component: 'test' }, orgId: guardOrg.orgId },
+    );
+    const agentActor: AgentActor = {
+      type: 'agent',
+      agentId: installed.agentId,
+      runId: startedRun.runId as string,
+    };
+
+    const upCheckout = await workerRt.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tLeaseUp },
+      { actor: agentActor, orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.delete', { projectId, cycleId: leaseUpcoming.id }),
+    ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
+
+    await workerRt.execute(
+      'kernel.task.set_status',
+      { id: tLeaseUp, status: 'in_review', fence: upCheckout.fence },
+      { actor: agentActor, orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.delete', { projectId, cycleId: leaseUpcoming.id });
+
+    const actCheckout = await workerRt.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tLeaseAct },
+      { actor: agentActor, orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      exec(guardOwner.userId, guardOrg.orgId, 'projects.cycle.complete', {
+        projectId,
+        cycleId: leaseActive.id,
+        carryover: { mode: 'backlog' },
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
+
+    await workerRt.execute(
+      'kernel.task.set_status',
+      { id: tLeaseAct, status: 'in_review', fence: actCheckout.fence },
+      { actor: agentActor, orgId: guardOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const completeAfterRelease = await exec<ProjectCycleCompleteResult>(
+      guardOwner.userId,
+      guardOrg.orgId,
+      'projects.cycle.complete',
+      { projectId, cycleId: leaseActive.id, carryover: { mode: 'backlog' } },
+    );
+    expect(completeAfterRelease.cycle.status).toBe('completed');
+    expect(completeAfterRelease.carriedOverCount).toBe(1);
   });
 });

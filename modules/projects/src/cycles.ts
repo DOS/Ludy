@@ -284,7 +284,8 @@ export function computeCycleBurndown(
 
   let observedUntil: string | null = null;
   if (status === 'completed') {
-    observedUntil = completedAt ? clampLocalDate(vietnamToday(new Date(completedAt)), startsOn, endsOn) : endsOn;
+    const closedOn = completedAt ? vietnamToday(new Date(completedAt)) : endsOn;
+    observedUntil = closedOn >= startsOn ? clampLocalDate(closedOn, startsOn, endsOn) : null;
   } else if (status === 'active') {
     observedUntil = todayVn >= startsOn ? clampLocalDate(todayVn, startsOn, endsOn) : null;
   }
@@ -619,6 +620,54 @@ export const projectCycleUpdate = defineCommand({
   },
 });
 
+async function assertCycleTasksAccessibleAndFree(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  cycleId: string,
+  now: Date,
+  leaseFilter: 'all' | 'open',
+): Promise<void> {
+  const cycleLinks = await trx
+    .selectFrom('crove_projects.project_task')
+    .select('task_id')
+    .where('org_id', '=', orgId)
+    .where('project_id', '=', projectId)
+    .where('cycle_id', '=', cycleId)
+    .orderBy('task_id', 'asc')
+    .forUpdate()
+    .execute();
+  if (cycleLinks.length === 0) return;
+
+  const visibleTasks = await trx
+    .selectFrom('crove_projects.project_task as pt')
+    .innerJoin('crove_kernel.task as t', (join) =>
+      join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
+    )
+    .select(['pt.task_id', 't.status', 't.checkout_run_id', 't.lock_expires_at'])
+    .where('pt.org_id', '=', orgId)
+    .where('pt.project_id', '=', projectId)
+    .where('pt.cycle_id', '=', cycleId)
+    .orderBy('pt.task_id', 'asc')
+    .forUpdate('t')
+    .execute();
+
+  if (cycleLinks.length !== visibleTasks.length) {
+    throw new DomainError(
+      'FORBIDDEN',
+      403,
+      'Chu kỳ còn công việc thuộc đơn vị bạn chưa có quyền xem',
+    );
+  }
+
+  for (const row of visibleTasks) {
+    if (leaseFilter === 'open' && (row.status === 'done' || row.status === 'cancelled')) {
+      continue;
+    }
+    assertTaskLeaseFree(row.checkout_run_id, row.lock_expires_at, now);
+  }
+}
+
 export const projectCycleDelete = defineCommand({
   name: 'projects.cycle.delete',
   input: zProjectCycleDeleteInput,
@@ -638,6 +687,8 @@ export const projectCycleDelete = defineCommand({
 
     const cycle = await loadCycle(ctx.trx, ctx.orgId, project.id, input.cycleId, true);
     if (cycle.status !== 'upcoming') throw cycleNotUpcoming();
+
+    await assertCycleTasksAccessibleAndFree(ctx.trx, ctx.orgId, project.id, cycle.id, ctx.now, 'all');
 
     await ctx.trx
       .deleteFrom('crove_projects.project_cycle')
@@ -733,6 +784,8 @@ export const projectCycleComplete = defineCommand({
       if (target.status !== 'upcoming') throw cycleTargetNotUpcoming();
       targetCycleId = target.id;
     }
+
+    await assertCycleTasksAccessibleAndFree(ctx.trx, ctx.orgId, project.id, cycle.id, ctx.now, 'open');
 
     const { rows: movedRows } = await sql<{ task_id: string }>`
       UPDATE crove_projects.project_task pt

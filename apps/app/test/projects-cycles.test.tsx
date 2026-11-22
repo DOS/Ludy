@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // SSR & accessibility tests for opt-in Cycles, Story points, Burndown/Velocity table fallback, and Vy Cycle Summary (#4361).
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -10,6 +10,7 @@ import type {
   ProjectCycle,
   ProjectCycleListResult,
   ProjectCycleMetrics,
+  ProjectCycleSummary,
   ProjectTaskCard,
 } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -24,6 +25,8 @@ const rpcData = vi.hoisted(() => ({
   board: null as ProjectBoard | null,
   cycles: null as ProjectCycleListResult | null,
   metrics: null as ProjectCycleMetrics | null,
+  summary: null as ProjectCycleSummary | null,
+  summaryCalls: 0,
 }));
 
 vi.mock('../src/lib/api.ts', async () => {
@@ -40,6 +43,10 @@ vi.mock('../src/lib/api.ts', async () => {
               if (name === 'projects.board' && rpcData.board) return Promise.resolve(rpcData.board);
               if (name === 'projects.listCycles' && rpcData.cycles) return Promise.resolve(rpcData.cycles);
               if (name === 'projects.cycleMetrics' && rpcData.metrics) return Promise.resolve(rpcData.metrics);
+              if (name === 'projects.cycleSummary' && rpcData.summary) {
+                rpcData.summaryCalls += 1;
+                return Promise.resolve(rpcData.summary);
+              }
               return Promise.reject(new Error('not mocked'));
             },
           });
@@ -64,8 +71,16 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
+const { orpc } = await import('../src/lib/api.ts');
+const { parseStoryPointsDraft } = await import('../src/components/project-board.tsx');
+const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 const { ProjectDetailPage } = await import('../src/routes/projects.tsx');
-const { buildBurndownPolylinePoints } = await import('../src/components/project-cycles.tsx');
+const {
+  buildBurndownPolylinePoints,
+  buildCycleSummaryQueryOptions,
+  initialCarryoverSelection,
+  validateCompleteCycleCarryover,
+} = await import('../src/components/project-cycles.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
   <QueryClientProvider client={queryClientState.current}>
@@ -121,6 +136,8 @@ const sampleCycle = (over: Partial<ProjectCycle> = {}): ProjectCycle => ({
 describe('Projects cycles UI & accessibility (#4361)', () => {
   beforeEach(() => {
     queryClientState.current.clear();
+    rpcData.summaryCalls = 0;
+    rpcData.summary = null;
   });
 
   it('hides cycle panel, cycle filter tabs, and story-point chips when cyclesEnabled=false and pointsEnabled=false', () => {
@@ -292,5 +309,150 @@ describe('Projects cycles UI & accessibility (#4361)', () => {
     const html = renderToStaticMarkup(wrap('en', <ProjectDetailPage />));
     expect(html).toContain('project-cycles-panel');
     expect(html).not.toContain('ask-vy-cycle-summary');
+  });
+
+  it('renders Day-1 burndown dot and omits points velocity label when pointsEnabled=false', () => {
+    const active = sampleCycle();
+    const board: ProjectBoard = {
+      project: {
+        id: PROJECT_ID,
+        name: 'Dự án Sprint Không Điểm',
+        description: null,
+        ownerUserId: null,
+        ownerName: null,
+        status: 'active',
+        cyclesEnabled: true,
+        cycleDurationWeeks: 2,
+        pointsEnabled: false,
+        canManage: true,
+        canWrite: true,
+        createdAt: '2027-02-01T01:00:00.000Z',
+        updatedAt: '2027-02-01T01:00:00.000Z',
+      },
+      members: [],
+      seats: [],
+      isTeamOrg: true,
+      viewerHasSeat: true,
+      tasks: [sampleTask({ storyPoints: null })],
+      activeCycle: active,
+      totalVisible: 1,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+    const cyclesRes: ProjectCycleListResult = {
+      cycles: [active],
+      backlogTaskCount: 0,
+      backlogPoints: 0,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+    const metricsRes: ProjectCycleMetrics = {
+      projectId: PROJECT_ID,
+      selectedCycle: active,
+      burndown: [
+        { date: '2027-02-01', idealRemainingTasks: 4, idealRemainingPoints: 0, remainingTasks: 4, remainingPoints: 0 },
+        { date: '2027-02-02', idealRemainingTasks: 0, idealRemainingPoints: 0, remainingTasks: null, remainingPoints: null },
+      ],
+      velocity: [
+        {
+          cycleId: '00000000-0000-4000-8000-000000000099',
+          number: 0,
+          name: 'Pre-sprint',
+          startsOn: '2027-01-15',
+          endsOn: '2027-01-28',
+          completedTasks: 3,
+          totalTasks: 4,
+          completedPoints: 0,
+          committedPoints: 0,
+        },
+      ],
+      averageVelocityTasks: 3,
+      averageVelocityPoints: 0,
+      hiddenByEntityCount: 0,
+    };
+    queryClientState.current.setQueryData(['projects', 'board', { projectId: PROJECT_ID }], board);
+    queryClientState.current.setQueryData(['projects', 'listCycles', { projectId: PROJECT_ID }], cyclesRes);
+    queryClientState.current.setQueryData(['projects', 'cycleMetrics', { projectId: PROJECT_ID }], metricsRes);
+
+    const html = renderToStaticMarkup(wrap('en', <ProjectDetailPage />));
+    expect(html).toContain('cycle-burndown-single-point');
+    expect(html).toContain('Avg: 3 tasks/cycle');
+    expect(html).not.toContain('pts/cycle');
+  });
+
+  it('requires explicit carryover choice when open tasks remain, revalidates target cycle, and preserves points on badInput', () => {
+    expect(initialCarryoverSelection(2)).toBe('none');
+    expect(initialCarryoverSelection(0)).toBe('backlog');
+
+    const upcoming = sampleCycle({ id: '00000000-0000-4000-8000-000000000022', status: 'upcoming', number: 2 });
+    expect(validateCompleteCycleCarryover(2, 'none', upcoming.id, [upcoming])).toEqual({
+      ok: false,
+      reason: 'pickRequired',
+      clearTarget: false,
+    });
+    expect(validateCompleteCycleCarryover(2, 'cycle', '00000000-0000-4000-8000-000000000099', [upcoming])).toEqual({
+      ok: false,
+      reason: 'pickAgain',
+      clearTarget: true,
+    });
+    expect(validateCompleteCycleCarryover(2, 'cycle', upcoming.id, [upcoming])).toEqual({
+      ok: true,
+      carryover: { mode: 'cycle', targetCycleId: upcoming.id },
+    });
+    expect(validateCompleteCycleCarryover(0, 'backlog', '', [])).toEqual({
+      ok: true,
+      carryover: { mode: 'backlog' },
+    });
+
+    expect(parseStoryPointsDraft('', true)).toEqual({ valid: false });
+    expect(parseStoryPointsDraft('', false)).toEqual({ valid: true, value: null });
+    expect(parseStoryPointsDraft('0', false)).toEqual({ valid: true, value: 0 });
+    expect(parseStoryPointsDraft('101', false)).toEqual({ valid: false });
+  });
+
+  it('keeps Vy cycle summary strictly on-demand across refreshProjectQueries invalidations', async () => {
+    const metricsRes: ProjectCycleMetrics = {
+      projectId: PROJECT_ID,
+      selectedCycle: sampleCycle(),
+      burndown: [],
+      velocity: [],
+      averageVelocityTasks: 0,
+      averageVelocityPoints: 0,
+      hiddenByEntityCount: 0,
+    };
+    rpcData.summary = {
+      ai: 'used',
+      project: { id: PROJECT_ID, name: 'Dự án Sprint', status: 'active' },
+      cycle: sampleCycle(),
+      sentences: ['Chu kỳ 1 hoàn thành 2 việc.'],
+      metrics: metricsRes,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+
+    const options = buildCycleSummaryQueryOptions(
+      orpc.projects.cycleSummary.queryOptions({ input: { projectId: PROJECT_ID, cycleId: CYCLE_ID, language: 'vi' } }),
+      'demo-org',
+      PROJECT_ID,
+      CYCLE_ID,
+      'vi',
+    );
+    const observer = new QueryObserver(queryClientState.current, options);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      await Promise.resolve();
+      expect(rpcData.summaryCalls).toBe(0);
+
+      await observer.refetch();
+      expect(rpcData.summaryCalls).toBe(1);
+      expect(queryClientState.current.getQueryState(options.queryKey)?.isInvalidated).toBe(false);
+
+      await refreshProjectQueries();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(rpcData.summaryCalls).toBe(1);
+      expect(queryClientState.current.getQueryState(options.queryKey)?.isInvalidated).toBe(true);
+    } finally {
+      unsubscribe();
+    }
   });
 });

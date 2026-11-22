@@ -165,6 +165,21 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
     expect(series[2]?.idealRemainingPoints).toBe(0);
   });
 
+  it('keeps actual remaining null for all days when a cycle was completed before its startsOn date', () => {
+    const series = computeCycleBurndown(
+      [{ status: 'done', storyPoints: 5, createdAt: '2027-02-01T02:00:00Z', updatedAt: '2027-02-01T03:00:00Z' }],
+      '2027-02-10',
+      '2027-02-12',
+      'completed',
+      '2027-02-05T10:00:00Z',
+      '2027-02-15T10:00:00Z',
+    );
+    expect(series).toHaveLength(3);
+    expect(series.every((d) => d.remainingTasks === null && d.remainingPoints === null)).toBe(true);
+    expect(series[0]?.idealRemainingPoints).toBe(5);
+    expect(series[2]?.idealRemainingPoints).toBe(0);
+  });
+
   it('refuses cycle or points mutations with 409 TASK_CHECKED_OUT while an active agent lease holds the task', () => {
     const now = new Date('2027-02-01T10:00:00.000Z');
     expect(() =>
