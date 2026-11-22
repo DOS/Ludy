@@ -24,6 +24,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { normalizeLeaveDaysInput } from '../components/hr-leave-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
@@ -327,6 +328,8 @@ export function HrSelfServicePage() {
               </div>
             </dl>
           </Card>
+
+          <HrAttendanceCheckinCard enabled={linked} />
 
           <Card className="mb-6 block space-y-4 p-4" data-testid="hr-my-leave-card">
             <div className="flex flex-wrap items-center justify-between gap-2">

@@ -10,6 +10,7 @@ import { hrBankTemplateCommands, hrBankTemplateQueries } from './bank-template.t
 import { hrDepartmentCommands, hrDepartmentQueries } from './departments.ts';
 import { hrLeaveCommands, hrLeaveQueries } from './leave.ts';
 import { hrLeaveRequestCommands, hrLeaveRequestQueries } from './leave-requests.ts';
+import { hrAttendanceCommands, hrAttendanceQueries } from './attendance.ts';
 import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 import { hrTodayQueries } from './today.ts';
 
@@ -30,6 +31,6 @@ export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } f
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
-export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrRecruitingCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrRecruitingQueries, ...hrTodayQueries];
+export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrRecruitingCommands];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrRecruitingQueries, ...hrTodayQueries];
 export { hrManifest } from './manifest.ts';

@@ -347,6 +347,23 @@ import {
   zHrSelfProfile,
   zHrSelfProfileAsk,
 } from './hr-leave.ts';
+import {
+  zHrAdminAttendanceRow,
+  zHrAttendanceAdjust,
+  zHrAttendanceAnomaliesAsk,
+  zHrAttendanceAnomaliesBrief,
+  zHrAttendanceList,
+  zHrAttendanceListResult,
+  zHrAttendanceLogView,
+  zHrAttendanceQrRotate,
+  zHrAttendanceQrRotateResult,
+  zHrAttendanceRollupResult,
+  zHrAttendanceRollupToPayroll,
+  zHrSelfAttendanceCheckIn,
+  zHrSelfAttendanceCheckOut,
+  zHrSelfAttendanceList,
+  zHrSelfAttendanceListResult,
+} from './hr-attendance.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1298,6 +1315,20 @@ export const contract = {
         list: oc.input(zHrSelfPayslipsList).output(z.array(zHrSelfPayslipSummary)),
         get: oc.input(zHrPayslipRef).output(zHrPayslip),
       },
+      attendance: {
+        checkIn: oc.input(zHrSelfAttendanceCheckIn).output(zHrAttendanceLogView),
+        checkOut: oc.input(zHrSelfAttendanceCheckOut).output(zHrAttendanceLogView),
+        list: oc.input(zHrSelfAttendanceList).output(zHrSelfAttendanceListResult),
+      },
+    },
+    attendance: {
+      list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
+      adjust: oc.input(zHrAttendanceAdjust).output(zHrAdminAttendanceRow),
+      qr: {
+        rotate: oc.input(zHrAttendanceQrRotate).output(zHrAttendanceQrRotateResult),
+      },
+      anomaliesBrief: oc.input(zHrAttendanceAnomaliesAsk).output(zHrAttendanceAnomaliesBrief),
+      rollupToPayroll: oc.input(zHrAttendanceRollupToPayroll).output(zHrAttendanceRollupResult),
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),

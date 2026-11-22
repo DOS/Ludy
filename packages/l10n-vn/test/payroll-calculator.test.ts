@@ -196,6 +196,18 @@ describe('an unpaid fortnight', () => {
     expect(c.employeeInsurance).toBe('1260000');
     expect(c.unionFee).toBe('240000');
   });
+
+  it('prorates fractional half-day unpaid leave accurately without rounding up to whole days', () => {
+    // 12,000,000 * 25.5 / 26 = 11,769,230.77 -> 11,769,231
+    const half = calculatePayroll(person, month('2026-08', { unpaidLeaveDays: '0.5' }));
+    expect(half.gross).toBe('11769231');
+    expect(half.breakdown.pay.unpaidReduction).toBe('230769');
+
+    // 13.5 unpaid days stays below the 14-day insurance suspension threshold
+    const underThreshold = calculatePayroll(person, month('2026-08', { unpaidLeaveDays: '13.5' }));
+    expect(underThreshold.gross).toBe('5769231');
+    expect(underThreshold.breakdown.insurance.suspended).toBeNull();
+  });
 });
 
 describe('overtime and night work', () => {

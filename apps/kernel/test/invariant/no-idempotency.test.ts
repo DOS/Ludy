@@ -86,9 +86,7 @@ interface PendingNoIdempotency {
   // yyyy-mm-dd; the test fails on any later day.
   expires: string;
 }
-const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {
-  'hr.attendance.qr.rotate': { reason: 'returns one-time office QR check-in secret (#4447)', expires: '2026-12-06' },
-};
+const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {};
 
 // What is wrong between the commands that declare noIdempotency and the two lists, one line each.
 function noIdempotencyListProblems(
@@ -119,6 +117,7 @@ describe('commands that declare noIdempotency (#3428)', () => {
   const PINNED_NO_IDEMPOTENCY_COMMANDS = [
     'finance.bank_feed.hook_set',
     'finance.marketplace_connection.push_hook_set',
+    'hr.attendance.qr.rotate',
     'sign.direct.otp_mail_data',
     'sign.envelope.send',
     'sign.public.otp_mail_data',

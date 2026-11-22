@@ -229,8 +229,8 @@ describe('module screens against the router (#1652)', () => {
           ['reports', ['reports']],
         ],
       ],
-      // The HR app (#2530, #4300): the staff list for owners and admins, plus self-service My HR portal for members.
-      ['hr', [['people', ['hr/employees', 'hr/recruiting', 'hr/payroll', 'hr/declarations', 'hr/my']]]],
+      // The HR app (#2530, #4300, #4447): the staff list and attendance for owners and admins, plus self-service My HR portal for members.
+      ['hr', [['people', ['hr/employees', 'hr/attendance', 'hr/recruiting', 'hr/payroll', 'hr/declarations', 'hr/my']]]],
       // The eSign app (#3325, #3526, #3554): envelopes, reusable templates, offline SHA-256 verifier, and CA settings.
       ['sign', [['sign', ['sign/envelopes', 'sign/templates', 'sign/verify', 'sign/settings']]]],
       // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
@@ -240,7 +240,7 @@ describe('module screens against the router (#1652)', () => {
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'hrMy', 'signEnvelopes', 'signTemplates', 'signVerify', 'signSettings', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
+      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'hrAttendance', 'recruiting', 'payroll', 'declarations', 'hrMy', 'signEnvelopes', 'signTemplates', 'signVerify', 'signSettings', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
     ]);
   });
 
@@ -251,6 +251,7 @@ describe('module screens against the router (#1652)', () => {
     expect(hrManager?.home).toBe('/o/$slug/hr/employees');
     expect(hrManager?.groups[0]?.items.map((i) => i.to)).toEqual([
       '/o/$slug/hr/employees',
+      '/o/$slug/hr/attendance',
       '/o/$slug/hr/recruiting',
       '/o/$slug/hr/payroll',
       '/o/$slug/hr/declarations',

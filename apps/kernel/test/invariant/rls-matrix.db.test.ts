@@ -123,8 +123,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_hr.attendance_log',
-  'crove_hr.attendance_qr_config',
   'crove_hr.onboarding_submission',
   'crove_hr.overtime_request',
   'crove_hr.probation_review',

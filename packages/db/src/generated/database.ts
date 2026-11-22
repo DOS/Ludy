@@ -117,6 +117,8 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.attendance_log': HrAttendanceLogTable;
+  'crove_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
@@ -1973,6 +1975,36 @@ export interface FinanceVendorAccountRuleTable {
   party_id: string;
   debit_account: string;
   confirmed_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.attendance_log */
+export interface HrAttendanceLogTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  work_date: ColumnType<string, string, NotGranted>;
+  checked_in_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  checked_out_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  check_in_method: Generated<string>;
+  worked_minutes: number | null;
+  status: Generated<string>;
+  note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.attendance_qr_config */
+export interface HrAttendanceQrConfigTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  qr_secret_hash: ColumnType<string, string, NotGranted>;
+  active: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 

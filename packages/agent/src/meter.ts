@@ -145,6 +145,8 @@ export const AI_FEATURES = {
   'projects.tasks_from_source': 'projects',
   // Ly's pseudonymized recruiting screening brief and interview focus questions (#3403 Stage 3 slice 3b-1 / #3413): reads alias C1, role facts, readiness flags, and scrubbed untrusted notes only; never decides hire or reject.
   'hr.recruiting_brief': 'hr',
+  // Ly's pseudonymized monthly attendance anomaly narration (#4447 Stage 5C): reads E1..En aliases and deterministic anomaly counts/flags only; detection and payroll rollup stay 100% deterministic.
+  'hr.attendance_anomaly': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
