@@ -79,6 +79,8 @@ suite('marketplace order reports (#2515)', () => {
   const onHand = async (o: Org, itemId: string) => (await query<Array<{ id: string; onHand: string }>>(o, 'finance.stock_item.list', {})).find((i) => i.id === itemId)?.onHand;
   const moves = (o: Org, itemId: string) => rows<{ order_move: string; quantity: string }>("SELECT order_move, quantity::text FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2 AND source_type = 'order_line' ORDER BY created_at, order_move", [o.orgId, itemId]);
   const orderRows = (o: Org) => rows<{ order_no: string; stage: string; quantity: string }>('SELECT o.order_no, l.stage, l.quantity::text FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 ORDER BY o.order_no, l.line_key', [o.orgId]);
+  const lineOf = async (o: Org, orderNo: string) =>
+    (await rows<{ id: string }>('SELECT l.id::text AS id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [o.orgId, orderNo]))[0]?.id as string;
   async function ingest(o: Org, bytes: Uint8Array) {
     const sha256 = sha256Hex(bytes);
     const storageKey = fileKey(o.orgId, sha256);
@@ -183,38 +185,108 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, item)).toBe('-8');
   });
 
-  it('takes a returned order line back into stock once, through the item the shipment moved', async () => {
+  it('a returned order line moves nothing by itself: it waits for the answer, and "back" takes it into stock once, through the item the shipment moved (#4355)', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');
     await confirm(o, (await read(o, report(row('R1', 'Đang giao', 'QC-1', 2)))).fileId);
     expect(await onHand(o, item)).toBe('-2');
-    expect(await confirm(o, (await read(o, report(row('R1', 'Đã hoàn trả', 'QC-1', 2)))).fileId)).toEqual({ newLines: 0, updatedLines: 1, duplicateLines: 0, stockMoves: 1 });
-    expect(await onHand(o, item)).toBe('0');
-    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
-    // A report that still says returned moves nothing more.
+    // The report says returned: the line moves forward, its goods do not move until a person says they are back.
+    expect(await confirm(o, (await read(o, report(row('R1', 'Đã hoàn trả', 'QC-1', 2)))).fileId)).toEqual({ newLines: 0, updatedLines: 1, duplicateLines: 0, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-2');
+    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship']);
+    // A report that still says returned changes nothing; a line first seen already returned ships only, and the question comes after.
     expect(await confirm(o, (await read(o, report(row('R1', 'Đã hoàn trả', 'QC-1', 2), row('R2', 'Chờ xác nhận', 'QC-1', 1)))).fileId)).toEqual({ newLines: 1, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
-    expect(await onHand(o, item)).toBe('0');
-    // A line first seen already returned ships and returns in one go: the net is nothing, and each happens once.
-    expect(await confirm(o, (await read(o, report(row('R3', 'Đã hoàn trả', 'QC-1', 3)))).fileId)).toMatchObject({ newLines: 1, stockMoves: 2 });
-    expect(await onHand(o, item)).toBe('0');
+    expect(await confirm(o, (await read(o, report(row('R3', 'Đã hoàn trả', 'QC-1', 3)))).fileId)).toMatchObject({ newLines: 1, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('-5');
+    // The person answers "back" for R1: the return is written, once.
+    const decided = await execute<{ moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: await lineOf(o, 'R1'), decision: 'back' }, o.member);
+    expect(decided.moveId).not.toBeNull();
+    expect(await onHand(o, item)).toBe('-3');
+    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship', 'ship']);
   });
 
-  it('brings the stock back when an order is cancelled after it shipped, and nothing when it was cancelled before', async () => {
+  it('a line cancelled after it shipped keeps its shipment and waits for the answer; one cancelled before shipping moves nothing and has nothing to answer (#4355)', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');
     await confirm(o, (await read(o, report(row('C1', 'Đang giao', 'QC-1', 2), row('C2', 'Chờ xác nhận', 'QC-1', 1)))).fileId);
     expect(await onHand(o, item)).toBe('-2');
-    // C1 failed delivery (cancelled after it shipped): the goods are back, once. C2 was cancelled before it shipped: nothing to bring back.
-    expect(await confirm(o, (await read(o, report(row('C1', 'Đã hủy', 'QC-1', 2), row('C2', 'Đã hủy', 'QC-1', 1)))).fileId)).toEqual({ newLines: 0, updatedLines: 2, duplicateLines: 0, stockMoves: 1 });
-    expect(await onHand(o, item)).toBe('0');
-    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
+    // C1 failed delivery (cancelled after it shipped): its shipment stands until a person says the goods are back. C2 was cancelled before it shipped: nothing moved.
+    expect(await confirm(o, (await read(o, report(row('C1', 'Đã hủy', 'QC-1', 2), row('C2', 'Đã hủy', 'QC-1', 1)))).fileId)).toEqual({ newLines: 0, updatedLines: 2, duplicateLines: 0, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-2');
+    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship']);
     expect((await orderRows(o)).map((r) => [r.order_no, r.stage])).toEqual([
       ['C1', 'cancelled'],
       ['C2', 'cancelled'],
     ]);
     // Again: nothing more. A line first seen cancelled moved nothing.
     expect(await confirm(o, (await read(o, report(row('C1', 'Đã hủy', 'QC-1', 2), row('C3', 'Đã hủy', 'QC-1', 4)))).fileId)).toEqual({ newLines: 1, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-2');
+    // The person's answer takes C1's goods back; C2 never shipped, so it has nothing to answer.
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: await lineOf(o, 'C1'), decision: 'back' }, o.member);
     expect(await onHand(o, item)).toBe('0');
+    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: await lineOf(o, 'C2'), decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_OFFERED' });
+  });
+
+  it('lists the lines that wait for the answer, keeps "not back" from moving anything, takes one answer per line, and holds the answer in the table (#4355)', async () => {
+    const o = await org();
+    const other = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('N1', 'Đang giao', 'QC-1', 2), row('N2', 'Đang giao', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4), row('N4', 'Đang giao', 'QC-1', 1)))).fileId);
+    await confirm(o, (await read(o, report(row('N1', 'Đã hoàn trả', 'QC-1', 2), row('N2', 'Đã hoàn trả', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4), row('N4', 'Đã hoàn trả', 'QC-1', 1)))).fileId);
+    const waiting = async () => (await query<{ returns: Array<{ orderNo: string; quantity: string; itemCode: string; stage: string }> }>(o, 'finance.marketplace.worklist', {}, o.viewer)).returns;
+    // N1, N2 and N4 came back; N3 is still on its way and is not asked. The quantity is the shipment's, as a plain number.
+    expect((await waiting()).map((r) => [r.orderNo, r.quantity, r.itemCode, r.stage]).sort()).toEqual([
+      ['N1', '2', 'QC-1', 'returned'],
+      ['N2', '1', 'QC-1', 'returned'],
+      ['N4', '1', 'QC-1', 'returned'],
+    ]);
+    const n1 = await lineOf(o, 'N1');
+    const n2 = await lineOf(o, 'N2');
+    const n3 = await lineOf(o, 'N3');
+    // Who may answer: not a viewer, not a line of another organization, not a line that has not come back.
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(execute(other, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' })).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_FOUND' });
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n3, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_OFFERED' });
+    expect(await onHand(o, item)).toBe('-8');
+    // "Not back": nothing moves, the line leaves the list, and the answer cannot be given again or changed to "back".
+    const no = await execute<{ decision: string; moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'not_back' }, o.member);
+    expect(no).toMatchObject({ decision: 'not_back', moveId: null });
+    expect(await onHand(o, item)).toBe('-8');
+    expect((await waiting()).map((r) => r.orderNo)).toEqual(['N2', 'N4']);
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
+    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship', 'ship', 'ship', 'ship']);
+    // An agent is not a person: refused, with nothing written.
+    await expect(rt.execute('finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // A line with an automatic return move from before this change is not offered and its answer is refused as decided (a move written straight into the table stands for it).
+    const legacy = await lineOf(o, 'N4');
+    await rows("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) SELECT org_id, legal_entity_id, item_id, move_date, -quantity, 'order_line', order_line_id, 'return', order_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'ship'", [o.orgId, legacy]);
+    expect((await waiting()).map((r) => r.orderNo)).toEqual(['N2']);
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: legacy, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
+    // "Back": one return move, of the shipment's quantity, dated today; a second answer is refused and writes nothing.
+    const yes = await execute<{ moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, o.member);
+    expect(yes.moveId).not.toBeNull();
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
+    const back = await rows<{ one: boolean; today: boolean; order_attempt: number }>(
+      "SELECT (quantity = 1) AS one, (move_date = CURRENT_DATE) AS today, order_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'",
+      [o.orgId, n2],
+    );
+    expect(back).toEqual([{ one: true, today: true, order_attempt: 1 }]);
+    expect(await onHand(o, item)).toBe('-6');
+    expect(await waiting()).toEqual([]);
+    // The answer is stored with the member and the time, and the table holds it: no change, no clearing, no answer on a line that has not come back.
+    const stored = await rows<{ goods_back: string; by_member: boolean; at_set: boolean }>(
+      'SELECT goods_back, (goods_back_by = $2) AS by_member, (goods_back_at IS NOT NULL) AS at_set FROM crove_finance.channel_order_line WHERE org_id = $1 AND id = $3',
+      [o.orgId, o.member, n1],
+    );
+    expect(stored).toEqual([{ goods_back: 'not_back', by_member: true, at_set: true }]);
+    await expect(rows("UPDATE crove_finance.channel_order_line SET goods_back = 'back' WHERE org_id = $1 AND id = $2", [o.orgId, n1])).rejects.toThrow(/CHANNEL_ORDER_RETURN/);
+    await expect(
+      rows('UPDATE crove_finance.channel_order_line SET goods_back = NULL, goods_back_attempt = NULL, goods_back_by = NULL, goods_back_at = NULL WHERE org_id = $1 AND id = $2', [o.orgId, n1]),
+    ).rejects.toThrow(/CHANNEL_ORDER_RETURN/);
+    await expect(
+      rows("UPDATE crove_finance.channel_order_line SET goods_back = 'back', goods_back_attempt = attempt, goods_back_by = $3, goods_back_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, n3, o.member]),
+    ).rejects.toThrow(/CHANNEL_ORDER_RETURN/);
   });
 
   it('refuses to reverse a move of an order line, in the app and in the database, and refuses one of another legal entity', async () => {
@@ -263,9 +335,11 @@ suite('marketplace order reports (#2515)', () => {
     await expect(insert(await lineOf('S2'), 'return', '2')).rejects.toThrow(/STOCK_ORDER_STAGE/);
     // A line cancelled without shipping passes the stage and is still refused a return with no shipment behind it.
     await expect(insert(await lineOf('S3'), 'return', '1')).rejects.toThrow(/STOCK_ORDER_RETURN/);
-    // The ways stock really moves still work: the shipment of S2 exists, and returned and cancelled-after-shipping lines bring it back.
+    // The ways stock really moves still work: the shipment of S2 exists, and a line cancelled after it shipped brings it back once a person says the goods are back (#4355).
     expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship']);
-    expect(await confirm(o, (await read(o, report(row('S2', 'Đã hủy', 'QC-1', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await confirm(o, (await read(o, report(row('S2', 'Đã hủy', 'QC-1', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-2');
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: await lineOf('S2'), decision: 'back' }, o.member);
     expect(await onHand(o, item)).toBe('0');
   });
 
@@ -309,7 +383,7 @@ suite('marketplace order reports (#2515)', () => {
     expect(await aliases()).toHaveLength(0);
   });
 
-  it('takes back a line that came back too: both of its moves are reversed and a new item takes its shipment and its return', async () => {
+  it('takes back a line that came back too: both of its moves are reversed, a new item takes its shipment, and the question is asked again for the new attempt (#4355)', async () => {
     const o = await org();
     const wrong = await makeItem(o, 'QC-A');
     const right = await makeItem(o, 'QC-B');
@@ -317,14 +391,19 @@ suite('marketplace order reports (#2515)', () => {
     const [open] = await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
     const line = open?.lineId as string;
     await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: wrong }, o.member);
-    expect(await confirm(o, (await read(o, report(row('Y1', 'Đã hoàn trả', 'MA-LA', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await confirm(o, (await read(o, report(row('Y1', 'Đã hoàn trả', 'MA-LA', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 0 });
+    // The person says the goods are back: the shipment and the return are both in the wrong item's book.
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: line, decision: 'back' }, o.member);
     expect(await onHand(o, wrong)).toBe('0');
     // The shipment, its return and their two reversals stay in the book of the wrong item, which ends where it began.
     expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 2, forgot: false });
     expect(await onHand(o, wrong)).toBe('0');
     expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, wrong]))[0]?.n).toBe(4);
-    // The line is a returned one: the new item takes its shipment and its return together, and the stock is as it should be.
-    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).toEqual({ moves: 2 });
+    // The line is a returned one: the new item takes its shipment only, and the answer is asked again for the new attempt; "back" then returns it.
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).toEqual({ moves: 1 });
+    expect((await moves(o, right)).map((m) => m.order_move)).toEqual(['ship']);
+    expect(await onHand(o, right)).toBe('-2');
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: line, decision: 'back' }, o.member);
     expect((await moves(o, right)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
     expect(await onHand(o, right)).toBe('0');
   });
@@ -361,12 +440,12 @@ suite('marketplace order reports (#2515)', () => {
     expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toHaveLength(0);
   });
 
-  it('has nothing to take back from a line cancelled after it shipped, whose stock came back by itself', async () => {
+  it('has nothing to take back from a line cancelled after it shipped: its goods are the answer of "goods back?", not an assignment (#4355)', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-A');
     await confirm(o, (await read(o, report(row('V1', 'Đang giao', 'QC-A', 2)))).fileId);
     await confirm(o, (await read(o, report(row('V1', 'Đã hủy', 'QC-A', 2)))).fileId);
-    expect(await onHand(o, item)).toBe('0');
+    expect(await onHand(o, item)).toBe('-2');
     const [v1] = await rows<{ id: string }>("SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = 'V1'", [o.orgId]);
     await expect(execute(o, 'finance.marketplace.unassign', { lineId: v1?.id }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_CANCELLED' });
   });
@@ -491,8 +570,10 @@ suite('marketplace order reports (#2515)', () => {
     const second = await read(o, report(row('U4', 'Đang giao', 'LẠ-7', 1)));
     expect(await confirm(o, second.fileId)).toMatchObject({ newLines: 1, stockMoves: 1 });
     expect(await onHand(o, item)).toBe('-9');
-    // A return of the assigned line brings back what the shipment took, through the same item.
-    expect(await confirm(o, (await read(o, report(row('U1', 'Đã hoàn trả', 'LẠ-7', 3)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    // A return of the assigned line moves nothing by itself; the person's answer brings back what the shipment took, through the same item (#4355).
+    expect(await confirm(o, (await read(o, report(row('U1', 'Đã hoàn trả', 'LẠ-7', 3)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-9');
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: line, decision: 'back' }, o.member);
     expect(await onHand(o, item)).toBe('-3');
   });
 

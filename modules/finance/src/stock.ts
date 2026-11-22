@@ -271,9 +271,9 @@ export const stockMoveReverse = defineCommand({
     // The undo of a return and the cascade that undoes the returns of a sale take the sale's lock first, so each sees what the other committed.
     await lockSaleReturns(ctx, move.return_of_move_id ?? move.id);
     if (move.source_type === 'reversal') throw new DomainError('STOCK_MOVE_IS_REVERSAL', 409, 'Đây đã là một phát sinh đảo, không đảo thêm được');
-    // The stock an order line moved follows the line's own stage (a return brings it back); reversing it alone would leave the line shipped with nothing to move again.
+    // The stock an order line moved follows the line's own shipment and a person's "goods back" answer (#4355); reversing it alone would leave the line shipped with nothing to move again.
     if (move.source_type === 'count') throw new DomainError('STOCK_MOVE_COUNT', 409, 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại');
-    if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao');
+    if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc, nếu hàng đã về, xác nhận "hàng đã về" ở việc cần làm để nhập lại kho');
     const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');
     // The returns of a sale come back first (the database holds the same rule): reversing the sale under them would put the returned pieces back twice.

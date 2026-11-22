@@ -1035,6 +1035,10 @@ export interface FinanceChannelOrderLineTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   attempt: Generated<number>;
   delivered_at: string | null;
+  goods_back: string | null;
+  goods_back_attempt: number | null;
+  goods_back_by: string | null;
+  goods_back_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_finance.channel_order */

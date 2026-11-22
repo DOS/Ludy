@@ -763,6 +763,89 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(await payoutsOf(o, settlement)).toHaveLength(0);
       expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     });
+
+    // The order line of a settlement line, made a returned one with its shipment out of an item (the stage moves forward from completed), and optionally its return move.
+    async function cameBack(o: Org, settlementLineId: string, withReturn = false) {
+      const [found] = await rows<{ id: string; legal_entity_id: string }>(
+        'SELECT l.id, l.legal_entity_id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_settlement_line sl ON sl.org_id = l.org_id AND sl.order_id = l.order_id WHERE sl.org_id = $1 AND sl.id = $2',
+        [o.orgId, settlementLineId],
+      );
+      const lineId = found?.id as string;
+      const item = await rt.execute<{ id: string }>(
+        'finance.stock_item.save',
+        { itemId: null, legalEntityId: null, code: `RB-${randomUUID().slice(0, 6)}`, name: 'Hàng trả', unit: 'gói', stockAccount: '156', trade: 'goods' },
+        { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      const move = (kind: 'ship' | 'return', quantity: number) =>
+        rows("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, '2026-10-12', $4, 'order_line', $5, $6, 1)", [
+          o.orgId,
+          found?.legal_entity_id,
+          item.id,
+          quantity,
+          lineId,
+          kind,
+        ]);
+      await move('ship', -1);
+      await rows("UPDATE crove_finance.channel_order_line SET stage = 'returned' WHERE org_id = $1 AND id = $2", [o.orgId, lineId]);
+      if (withReturn) await move('return', 1);
+      return lineId;
+    }
+    const offered = async (o: Org) => (await rt.query<{ returns: { orderLineId: string }[] }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId })).returns.map((r) => r.orderLineId);
+    const decide = (o: Org, orderLineId: string, decision: 'back' | 'not_back') =>
+      rt.execute('finance.marketplace_return.decide', { orderLineId, decision }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
+
+    it('does not offer, and refuses to confirm, the goods of an order whose carrier compensation a waiting or approved payout names (#4355)', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '3000' }], '103000');
+      const { proposalId } = await askWith(o, settlement, line, [{ kind: 'carrier_compensation', lineId: ids[0], amount: '3000', costAmount: '0' }]);
+      const orderLine = await cameBack(o, ids[0] as string);
+      // The proposal waits: the order is not offered, and a direct answer is refused.
+      expect(await offered(o)).toEqual([]);
+      await expect(decide(o, orderLine, 'back')).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_COMPENSATED', status: 409 });
+      // Approved: the same.
+      await approve(o, proposalId);
+      expect(await offered(o)).toEqual([]);
+      await expect(decide(o, orderLine, 'back')).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_COMPENSATED', status: 409 });
+      expect(await rows("SELECT 1 FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, orderLine])).toHaveLength(0);
+    });
+
+    it('offers the order again once the proposal that named compensation is rejected, and lets compensation follow a "not back" answer (#4355)', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '3000' }], '103000');
+      const compensation = [{ kind: 'carrier_compensation', lineId: ids[0], amount: '3000', costAmount: '0' }];
+      const { proposalId } = await askWith(o, settlement, line, compensation);
+      const orderLine = await cameBack(o, ids[0] as string);
+      expect(await offered(o)).toEqual([]);
+      // A rejected proposal no longer counts: the order is offered, and "not back" moves nothing and leaves compensation open for a new request.
+      await rt.execute('kernel.proposal.reject', { id: proposalId, reason: 'no' }, { actor: asUser(o.owner), orgId: o.orgId });
+      expect(await offered(o)).toEqual([orderLine]);
+      await decide(o, orderLine, 'not_back');
+      expect(await offered(o)).toEqual([]);
+      const again = await askWith(o, settlement, line, compensation);
+      expect(accounts(await payloadOf(o, again.proposalId))?.map((l) => l[0])).toContain('711');
+    });
+
+    it('offers the order of a payout that classified nothing as compensation, and refuses carrier compensation for an order whose goods are back, at the request and at the approval (#4355)', async () => {
+      // An incentive names no compensation: the order is offered, the answer is taken.
+      const first = await company([{ sales: '100000', other: '3000' }], '103000');
+      await askWith(first.o, first.settlement, first.line, [{ kind: 'incentive', lineId: first.ids[0], amount: '3000' }]);
+      const firstLine = await cameBack(first.o, first.ids[0] as string);
+      expect(await offered(first.o)).toEqual([firstLine]);
+      // The goods are confirmed back: a payout cannot call the order's money carrier compensation.
+      await decide(first.o, firstLine, 'back');
+      const third = await company([{ sales: '100000', other: '3000' }], '103000');
+      await cameBack(third.o, third.ids[0] as string, true);
+      await expect(askWith(third.o, third.settlement, third.line, [{ kind: 'carrier_compensation', lineId: third.ids[0], amount: '3000', costAmount: '0' }])).rejects.toMatchObject({
+        code: 'MARKETPLACE_PAYOUT_GOODS_BACK',
+        status: 409,
+        details: { lineId: third.ids[0] },
+      });
+      // A proposal made before the goods came back is refused at the approval, and stays waiting.
+      const second = await company([{ sales: '100000', other: '3000' }], '103000');
+      const asked = await askWith(second.o, second.settlement, second.line, [{ kind: 'carrier_compensation', lineId: second.ids[0], amount: '3000', costAmount: '0' }]);
+      await cameBack(second.o, second.ids[0] as string, true);
+      await expect(approve(second.o, asked.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_GOODS_BACK', status: 409 });
+      expect(await payoutsOf(second.o, second.settlement)).toHaveLength(0);
+      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [second.o.orgId, asked.proposalId]))[0]?.status).toBe('pending');
+    });
   });
 
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {
