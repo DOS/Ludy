@@ -12,7 +12,7 @@ import { Badge } from '@ludy/ui/components/badge';
 // id, and the control points at it with `aria-describedby` (see `isAiWritten`). The control's name stays short (the label), and the hint is read as its description.
 export function AiWrittenBadge({ actorOrigin, tainted = false, className, showHint = false, hintId }: { actorOrigin: 'ui' | 'mcp'; tainted?: boolean; className?: string; showHint?: boolean; hintId?: string }) {
   const t = useTranslations('aiWritten');
-  if (actorOrigin !== 'mcp' && !tainted) return null;
+  if (!isAiWritten(actorOrigin, tainted)) return null;
   // The text of a row a person made and an app only rewrote says "edited"; a row an app made says "written".
   const wrote = actorOrigin === 'mcp';
   const hint = wrote ? t('hint') : t('hintEdited');
