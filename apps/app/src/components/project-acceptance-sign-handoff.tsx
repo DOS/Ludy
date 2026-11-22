@@ -38,6 +38,7 @@ import {
   buildSalesInvoiceAcceptanceSearch,
 } from '../lib/project-acceptance-pdf.ts';
 import type { SignDeliveryMode, SignEnvelopeStatus } from '../lib/sign-fields.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 const RETRYABLE_ENVELOPE_STATUSES = new Set<SignEnvelopeStatus>(['voided', 'expired', 'declined']);
 const zValidEmail = z.email().max(254);
@@ -61,6 +62,8 @@ const SIGN_STATUS_BADGE_VARIANT: Record<
 export interface ProjectAcceptanceCompletedTask {
   id: string;
   title: string;
+  // The title is an AI coworker's text (#4421): the handover copy shows its invisible characters instead of carrying them into editable text.
+  tainted?: boolean;
 }
 
 export interface ProjectAcceptanceProjectSource {
@@ -171,6 +174,11 @@ export function canCreateInvoiceFromAcceptance(
   );
 }
 
+// The done tasks of a board read as the handover's completed tasks, each with the taint of its title (#4421): a filtered or truncated board is read again for them, and the copy then marks the title the same way.
+export function completedTasksOfBoard(tasks: readonly { id: string; title: string; status: string; tainted: boolean }[]): ProjectAcceptanceCompletedTask[] {
+  return tasks.filter((task) => task.status === 'done').map((task) => ({ id: task.id, title: task.title, tainted: task.tainted }));
+}
+
 export function buildDeterministicDeliverables(
   completedTasks: readonly ProjectAcceptanceCompletedTask[],
 ): EditableAcceptanceDeliverable[] {
@@ -179,7 +187,7 @@ export function buildDeterministicDeliverables(
   }
   return completedTasks.map((task) => ({
     localId: `task-${task.id}`,
-    text: task.title,
+    text: taskTitleText(task),
     proposedByAi: false,
   }));
 }
@@ -445,9 +453,7 @@ export function ProjectAcceptanceDialogBody({
 
   const effectiveCompletedTasks = useMemo<readonly ProjectAcceptanceCompletedTask[]>(() => {
     if (shouldFetchDoneTasks && doneTasksQuery.data?.tasks) {
-      return doneTasksQuery.data.tasks
-        .filter((task) => task.status === 'done')
-        .map((task) => ({ id: task.id, title: task.title }));
+      return completedTasksOfBoard(doneTasksQuery.data.tasks);
     }
     return completedTasks;
   }, [shouldFetchDoneTasks, doneTasksQuery.data, completedTasks]);

@@ -12,6 +12,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { groupNotifications, groupSubjectCount, isKnownKind, NOTIFICATION_LIST_LIMIT, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { SETTINGS_CARD } from './settings/tabs.ts';
 
 // The card of Settings that holds the preferences; test/settings-tabs.test.ts checks this link goes to the tab of that card.
@@ -50,9 +51,9 @@ function useLine() {
       case 'kernel.conversation_new':
         return t('text.conversation_new');
       case 'kernel.task_assigned':
-        return t('text.task_assigned', { title: n.detail.title ?? '' });
+        return t('text.task_assigned', { title: taskTitleText({ title: n.detail.title ?? '', tainted: n.tainted }) });
       case 'kernel.task_rerouted':
-        return n.detail.count ? t('text.tasks_rerouted', { count: Number(n.detail.count) }) : t('text.task_rerouted', { title: n.detail.title ?? '' });
+        return n.detail.count ? t('text.tasks_rerouted', { count: Number(n.detail.count) }) : t('text.task_rerouted', { title: taskTitleText({ title: n.detail.title ?? '', tainted: n.tainted }) });
       case 'finance.bank_attention':
         return t('text.bank_attention', { account: n.detail.bankAccount ?? '', lines: Number(n.detail.lines ?? 0) });
       case 'finance.portal_attention':

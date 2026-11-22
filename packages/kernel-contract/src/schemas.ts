@@ -1052,6 +1052,8 @@ export const zNotifications = z.object({
       subjectType: z.string().nullable(),
       subjectId: zId.nullable(),
       detail: z.record(z.string(), z.string()),
+      // True when the title in `detail` is a task title an AI coworker wrote (a person approved the ask): the screen marks its invisible characters (#4421). Absent for any other notice.
+      tainted: z.boolean().optional(),
       createdAt: z.string(),
       read: z.boolean(),
     }),

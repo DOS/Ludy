@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The title of a task as it is shown (#4370). A tainted task's title is an AI coworker's text (a person approved the ask, reading the Inbox card, which writes the direction marks, the zero-width and the other
 // invisible characters out as <U+202E> and the like): shown the same way here (the set of characters is the card's own, see packages/kernel/src/engage-view.ts, but for the zero-width joiner and non-joiner,
-// which emoji and some scripts need), in the task list, the task page, the task panel, My work, the project board and the thread's task list, so a title cannot reorder the line around it or hide part of itself
-// where nobody reads a card. A person's own title is shown as typed. Not covered yet: the notifications (their read has no taint flag), the project's weekly status and the pickers (#4370 follow-up).
+// which emoji and some scripts need), in the task list, the task page, the task panel, My work, the project board, the thread's task list, the task_assigned and task_rerouted notices, the project's weekly status, the project task
+// picker, the duplicate hint, the note-links picker and the acceptance handover copy (#4421), so a title cannot reorder the line around it or hide part of itself where nobody reads a card. A person's own
+// title is shown as typed.
 const hidden = (code: number): boolean =>
   code <= 0x08 ||
   (code >= 0x0b && code <= 0x1f) ||

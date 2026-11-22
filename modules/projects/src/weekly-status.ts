@@ -69,6 +69,7 @@ export interface ProjectWeeklyStatusSource {
 interface RawBucketTaskRow {
   id: string;
   title: string;
+  tainted: boolean;
   status: string;
   due: Date | string | null;
 }
@@ -194,6 +195,8 @@ function mapBucket(
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
+    // A title an AI coworker wrote (a person approved the ask): the screen marks the characters a person cannot see (#4421).
+    tainted: row.tainted,
     status: row.status as ProjectWeeklyStatusTask['status'],
     due: row.due === null ? null : new Date(row.due).toISOString(),
     commentCount: commentCounts.get(row.id) ?? 0,
@@ -281,7 +284,7 @@ export const projectWeeklyStatusSource = defineQuery({
                 )
               GROUP BY 1
             )
-            SELECT t.id, t.title, t.status, t.due
+            SELECT t.id, t.title, t.tainted, t.status, t.due
               FROM crove_projects.project_task pt
               JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
               JOIN done_events de ON de.task_id = t.id
@@ -292,7 +295,7 @@ export const projectWeeklyStatusSource = defineQuery({
              LIMIT ${PROJECT_WEEKLY_STATUS_BUCKET_LIMIT}`.execute(ctx.trx)
         : Promise.resolve({ rows: [] as RawBucketTaskRow[] }),
       sql<RawBucketTaskRow>`
-        SELECT t.id, t.title, t.status, t.due
+        SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
           JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -303,7 +306,7 @@ export const projectWeeklyStatusSource = defineQuery({
          ORDER BY t.due ASC, t.created_at ASC, t.id ASC
          LIMIT ${PROJECT_WEEKLY_STATUS_BUCKET_LIMIT}`.execute(ctx.trx),
       sql<RawBucketTaskRow>`
-        SELECT t.id, t.title, t.status, t.due
+        SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
           JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -312,7 +315,7 @@ export const projectWeeklyStatusSource = defineQuery({
          ORDER BY t.due ASC NULLS LAST, t.updated_at ASC, t.id ASC
          LIMIT ${PROJECT_WEEKLY_STATUS_BUCKET_LIMIT}`.execute(ctx.trx),
       sql<RawBucketTaskRow>`
-        SELECT t.id, t.title, t.status, t.due
+        SELECT t.id, t.title, t.tainted, t.status, t.due
           FROM crove_projects.project_task pt
           JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
