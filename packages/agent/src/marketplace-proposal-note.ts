@@ -174,16 +174,16 @@ const FIGURE_CUES: Readonly<Record<MarketplaceNoteFigure, readonly Cue[]>> = {
 };
 // The kinds an account code may be named beside, by its first digits (the chart's own groups).
 function accountCues(code: string): readonly Cue[] {
-  if (/^33311/.test(code)) return ['vat'];
-  if (/^333/.test(code)) return ['tax'];
-  if (/^331/.test(code)) return ['fee'];
-  if (/^131/.test(code)) return ['receivable'];
-  if (/^11/.test(code)) return ['received'];
-  if (/^521/.test(code)) return ['refund'];
-  if (/^511/.test(code)) return ['sales'];
-  if (/^632/.test(code)) return ['cost', 'compensation'];
-  if (/^711/.test(code)) return ['incentive', 'excess', 'compensation'];
-  if (/^1388/.test(code)) return ['mistake'];
+  if (code.startsWith('33311')) return ['vat'];
+  if (code.startsWith('333')) return ['tax'];
+  if (code.startsWith('331')) return ['fee'];
+  if (code.startsWith('131')) return ['receivable'];
+  if (code.startsWith('11')) return ['received'];
+  if (code.startsWith('521')) return ['refund'];
+  if (code.startsWith('511')) return ['sales'];
+  if (code.startsWith('632')) return ['cost', 'compensation'];
+  if (code.startsWith('711')) return ['incentive', 'excess', 'compensation'];
+  if (code.startsWith('1388')) return ['mistake'];
   return [];
 }
 const NUMBER = /\d[\d.,]*\d|\d/g;
