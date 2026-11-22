@@ -351,10 +351,10 @@ describe('deterministic PDF text tags (pdf_inspect, #3552)', () => {
         pdfBase64: Buffer.from(pdfBytes).toString('base64'),
         fields: res.detectedTags.flatMap<PdfSealInput['fields'][number]>((tag) => {
           if (tag.fieldType === 'attachment') return [];
-          if (tag.fieldType === 'signature') {
+          if (tag.fieldType === 'signature' || tag.fieldType === 'stamp') {
             return [
               {
-                type: 'signature' as const,
+                type: tag.fieldType,
                 page: tag.pageNumber,
                 xNorm: tag.xNorm,
                 yNorm: tag.yNorm,
