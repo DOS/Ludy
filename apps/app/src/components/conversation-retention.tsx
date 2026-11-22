@@ -42,13 +42,14 @@ export function ConversationRetentionCard() {
     );
   }
   if (!current.data) return null;
-  const choose = (next: Months) => {
-    if (monthsOf(next) < monthsOf(current.data.retentionMonths)) setAsking(next);
-    else set.mutate(next);
-  };
   // While a save is out, the select shows the value being saved (not the old one) and stays enabled: a disabled select drops the keyboard's focus, and the 44 px height holds on a phone.
   const shownMonths = set.isPending && set.variables !== undefined ? set.variables : current.data.retentionMonths;
   const value = shownMonths === null ? 'keep' : String(shownMonths);
+  // A shorter choice than the one on show asks first; one against the saved value alone would ask again for a change that is longer than the one in flight.
+  const choose = (next: Months) => {
+    if (monthsOf(next) < monthsOf(shownMonths)) setAsking(next);
+    else set.mutate(next);
+  };
   return (
     <Card className="block space-y-3 p-4" data-testid="conversation-retention">
       {heading}
