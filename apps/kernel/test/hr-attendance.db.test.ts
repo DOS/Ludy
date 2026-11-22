@@ -10,6 +10,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PayrollPromptLeakError } from '@ludy/agent';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
@@ -271,10 +272,10 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       o1.exec(o1.memberB, 'hr.self.attendance.check_in', { method: 'qr', qrToken: qr1.secret }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_QR_INVALID' });
 
-    // Valid new QR works for memberB
+    // Valid new QR works for memberB using fragment #qr=<secret> URL format
     const checkInB = await o1.exec<HrAttendanceLogView>(o1.memberB, 'hr.self.attendance.check_in', {
       method: 'qr',
-      qrToken: qr2.secret,
+      qrToken: `https://app.ludy.vn/o/${o1.slug}/hr/my#qr=${encodeURIComponent(qr2.secret)}`,
     });
     expect(checkInB.employeeId).toBe(o1.empBId);
 
@@ -355,6 +356,83 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
         ),
       ),
     ).rejects.toThrow();
+
+    // B1 DB invariants: non-admin member cannot insert forged completed rows, bypass QR proof, or forge checkout duration/status in raw SQL
+    await expect(
+      runAsUserInOrg(o1.memberA, o1.orgId, (c) =>
+        c.query(
+          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status)
+           VALUES ($1, $2, $3, '2026-11-02', now() - interval '8 hours', now(), 'web', 1440, 'present')`,
+          [o1.orgId, empInfo.legal_entity_id, o1.empAId],
+        ),
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
+        await c.query(`SELECT pg_catalog.set_config('crove_hr.qr_verified_hash', $1, true)`, ['f'.repeat(64)]);
+        await c.query(
+          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+           VALUES ($1, $2, $3, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, now(), 'qr', 'missing_checkout')`,
+          [o1.orgId, empInfo.legal_entity_id, o1.empAId],
+        );
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
+        c.query(
+          `UPDATE crove_hr.attendance_log
+           SET checked_out_at = now(), worked_minutes = 999, status = 'present'
+           WHERE org_id = $1 AND id = $2`,
+          [o1.orgId, checkInB.id],
+        ),
+      ),
+    ).rejects.toThrow();
+
+    // CHECK constraint rejects 'present' rows without checkout/worked_minutes even as admin
+    await expect(
+      withAdmin((c) =>
+        c.query(
+          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+           VALUES ($1, $2, $3, '2026-11-03', now(), 'manual', 'present')`,
+          [o1.orgId, empInfo.legal_entity_id, o1.empAId],
+        ),
+      ),
+    ).rejects.toThrow();
+
+    // Overnight openLog: yesterday's missing_checkout surfaces in self.attendance.list when today has no log, and ended staff cannot check in/out via SQL
+    await withAdmin((c) => c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2`, [o1.orgId, o1.empBId]));
+    const yesterdayVn = vietnamToday(new Date(Date.now() - 86_400_000));
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         SELECT org_id, legal_entity_id, id, $3::date, now() - interval '9 hours', 'web', 'missing_checkout'
+         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+        [o1.orgId, o1.empBId, yesterdayVn],
+      ),
+    );
+    const overnightList = await o1.query<HrSelfAttendanceListResult>(o1.memberB, 'hr.self.attendance.list', { month });
+    expect(overnightList.todayLog).toBeNull();
+    expect(overnightList.openLog?.workDate).toBe(yesterdayVn);
+
+    await o1.exec(o1.owner, 'hr.payroll.employee.end', { employeeId: o1.empBId, endedOn: today });
+    await expect(
+      runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
+        c.query(
+          `UPDATE crove_hr.attendance_log
+           SET checked_out_at = now(), worked_minutes = 540, status = 'present'
+           WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
+          [o1.orgId, o1.empBId, yesterdayVn],
+        ),
+      ),
+    ).rejects.toThrow();
+    // Ended employee still reads historical attendance list via RPC/RLS
+    const endedList = await o1.query<HrSelfAttendanceListResult>(o1.memberB, 'hr.self.attendance.list', {
+      month: yesterdayVn.slice(0, 7),
+    });
+    expect(endedList.openLog).toBeNull();
+    expect(endedList.logs.some((l) => l.workDate === yesterdayVn)).toBe(true);
   });
 
   it('detects anomalies, narrates safely via metered Ly fallback/alias, and rolls up decimal.js figures into draft payroll with CSV parity', async () => {
@@ -445,8 +523,47 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     expect(onBrief.ai).toEqual({ ok: true, reason: 'ok' });
     expect(seenPromptInput).not.toBeNull();
 
+    // N4: reader throwing PayrollPromptLeakError or runtime error degrades deterministically without throwing
+    const leakAi: AttendanceAnomaliesAi = {
+      budget: new DraftBudget(),
+      reader: {
+        attendanceAnomalies: async () => {
+          throw new PayrollPromptLeakError();
+        },
+      },
+    };
+    const leakBrief = await generateAttendanceAnomaliesBrief(leakAi, ports, o.orgId, o.admin, { month: targetMonth, lang: 'vi' });
+    expect(leakBrief.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(leakBrief.summary).toContain(targetMonth);
+
+    const errAi: AttendanceAnomaliesAi = {
+      budget: new DraftBudget(),
+      reader: {
+        attendanceAnomalies: async () => {
+          throw new Error('upstream timeout');
+        },
+      },
+    };
+    const errBrief = await generateAttendanceAnomaliesBrief(errAi, ports, o.orgId, o.admin, { month: targetMonth, lang: 'vi' });
+    expect(errBrief.ai).toEqual({ ok: false, reason: 'unavailable' });
+
+    // B2: Add empC, open draft payroll run, then end empC before targetMonth so stale draft line stays excluded from people
+    const empCRes = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+      displayName: 'Lê Cũ',
+      employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', payBasis: 'monthly', baseWage: '10000000' },
+    });
+    const empCId = empCRes.employeeId as string;
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: empCId,
+      workDate: '2026-09-10',
+      checkedInAt: '2026-09-10T01:30:00Z',
+      checkedOutAt: '2026-09-10T10:30:00Z',
+      status: 'present',
+    });
+
     // Open draft payroll run for 2026-09
     const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: targetMonth });
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empCId, endedOn: '2026-08-15' });
 
     // Refuses rollup while empB has unresolved missing_checkout unless allowIncomplete
     await expect(
@@ -467,18 +584,44 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       allowIncomplete: true,
     });
     expect(incompleteRollup.updatedCount).toBe(1);
-    expect(incompleteRollup.skippedEmployeeCount).toBe(1);
+    expect(incompleteRollup.skippedEmployeeCount).toBe(2);
     expect(incompleteRollup.rows.find((r) => r.employeeId === o.empAId)?.paidLeaveDays).toBe('0');
 
-    // Also verify adjust clearing checkedOutAt resets worked_minutes to null cleanly
+    // Thread #10: allowIncomplete still refuses when an open row has a secondary weekend/holiday anomaly (Sunday 2026-09-20)
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         SELECT org_id, legal_entity_id, id, '2026-09-20', '2026-09-20T01:30:00Z', 'web', 'missing_checkout'
+         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+        [o.orgId, o.empBId],
+      ),
+    );
+    await expect(
+      o.exec(o.owner, 'hr.attendance.rollup_to_payroll', { runId: run.runId, allowIncomplete: true }),
+    ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_MISSING_CHECKOUT' });
+    await withAdmin((c) =>
+      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, o.empBId]),
+    );
+
+    // Also verify adjust clearing checkedOutAt resets worked_minutes to null, and note-only edit preserves credited minutes
     const tempAdj = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
       employeeId: o.empBId,
       workDate: '2026-09-14',
-      checkedInAt: '2026-09-14T01:30:00Z',
-      checkedOutAt: '2026-09-14T09:30:00Z',
+      checkedInAt: '2026-09-14T02:00:00Z',
+      checkedOutAt: '2026-09-14T11:00:00Z',
+      workedMinutes: 480,
       status: 'present',
     });
     expect(tempAdj.workedMinutes).toBe(480);
+    const noteOnlyAdj = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
+      employeeId: o.empBId,
+      workDate: '2026-09-14',
+      checkedInAt: '2026-09-14T02:00:00Z',
+      checkedOutAt: '2026-09-14T11:00:00Z',
+      status: 'present',
+      note: 'Trừ 1 tiếng nghỉ trưa, giữ 8h công',
+    });
+    expect(noteOnlyAdj.workedMinutes).toBe(480);
     const clearedAdj = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
       employeeId: o.empBId,
       workDate: '2026-09-14',

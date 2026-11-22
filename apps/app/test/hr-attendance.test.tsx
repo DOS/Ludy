@@ -99,6 +99,7 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
       month,
       today: `${month}-18`,
       todayLog: null,
+      openLog: null,
       logs: [],
       summary: { presentDays: 0, halfDays: 0, missingCheckoutDays: 0, adjustedDays: 0, totalWorkedMinutes: 0 },
     };
@@ -125,6 +126,20 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
         anomalies: [],
         updatedAt: `${month}-18T01:30:00.000Z`,
       },
+      openLog: {
+        id: '00000000-0000-7000-8000-000000000020',
+        legalEntityId: notCheckedIn.legalEntityId,
+        employeeId: notCheckedIn.employeeId,
+        workDate: `${month}-18`,
+        checkedInAt: `${month}-18T01:30:00.000Z`,
+        checkedOutAt: null,
+        checkInMethod: 'qr',
+        workedMinutes: null,
+        status: 'missing_checkout',
+        note: null,
+        anomalies: [],
+        updatedAt: `${month}-18T01:30:00.000Z`,
+      },
       logs: [],
     };
     cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], checkedInOpen);
@@ -132,6 +147,22 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
     expect(html2).toContain('data-testid="hr-my-checkout-btn"');
     expect(html2).toContain('08:30');
     expect(html2).toContain(viMessages.hrMy.attendance.methods.qr);
+
+    // Overnight open shift (yesterday open while todayLog is null) surfaces Checkout cleanly
+    const overnightOpen: HrSelfAttendanceListResult = {
+      ...notCheckedIn,
+      todayLog: null,
+      openLog: {
+        ...checkedInOpen.todayLog!,
+        workDate: `${month}-17`,
+        checkedInAt: `${month}-17T15:00:00.000Z`,
+      },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], overnightOpen);
+    const htmlOvernight = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(htmlOvernight).toContain('data-testid="hr-my-attendance-overnight"');
+    expect(htmlOvernight).toContain('data-testid="hr-my-checkout-btn"');
+    expect(htmlOvernight).not.toContain('data-testid="hr-my-checkin-btn"');
 
     const completed: HrSelfAttendanceListResult = {
       ...notCheckedIn,
@@ -141,6 +172,7 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
         workedMinutes: 540,
         status: 'present',
       },
+      openLog: null,
       logs: [
         {
           ...checkedInOpen.todayLog!,
@@ -266,6 +298,8 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
       },
     ];
 
+    cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'admin' }] });
+    cache.current.setQueryData(['legalEntities', 'list', {}], [{ id: leId, name: 'Công ty TNHH Crove', isDefault: true }]);
     cache.current.setQueryData(['hr', 'attendance', 'list', { month, anomaliesOnly: false }], adminList);
     cache.current.setQueryData(['hr', 'payroll', 'employees', 'list', {}], employees);
     cache.current.setQueryData(['hr', 'payroll', 'runs', 'list', { limit: 60 }], runs);
@@ -278,5 +312,17 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
     expect(html).toContain('Nguyễn Thị Lan');
     expect(html).toContain('12h');
     expect(html).toContain('Ca dài (&gt; 10h)');
+  });
+
+  it('blocks viewers and non-admin members from rendering the attendance admin screen', () => {
+    for (const role of ['viewer', 'member'] as const) {
+      cache.current.clear();
+      cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role }] });
+      const html = wrap(<HrAttendancePage />, 'vi');
+      expect(html).toContain('data-testid="hr-attendance-forbidden"');
+      expect(html).not.toContain('data-testid="hr-attendance-qr-card"');
+      expect(html).not.toContain('data-testid="hr-attendance-qr-rotate"');
+      expect(html).not.toContain('data-testid="hr-attendance-rollup-btn"');
+    }
   });
 });

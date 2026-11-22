@@ -550,7 +550,7 @@ const householdRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hous
 const marketplaceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'marketplace', component: MarketplaceBalancePage });
 // The HR app's staff list (#2530), with the hr module: owners and admins only.
 const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
-const hrAttendanceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/attendance', component: HrAttendancePage });
+const hrAttendanceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/attendance', remountDeps: ({ params }) => params, component: HrAttendancePage });
 // Lightweight recruiting (#3425): job openings, candidate pipeline, calendar interviews, 1-click hire and Ly brief.
 const hrRecruitingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/recruiting', component: HrRecruitingPage });
 // The HR app's pay run (#2531): the months, the sheet, the approval and the payslips.
@@ -558,7 +558,7 @@ const hrPayrollRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/p
 // The HR app's declaration lists (#2533): the D02-LT, the quarterly and annual PIT data and the certificate data, to print, save as a PDF or download as xlsx.
 const hrDeclarationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/declarations', component: HrDeclarationsPage });
 const hrBankTemplatesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/bank-templates', component: HrBankTemplatesPage });
-const hrMyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/my', component: HrSelfServicePage });
+const hrMyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/my', remountDeps: ({ params }) => params, component: HrSelfServicePage });
 const journalRoute = createRoute({ getParentRoute: () => orgRoute, path: 'journal', validateSearch: parseJournalSearch, component: JournalPage });
 // Cash and bank vouchers (issue #327); ?type=&from=&to= keep the list's filters (#1513).
 const vouchersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'vouchers', validateSearch: parseVouchersSearch, component: VouchersPage });

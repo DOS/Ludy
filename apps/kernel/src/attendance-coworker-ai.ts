@@ -3,14 +3,26 @@
 // reads anomaly facts via audited sensitive query (`hr.attendance.anomalies.read`), runs
 // `InboxReader.attendanceAnomalies` outside the DB transaction under `DraftBudget`, records
 // the audited check (`hr.attendance.anomalies.audit`), and falls back 100% deterministically.
-import { reviewAttendanceAnomalies, type InboxReader } from '@ludy/agent';
+import { AiBudgetExhaustedError, PayrollPromptLeakError, reviewAttendanceAnomalies, type InboxReader } from '@ludy/agent';
 import type {
   AttendanceAnomalyAiReason,
   HrAttendanceAnomaliesAsk,
   HrAttendanceAnomaliesBrief,
   HrAttendanceAnomaliesSnapshot,
 } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
+
+function isRateLimitError(error: unknown): boolean {
+  return (
+    (error instanceof DomainError && (error.code === 'RATE_LIMITED' || error.status === 429)) ||
+    (typeof error === 'object' &&
+      error !== null &&
+      ((error as { status?: unknown }).status === 429 ||
+        (error as { statusCode?: unknown }).statusCode === 429 ||
+        (error as { code?: unknown }).code === 'RATE_LIMITED'))
+  );
+}
 
 export interface AttendanceAnomaliesAi {
   reader: Pick<InboxReader, 'attendanceAnomalies'> | null;
@@ -53,6 +65,18 @@ export async function generateAttendanceAnomaliesBrief(
     } else {
       try {
         result = await ai.reader.attendanceAnomalies(baseInput);
+      } catch (error: unknown) {
+        if (error instanceof AiBudgetExhaustedError) {
+          result = await reviewAttendanceAnomalies(baseInput, { generate: null, aiDisabledReason: 'budget' });
+        } else if (isRateLimitError(error)) {
+          result = await reviewAttendanceAnomalies(baseInput, { generate: null, aiDisabledReason: 'rate_limited' });
+        } else if (error instanceof PayrollPromptLeakError) {
+          const baseFallback = await reviewAttendanceAnomalies(baseInput, { generate: null, aiDisabledReason: 'unavailable' });
+          result = { ...baseFallback, ai: { ok: false, reason: 'refused' as const } };
+        } else {
+          console.error('[hr-attendance-ai] anomalies brief failed', error instanceof Error ? error.name : typeof error);
+          result = await reviewAttendanceAnomalies(baseInput, { generate: null, aiDisabledReason: 'unavailable' });
+        }
       } finally {
         ticket.release();
       }

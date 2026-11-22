@@ -111,5 +111,20 @@ describe('HR Stage 5C attendance coworker Ly (#4447)', () => {
         { generate: async () => ({ output: null }) },
       ),
     ).rejects.toBeInstanceOf(PayrollPromptLeakError);
+
+    // Accentless / NFKD leak in model output is refused cleanly
+    const accentLeak = await reviewAttendanceAnomalies(
+      { month: '2026-11', language: 'vi', anomalies: SAMPLE_ANOMALIES },
+      {
+        generate: async () => ({
+          output: {
+            summary: 'Nguyen Thi Lan thiếu check-out trong tháng 2026-11.',
+            highlights: [],
+          },
+        }),
+      },
+    );
+    expect(accentLeak.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(accentLeak.summary).not.toContain('Nguyen Thi Lan');
   });
 });

@@ -15,16 +15,45 @@ import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
-const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const VN_OFFSET_MS = 7 * 3_600_000;
 const PHONE_INPUT_TARGET = 'max-md:min-h-11';
 
 function readInitialQrFromLocation(): string {
   if (typeof window === 'undefined') return '';
   try {
+    if (window.location.hash) {
+      const hashToken = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('qr')?.trim();
+      if (hashToken) return hashToken;
+    }
     return new URLSearchParams(window.location.search).get('qr')?.trim() ?? '';
   } catch {
     return '';
+  }
+}
+
+function stripQrFromLocation(): void {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return;
+  try {
+    const url = new URL(window.location.href);
+    let changed = false;
+    if (url.searchParams.has('qr')) {
+      url.searchParams.delete('qr');
+      changed = true;
+    }
+    if (url.hash) {
+      const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+      if (hashParams.has('qr')) {
+        hashParams.delete('qr');
+        const nextHash = hashParams.toString();
+        url.hash = nextHash ? `#${nextHash}` : '';
+        changed = true;
+      }
+    }
+    if (changed) {
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+  } catch {
+    // Ignore history API errors safely.
   }
 }
 
@@ -61,13 +90,13 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
     if (param) {
       setQrOpen(true);
       setQrToken(param);
+      stripQrFromLocation();
     }
   }, []);
 
   const listQ = useQuery({
     ...orpc.hr.self.attendance.list.queryOptions({ input: { month } }),
     enabled,
-    ...ONCE,
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.self.attendance.key() });
@@ -101,6 +130,8 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
   const data: HrSelfAttendanceListResult | undefined = listQ.data;
   const today = data?.today ?? '';
   const todayLog = data?.todayLog ?? null;
+  const openLog = data?.openLog ?? null;
+  const activeOpenLog = openLog ?? (todayLog && todayLog.checkedOutAt === null ? todayLog : null);
   const logs = data?.logs ?? [];
   const summary = data?.summary;
   const pending = checkInWeb.isPending || checkInQr.isPending || checkOut.isPending;
@@ -135,7 +166,17 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-xs font-medium text-muted-foreground">{t('todayStatusLabel')}</div>
-              {todayLog === null ? (
+              {activeOpenLog !== null && activeOpenLog.workDate !== today ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium" data-testid="hr-my-attendance-overnight">
+                  <span>
+                    {t('openOvernightShift', {
+                      date: activeOpenLog.workDate,
+                      time: formatVietnamTime(activeOpenLog.checkedInAt),
+                    })}
+                  </span>
+                  <Badge variant="brand">{t(`methods.${activeOpenLog.checkInMethod}`)}</Badge>
+                </div>
+              ) : todayLog === null ? (
                 <div className="text-sm font-medium">{t('notCheckedIn')}</div>
               ) : todayLog.checkedOutAt === null ? (
                 <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
@@ -156,7 +197,18 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
               )}
             </div>
 
-            {todayLog === null ? (
+            {activeOpenLog !== null ? (
+              <Button
+                type="button"
+                loading={checkOut.isPending}
+                disabled={pending}
+                className={PHONE_TARGET}
+                onClick={() => checkOut.mutate({ workDate: activeOpenLog.workDate, ...(note.trim() ? { note: note.trim() } : {}) })}
+                data-testid="hr-my-checkout-btn"
+              >
+                {t('checkOutBtn')}
+              </Button>
+            ) : todayLog === null ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
@@ -179,21 +231,10 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
                   {t('checkInQrToggle')}
                 </Button>
               </div>
-            ) : todayLog.checkedOutAt === null ? (
-              <Button
-                type="button"
-                loading={checkOut.isPending}
-                disabled={pending}
-                className={PHONE_TARGET}
-                onClick={() => checkOut.mutate({ workDate: todayLog.workDate, ...(note.trim() ? { note: note.trim() } : {}) })}
-                data-testid="hr-my-checkout-btn"
-              >
-                {t('checkOutBtn')}
-              </Button>
             ) : null}
           </div>
 
-          {(todayLog === null || todayLog.checkedOutAt === null) && (
+          {(todayLog === null || activeOpenLog !== null) && (
             <div>
               <Label htmlFor="hr-my-attendance-note" className="text-xs text-muted-foreground">
                 {t('noteLabel')}
@@ -210,7 +251,7 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
             </div>
           )}
 
-          {todayLog === null && qrOpen && (
+          {todayLog === null && activeOpenLog === null && qrOpen && (
             <div className="rounded-md border border-border bg-card p-3 space-y-2" data-testid="hr-my-checkin-qr-panel">
               <Label htmlFor="hr-my-qr-token" className="text-xs font-medium">
                 {t('qrTokenLabel')}

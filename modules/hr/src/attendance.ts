@@ -15,6 +15,7 @@ import {
   zHrAttendanceList,
   zHrAttendanceQrRotate,
   zHrAttendanceRollupToPayroll,
+  zHrPayrollInputs,
   zHrSelfAttendanceCheckIn,
   zHrSelfAttendanceCheckOut,
   zHrSelfAttendanceList,
@@ -65,20 +66,25 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const QR_HASH_PREFIX = 'crove-attendance-qr:v1:';
 
-/** Extracts the raw QR secret from either a direct token or an app check-in link containing `?qr=...`. */
+/** Extracts the raw QR secret from either a direct token or an app check-in link containing `#qr=...` or `?qr=...`. */
 export function normalizeAttendanceQrToken(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
   try {
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/')) {
       const url = new URL(trimmed, 'https://app.ludy.local');
+      if (url.hash) {
+        const hashParams = new URLSearchParams(url.hash.slice(1));
+        const hp = hashParams.get('qr')?.trim();
+        if (hp) return hp;
+      }
       const qp = url.searchParams.get('qr')?.trim();
       if (qp) return qp;
     }
   } catch {
     // Not a URL; treat as raw secret below.
   }
-  const match = /(?:^|[?&])qr=([^&#]+)/.exec(trimmed);
+  const match = /(?:^|[?&#])qr=([^&#]+)/.exec(trimmed);
   if (match?.[1]) {
     try {
       return decodeURIComponent(match[1]).trim();
@@ -397,6 +403,15 @@ export const selfAttendanceCheckIn = defineCommand({
       }
     }
 
+    // Serialize concurrent self check-in calls for the same employee so the second returns 409 instead of hitting 23505.
+    await ctx.trx
+      .selectFrom('crove_hr.payroll_employee')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', emp.id)
+      .forUpdate()
+      .executeTakeFirst();
+
     const existing = await ctx.trx
       .selectFrom('crove_hr.attendance_log')
       .select(['id'])
@@ -519,6 +534,7 @@ export const selfAttendanceList = defineQuery({
     const { emp } = await requireLinkedEmployee(ctx);
     const now = new Date();
     const today = vietnamToday(now);
+    const yesterday = vietnamToday(new Date(now.getTime() - DAY_MS));
     const month = parsed.month ?? vietnamMonth(now);
     const { start, end } = monthRange(month);
 
@@ -533,17 +549,26 @@ export const selfAttendanceList = defineQuery({
       .execute();
 
     const logs = rows.map((r) => toAttendanceLogView(r, today));
-    const todayRow =
-      month === vietnamMonth(now)
-        ? logs.find((l) => l.workDate === today) ?? null
-        : await ctx.trx
-            .selectFrom('crove_hr.attendance_log')
-            .selectAll()
-            .where('org_id', '=', ctx.orgId)
-            .where('employee_id', '=', emp.id)
-            .where('work_date', '=', today)
-            .executeTakeFirst()
-            .then((r) => (r ? toAttendanceLogView(r, today) : null));
+    const recentOpenRows = await ctx.trx
+      .selectFrom('crove_hr.attendance_log')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', emp.id)
+      .where('work_date', 'in', [today, yesterday])
+      .execute();
+    const recentByDate = new Map(recentOpenRows.map((r) => [isoDateOnly(r.work_date), toAttendanceLogView(r, today)]));
+    const todayRow = recentByDate.get(today) ?? null;
+    const yesterdayRow = recentByDate.get(yesterday) ?? null;
+    const isEligibleOpen = (row: HrAttendanceLogView | null): boolean =>
+      row !== null && row.checkedOutAt === null && row.status === 'missing_checkout';
+    const openLog =
+      emp.status === 'active'
+        ? isEligibleOpen(todayRow)
+          ? todayRow
+          : todayRow === null && isEligibleOpen(yesterdayRow)
+            ? yesterdayRow
+            : null
+        : null;
 
     const summary: HrAttendanceSummary = {
       presentDays: 0,
@@ -566,6 +591,7 @@ export const selfAttendanceList = defineQuery({
       month,
       today,
       todayLog: todayRow,
+      openLog,
       logs,
       summary,
     };
@@ -762,12 +788,21 @@ export const attendanceAdjust = defineCommand({
       throw new DomainError('HR_ATTENDANCE_CHECKIN_REQUIRED', 422, 'Cần có giờ check-in trừ khi trạng thái là điều chỉnh');
     }
 
+    const inChanged =
+      parsed.checkedInAt !== undefined &&
+      (checkedInAt?.getTime() ?? null) !== (existing?.checked_in_at?.getTime() ?? null);
+    const outChanged =
+      parsed.checkedOutAt !== undefined &&
+      (checkedOutAt?.getTime() ?? null) !== (existing?.checked_out_at?.getTime() ?? null);
+
     const workedMinutes =
       parsed.workedMinutes !== undefined
         ? parsed.workedMinutes
         : checkedInAt && checkedOutAt
-          ? elapsedMinutes(checkedInAt, checkedOutAt)
-          : parsed.checkedOutAt === null || parsed.checkedInAt === null
+          ? existing && !inChanged && !outChanged && existing.worked_minutes !== null
+            ? existing.worked_minutes
+            : elapsedMinutes(checkedInAt, checkedOutAt)
+          : checkedInAt === null || checkedOutAt === null
             ? null
             : existing?.worked_minutes ?? null;
 
@@ -860,6 +895,15 @@ export const attendanceQrRotate = defineCommand({
     const parsed = zHrAttendanceQrRotate.parse(input);
     const uid = userOf(ctx.actor);
     const legalEntityId = await resolveEntity(ctx, parsed.legalEntityId);
+
+    // Serialize concurrent QR rotations on the legal entity row so deactivate + insert never collides on active_entity_uq (23505).
+    await ctx.trx
+      .selectFrom('crove_kernel.legal_entity')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', legalEntityId)
+      .forUpdate()
+      .executeTakeFirst();
 
     await ctx.trx
       .updateTable('crove_hr.attendance_qr_config')
@@ -959,10 +1003,14 @@ export const attendanceRollupToPayroll = defineCommand({
 
     const logsByEmp = new Map<string, AttendanceRollupEntry[]>();
     let missingCheckoutCount = 0;
+    const openNonNormalDates: string[] = [];
     for (const r of logRows) {
       const workDate = isoDateOnly(r.work_date);
       if (r.status === 'missing_checkout' || r.worked_minutes === null) {
         missingCheckoutCount += 1;
+        if (dayKindForDate(workDate) !== 'normal_day') {
+          openNonNormalDates.push(workDate);
+        }
       }
       const arr = logsByEmp.get(r.employee_id) ?? [];
       arr.push({
@@ -980,6 +1028,16 @@ export const attendanceRollupToPayroll = defineCommand({
         'HR_ATTENDANCE_MISSING_CHECKOUT',
         409,
         `Còn ${missingCheckoutCount} ngày công chưa check-out trong tháng ${payRun.month}. Vui lòng điều chỉnh trước khi tổng hợp vào bảng lương.`,
+      );
+    }
+
+    // Even under allowIncomplete, open rows on Sundays or public holidays carry secondary overtime anomalies
+    // that cannot be silently discarded without human review.
+    if (missingCheckoutCount > 0 && parsed.allowIncomplete && openNonNormalDates.length > 0) {
+      throw new DomainError(
+        'HR_ATTENDANCE_MISSING_CHECKOUT',
+        409,
+        `Không thể bỏ qua ngày thiếu check-out rơi vào Chủ nhật/ngày lễ (${openNonNormalDates.join(', ')}). Vui lòng điều chỉnh trước khi tổng hợp.`,
       );
     }
 
@@ -1021,6 +1079,12 @@ export const attendanceRollupToPayroll = defineCommand({
 
     for (const [lineId, lineRow] of byLineId.entries()) {
       if (lineRow.kind !== 'pay') continue;
+      if (!people.has(lineRow.employee_id)) {
+        skippedEmployeeCount += 1;
+        continue;
+      }
+      // Conservative policy under allowIncomplete: only completed/adjusted rows earn worked-day credit,
+      // so unverified open days stay uncredited (increasing unpaid shortfall unless admin adjusts or logs leave).
       const empLogs = logsByEmp.get(lineRow.employee_id);
       const completedLogs = empLogs?.filter((e) => e.status !== 'missing_checkout' && e.workedMinutes !== null) ?? [];
       if (completedLogs.length === 0) {
@@ -1039,14 +1103,14 @@ export const attendanceRollupToPayroll = defineCommand({
       if (person.terms.payBasis === 'hourly' && computed.workedHours === null) {
         throw new DomainError('HR_ROLLUP_HOURLY_MISSING', 422, 'Nhân viên lương theo giờ thiếu giờ công hợp lệ');
       }
-      const merged: HrPayrollInputs = {
+      const merged = zHrPayrollInputs.parse({
         ...existing,
         unpaidLeaveDays: computed.unpaidLeaveDays,
         unpaidLeaveFromLedger: false,
         overtime: computed.overtime,
         nightHours: computed.nightHours,
         ...(person.terms.payBasis === 'hourly' && computed.workedHours !== null ? { workedHours: computed.workedHours } : {}),
-      };
+      });
       updates.push({
         lineId: line.id,
         employmentId: person.terms.id,

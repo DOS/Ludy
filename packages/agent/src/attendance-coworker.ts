@@ -13,7 +13,7 @@ import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { statedFiguresProblem } from './overview.ts';
-import { PayrollPromptLeakError, restoreAliases } from './payroll-coworker.ts';
+import { PayrollPromptLeakError, promptLeaks, restoreAliases } from './payroll-coworker.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 import { hasAddress } from './reminder.ts';
 
@@ -178,8 +178,7 @@ function buildAliases(anomalies: readonly AttendanceAnomalyItem[]): {
 }
 
 function containsForbiddenPii(text: string, forbidden: readonly string[]): boolean {
-  const lower = text.toLowerCase();
-  return forbidden.some((f) => lower.includes(f.toLowerCase()));
+  return promptLeaks(text, forbidden).length > 0;
 }
 
 function attendanceInstructions(lang: 'vi' | 'en'): string {

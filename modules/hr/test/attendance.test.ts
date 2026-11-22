@@ -13,6 +13,7 @@ import {
 describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
   it('extracts QR secrets cleanly from raw tokens or check-in URLs and hashes deterministically', () => {
     expect(normalizeAttendanceQrToken('  abc123token  ')).toBe('abc123token');
+    expect(normalizeAttendanceQrToken('https://app.ludy.vn/o/demo/hr/my#qr=hash-token-1')).toBe('hash-token-1');
     expect(normalizeAttendanceQrToken('https://app.ludy.vn/o/demo/hr/my?qr=xyz-token-1')).toBe('xyz-token-1');
     expect(normalizeAttendanceQrToken('/o/demo/hr/my?foo=1&qr=my%2Btok')).toBe('my+tok');
 

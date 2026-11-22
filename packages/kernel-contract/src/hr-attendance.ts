@@ -81,6 +81,7 @@ export const zHrSelfAttendanceListResult = z.object({
   month: zHrMonth,
   today: zLocalDate,
   todayLog: zHrAttendanceLogView.nullable(),
+  openLog: zHrAttendanceLogView.nullable(),
   logs: z.array(zHrAttendanceLogView),
   summary: zHrAttendanceSummary,
 });

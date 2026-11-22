@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS crove_hr.attendance_log (
   CONSTRAINT attendance_log_checkout_after_checkin_ck CHECK (
     checked_out_at IS NULL OR checked_in_at IS NULL OR checked_out_at >= checked_in_at
   ),
-  CONSTRAINT attendance_log_checkin_required_ck CHECK (checked_in_at IS NOT NULL OR status = 'adjusted')
+  CONSTRAINT attendance_log_checkin_required_ck CHECK (checked_in_at IS NOT NULL OR status = 'adjusted'),
+  CONSTRAINT attendance_log_completed_fields_ck CHECK (
+    status NOT IN ('present', 'half_day')
+    OR (checked_in_at IS NOT NULL AND checked_out_at IS NOT NULL AND worked_minutes IS NOT NULL)
+  )
 );
 
 CREATE INDEX IF NOT EXISTS attendance_log_entity_emp_date_idx
@@ -51,11 +55,116 @@ CREATE TRIGGER b_legal_entity
   FOR EACH ROW EXECUTE FUNCTION crove_hr.legal_entity_fill('employee_id');
 ALTER TABLE crove_hr.attendance_log ENABLE ALWAYS TRIGGER b_legal_entity;
 
+-- Active non-erased self-employee check for write operations (keeps read-only is_self_employee open for ended staff history).
+CREATE OR REPLACE FUNCTION crove_hr.is_active_self_employee(p_org_id uuid, p_employee_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_actor text := crove_kernel.ctx_actor_type();
+  v_user uuid := crove_kernel.ctx_user_id();
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_employee_id IS NULL THEN
+    RETURN false;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN false;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+     WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin', 'member')
+  ) THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1 FROM crove_hr.payroll_employee e
+     WHERE e.org_id = v_org
+       AND e.id = p_employee_id
+       AND e.user_id = v_user
+       AND e.erased_at IS NULL
+       AND e.status = 'active'
+  );
+END $$;
+REVOKE ALL ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) TO crove_tenant;
+
+-- Runs after b_legal_entity so NEW.legal_entity_id is filled; blocks self-service INSERTs from forging status/hours/QR proof.
+CREATE OR REPLACE FUNCTION crove_hr.attendance_log_insert_guard() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_admin boolean;
+  v_qr_hash text;
+BEGIN
+  -- Admin fixture seeds outside RLS have no context; RLS already blocks every crove_tenant role when ctx_actor_type() IS NULL.
+  IF crove_kernel.ctx_actor_type() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF crove_kernel.ctx_actor_type() <> 'user' THEN
+    RAISE EXCEPTION 'user actor required to insert attendance_log' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM crove_kernel.tenant_member m
+    WHERE m.org_id = NEW.org_id
+      AND m.user_id = crove_kernel.ctx_user_id()
+      AND m.role IN ('owner', 'admin')
+  ) INTO v_admin;
+
+  IF v_admin THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT crove_hr.is_active_self_employee(NEW.org_id, NEW.employee_id) THEN
+    RAISE EXCEPTION 'active linked employee required to check in' USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.check_in_method NOT IN ('web', 'qr')
+     OR NEW.status <> 'missing_checkout'
+     OR NEW.checked_in_at IS NULL
+     OR NEW.checked_out_at IS NOT NULL
+     OR NEW.worked_minutes IS NOT NULL THEN
+    RAISE EXCEPTION 'self check-in must start an open missing_checkout row via web or qr' USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.work_date IS DISTINCT FROM (NEW.checked_in_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+     OR pg_catalog.abs(pg_catalog.date_part('epoch', NEW.checked_in_at - pg_catalog.now())) > 300 THEN
+    RAISE EXCEPTION 'self check-in work_date or timestamp is out of server window' USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.check_in_method = 'qr' THEN
+    v_qr_hash := NULLIF(pg_catalog.current_setting('crove_hr.qr_verified_hash', true), '');
+    IF v_qr_hash IS NULL OR NOT EXISTS (
+      SELECT 1
+      FROM crove_hr.attendance_qr_config c
+      WHERE c.org_id = NEW.org_id
+        AND c.legal_entity_id = NEW.legal_entity_id
+        AND c.active
+        AND c.qr_secret_hash = v_qr_hash
+    ) THEN
+      RAISE EXCEPTION 'QR check-in requires a verified active office QR secret' USING ERRCODE = '42501';
+    END IF;
+    PERFORM pg_catalog.set_config('crove_hr.qr_verified_hash', '', true);
+  END IF;
+
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_hr.attendance_log_insert_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+DROP TRIGGER IF EXISTS z_attendance_log_insert_guard ON crove_hr.attendance_log;
+CREATE TRIGGER z_attendance_log_insert_guard
+  BEFORE INSERT ON crove_hr.attendance_log
+  FOR EACH ROW EXECUTE FUNCTION crove_hr.attendance_log_insert_guard();
+ALTER TABLE crove_hr.attendance_log ENABLE ALWAYS TRIGGER z_attendance_log_insert_guard;
+
 CREATE OR REPLACE FUNCTION crove_hr.attendance_log_update_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_erased boolean;
   v_admin boolean;
+  v_expected_minutes integer;
+  v_expected_status text;
 BEGIN
   SELECT e.erased_at IS NOT NULL INTO v_erased
   FROM crove_hr.payroll_employee e
@@ -91,12 +200,12 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Non-admin linked employees may only check out their own open day once (never overwrite an adjusted or checked-out log).
-  IF NOT crove_hr.is_self_employee(NEW.org_id, NEW.employee_id) THEN
-    RAISE EXCEPTION 'only HR admin or owning employee may update attendance_log' USING ERRCODE = '42501';
+  -- Non-admin linked employees may only close their own active missing_checkout shift once with exact computed minutes/status.
+  IF NOT crove_hr.is_active_self_employee(NEW.org_id, NEW.employee_id) THEN
+    RAISE EXCEPTION 'only HR admin or active owning employee may update attendance_log' USING ERRCODE = '42501';
   END IF;
 
-  IF OLD.checked_out_at IS NOT NULL OR OLD.status = 'adjusted' THEN
+  IF OLD.status <> 'missing_checkout' OR OLD.checked_in_at IS NULL OR OLD.checked_out_at IS NOT NULL THEN
     RAISE EXCEPTION 'attendance already checked out or adjusted' USING ERRCODE = '23514';
   END IF;
 
@@ -105,8 +214,18 @@ BEGIN
     RAISE EXCEPTION 'self checkout cannot alter check-in time or method' USING ERRCODE = '42501';
   END IF;
 
-  IF NEW.checked_out_at IS NULL OR NEW.status NOT IN ('present', 'half_day') THEN
-    RAISE EXCEPTION 'self checkout must set checked_out_at and present/half_day status' USING ERRCODE = '23514';
+  IF NEW.checked_out_at IS NULL
+     OR NEW.checked_out_at < OLD.checked_in_at
+     OR pg_catalog.abs(pg_catalog.date_part('epoch', NEW.checked_out_at - pg_catalog.now())) > 300 THEN
+    RAISE EXCEPTION 'self checkout must set checked_out_at within server window' USING ERRCODE = '23514';
+  END IF;
+
+  v_expected_minutes := LEAST(1440, GREATEST(0, pg_catalog.floor(pg_catalog.date_part('epoch', NEW.checked_out_at - OLD.checked_in_at) / 60)))::integer;
+  v_expected_status := CASE WHEN v_expected_minutes >= 360 THEN 'present' ELSE 'half_day' END;
+
+  IF NEW.worked_minutes IS DISTINCT FROM v_expected_minutes
+     OR NEW.status IS DISTINCT FROM v_expected_status THEN
+    RAISE EXCEPTION 'self checkout worked_minutes and status must match server duration calculation' USING ERRCODE = '23514';
   END IF;
 
   RETURN NEW;
@@ -153,9 +272,12 @@ BEGIN
     '        m.role IN (''owner'', ''admin'') '
     '        OR ('
     '          m.role <> ''viewer'' '
-    '          AND crove_hr.is_self_employee(attendance_log.org_id, attendance_log.employee_id) '
+    '          AND crove_hr.is_active_self_employee(attendance_log.org_id, attendance_log.employee_id) '
     '          AND attendance_log.check_in_method IN (''web'', ''qr'') '
-    '          AND attendance_log.status IN (''missing_checkout'', ''present'', ''half_day'')'
+    '          AND attendance_log.status = ''missing_checkout'' '
+    '          AND attendance_log.checked_in_at IS NOT NULL '
+    '          AND attendance_log.checked_out_at IS NULL '
+    '          AND attendance_log.worked_minutes IS NULL'
     '        )'
     '      )'
     '  )'
@@ -170,7 +292,7 @@ BEGIN
     '    SELECT 1 FROM crove_kernel.tenant_member m '
     '    WHERE m.org_id = attendance_log.org_id '
     '      AND m.user_id = (SELECT crove_kernel.ctx_user_id()) '
-    '      AND (m.role IN (''owner'', ''admin'') OR (m.role <> ''viewer'' AND crove_hr.is_self_employee(attendance_log.org_id, attendance_log.employee_id)))'
+    '      AND (m.role IN (''owner'', ''admin'') OR (m.role <> ''viewer'' AND crove_hr.is_active_self_employee(attendance_log.org_id, attendance_log.employee_id)))'
     '  )'
     ') '
     'WITH CHECK ('
@@ -183,7 +305,7 @@ BEGIN
     '        m.role IN (''owner'', ''admin'') '
     '        OR ('
     '          m.role <> ''viewer'' '
-    '          AND crove_hr.is_self_employee(attendance_log.org_id, attendance_log.employee_id) '
+    '          AND crove_hr.is_active_self_employee(attendance_log.org_id, attendance_log.employee_id) '
     '          AND attendance_log.check_in_method IN (''web'', ''qr'') '
     '          AND attendance_log.status IN (''present'', ''half_day'')'
     '        )'
@@ -257,8 +379,12 @@ CREATE OR REPLACE FUNCTION crove_hr.verify_attendance_qr(
   p_legal_entity_id uuid,
   p_qr_secret_hash text
 ) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_matched boolean := false;
 BEGIN
+  PERFORM pg_catalog.set_config('crove_hr.qr_verified_hash', '', true);
+
   IF crove_kernel.ctx_actor_type() <> 'user'
      OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id
      OR p_legal_entity_id IS NULL
@@ -283,18 +409,32 @@ BEGIN
     RETURN false;
   END IF;
 
-  IF NOT crove_hr.has_linked_employee(p_org_id, p_legal_entity_id) THEN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM crove_hr.payroll_employee e
+    WHERE e.org_id = p_org_id
+      AND e.legal_entity_id = p_legal_entity_id
+      AND e.user_id = crove_kernel.ctx_user_id()
+      AND e.erased_at IS NULL
+      AND e.status = 'active'
+  ) THEN
     RETURN false;
   END IF;
 
-  RETURN EXISTS (
+  SELECT EXISTS (
     SELECT 1
     FROM crove_hr.attendance_qr_config c
     WHERE c.org_id = p_org_id
       AND c.legal_entity_id = p_legal_entity_id
       AND c.active
       AND c.qr_secret_hash = p_qr_secret_hash
-  );
+  ) INTO v_matched;
+
+  IF v_matched THEN
+    PERFORM pg_catalog.set_config('crove_hr.qr_verified_hash', p_qr_secret_hash, true);
+  END IF;
+
+  RETURN v_matched;
 END $$;
 REVOKE ALL ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) TO crove_tenant;

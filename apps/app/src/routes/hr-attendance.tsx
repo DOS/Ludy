@@ -30,7 +30,6 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { encodeQrMatrix, qrSvgPath } from '../lib/qr-svg.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
-const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const VN_OFFSET_MS = 7 * 3_600_000;
 const DAY_MS = 86_400_000;
 const PHONE_SELECT_TARGET = 'max-md:min-h-11 [&_select]:max-md:min-h-11';
@@ -87,6 +86,7 @@ export function HrAttendancePage() {
   const { locale } = useLocaleSetting();
 
   const [month, setMonth] = useState(() => vietnamMonth(new Date()));
+  const [selectedEntityId, setSelectedEntityId] = useState('');
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const [rotatedQr, setRotatedQr] = useState<HrAttendanceQrRotateResult | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
@@ -96,6 +96,7 @@ export function HrAttendancePage() {
   const [rollupResult, setRollupResult] = useState<HrAttendanceRollupResult | null>(null);
 
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState<HrAdminAttendanceRow | null>(null);
   const [adjEmpId, setAdjEmpId] = useState('');
   const [adjDate, setAdjDate] = useState(() => vietnamToday(new Date()));
   const [adjIn, setAdjIn] = useState('08:30');
@@ -104,19 +105,32 @@ export function HrAttendancePage() {
   const [adjStatus, setAdjStatus] = useState<'adjusted' | 'present' | 'half_day'>('adjusted');
   const [adjNote, setAdjNote] = useState('');
 
+  const meQ = useQuery(orpc.me.get.queryOptions());
+  const roleHere = meQ.data?.orgs.find((o) => o.slug === slug)?.role;
+  const canManage = roleHere === 'owner' || roleHere === 'admin';
+
+  const entitiesQ = useQuery({
+    ...orpc.legalEntities.list.queryOptions(),
+    enabled: canManage,
+    staleTime: 30_000,
+  });
+
   const listQ = useQuery({
-    ...orpc.hr.attendance.list.queryOptions({ input: { month, anomaliesOnly } }),
-    ...ONCE,
+    ...orpc.hr.attendance.list.queryOptions({
+      input: { month, anomaliesOnly, ...(selectedEntityId ? { legalEntityId: selectedEntityId } : {}) },
+    }),
+    enabled: canManage,
   });
 
   const employeesQ = useQuery({
     ...orpc.hr.payroll.employees.list.queryOptions({ input: {} }),
-    ...ONCE,
+    enabled: canManage,
+    staleTime: 30_000,
   });
 
   const runsQ = useQuery({
     ...orpc.hr.payroll.runs.list.queryOptions({ input: { limit: 60 } }),
-    ...ONCE,
+    enabled: canManage,
   });
 
   const refreshAttendance = async () => {
@@ -144,6 +158,7 @@ export function HrAttendancePage() {
     ...orpc.hr.attendance.adjust.mutationOptions(),
     onSuccess: async () => {
       setAdjustOpen(false);
+      setEditingRow(null);
       setAdjNote('');
       await refreshAttendance();
     },
@@ -158,11 +173,13 @@ export function HrAttendancePage() {
   });
 
   const data = listQ.data;
+  const entities = entitiesQ.data ?? [];
+  const activeEntityId = selectedEntityId || data?.legalEntityId || '';
   const scopedEmployees: readonly HrEmployeeSummary[] = (employeesQ.data ?? []).filter(
-    (e) => (e.status === 'active' || e.id === adjEmpId) && (!data?.legalEntityId || e.legalEntityId === data.legalEntityId),
+    (e) => (e.status === 'active' || e.id === adjEmpId) && (!activeEntityId || e.legalEntityId === activeEntityId),
   );
   const draftRunsForMonth: readonly HrRunSummary[] = (runsQ.data ?? []).filter(
-    (r) => r.month === month && r.status === 'draft' && (!data?.legalEntityId || r.legalEntityId === data.legalEntityId),
+    (r) => r.month === month && r.status === 'draft' && (!activeEntityId || r.legalEntityId === activeEntityId),
   );
 
   useEffect(() => {
@@ -174,23 +191,69 @@ export function HrAttendancePage() {
   }, [draftRunsForMonth, selectedRunId]);
 
   useEffect(() => {
-    if (!adjEmpId && scopedEmployees.length > 0) {
-      setAdjEmpId(scopedEmployees[0]!.id);
+    if (!scopedEmployees.some((e) => e.id === adjEmpId)) {
+      setAdjEmpId(scopedEmployees[0]?.id ?? '');
     }
   }, [scopedEmployees, adjEmpId]);
 
+  if (meQ.isPending) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={t('title')} subtitle={t('subtitle')} />
+        <TableSkeleton rows={5} columns={6} />
+      </div>
+    );
+  }
+
+  if (!canManage) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={t('title')} subtitle={t('subtitle')} />
+        <div data-testid="hr-attendance-forbidden">
+          <ErrorText>{t('forbidden')}</ErrorText>
+        </div>
+      </div>
+    );
+  }
+
+  if (listQ.isError && !data) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={t('title')} subtitle={t('subtitle')} />
+        <ErrorText>{errorMessage(listQ.error)}</ErrorText>
+      </div>
+    );
+  }
+
   const checkInLink =
     rotatedQr && slug && typeof window !== 'undefined'
-      ? `${window.location.origin}/o/${slug}/hr/my?qr=${encodeURIComponent(rotatedQr.secret)}`
+      ? `${window.location.origin}/o/${slug}/hr/my#qr=${encodeURIComponent(rotatedQr.secret)}`
       : rotatedQr?.secret ?? '';
 
   const qrSvg = rotatedQr ? buildSafeQrSvg(checkInLink, rotatedQr.secret) : null;
 
+  const openNewAdjust = () => {
+    if (adjustOpen && editingRow === null) {
+      setAdjustOpen(false);
+      return;
+    }
+    setEditingRow(null);
+    setAdjEmpId(scopedEmployees[0]?.id ?? '');
+    setAdjDate(data?.today ?? vietnamToday(new Date()));
+    setAdjIn('08:30');
+    setAdjOut('17:30');
+    setAdjMethod('manual');
+    setAdjStatus('adjusted');
+    setAdjNote('');
+    setAdjustOpen(true);
+  };
+
   const openEditRow = (row: HrAdminAttendanceRow) => {
+    setEditingRow(row);
     setAdjEmpId(row.employeeId);
     setAdjDate(row.workDate);
-    setAdjIn(toVnTimeInput(row.checkedInAt) || '08:30');
-    setAdjOut(toVnTimeInput(row.checkedOutAt) || '17:30');
+    setAdjIn(toVnTimeInput(row.checkedInAt));
+    setAdjOut(toVnTimeInput(row.checkedOutAt));
     setAdjMethod(row.checkInMethod);
     setAdjStatus(row.status === 'missing_checkout' ? 'adjusted' : row.status);
     setAdjNote(row.note ?? '');
@@ -202,47 +265,74 @@ export function HrAttendancePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={t('title')}
-        subtitle={t('subtitle')}
-        actions={
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="hr-attendance-month" className="text-xs text-muted-foreground">
-                {t('monthLabel')}
-              </Label>
-              <Input
-                id="hr-attendance-month"
-                type="month"
-                value={month}
-                onChange={(e) => {
-                  setMonth(e.target.value);
-                  setLyBrief(null);
-                  setRollupResult(null);
-                }}
-                className={`w-40 ${PHONE_INPUT_TARGET}`}
-                data-testid="hr-attendance-month"
-              />
+      <div className="print:hidden">
+        <PageHeader
+          title={t('title')}
+          subtitle={t('subtitle')}
+          actions={
+            <div className="flex flex-wrap items-center gap-3">
+              {entities.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="hr-attendance-entity" className="text-xs text-muted-foreground">
+                    {t('entityLabel')}
+                  </Label>
+                  <NativeSelect
+                    id="hr-attendance-entity"
+                    value={activeEntityId}
+                    onChange={(e) => {
+                      setSelectedEntityId(e.target.value);
+                      setRotatedQr(null);
+                      setLyBrief(null);
+                      setRollupResult(null);
+                    }}
+                    className={PHONE_SELECT_TARGET}
+                    data-testid="hr-attendance-entity"
+                  >
+                    {entities.map((ent) => (
+                      <NativeSelectOption key={ent.id} value={ent.id}>
+                        {ent.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <Label htmlFor="hr-attendance-month" className="text-xs text-muted-foreground">
+                  {t('monthLabel')}
+                </Label>
+                <Input
+                  id="hr-attendance-month"
+                  type="month"
+                  value={month}
+                  onChange={(e) => {
+                    setMonth(e.target.value);
+                    setLyBrief(null);
+                    setRollupResult(null);
+                  }}
+                  className={`w-40 ${PHONE_INPUT_TARGET}`}
+                  data-testid="hr-attendance-month"
+                />
+              </div>
+              <label className={`inline-flex items-center gap-2 text-sm cursor-pointer ${PHONE_TARGET}`}>
+                <input
+                  type="checkbox"
+                  checked={anomaliesOnly}
+                  onChange={(e) => setAnomaliesOnly(e.target.checked)}
+                  data-testid="hr-attendance-anomalies-only"
+                />
+                <span>{t('anomaliesOnly')}</span>
+              </label>
             </div>
-            <label className={`inline-flex items-center gap-2 text-sm cursor-pointer ${PHONE_TARGET}`}>
-              <input
-                type="checkbox"
-                checked={anomaliesOnly}
-                onChange={(e) => setAnomaliesOnly(e.target.checked)}
-                data-testid="hr-attendance-anomalies-only"
-              />
-              <span>{t('anomaliesOnly')}</span>
-            </label>
-          </div>
-        }
-      />
+          }
+        />
+      </div>
 
       {listQ.isLoading && <TableSkeleton rows={5} columns={6} />}
       {listQ.error && <ErrorText>{errorMessage(listQ.error)}</ErrorText>}
 
       {/* Office QR Management */}
-      <Card className="block space-y-4 p-4" data-testid="hr-attendance-qr-card">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <Card className="block space-y-4 p-4 print:border-0 print:p-0" data-testid="hr-attendance-qr-card">
+        <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
           <div>
             <h2 className="text-base font-semibold">{t('qrTitle')}</h2>
             <p className="text-sm text-muted-foreground">{t('qrPrivacyNote')}</p>
@@ -259,7 +349,7 @@ export function HrAttendancePage() {
             variant="outline"
             loading={rotateQr.isPending}
             className={PHONE_TARGET}
-            onClick={() => rotateQr.mutate(data?.legalEntityId ? { legalEntityId: data.legalEntityId } : {})}
+            onClick={() => rotateQr.mutate(activeEntityId ? { legalEntityId: activeEntityId } : {})}
             data-testid="hr-attendance-qr-rotate"
           >
             {t('qrRotateBtn')}
@@ -270,7 +360,7 @@ export function HrAttendancePage() {
 
         {rotatedQr && qrSvg && (
           <div
-            className="flex flex-wrap items-center gap-6 rounded-lg border border-border bg-muted/20 p-4"
+            className="flex flex-wrap items-center gap-6 rounded-lg border border-border bg-muted/20 p-4 print:border-0 print:bg-transparent print:p-0"
             data-testid="hr-attendance-qr-poster"
           >
             <div className="rounded-lg border border-border bg-image-surface p-3 text-foreground dark:text-background">
@@ -333,7 +423,7 @@ export function HrAttendancePage() {
       </Card>
 
       {/* Deterministic Anomalies & Optional Ly Brief */}
-      <Card className="block space-y-3 p-4" data-testid="hr-attendance-anomalies-card">
+      <Card className="block space-y-3 p-4 print:hidden" data-testid="hr-attendance-anomalies-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold">
             {t('anomaliesTitle')} ({anomalies.length})
@@ -348,7 +438,7 @@ export function HrAttendancePage() {
               onClick={() =>
                 askLy.mutate({
                   month,
-                  ...(data?.legalEntityId ? { legalEntityId: data.legalEntityId } : {}),
+                  ...(activeEntityId ? { legalEntityId: activeEntityId } : {}),
                   lang: locale === 'en' ? 'en' : 'vi',
                 })
               }
@@ -389,7 +479,7 @@ export function HrAttendancePage() {
       </Card>
 
       {/* Monthly Rollup to Draft Payroll */}
-      <Card className="block space-y-4 p-4" data-testid="hr-attendance-rollup-card">
+      <Card className="block space-y-4 p-4 print:hidden" data-testid="hr-attendance-rollup-card">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">{t('rollupTitle')}</h2>
@@ -457,7 +547,7 @@ export function HrAttendancePage() {
 
         {rollupMut.error && <ErrorText>{errorMessage(rollupMut.error)}</ErrorText>}
 
-        {rollupResult && (
+        {rollupResult && rollupResult.runId === selectedRunId && rollupResult.month === month && (
           <div className="space-y-3" data-testid="hr-attendance-rollup-result">
             <p className="text-sm font-medium">
               {t('rollupDone', { updated: String(rollupResult.updatedCount), skipped: String(rollupResult.skippedEmployeeCount) })}
@@ -493,7 +583,7 @@ export function HrAttendancePage() {
       </Card>
 
       {/* Attendance Logs & Manual Adjustment */}
-      <Card className="block space-y-4 p-4" data-testid="hr-attendance-logs-card">
+      <Card className="block space-y-4 p-4 print:hidden" data-testid="hr-attendance-logs-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold">{t('logsTitle', { count: String(logs.length) })}</h2>
           <Button
@@ -501,7 +591,7 @@ export function HrAttendancePage() {
             variant="outline"
             size="sm"
             className={PHONE_TARGET}
-            onClick={() => setAdjustOpen((v) => !v)}
+            onClick={openNewAdjust}
             data-testid="hr-attendance-add-adjust"
           >
             {t('addAdjustBtn')}
@@ -514,11 +604,21 @@ export function HrAttendancePage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!adjEmpId || !adjDate) return;
+              const isSameEditTarget =
+                editingRow !== null && editingRow.employeeId === adjEmpId && editingRow.workDate === adjDate;
+              const checkedInAt =
+                isSameEditTarget && adjIn.trim() === toVnTimeInput(editingRow.checkedInAt)
+                  ? editingRow.checkedInAt
+                  : toVnIsoTimestamp(adjDate, adjIn);
+              const checkedOutAt =
+                isSameEditTarget && adjOut.trim() === toVnTimeInput(editingRow.checkedOutAt)
+                  ? editingRow.checkedOutAt
+                  : toVnOutTimestamp(adjDate, adjIn, adjOut);
               saveAdjust.mutate({
                 employeeId: adjEmpId,
                 workDate: adjDate,
-                checkedInAt: toVnIsoTimestamp(adjDate, adjIn),
-                checkedOutAt: toVnOutTimestamp(adjDate, adjIn, adjOut),
+                checkedInAt,
+                checkedOutAt,
                 checkInMethod: adjMethod,
                 status: adjStatus,
                 ...(adjNote.trim() ? { note: adjNote.trim() } : { note: null }),
@@ -647,7 +747,10 @@ export function HrAttendancePage() {
                 type="button"
                 variant="ghost"
                 className={PHONE_TARGET}
-                onClick={() => setAdjustOpen(false)}
+                onClick={() => {
+                  setAdjustOpen(false);
+                  setEditingRow(null);
+                }}
               >
                 {t('adjustCancel')}
               </Button>
