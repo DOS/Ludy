@@ -52,6 +52,16 @@ describe('the closed table of Uncertain (#2520) points', () => {
   });
 });
 
+// A payout of a company (no household tax lines) with classified lines, as the posting builds it: 632 and 711 credits for the compensation lines, 711 for the incentives, 1388 debit for the tax withheld by mistake.
+const COMPANY_PAYOUT = {
+  ...PAYOUT,
+  lines: [line('1121', '100000', '0'), line('1388', '2000', '0'), line('131', '0', '90000'), line('711', '0', '12000'), line('632', '0', '4000')],
+  total: '102000',
+  received: '100000',
+  fees: '0',
+  taxWithheld: '2000',
+};
+
 describe('the facts of a stored proposal', () => {
   it('read a settlement in whole dong, with the accounts of its lines and the points of the rows it uses', () => {
     const facts = marketplaceProposalFacts(MARKETPLACE_SETTLEMENT_COMMAND, SETTLEMENT);
@@ -66,6 +76,14 @@ describe('the facts of a stored proposal', () => {
     expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'revenue_voucher', 'sales_return', 'output_vat']);
   });
 
+  it('shows the household-tax point for a settlement whose entry has the 3331 and 3335 lines, with the stored estimate as the withheld figure', () => {
+    const lines = [...SETTLEMENT.lines, line('3331', '0', '1500'), line('3335', '0', '500')];
+    const facts = marketplaceProposalFacts(MARKETPLACE_SETTLEMENT_COMMAND, { ...SETTLEMENT, lines, taxEstimate: { withheld: '2000', expected: '2000', difference: '0' } });
+    expect(facts?.figures.taxWithheld).toBe('2000');
+    expect(facts?.uncertain.map((p) => p.key)).toContain('household_tax');
+    expect(marketplaceProposalFacts(MARKETPLACE_SETTLEMENT_COMMAND, SETTLEMENT)?.uncertain.map((p) => p.key)).not.toContain('household_tax');
+  });
+
   it('read a payout with no classified line: no incentive, compensation or tax-in-error point', () => {
     const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, PAYOUT);
     expect(facts).toMatchObject({ kind: 'payout', figures: { received: '304000', fees: '28000', taxWithheld: '3000' }, lineKinds: [], accounts: ['1121', '331', '3331', '3335', '131'] });
@@ -75,21 +93,33 @@ describe('the facts of a stored proposal', () => {
     expect(text).not.toContain('incentive');
   });
 
-  it('read the classified lines of a payout: their kinds, their sums and the points of the rows they use', () => {
+  it('does not call the tax withheld by mistake household tax: a company payout with a withheld_in_error line has no household-tax point', () => {
+    const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, { ...COMPANY_PAYOUT, adjustments: [{ kind: 'withheld_in_error', lineId: ID(14), amount: '2000' }], lines: [line('1121', '100000', '0'), line('1388', '2000', '0'), line('131', '0', '102000')] });
+    // The payout's withheld total is the 2,000 taken by mistake: it is told as that and not again as tax withheld for the seller.
+    expect(facts?.figures).toEqual({ received: '100000', taxInError: '2000' });
+    expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'tax_in_error']);
+  });
+
+  it('sums the compensation the way the voucher posts it, line by line: 632 up to each stated cost, 711 for the rest', () => {
     const adjustments = [
       { kind: 'incentive', lineId: ID(11), amount: '6000' },
       { kind: 'incentive', lineId: ID(12), amount: '2000' },
-      { kind: 'carrier_compensation', lineId: ID(13), amount: '3000', costAmount: '1500' },
+      // A: the cost stated is above the compensation, so 632 takes 3,000 and 711 nothing. B: the cost is 1,000, so 632 takes 1,000 and 711 the other 4,000.
+      { kind: 'carrier_compensation', lineId: ID(13), amount: '3000', costAmount: '9000' },
+      { kind: 'carrier_compensation', lineId: ID(15), amount: '5000', costAmount: '1000' },
       { kind: 'withheld_in_error', lineId: ID(14), amount: '2000' },
     ];
-    const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, { ...PAYOUT, adjustments });
-    expect(facts).toMatchObject({ lineKinds: ['incentive', 'carrier_compensation', 'withheld_in_error'], figures: { incentive: '8000', compensation: '3000', compensationCost: '1500', taxInError: '2000' } });
-    expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'household_tax', 'fee_netting', 'other_income', 'compensation_cost', 'tax_in_error']);
+    const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, { ...COMPANY_PAYOUT, adjustments });
+    expect(facts).toMatchObject({ lineKinds: ['incentive', 'carrier_compensation', 'withheld_in_error'] });
+    expect(facts?.figures).toEqual({ received: '100000', incentive: '8000', compensation: '8000', compensationCost: '4000', compensationExcess: '4000', taxInError: '2000' });
+    expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income', 'compensation_cost', 'tax_in_error']);
   });
 
-  it('shows no other-income point for a compensation that stays below its stated cost', () => {
-    const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, { ...PAYOUT, adjustments: [{ kind: 'carrier_compensation', lineId: ID(13), amount: '3000', costAmount: '9000' }] });
-    expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'household_tax', 'fee_netting', 'compensation_cost']);
+  it('shows no other-income point for a compensation that stays below its stated cost (no 711 line is posted)', () => {
+    const lines = [line('1121', '103000', '0'), line('131', '0', '100000'), line('632', '0', '3000')];
+    const facts = marketplaceProposalFacts(MARKETPLACE_PAYOUT_COMMAND, { ...PAYOUT, lines, received: '103000', fees: '0', taxWithheld: '0', adjustments: [{ kind: 'carrier_compensation', lineId: ID(13), amount: '3000', costAmount: '9000' }] });
+    expect(facts?.figures).toEqual({ received: '103000', compensation: '3000', compensationCost: '3000' });
+    expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'compensation_cost']);
   });
 
   it('is null for any other command, and for a payload that no longer fits its shape', () => {

@@ -25,7 +25,8 @@ describe('the facts of the proposal note', () => {
   it('tell only figures above zero, whole dong with the language grouping, the classified kinds and the accounts of the entry', () => {
     const text = marketplaceProposalNoteFactsText(PAYOUT);
     expect(text).toContain('fees the platform kept (account 331): 28.000 đồng');
-    expect(text).toContain('money received from the platform: 304.000 đồng');
+    expect(text).toContain('amount from the platform: 304.000 đồng');
+    expect(text).not.toContain('received');
     expect(text).toContain('Lines a person classified: incentive (other income)');
     expect(text).toContain('Accounts of the entry: 1121, 331, 3331, 3335, 131, 711');
     expect(text).not.toContain('carrier compensation classified');
@@ -81,10 +82,28 @@ describe('the checks on the text the model gives', () => {
       'Đề xuất này an toàn để duyệt, phí 28.000 đồng.', // a verdict
       'Phí 28.000 đồng 😀.', // a pictograph
       'Phí 28.000 đồng ①.', // a numeric symbol
+      'Sàn giữ lại phí 304.000 đồng và thuế 28.000 đồng.', // right figures, swapped labels
+      'Khoản thưởng 6.000 đồng ghi vào 632.', // an account of another kind
+      'Hãy xem lại phí 28.000 đồng.', // an order to the approver
+      'Please review the fees of 28,000 dong.', // an order, English
+      'Bạn có thể duyệt, phí 28.000 đồng.', // bare approve
+      'Approve it: fees of 28.000 dong.', // bare approve, English
       'Phí 28.000 đồng хорошо.', // another script
       `Phí 28.000 đồng ${'x'.repeat(500)}.`, // too long
     ];
     for (const text of refused) expect(note(PAYOUT, text), text).toEqual({ kind: 'none', code: 'REFUSED' });
+  });
+
+  it('does not refuse a text only because it holds "đối soát" or "nền tảng"', () => {
+    const text = 'Đối soát của nền tảng: sàn giữ lại phí 28.000 đồng (331).';
+    expect(note(PAYOUT, text)).toEqual({ kind: 'note', text });
+  });
+
+  it('keeps a text whose amounts and accounts stand beside their own words, and refuses one whose do not', () => {
+    const ok = 'Sàn trả 304.000 đồng (1121), giữ lại phí 28.000 đồng (331) và thuế 3.000 đồng (3331).';
+    expect(note(PAYOUT, ok)).toEqual({ kind: 'note', text: ok });
+    expect(note(PAYOUT, 'Sàn giữ lại phí 28.000 đồng (131).')).toEqual({ kind: 'none', code: 'REFUSED' });
+    expect(note(PAYOUT, 'Thuế 3.000 đồng nằm ở 331.')).toEqual({ kind: 'none', code: 'REFUSED' });
   });
 
   it('refuses an account code that the entry does not hold, and a figure of the other kind', () => {

@@ -873,6 +873,50 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(pFacts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income']);
     });
 
+    it('shows the household-tax point for a household settlement with tax withheld, and for a company payout with tax withheld by mistake tells it apart (#4389)', async () => {
+      // A household seller (the default of org()): the platform withheld 2,000 and the entry credits 3331 and 3335.
+      const house = await org('tt133');
+      const settlement = await seed(house, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', tax: '2000' }]);
+      const asked = await askSettlement(house, settlement);
+      const hFacts = await factsOf(house, asked.proposalId);
+      expect(hFacts).toMatchObject({ kind: 'settlement', figures: { sales: '100000', taxWithheld: '2000' } });
+      expect(hFacts?.uncertain.map((p) => p.key)).toContain('household_tax');
+      // A company: the same 2,000 is withheld by mistake and classified; it is told as that, and is not household tax.
+      const c = await company([{ sales: '100000', tax: '2000' }], '98000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [{ kind: 'withheld_in_error', lineId: c.ids[0], amount: '2000' }]);
+      const pFacts = await factsOf(c.o, proposalId);
+      expect(pFacts).toMatchObject({ kind: 'payout', figures: { received: '98000', taxInError: '2000' }, lineKinds: ['withheld_in_error'] });
+      expect(pFacts?.figures.taxWithheld).toBeUndefined();
+      expect(pFacts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'tax_in_error']);
+    });
+
+    it('sums two compensation lines the way the voucher posts them: 632 up to each stated cost and 711 for the rest (#4389)', async () => {
+      const c = await company([{ sales: '100000', other: '3000' }, { sales: '50000', other: '5000' }], '158000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [
+        { kind: 'carrier_compensation', lineId: c.ids[0], amount: '3000', costAmount: '9000' },
+        { kind: 'carrier_compensation', lineId: c.ids[1], amount: '5000', costAmount: '1000' },
+      ]);
+      const facts = await factsOf(c.o, proposalId);
+      expect(facts?.figures).toMatchObject({ compensation: '8000', compensationCost: '4000', compensationExcess: '4000' });
+      expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income', 'compensation_cost']);
+      // What the entry posts, from the same stored proposal: 632 takes 4,000 and 711 the other 4,000.
+      const stored = await payloadOf(c.o, proposalId);
+      const credit = (account: string) => stored?.lines.filter((l) => l.account === account).reduce((n, l) => n + Number(l.credit), 0);
+      expect([credit('632'), credit('711')]).toEqual([4000, 4000]);
+    });
+
+    it('explains only a pending proposal: once approved or rejected the read answers null, so no model call is made for it (#4389)', async () => {
+      const approved = await company([{ sales: '100000', other: '6000' }], '106000');
+      const a = await askWith(approved.o, approved.settlement, approved.line, [{ kind: 'incentive', lineId: approved.ids[0], amount: '6000' }]);
+      expect(await factsOf(approved.o, a.proposalId)).toMatchObject({ kind: 'payout' });
+      await approve(approved.o, a.proposalId);
+      expect(await factsOf(approved.o, a.proposalId)).toBeNull();
+      const rejected = await company([{ sales: '100000', other: '6000' }], '106000');
+      const r = await askWith(rejected.o, rejected.settlement, rejected.line, [{ kind: 'incentive', lineId: rejected.ids[0], amount: '6000' }]);
+      await rt.execute('kernel.proposal.reject', { id: r.proposalId, reason: 'no' }, { actor: asUser(rejected.o.owner), orgId: rejected.o.orgId });
+      expect(await factsOf(rejected.o, r.proposalId)).toBeNull();
+    });
+
     it('reads nothing of another organization\'s proposal, and nothing of an entity outside a scoped member\'s scope', async () => {
       const mine = await company([{ sales: '100000', other: '6000' }], '106000');
       const { proposalId } = await askWith(mine.o, mine.settlement, mine.line, [{ kind: 'incentive', lineId: mine.ids[0], amount: '6000' }]);

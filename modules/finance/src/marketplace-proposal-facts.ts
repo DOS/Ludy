@@ -10,6 +10,7 @@ import { zMarketplacePayoutProposal, zMarketplaceSettlementProposal, MARKETPLACE
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
+import { MARKETPLACE_POSTING_MAPS } from './marketplace-posting-map.ts';
 import { z } from 'zod';
 import type { MarketplaceRow } from './marketplace-posting-map.ts';
 
@@ -17,7 +18,7 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const zMarketplaceProposalFactsInput = z.strictObject({ proposalId: z.uuid() });
 
-export type ProposalNoteFigure = 'sales' | 'sellerDiscount' | 'refund' | 'received' | 'fees' | 'taxWithheld' | 'incentive' | 'compensation' | 'compensationCost' | 'taxInError';
+export type ProposalNoteFigure = 'sales' | 'sellerDiscount' | 'refund' | 'received' | 'fees' | 'taxWithheld' | 'incentive' | 'compensation' | 'compensationCost' | 'compensationExcess' | 'taxInError';
 export type ProposalNoteLineKind = 'incentive' | 'carrier_compensation' | 'withheld_in_error';
 
 export interface MarketplaceProposalFacts {
@@ -41,6 +42,9 @@ interface UncertainPoint {
 }
 
 const above = (value: string | undefined): boolean => value !== undefined && money(value).gt(0);
+
+// Whether the entry's own lines use the account of a posting-map row (in any regime's map): the point is chosen from what the voucher really posts, never from a total that may mix kinds.
+const usesRow = (accounts: readonly string[], row: MarketplaceRow): boolean => Object.values(MARKETPLACE_POSTING_MAPS).some((map) => accounts.includes(map[row].code));
 
 export const MARKETPLACE_UNCERTAIN: readonly UncertainPoint[] = Object.freeze([
   {
@@ -67,42 +71,42 @@ export const MARKETPLACE_UNCERTAIN: readonly UncertainPoint[] = Object.freeze([
   {
     key: 'output_vat',
     rows: ['outputVat'],
-    when: (f) => f.kind === 'settlement' && f.accounts.includes('33311'),
+    when: (f) => f.kind === 'settlement' && usesRow(f.accounts, 'outputVat'),
     vi: 'Thuế GTGT đầu ra tính theo thuế suất đang hiệu lực của từng hàng; thuế suất 8% hay 10% còn tùy quy định hiện hành.',
     en: 'Output VAT follows the rate in force on each item; whether 8% or 10% applies depends on the current rule.',
   },
   {
     key: 'household_tax',
     rows: ['vatPayable', 'pitPayable'],
-    when: (f) => above(f.figures.taxWithheld),
+    when: (f) => usesRow(f.accounts, 'vatPayable') || usesRow(f.accounts, 'pitPayable'),
     vi: 'Thuế sàn giữ lại là thuế đã nộp thay: chưa chắc có phải khai lại không, và các trường thuế của sàn đều có độ tin cậy thấp.',
     en: 'The withheld tax is tax already paid on your behalf: whether it must be declared again is not settled, and every platform tax field is low confidence.',
   },
   {
     key: 'fee_netting',
     rows: ['feePayable'],
-    when: (f) => f.kind === 'payout' && above(f.figures.fees),
+    when: (f) => f.kind === 'payout' && above(f.figures.fees) && usesRow(f.accounts, 'feePayable'),
     vi: 'Phí sàn bù trừ ngay khi nhận tiền: chưa rõ có đủ điều kiện thanh toán không dùng tiền mặt để khấu trừ thuế GTGT đầu vào, và ai xuất hóa đơn phí.',
     en: 'Fees are netted when the money arrives: whether that meets the non-cash payment condition for input VAT, and who issues the fee invoice, are not settled.',
   },
   {
     key: 'other_income',
     rows: ['otherIncome'],
-    when: (f) => f.kind === 'payout' && (above(f.figures.incentive) || (above(f.figures.compensation) && money(f.figures.compensation ?? '0').gt(f.figures.compensationCost ?? '0'))),
+    when: (f) => f.kind === 'payout' && usesRow(f.accounts, 'otherIncome'),
     vi: 'Khoản thưởng hoặc phần bồi thường vượt giá vốn ghi vào thu nhập khác (711): chưa rõ có bị coi là dịch vụ chịu thuế không.',
     en: 'An incentive, or compensation above cost, is booked as other income (711): whether it counts as a taxed service is not settled.',
   },
   {
     key: 'compensation_cost',
     rows: ['costOfGoods'],
-    when: (f) => f.kind === 'payout' && above(f.figures.compensation),
+    when: (f) => f.kind === 'payout' && usesRow(f.accounts, 'costOfGoods'),
     vi: 'Bồi thường hàng mất ghi giảm giá vốn (632) theo giá vốn người dùng nhập, phần còn lại vào 711: ghi thuần hay gộp là lựa chọn của kế toán.',
     en: 'Compensation for lost goods reduces cost of goods (632) up to the cost a person stated, the rest goes to 711: net or gross is the accountant\'s choice.',
   },
   {
     key: 'tax_in_error',
     rows: ['otherReceivable'],
-    when: (f) => f.kind === 'payout' && above(f.figures.taxInError),
+    when: (f) => f.kind === 'payout' && usesRow(f.accounts, 'otherReceivable'),
     vi: 'Thuế bị giữ nhầm ghi vào 1388: cơ quan thuế có thể hoàn thay vì sàn hoàn, chưa có kết luận.',
     en: 'Tax withheld by mistake is booked on 1388: the tax office may refund it instead of the platform, not settled.',
   },
@@ -121,13 +125,21 @@ function figuresOf(entries: Array<[ProposalNoteFigure, string]>): Partial<Record
 
 const accountsOf = (lines: ReadonlyArray<{ account: string }>): string[] => [...new Set(lines.map((l) => l.account).filter((a) => /^\d{3,5}$/.test(a)))];
 
-// The classified amounts of a payout, in whole dong, from its stored adjustments.
+// The classified amounts of a payout, in whole dong, from its stored adjustments, split the way the voucher posts them: per compensation line, 632 is credited with the smaller of the compensation and the
+// cost the person stated, and 711 with the rest (modules/finance marketplace-payout-posting.ts), so the cost and the excess are summed line by line, never from the totals.
 function classified(adjustments: MarketplacePayoutProposal['adjustments']) {
   const total = (kind: ProposalNoteLineKind, pick: (a: MarketplacePayoutProposal['adjustments'][number]) => string) => toMoney(sum(adjustments.filter((a) => a.kind === kind).map(pick)));
+  const covered = (a: MarketplacePayoutProposal['adjustments'][number]): string => {
+    if (a.kind !== 'carrier_compensation') return '0';
+    return money(a.costAmount).lt(a.amount) ? money(a.costAmount).toFixed(4) : money(a.amount).toFixed(4);
+  };
+  const compensation = total('carrier_compensation', (a) => a.amount);
+  const compensationCost = toMoney(sum(adjustments.map(covered)));
   return {
     incentive: total('incentive', (a) => a.amount),
-    compensation: total('carrier_compensation', (a) => a.amount),
-    compensationCost: total('carrier_compensation', (a) => (a.kind === 'carrier_compensation' ? a.costAmount : '0')),
+    compensation,
+    compensationCost,
+    compensationExcess: toMoney(money(compensation).minus(compensationCost)),
     taxInError: total('withheld_in_error', (a) => a.amount),
   };
 }
@@ -149,7 +161,17 @@ export function marketplaceProposalFacts(command: string, payload: unknown): Mar
     const lineKinds = (['incentive', 'carrier_compensation', 'withheld_in_error'] as const).filter((kind) => p.adjustments.some((a) => a.kind === kind));
     const facts = {
       kind: 'payout' as const,
-      figures: figuresOf([['received', p.received], ['fees', p.fees], ['taxWithheld', p.taxWithheld], ['incentive', c.incentive], ['compensation', c.compensation], ['compensationCost', c.compensationCost], ['taxInError', c.taxInError]]),
+      // The payout's withheld tax includes the tax withheld by mistake (it is classified, not household tax), so the two are told apart: `taxWithheld` is only what is left of it.
+      figures: figuresOf([
+        ['received', p.received],
+        ['fees', p.fees],
+        ['taxWithheld', money(p.taxWithheld).minus(c.taxInError).toFixed(4)],
+        ['incentive', c.incentive],
+        ['compensation', c.compensation],
+        ['compensationCost', c.compensationCost],
+        ['compensationExcess', c.compensationExcess],
+        ['taxInError', c.taxInError],
+      ]),
       lineKinds,
       accounts: accountsOf(p.lines),
     };
@@ -171,11 +193,12 @@ export const marketplaceProposalFactsQuery = defineQuery({
   input: zMarketplaceProposalFactsInput,
   access: ALL,
   handler: async (ctx, input): Promise<MarketplaceProposalFacts | null> => {
-    const { rows } = await sql<{ command: string | null; payload: unknown }>`
-      SELECT command, payload FROM crove_kernel.proposal WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.proposalId}::uuid`.execute(ctx.trx);
+    const { rows } = await sql<{ command: string | null; status: string; payload: unknown }>`
+      SELECT command, status, payload FROM crove_kernel.proposal WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.proposalId}::uuid`.execute(ctx.trx);
     const row = rows[0];
     if (!row) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
-    return row.command ? marketplaceProposalFacts(row.command, row.payload) : null;
+    // A decided proposal (approved, rejected, expired or failed) has nothing left to approve: no note, so no model call for it.
+    return row.command && row.status === 'pending' ? marketplaceProposalFacts(row.command, row.payload) : null;
   },
 });
 

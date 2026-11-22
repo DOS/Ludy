@@ -74,9 +74,9 @@ describe('the note on a marketplace proposal in the Inbox card (#4389)', () => {
 
   it('shows the note, the Uncertain points chosen by code and the AI wording mark, in Vietnamese and in English', () => {
     const vi = render(NOTE());
-    for (const text of ['data-testid="marketplace-proposal-note"', 'Ly ghi chú về bút toán này', 'Sàn giữ lại phí 28.000 đồng (331)', 'Ly diễn đạt từ các con số', 'Điểm còn chưa chắc (#2520)', 'Khoản phải thu từ sàn ghi vào 131.', 'Phí sàn bù trừ khi nhận tiền.', 'không phải do AI']) expect(vi).toContain(text);
+    for (const text of ['data-testid="marketplace-proposal-note"', 'Ly ghi chú về bút toán này', 'Sàn giữ lại phí 28.000 đồng (331)', 'Ly diễn đạt từ các con số', 'Điểm còn chưa chắc', 'Khoản phải thu từ sàn ghi vào 131.', 'Phí sàn bù trừ khi nhận tiền.', 'không phải do AI']) expect(vi).toContain(text);
     const en = render(NOTE({ note: 'The platform kept 28,000 dong in fees (331).', uncertain: [{ key: 'receivable', text: 'Receivable on 131.' }] }), 'en');
-    for (const text of ['note on this entry', 'The platform kept 28,000 dong in fees (331).', 'Ly worded this from the figures', 'Points not yet settled (#2520)', 'Receivable on 131.', 'not by AI']) expect(en).toContain(text);
+    for (const text of ['note on this entry', 'The platform kept 28,000 dong in fees (331).', 'Ly worded this from the figures', 'Points not yet settled', 'Receivable on 131.', 'not by AI']) expect(en).toContain(text);
   });
 
   it('shows the fixed template with the Uncertain list and no AI mark when the model did not write the note', () => {
