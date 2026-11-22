@@ -53,6 +53,10 @@ export const projectsManifest = defineModule({
         'added_by',
         'created_at',
       ]),
+      roadmap_announcement: columns(
+        ['org_id', 'id', 'board_id', 'status', 'published_at', 'linked_item_ids', 'notifications_sent_at', 'created_by', 'created_at', 'updated_at'],
+        { title: 'pii', body_md: 'pii' },
+      ),
       roadmap_board: columns(
         [
           'org_id',
@@ -94,8 +98,8 @@ export const projectsManifest = defineModule({
         { email: 'contact', otp_sha256: 'sensitive', claim_sha256: 'sensitive' },
       ),
       roadmap_subscriber: columns(
-        ['org_id', 'id', 'board_id', 'voter_email_hash', 'notify_on_ship', 'unsubscribed_at', 'created_at', 'updated_at'],
-        { email_sealed: 'contact', unsubscribe_token_sha256: 'sensitive' },
+        ['org_id', 'id', 'board_id', 'voter_email_hash', 'mail_hash', 'notify_on_ship', 'unsubscribed_at', 'created_at', 'updated_at'],
+        { email_sealed: 'contact', unsubscribe_token_sha256: 'sensitive', unsub_token_sealed: 'sensitive' },
       ),
       roadmap_vote: columns(['org_id', 'id', 'board_id', 'item_id', 'voter_email_hash', 'notify_on_ship', 'created_at']),
       task_dependency: columns([
@@ -131,6 +135,7 @@ export const projectsManifest = defineModule({
   permissions: [],
   entities: [
     { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
+    { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
     { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
     { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
   ],

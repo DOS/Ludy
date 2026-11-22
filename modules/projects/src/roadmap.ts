@@ -4,12 +4,18 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  ROADMAP_ANNOUNCEMENTS_LIMIT,
   ROADMAP_BOARDS_LIMIT,
   ROADMAP_ITEMS_LIMIT,
   ROADMAP_SLUG_PATTERN,
   auditValue,
   tableWrite,
   zId,
+  zRoadmapAnnouncementCreateInput,
+  zRoadmapAnnouncementDeleteInput,
+  zRoadmapAnnouncementPublishInput,
+  zRoadmapAnnouncementSendNotificationsInput,
+  zRoadmapAnnouncementUpdateInput,
   zRoadmapBoardCreateInput,
   zRoadmapBoardDetailInput,
   zRoadmapBoardUpdateInput,
@@ -19,6 +25,9 @@ import {
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
   type RoadmapAdminItem,
+  type RoadmapAnnouncement,
+  type RoadmapAnnouncementLinkedItem,
+  type RoadmapAnnouncementStatus,
   type RoadmapBoardDetailResult,
   type RoadmapBoardListResult,
   type RoadmapBoardSummary,
@@ -35,8 +44,13 @@ import { READERS, WRITERS, assertNotArchived, memberProfilesMap, userOf, type Pr
 const TABLES = projectsManifest.tables;
 const BOARD_TABLE = TABLES.crove_projects.roadmap_board;
 const ITEM_TABLE = TABLES.crove_projects.roadmap_item;
+const ANNOUNCEMENT_TABLE = TABLES.crove_projects.roadmap_announcement;
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const ROADMAP_OTP_TTL_MS = 10 * 60_000;
+
+function announcementTarget(input: { announcementId: string }) {
+  return { type: 'projects.roadmap_announcement', id: input.announcementId };
+}
 
 function roadmapBoardTarget(input: { boardId: string }) {
   return { type: 'projects.roadmap_board', id: input.boardId };
@@ -472,11 +486,166 @@ export const roadmapBoardGet = defineQuery({
         createdAt: isoString(r.created_at),
         updatedAt: isoString(r.updated_at),
       })),
+      announcements: await loadBoardAnnouncements(ctx.trx, ctx.orgId, board.id),
+      activeSubscriberCount: await loadActiveSubscriberCount(ctx.trx, board.id),
       canWrite: ctx.role !== null && ctx.role !== 'viewer',
       canManageBoard: ctx.role === 'owner' || ctx.role === 'admin',
     };
   },
 });
+
+async function loadActiveSubscriberCount(trx: Trx, boardId: string): Promise<number> {
+  const { rows } = await sql<{ count: number }>`
+    SELECT crove_projects.roadmap_announcement_recipient_count(${boardId}::uuid) AS count`.execute(trx);
+  return Math.max(0, Number(rows[0]?.count ?? 0));
+}
+
+async function resolveLinkedItemsMap(
+  trx: Trx,
+  orgId: string,
+  boardId: string,
+  allIds: readonly string[],
+): Promise<Map<string, RoadmapAnnouncementLinkedItem>> {
+  const uniqueIds = [...new Set(allIds)];
+  const map = new Map<string, RoadmapAnnouncementLinkedItem>();
+  if (uniqueIds.length === 0) return map;
+  const { rows } = await sql<{
+    id: string;
+    public_title: string;
+    stage: string;
+    moderation_status: string;
+    vote_count: number;
+  }>`
+    SELECT i.id, i.public_title, i.stage, i.moderation_status, i.vote_count
+    FROM crove_projects.roadmap_item i
+    WHERE i.org_id = ${orgId}::uuid
+      AND i.board_id = ${boardId}::uuid
+      AND i.id = ANY(${uniqueIds}::uuid[])`.execute(trx);
+  for (const r of rows) {
+    map.set(r.id, {
+      id: r.id,
+      publicTitle: r.public_title,
+      stage: r.stage as RoadmapItemStage,
+      moderationStatus: r.moderation_status as RoadmapItemModerationStatus,
+      voteCount: Number(r.vote_count),
+    });
+  }
+  return map;
+}
+
+async function loadBoardAnnouncements(trx: Trx, orgId: string, boardId: string): Promise<RoadmapAnnouncement[]> {
+  const { rows } = await sql<{
+    id: string;
+    board_id: string;
+    title: string;
+    body_md: string;
+    status: string;
+    published_at: Date | null;
+    linked_item_ids: string[];
+    notifications_sent_at: Date | null;
+    created_at: Date;
+    updated_at: Date;
+  }>`
+    SELECT id, board_id, title, body_md, status, published_at, linked_item_ids, notifications_sent_at, created_at, updated_at
+    FROM crove_projects.roadmap_announcement
+    WHERE org_id = ${orgId}::uuid
+      AND board_id = ${boardId}::uuid
+    ORDER BY
+      CASE WHEN status = 'draft' THEN 0 ELSE 1 END ASC,
+      published_at DESC NULLS FIRST,
+      created_at DESC,
+      id DESC
+    LIMIT ${ROADMAP_ANNOUNCEMENTS_LIMIT}`.execute(trx);
+
+  const allLinkedIds = rows.flatMap((r) => r.linked_item_ids ?? []);
+  const linkedMap = await resolveLinkedItemsMap(trx, orgId, boardId, allLinkedIds);
+
+  return rows.map((r) => {
+    const linkedIds = r.linked_item_ids ?? [];
+    return {
+      id: r.id,
+      boardId: r.board_id,
+      title: r.title,
+      bodyMd: r.body_md,
+      status: r.status as RoadmapAnnouncementStatus,
+      publishedAt: r.published_at ? isoString(r.published_at) : null,
+      linkedItemIds: linkedIds,
+      linkedItems: linkedIds.map((id) => linkedMap.get(id)).filter((item): item is RoadmapAnnouncementLinkedItem => item !== undefined),
+      notificationsSentAt: r.notifications_sent_at ? isoString(r.notifications_sent_at) : null,
+      createdAt: isoString(r.created_at),
+      updatedAt: isoString(r.updated_at),
+    };
+  });
+}
+
+async function loadAnnouncementById(trx: Trx, orgId: string, announcementId: string): Promise<RoadmapAnnouncement> {
+  const { rows } = await sql<{
+    id: string;
+    board_id: string;
+    title: string;
+    body_md: string;
+    status: string;
+    published_at: Date | null;
+    linked_item_ids: string[];
+    notifications_sent_at: Date | null;
+    created_at: Date;
+    updated_at: Date;
+  }>`
+    SELECT id, board_id, title, body_md, status, published_at, linked_item_ids, notifications_sent_at, created_at, updated_at
+    FROM crove_projects.roadmap_announcement
+    WHERE org_id = ${orgId}::uuid
+      AND id = ${announcementId}::uuid`.execute(trx);
+  const r = rows[0];
+  if (!r) {
+    throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_FOUND', 404, 'Không tìm thấy bản cập nhật lộ trình');
+  }
+  const linkedIds = r.linked_item_ids ?? [];
+  const linkedMap = await resolveLinkedItemsMap(trx, orgId, r.board_id, linkedIds);
+  return {
+    id: r.id,
+    boardId: r.board_id,
+    title: r.title,
+    bodyMd: r.body_md,
+    status: r.status as RoadmapAnnouncementStatus,
+    publishedAt: r.published_at ? isoString(r.published_at) : null,
+    linkedItemIds: linkedIds,
+    linkedItems: linkedIds.map((id) => linkedMap.get(id)).filter((item): item is RoadmapAnnouncementLinkedItem => item !== undefined),
+    notificationsSentAt: r.notifications_sent_at ? isoString(r.notifications_sent_at) : null,
+    createdAt: isoString(r.created_at),
+    updatedAt: isoString(r.updated_at),
+  };
+}
+
+async function validateShippedLinkedItems(
+  trx: Trx,
+  orgId: string,
+  boardId: string,
+  rawItemIds: readonly string[] | undefined,
+): Promise<string[]> {
+  if (!rawItemIds || rawItemIds.length === 0) return [];
+  const uniqueIds = [...new Set(rawItemIds)];
+  const { rows } = await sql<{ id: string; stage: string; moderation_status: string }>`
+    SELECT id, stage, moderation_status
+    FROM crove_projects.roadmap_item
+    WHERE org_id = ${orgId}::uuid
+      AND board_id = ${boardId}::uuid
+      AND id = ANY(${uniqueIds}::uuid[])`.execute(trx);
+  const found = new Map(rows.map((r) => [r.id, r]));
+  for (const id of uniqueIds) {
+    const item = found.get(id);
+    if (!item) {
+      throw new DomainError('ROADMAP_ITEM_NOT_FOUND', 422, 'Ý tưởng liên kết không thuộc bảng lộ trình này');
+    }
+    if (item.moderation_status !== 'published' || item.stage !== 'shipped') {
+      throw new DomainError(
+        'ROADMAP_ANNOUNCEMENT_ITEM_NOT_SHIPPED',
+        422,
+        'Chỉ có thể gắn các ý tưởng đã công khai ở giai đoạn Đã phát hành vào thông báo cập nhật',
+      );
+    }
+  }
+  return uniqueIds;
+}
 
 export const roadmapBoardCreate = defineCommand({
   name: 'projects.roadmap.board.create',
@@ -1119,6 +1288,516 @@ export const roadmapOtpMailData = defineCommand({
   },
 });
 
+export const roadmapAnnouncementCreate = defineCommand({
+  name: 'projects.roadmap.announcement.create',
+  input: zRoadmapAnnouncementCreateInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: roadmapBoardTarget,
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'roadmap_announcement', [
+      'org_id',
+      'board_id',
+      'title',
+      'body_md',
+      'status',
+      'linked_item_ids',
+      'created_by',
+      'created_at',
+      'updated_at',
+    ]),
+  ],
+  handler: async (ctx, input): Promise<{ announcement: RoadmapAnnouncement }> => {
+    const userId = userOf(ctx.actor);
+    const board = await loadBoardSummary(ctx.trx, ctx.orgId, input.boardId);
+    if (board.projectId) {
+      await assertPublicProjectAllowed(ctx.trx, ctx.orgId, board.projectId, true);
+    }
+    const linkedItemIds = await validateShippedLinkedItems(ctx.trx, ctx.orgId, board.id, input.linkedItemIds);
+
+    const inserted = await ctx.trx
+      .insertInto('crove_projects.roadmap_announcement')
+      .values({
+        org_id: ctx.orgId,
+        board_id: board.id,
+        title: input.title,
+        body_md: input.bodyMd,
+        status: 'draft',
+        published_at: null,
+        linked_item_ids: linkedItemIds,
+        notifications_sent_at: null,
+        created_by: userId,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+
+    ctx.audit({
+      boardId: board.id,
+      announcementId: inserted.id,
+      linkedCount: linkedItemIds.length,
+      title: auditValue(ANNOUNCEMENT_TABLE, 'title', input.title),
+      body_md: auditValue(ANNOUNCEMENT_TABLE, 'body_md', input.bodyMd),
+    });
+    return { announcement: await loadAnnouncementById(ctx.trx, ctx.orgId, inserted.id) };
+  },
+});
+
+export const roadmapAnnouncementUpdate = defineCommand({
+  name: 'projects.roadmap.announcement.update',
+  input: zRoadmapAnnouncementUpdateInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: announcementTarget,
+  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_announcement', ['title', 'body_md', 'linked_item_ids', 'updated_at'])],
+  handler: async (ctx, input): Promise<{ announcement: RoadmapAnnouncement }> => {
+    userOf(ctx.actor);
+    const existing = await ctx.trx
+      .selectFrom('crove_projects.roadmap_announcement')
+      .select(['id', 'board_id', 'status', 'title', 'body_md', 'linked_item_ids'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.announcementId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_FOUND', 404, 'Không tìm thấy bản cập nhật lộ trình');
+    }
+    if (existing.status !== 'draft') {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_ALREADY_PUBLISHED', 409, 'Không thể chỉnh sửa bản cập nhật đã công bố');
+    }
+
+    const nextTitle = input.title ?? existing.title;
+    const nextBodyMd = input.bodyMd ?? existing.body_md;
+    const nextLinkedIds =
+      input.linkedItemIds !== undefined
+        ? await validateShippedLinkedItems(ctx.trx, ctx.orgId, existing.board_id, input.linkedItemIds)
+        : existing.linked_item_ids;
+
+    await ctx.trx
+      .updateTable('crove_projects.roadmap_announcement')
+      .set({
+        title: nextTitle,
+        body_md: nextBodyMd,
+        linked_item_ids: nextLinkedIds,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', existing.id)
+      .execute();
+
+    ctx.audit({
+      boardId: existing.board_id,
+      announcementId: existing.id,
+      linkedCount: nextLinkedIds.length,
+      title: auditValue(ANNOUNCEMENT_TABLE, 'title', nextTitle),
+      body_md: auditValue(ANNOUNCEMENT_TABLE, 'body_md', nextBodyMd),
+    });
+    return { announcement: await loadAnnouncementById(ctx.trx, ctx.orgId, existing.id) };
+  },
+});
+
+export const roadmapAnnouncementPublish = defineCommand({
+  name: 'projects.roadmap.announcement.publish',
+  input: zRoadmapAnnouncementPublishInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  target: announcementTarget,
+  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_announcement', ['status', 'published_at', 'updated_at'])],
+  handler: async (ctx, input): Promise<{ announcement: RoadmapAnnouncement }> => {
+    userOf(ctx.actor);
+    assertManager(ctx);
+    const existing = await ctx.trx
+      .selectFrom('crove_projects.roadmap_announcement')
+      .select(['id', 'board_id', 'status', 'published_at', 'linked_item_ids'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.announcementId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_FOUND', 404, 'Không tìm thấy bản cập nhật lộ trình');
+    }
+    const board = await loadBoardSummary(ctx.trx, ctx.orgId, existing.board_id);
+    if (board.projectId) {
+      await assertPublicProjectAllowed(ctx.trx, ctx.orgId, board.projectId, true);
+    }
+    if (existing.linked_item_ids.length > 0) {
+      await validateShippedLinkedItems(ctx.trx, ctx.orgId, existing.board_id, existing.linked_item_ids);
+    }
+
+    if (existing.status !== 'published') {
+      await ctx.trx
+        .updateTable('crove_projects.roadmap_announcement')
+        .set({
+          status: 'published',
+          published_at: existing.published_at ?? ctx.now,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', existing.id)
+        .execute();
+      await ctx.emit('projects.roadmap.announcement_published', {
+        boardId: existing.board_id,
+        announcementId: existing.id,
+      });
+      await ctx.activity('projects.roadmap_announcement', existing.id, 'projects.roadmap.announcement.published', 'Công bố bản cập nhật trên bảng lộ trình');
+    }
+
+    ctx.audit({ boardId: existing.board_id, announcementId: existing.id, status: 'published' });
+    return { announcement: await loadAnnouncementById(ctx.trx, ctx.orgId, existing.id) };
+  },
+});
+
+export const roadmapAnnouncementDelete = defineCommand({
+  name: 'projects.roadmap.announcement.delete',
+  input: zRoadmapAnnouncementDeleteInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: announcementTarget,
+  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_announcement', ['org_id', 'id'])],
+  handler: async (ctx, input): Promise<{ deleted: boolean }> => {
+    userOf(ctx.actor);
+    const existing = await ctx.trx
+      .selectFrom('crove_projects.roadmap_announcement')
+      .select(['id', 'board_id', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.announcementId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_FOUND', 404, 'Không tìm thấy bản cập nhật lộ trình');
+    }
+    if (existing.status !== 'draft') {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_ALREADY_PUBLISHED', 409, 'Không thể xóa bản cập nhật đã công bố');
+    }
+    await ctx.trx
+      .deleteFrom('crove_projects.roadmap_announcement')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', existing.id)
+      .execute();
+
+    ctx.audit({ boardId: existing.board_id, announcementId: existing.id, deleted: true });
+    return { deleted: true };
+  },
+});
+
+export const roadmapAnnouncementSendNotifications = defineCommand({
+  name: 'projects.roadmap.announcement.send_notifications',
+  input: zRoadmapAnnouncementSendNotificationsInput,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: MANAGERS,
+  target: announcementTarget,
+  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_announcement', ['notifications_sent_at', 'updated_at'])],
+  handler: async (ctx, input) => {
+    userOf(ctx.actor);
+    assertManager(ctx);
+
+    const existing = await ctx.trx
+      .selectFrom('crove_projects.roadmap_announcement')
+      .select(['id', 'board_id', 'status', 'notifications_sent_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.announcementId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_FOUND', 404, 'Không tìm thấy bản cập nhật lộ trình');
+    }
+    if (existing.status !== 'published') {
+      throw new DomainError('ROADMAP_ANNOUNCEMENT_NOT_PUBLISHED', 409, 'Cần công bố bản cập nhật trước khi gửi thông báo cho người đăng ký');
+    }
+
+    const board = await loadBoardSummary(ctx.trx, ctx.orgId, existing.board_id);
+    if (!board.enabled) {
+      throw new DomainError('ROADMAP_BOARD_DISABLED', 409, 'Bảng lộ trình đang tắt công khai nên chưa thể gửi thông báo');
+    }
+    if (board.projectId) {
+      await assertPublicProjectAllowed(ctx.trx, ctx.orgId, board.projectId, true);
+    }
+
+    // Idempotent guard: once notifications_sent_at is stamped, never enqueue a duplicate notification batch.
+    if (existing.notifications_sent_at !== null) {
+      const current = await loadAnnouncementById(ctx.trx, ctx.orgId, existing.id);
+      ctx.audit({ boardId: existing.board_id, announcementId: existing.id, alreadySent: true, eligibleCount: 0 });
+      return { announcement: current, eligibleCount: 0, queuedDispatch: false };
+    }
+
+    const eligibleCount = await loadActiveSubscriberCount(ctx.trx, existing.board_id);
+    await ctx.trx
+      .updateTable('crove_projects.roadmap_announcement')
+      .set({
+        notifications_sent_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', existing.id)
+      .execute();
+
+    const queuedDispatch = eligibleCount > 0;
+    if (queuedDispatch) {
+      await ctx.emit('projects.roadmap.announcement_notify', {
+        boardId: existing.board_id,
+        announcementId: existing.id,
+      });
+      await ctx.activity(
+        'projects.roadmap_announcement',
+        existing.id,
+        'projects.roadmap.announcement.send_notifications',
+        `Gửi thông báo tính năng mới cho ${eligibleCount} người đăng ký`,
+      );
+    }
+
+    // Counts and ids only: never expose subscriber emails or announcement free text in audit metadata.
+    ctx.audit({
+      boardId: existing.board_id,
+      announcementId: existing.id,
+      eligibleCount,
+      queuedDispatch,
+    });
+    return {
+      announcement: await loadAnnouncementById(ctx.trx, ctx.orgId, existing.id),
+      eligibleCount,
+      queuedDispatch,
+    };
+  },
+});
+
+export const roadmapShippedMailData = defineQuery({
+  name: 'projects.roadmap.shipped_mail_data',
+  input: z.strictObject({
+    announcementId: zId,
+    subscriberId: zId,
+  }),
+  access: 'system',
+  handler: async (
+    ctx,
+    input,
+  ): Promise<{
+    title: string;
+    bodyMd: string;
+    linkedItems: Array<{ id: string; publicTitle: string }>;
+    voterEmailHash: string;
+    unsubTokenSealed: string;
+  } | null> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ worker hệ thống mới đọc được dữ liệu email cập nhật');
+    }
+    const { rows: annRows } = await sql<{
+      board_id: string;
+      title: string;
+      body_md: string;
+      status: string;
+      linked_item_ids: string[];
+      board_enabled: boolean;
+      project_id: string | null;
+      project_visibility: string | null;
+    }>`
+      SELECT
+        a.board_id,
+        a.title,
+        a.body_md,
+        a.status,
+        a.linked_item_ids,
+        b.enabled AS board_enabled,
+        b.project_id,
+        COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') AS project_visibility
+      FROM crove_projects.roadmap_announcement a
+      JOIN crove_projects.roadmap_board b
+        ON b.org_id = a.org_id AND b.id = a.board_id
+      LEFT JOIN crove_projects.project p
+        ON p.org_id = b.org_id AND p.id = b.project_id
+      WHERE a.org_id = ${ctx.orgId}::uuid
+        AND a.id = ${input.announcementId}::uuid`.execute(ctx.trx);
+
+    const ann = annRows[0];
+    if (!ann || ann.status !== 'published' || !ann.board_enabled || ann.project_visibility === 'private') {
+      return null;
+    }
+
+    const { rows: subRows } = await sql<{ data: { voterEmailHash: string; unsubTokenSealed: string } | null }>`
+      SELECT crove_projects.roadmap_subscriber_unsub_sealed(${ann.board_id}::uuid, ${input.subscriberId}::uuid) AS data`.execute(ctx.trx);
+    const sub = subRows[0]?.data;
+    if (!sub?.voterEmailHash || !sub?.unsubTokenSealed) {
+      return null;
+    }
+
+    const linkedMap = await resolveLinkedItemsMap(ctx.trx, ctx.orgId, ann.board_id, ann.linked_item_ids ?? []);
+    const linkedItems = (ann.linked_item_ids ?? [])
+      .map((id) => linkedMap.get(id))
+      .filter((item): item is RoadmapAnnouncementLinkedItem => item !== undefined && item.moderationStatus === 'published' && item.stage === 'shipped')
+      .map((item) => ({ id: item.id, publicTitle: item.publicTitle }));
+
+    return {
+      title: ann.title,
+      bodyMd: ann.body_md,
+      linkedItems,
+      voterEmailHash: sub.voterEmailHash,
+      unsubTokenSealed: sub.unsubTokenSealed,
+    };
+  },
+});
+
+export interface RoadmapAiDedupeSource {
+  boardTitle: string;
+  todayVn: string;
+  aiStopped: boolean;
+  aiBudgetSpent: boolean;
+  items: Array<{
+    id: string;
+    publicTitle: string;
+    publicSummary: string | null;
+    stage: RoadmapItemStage;
+    moderationStatus: 'pending' | 'published';
+    voteCount: number;
+    tainted: boolean;
+    category: string | null;
+  }>;
+  truncated: boolean;
+}
+
+export interface RoadmapAiChangelogSource {
+  boardTitle: string;
+  todayVn: string;
+  aiStopped: boolean;
+  aiBudgetSpent: boolean;
+  items: Array<{
+    id: string;
+    publicTitle: string;
+    publicSummary: string | null;
+    category: string | null;
+    tainted: boolean;
+  }>;
+}
+
+async function loadProjectsAiMeta(trx: Trx, orgId: string): Promise<{ todayVn: string; aiStopped: boolean; aiBudgetSpent: boolean }> {
+  const { rows } = await sql<{
+    today_vn: string;
+    ai_stopped: boolean;
+    budget_spent: boolean;
+  }>`
+    SELECT
+      pg_catalog.to_char((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today_vn,
+      (
+        ludy_kernel.global_kill_switch_on('ai')
+        OR EXISTS (
+          SELECT 1 FROM ludy_kernel.kill_switch k
+           WHERE k.org_id = ${orgId}::uuid
+             AND k.released_at IS NULL
+             AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = 'projects'))
+        )
+      ) AS ai_stopped,
+      ludy_kernel.ai_budget_exhausted(${orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(trx);
+  const meta = rows[0];
+  return {
+    todayVn: meta?.today_vn ?? new Date().toISOString().slice(0, 10),
+    aiStopped: meta?.ai_stopped === true,
+    aiBudgetSpent: meta?.budget_spent === true,
+  };
+}
+
+export const roadmapAiDedupeSource = defineQuery({
+  name: 'projects.roadmap.ai_dedupe_source',
+  input: z.strictObject({ boardId: zId }),
+  access: WRITERS,
+  handler: async (ctx, input): Promise<RoadmapAiDedupeSource> => {
+    userOf(ctx.actor);
+    const board = await loadBoardSummary(ctx.trx, ctx.orgId, input.boardId);
+    const meta = await loadProjectsAiMeta(ctx.trx, ctx.orgId);
+    const { rows } = await sql<{
+      id: string;
+      public_title: string;
+      public_summary: string | null;
+      stage: string;
+      moderation_status: string;
+      vote_count: number;
+      tainted: boolean;
+      category: string | null;
+    }>`
+      SELECT id, public_title, public_summary, stage, moderation_status, vote_count, tainted, category
+      FROM crove_projects.roadmap_item
+      WHERE org_id = ${ctx.orgId}::uuid
+        AND board_id = ${board.id}::uuid
+        AND moderation_status IN ('pending', 'published')
+      ORDER BY
+        CASE WHEN moderation_status = 'pending' THEN 0 ELSE 1 END ASC,
+        vote_count DESC,
+        created_at DESC,
+        id DESC
+      LIMIT 61`.execute(ctx.trx);
+
+    const truncated = rows.length > 60;
+    const bounded = rows.slice(0, 60);
+    return {
+      boardTitle: board.title,
+      todayVn: meta.todayVn,
+      aiStopped: meta.aiStopped,
+      aiBudgetSpent: meta.aiBudgetSpent,
+      items: bounded.map((r) => ({
+        id: r.id,
+        publicTitle: r.public_title,
+        publicSummary: r.public_summary,
+        stage: r.stage as RoadmapItemStage,
+        moderationStatus: r.moderation_status as 'pending' | 'published',
+        voteCount: Number(r.vote_count),
+        tainted: Boolean(r.tainted),
+        category: r.category,
+      })),
+      truncated,
+    };
+  },
+});
+
+export const roadmapAiChangelogSource = defineQuery({
+  name: 'projects.roadmap.ai_changelog_source',
+  input: z.strictObject({
+    boardId: zId,
+    itemIds: z.array(zId).min(1).max(20),
+  }),
+  access: WRITERS,
+  handler: async (ctx, input): Promise<RoadmapAiChangelogSource> => {
+    userOf(ctx.actor);
+    const board = await loadBoardSummary(ctx.trx, ctx.orgId, input.boardId);
+    const meta = await loadProjectsAiMeta(ctx.trx, ctx.orgId);
+    const validIds = await validateShippedLinkedItems(ctx.trx, ctx.orgId, board.id, input.itemIds);
+    const { rows } = await sql<{
+      id: string;
+      public_title: string;
+      public_summary: string | null;
+      category: string | null;
+      tainted: boolean;
+    }>`
+      SELECT id, public_title, public_summary, category, tainted
+      FROM crove_projects.roadmap_item
+      WHERE org_id = ${ctx.orgId}::uuid
+        AND board_id = ${board.id}::uuid
+        AND id = ANY(${validIds}::uuid[])
+        AND moderation_status = 'published'
+        AND stage = 'shipped'`.execute(ctx.trx);
+
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return {
+      boardTitle: board.title,
+      todayVn: meta.todayVn,
+      aiStopped: meta.aiStopped,
+      aiBudgetSpent: meta.aiBudgetSpent,
+      items: validIds
+        .map((id) => byId.get(id))
+        .filter((r): r is NonNullable<typeof r> => r !== undefined)
+        .map((r) => ({
+          id: r.id,
+          publicTitle: r.public_title,
+          publicSummary: r.public_summary,
+          category: r.category,
+          tainted: Boolean(r.tainted),
+        })),
+    };
+  },
+});
+
 export const roadmapCommands = [
   roadmapBoardCreate,
   roadmapBoardUpdate,
@@ -1127,7 +1806,41 @@ export const roadmapCommands = [
   roadmapItemMerge,
   roadmapItemConvertToTask,
   roadmapItemSyncStage,
+  roadmapAnnouncementCreate,
+  roadmapAnnouncementUpdate,
+  roadmapAnnouncementPublish,
+  roadmapAnnouncementDelete,
+  roadmapAnnouncementSendNotifications,
   roadmapOtpMailData,
 ];
 
-export const roadmapQueries = [roadmapBoards, roadmapBoardGet];
+export const roadmapAnnouncementFromEvent = defineQuery({
+  name: 'projects.roadmap.announcement_from_event',
+  input: z.strictObject({ eventId: zId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<{ announcementId: string } | null> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ worker hệ thống mới đọc được sự kiện gửi thông báo');
+    }
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.outbox_event')
+      .select(['payload'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.eventId)
+      .where('type', '=', 'projects.roadmap.announcement_notify')
+      .executeTakeFirst();
+    const payload = row?.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const announcementId = (payload as Record<string, unknown>).announcementId;
+    return typeof announcementId === 'string' && zId.safeParse(announcementId).success ? { announcementId } : null;
+  },
+});
+
+export const roadmapQueries = [
+  roadmapBoards,
+  roadmapBoardGet,
+  roadmapShippedMailData,
+  roadmapAiDedupeSource,
+  roadmapAiChangelogSource,
+  roadmapAnnouncementFromEvent,
+];

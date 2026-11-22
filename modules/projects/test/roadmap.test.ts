@@ -2,19 +2,31 @@
 // Unit checks for Projects Public Roadmap contracts, embed origin validation, and OTP email rendering (#4399).
 import { describe, expect, it } from 'vitest';
 import {
+  ROADMAP_ANNOUNCEMENT_STATUSES,
   normalizeRoadmapEmbedOrigin,
+  zRoadmapAnnouncementCreateInput,
   zRoadmapBoardCreateInput,
+  zRoadmapChangelogDraftInput,
+  zRoadmapDedupeInput,
   zRoadmapEmbedOrigin,
   zRoadmapPublicOtpRequestInput,
   zRoadmapPublicOtpVerifyInput,
   zRoadmapPublicSubmitIdeaInput,
+  zRoadmapPublicVoteInput,
 } from '@ludy/kernel-contract';
 import {
   generateEphemeralOtpWrapKey,
   openEphemeralOtpCode,
   renderRoadmapOtpMail,
+  renderRoadmapShippedMail,
   sealEphemeralOtpCode,
 } from '../src/roadmap-mail.ts';
+import {
+  mcpRoadmapDemandSummary,
+  mcpRoadmapIdeas,
+  zMcpRoadmapDemandSummaryInput,
+  zMcpRoadmapIdeasInput,
+} from '../src/roadmap-mcp.ts';
 
 describe('projects roadmap embed origins and contracts (#4399)', () => {
   it('accepts strict HTTPS origins without path, query, fragment, trailing slash, or wildcards and rejects unsafe inputs', () => {
@@ -107,5 +119,84 @@ describe('renderRoadmapOtpMail (#4399)', () => {
 
     expect(() => openEphemeralOtpCode(sealed, key, 'board-1:otp-other')).toThrow();
     expect(() => openEphemeralOtpCode(sealed, generateEphemeralOtpWrapKey(), aad)).toThrow();
+  });
+});
+
+describe('Slice 2 announcements, shipped email renderer, subscribe toggle, & MCP read descriptors (#4400)', () => {
+  it('validates announcement inputs, subscribe action, and Vy AI RPC contracts', () => {
+    expect(ROADMAP_ANNOUNCEMENT_STATUSES).toEqual(['draft', 'published']);
+
+    const ann = zRoadmapAnnouncementCreateInput.parse({
+      boardId: '00000000-0000-4000-8000-000000000001',
+      title: '  Ban cap nhat thang 3  ',
+      bodyMd: '  ## Tinh nang moi\n- Da ho tro CSV  ',
+      linkedItemIds: ['00000000-0000-4000-8000-000000000002'],
+    });
+    expect(ann.title).toBe('Ban cap nhat thang 3');
+    expect(ann.linkedItemIds).toEqual(['00000000-0000-4000-8000-000000000002']);
+
+    expect(zRoadmapPublicVoteInput.parse({ action: 'subscribe', notifyOnShip: true })).toEqual({
+      action: 'subscribe',
+      notifyOnShip: true,
+    });
+    expect(() => zRoadmapPublicVoteInput.parse({ action: 'subscribe' })).toThrow();
+
+    expect(zRoadmapDedupeInput.parse({ boardId: '00000000-0000-4000-8000-000000000001' }).boardId).toBe(
+      '00000000-0000-4000-8000-000000000001',
+    );
+    expect(
+      zRoadmapChangelogDraftInput.parse({
+        boardId: '00000000-0000-4000-8000-000000000001',
+        itemIds: ['00000000-0000-4000-8000-000000000002'],
+        language: 'en',
+      }).language,
+    ).toBe('en');
+  });
+
+  it('renders shipped announcement emails safely with HTML escaping, markdown blocks, shipped badges, and fragment unsubscribe URL', () => {
+    const payload = {
+      lang: 'vi' as const,
+      orgName: 'Cong ty A <script>x</script>',
+      orgSlug: 'acme',
+      boardId: '00000000-0000-4000-8000-000000000001',
+      boardSlug: 'roadmap',
+      boardTitle: 'Lo trinh & Gop y',
+      announcementId: '00000000-0000-4000-8000-000000000005',
+      subscriberId: '00000000-0000-4000-8000-000000000006',
+    };
+
+    const rendered = renderRoadmapShippedMail(payload, {
+      brand: 'Ludy',
+      publicUrl: 'https://app.ludy.vn/',
+      announcementTitle: 'Phat hanh **bao cao CSV**',
+      bodyMd: '## Diem noi bat\n- **Xuat CSV** nhanh chong\n- Tham khao [tai lieu](https://docs.ludy.vn/csv) hoac [xss](javascript:alert(1))\n- <img src=x onerror=alert(1)>',
+      linkedItems: [{ id: '1', publicTitle: 'Xuat CSV hoa don' }],
+      unsubToken: 'unsub_token_abcdef_123456',
+    });
+
+    expect(rendered.subject).toBe('[Lo trinh & Gop y] Phat hanh **bao cao CSV**');
+    expect(rendered.text).toContain('Xuat CSV hoa don');
+    expect(rendered.text).toContain('https://app.ludy.vn/-/roadmap/acme/roadmap#unsubscribe=unsub_token_abcdef_123456');
+    expect(rendered.text).toContain('https://app.ludy.vn/-/roadmap/acme/roadmap?tab=changelog');
+    expect(rendered.html).toContain('<h2');
+    expect(rendered.html).toContain('<strong>Xuat CSV</strong>');
+    expect(rendered.html).toContain('href="https://docs.ludy.vn/csv"');
+    expect(rendered.html).not.toContain('href="javascript:');
+    expect(rendered.html).toContain('[xss](javascript:alert(1))');
+    expect(rendered.html).not.toContain('<img src=x');
+    expect(rendered.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(rendered.html).toContain('href="https://app.ludy.vn/-/roadmap/acme/roadmap#unsubscribe=unsub_token_abcdef_123456"');
+  });
+
+  it('pins strict MCP read descriptors and bounds for projects.mcp.roadmap_*', () => {
+    expect(mcpRoadmapIdeas.mcp).toEqual({ scope: 'ludy.read' });
+    expect(mcpRoadmapIdeas.access).toEqual(['owner', 'admin']);
+    expect(mcpRoadmapDemandSummary.mcp).toEqual({ scope: 'ludy.read' });
+    expect(mcpRoadmapDemandSummary.access).toEqual(['owner', 'admin']);
+
+    expect(zMcpRoadmapIdeasInput.parse({}).limit).toBe(25);
+    expect(() => zMcpRoadmapIdeasInput.parse({ limit: 51 })).toThrow();
+    expect(zMcpRoadmapDemandSummaryInput.parse({}).topLimit).toBe(10);
+    expect(() => zMcpRoadmapDemandSummaryInput.parse({ topLimit: 21 })).toThrow();
   });
 });

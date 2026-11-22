@@ -87,6 +87,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_projects_roadmap.sql',
       // #2600 (Projects v2 lean time tracking): the purge restatement that adds crove_projects.time_entry restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_projects_time.sql',
+      // #4400 (Projects Public Roadmap Slice 2): the purge restatement that adds crove_projects.roadmap_announcement restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_projects_announcements.sql',
     ]);
   });
 });

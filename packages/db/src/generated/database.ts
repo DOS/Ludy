@@ -170,6 +170,7 @@ export interface CroveProjectsSchema {
   'crove_projects.project_cycle': ProjectsProjectCycleTable;
   'crove_projects.project_member': ProjectsProjectMemberTable;
   'crove_projects.project_task': ProjectsProjectTaskTable;
+  'crove_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'crove_projects.roadmap_board': ProjectsRoadmapBoardTable;
   'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
   'crove_projects.roadmap_vote': ProjectsRoadmapVoteTable;
@@ -3855,6 +3856,22 @@ export interface ProjectsProjectTaskTable {
   start_on: string | null;
   cycle_id: string | null;
   story_points: number | null;
+}
+
+/** crove_projects.roadmap_announcement */
+export interface ProjectsRoadmapAnnouncementTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  title: string;
+  body_md: string;
+  status: Generated<string>;
+  published_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  linked_item_ids: Generated<string[]>;
+  notifications_sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_projects.roadmap_board */

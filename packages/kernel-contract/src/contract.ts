@@ -707,12 +707,23 @@ import {
 } from './projects.ts';
 import {
   zRoadmapAdminItem,
+  zRoadmapAnnouncement,
+  zRoadmapAnnouncementCreateInput,
+  zRoadmapAnnouncementDeleteInput,
+  zRoadmapAnnouncementPublishInput,
+  zRoadmapAnnouncementSendNotificationsInput,
+  zRoadmapAnnouncementSendNotificationsResult,
+  zRoadmapAnnouncementUpdateInput,
   zRoadmapBoardCreateInput,
   zRoadmapBoardDetailInput,
   zRoadmapBoardDetailResult,
   zRoadmapBoardListResult,
   zRoadmapBoardSummary,
   zRoadmapBoardUpdateInput,
+  zRoadmapChangelogDraftInput,
+  zRoadmapChangelogDraftResult,
+  zRoadmapDedupeInput,
+  zRoadmapDedupeResult,
   zRoadmapItemConvertToTaskInput,
   zRoadmapItemCreateInput,
   zRoadmapItemMergeInput,
@@ -3618,6 +3629,23 @@ export const contract = {
       itemSyncStage: oc
         .input(zRoadmapItemSyncStageInput.extend({ idempotencyKey: zId }))
         .output(z.strictObject({ item: zRoadmapAdminItem })),
+      announcementCreate: oc
+        .input(zRoadmapAnnouncementCreateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementUpdate: oc
+        .input(zRoadmapAnnouncementUpdateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementPublish: oc
+        .input(zRoadmapAnnouncementPublishInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementDelete: oc
+        .input(zRoadmapAnnouncementDeleteInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ deleted: z.boolean() })),
+      announcementSendNotifications: oc
+        .input(zRoadmapAnnouncementSendNotificationsInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapAnnouncementSendNotificationsResult),
+      dedupeSuggest: oc.input(zRoadmapDedupeInput).output(zRoadmapDedupeResult),
+      changelogDraft: oc.input(zRoadmapChangelogDraftInput).output(zRoadmapChangelogDraftResult),
     },
     startTime: oc
       .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))

@@ -62,6 +62,7 @@ export * from './today.ts';
 export * from './weekly.ts';
 export * from './project-weekly-status.ts';
 export * from './project-cycle-summary.ts';
+export * from './project-roadmap.ts';
 export * from './transcribe.ts';
 export * from './transcribe-eval.ts';
 export * from './sign-ai.ts';

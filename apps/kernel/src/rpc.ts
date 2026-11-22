@@ -54,7 +54,7 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -75,6 +75,7 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -598,6 +599,15 @@ export function createRpcHandler(
   );
   const projectCycleSummaryCoworker = projectCycleSummaryAi(
     conversationReader?.projectCycleSummary ? { projectCycleSummary: conversationReader.projectCycleSummary.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
+  const projectRoadmapCoworker = projectRoadmapAi(
+    conversationReader
+      ? {
+          ...(conversationReader.roadmapDedupe ? { roadmapDedupe: conversationReader.roadmapDedupe.bind(conversationReader) } : {}),
+          ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
+        }
+      : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -4727,6 +4737,31 @@ export function createRpcHandler(
         itemMerge: os.projects.roadmap.itemMerge.handler(projectsCommand('projects.roadmap.item.merge')),
         itemConvertToTask: os.projects.roadmap.itemConvertToTask.handler(projectsCommand('projects.roadmap.item.convert_to_task')),
         itemSyncStage: os.projects.roadmap.itemSyncStage.handler(projectsCommand('projects.roadmap.item.sync_stage')),
+        announcementCreate: os.projects.roadmap.announcementCreate.handler(projectsCommand('projects.roadmap.announcement.create')),
+        announcementUpdate: os.projects.roadmap.announcementUpdate.handler(projectsCommand('projects.roadmap.announcement.update')),
+        announcementPublish: os.projects.roadmap.announcementPublish.handler(projectsCommand('projects.roadmap.announcement.publish')),
+        announcementDelete: os.projects.roadmap.announcementDelete.handler(projectsCommand('projects.roadmap.announcement.delete')),
+        announcementSendNotifications: os.projects.roadmap.announcementSendNotifications.handler(projectsCommand('projects.roadmap.announcement.send_notifications')),
+        dedupeSuggest: os.projects.roadmap.dedupeSuggest.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<RoadmapAiDedupeSource>(
+              'projects.roadmap.ai_dedupe_source',
+              { boardId: input.boardId },
+              { actor, orgId },
+            );
+            return prepareRoadmapDedupe(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
+        changelogDraft: os.projects.roadmap.changelogDraft.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<RoadmapAiChangelogSource>(
+              'projects.roadmap.ai_changelog_source',
+              { boardId: input.boardId, itemIds: input.itemIds },
+              { actor, orgId },
+            );
+            return prepareRoadmapChangelogDraft(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
       },
       startTime: os.projects.startTime.handler(projectsCommand('projects.time.start')),
       stopTime: os.projects.stopTime.handler(projectsCommand('projects.time.stop')),

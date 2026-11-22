@@ -32,9 +32,12 @@ import {
   PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
   PROJECT_TIME_NOTE_MAX,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  ROADMAP_ANNOUNCEMENT_BODY_MAX,
+  ROADMAP_ANNOUNCEMENT_TITLE_MAX,
   ROADMAP_DESCRIPTION_MAX,
   ROADMAP_ITEM_SUMMARY_MAX,
   ROADMAP_ITEM_TITLE_MAX,
+  ROADMAP_SHIPPED_MAIL_SOURCE,
   ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
   type PersonalDataErasure,
@@ -597,6 +600,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Optional public submitter display name on a roadmap item; erased on personal-data match',
   },
+  'crove_projects.roadmap_announcement.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap changelog announcement title, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.roadmap_announcement.body_md': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap changelog announcement Markdown body, which may name a person: mentions are replaced with a redaction marker',
+  },
   'crove_projects.roadmap_vote.voter_email_hash': {
     kind: 'other',
     handling: 'hashed',
@@ -625,6 +638,12 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     machinery: true,
     reason: 'Sealed subscriber email for opt-in shipped notifications; erased by crove_projects.personal_erase_roadmap_machinery',
+  },
+  'crove_projects.roadmap_subscriber.mail_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    machinery: true,
+    reason: 'Keyed mail hash on roadmap_subscriber used to enforce org mail suppressions; row is deleted on erasure',
   },
   'crove_projects.time_entry.note': {
     kind: 'free_text',
@@ -989,7 +1008,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
       FROM ludy_kernel.mail_message m
      WHERE m.org_id = ${orgId}::uuid
-       AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+       AND m.source IN (${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}, ${ROADMAP_SHIPPED_MAIL_SOURCE})
        AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
        AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
      ORDER BY m.created_at DESC, m.id
@@ -1131,6 +1150,13 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_projects.project_column.name',
   'crove_projects.project_cycle.name',
   'crove_projects.project_cycle.goal',
+  'crove_projects.roadmap_board.title',
+  'crove_projects.roadmap_board.description',
+  'crove_projects.roadmap_item.public_title',
+  'crove_projects.roadmap_item.public_summary',
+  'crove_projects.roadmap_item.submitter_display_name',
+  'crove_projects.roadmap_announcement.title',
+  'crove_projects.roadmap_announcement.body_md',
   'crove_projects.time_entry.note',
   'crove_hr.candidate.notes',
 ]);
@@ -1842,7 +1868,7 @@ export const personalDataErase = defineCommand({
         UPDATE ludy_kernel.mail_message m
            SET payload = NULL, subject = NULL
          WHERE m.org_id = ${ctx.orgId}::uuid
-           AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+           AND m.source IN (${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}, ${ROADMAP_SHIPPED_MAIL_SOURCE})
            AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
            AND (
              ${freeTextMatch(probe, sql.ref('m.subject'))}
@@ -1853,6 +1879,13 @@ export const personalDataErase = defineCommand({
                 WHERE p.org_id = m.org_id
                   AND p.id = m.source_id
                   AND (${freeTextMatch(probe, sql.ref('p.name'))} OR ${freeTextMatch(probe, sql.ref('p.description'))})
+             )
+             OR EXISTS (
+               SELECT 1
+                 FROM crove_projects.roadmap_announcement a
+                WHERE a.org_id = m.org_id
+                  AND a.id = m.source_id
+                  AND (${freeTextMatch(probe, sql.ref('a.title'))} OR ${freeTextMatch(probe, sql.ref('a.body_md'))})
              )
            )
          RETURNING m.status`.execute(ctx.trx);
@@ -1968,6 +2001,34 @@ export const personalDataErase = defineCommand({
       add('crove_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
       add('crove_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
       add('crove_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+
+      const annTitleMatch = freeTextMatch(probe, sql.ref('a.title'));
+      const annBodyMatch = freeTextMatch(probe, sql.ref('a.body_md'));
+      const { rows: roadmapAnnouncements } = await sql<{ title: boolean; body_md: boolean }>`
+        UPDATE crove_projects.roadmap_announcement a
+           SET title = CASE
+                         WHEN ${annTitleMatch}
+                           THEN COALESCE(
+                             NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('a.title'), REDACTED_MARK)}, ${ROADMAP_ANNOUNCEMENT_TITLE_MAX}::int)), ''),
+                             ${REDACTED_MARK}
+                           )
+                         ELSE a.title
+                       END,
+               body_md = CASE
+                           WHEN ${annBodyMatch}
+                             THEN COALESCE(
+                               NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('a.body_md'), REDACTED_MARK)}, ${ROADMAP_ANNOUNCEMENT_BODY_MAX}::int)), ''),
+                               ${REDACTED_MARK}
+                             )
+                           ELSE a.body_md
+                         END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.roadmap_announcement o
+         WHERE o.org_id = a.org_id AND o.id = a.id AND a.org_id = ${ctx.orgId}::uuid
+           AND (${annTitleMatch} OR ${annBodyMatch})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, ${freeTextMatch(probe, sql.ref('o.body_md'))} AS body_md`.execute(ctx.trx);
+      add('crove_projects.roadmap_announcement.title', roadmapAnnouncements.filter((r) => r.title).length);
+      add('crove_projects.roadmap_announcement.body_md', roadmapAnnouncements.filter((r) => r.body_md).length);
 
       // Project time entry notes that quote the person (#2600): replace mentions in note, bounded to 500 chars.
       const timeEntryNote = freeTextMatch(probe, sql.ref('te.note'));

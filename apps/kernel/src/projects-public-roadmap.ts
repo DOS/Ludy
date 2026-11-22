@@ -183,7 +183,7 @@ function sealSubscriberEmail(
   boardId: string,
   voterEmailHash: string,
   email: string,
-): { emailSealed: string; unsubTokenSha256: string } {
+): { emailSealed: string; unsubTokenSha256: string; unsubTokenSealed: string } {
   if (broker.id === 'none') {
     throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin người đăng ký (CREDENTIAL_KEY)');
   }
@@ -192,10 +192,17 @@ function sealSubscriberEmail(
     provider: 'projects.roadmap_subscriber',
     externalAccountId: `${boardId}:${voterEmailHash}`,
   });
-  const unsubTokenSha256 = sha256Hex(randomBytes(32).toString('base64url'));
+  const rawUnsubToken = randomBytes(32).toString('base64url');
+  const unsubTokenSha256 = sha256Hex(rawUnsubToken);
+  const sealedUnsub = broker.seal(rawUnsubToken, {
+    orgId,
+    provider: 'projects.roadmap_subscriber_unsub',
+    externalAccountId: `${boardId}:${voterEmailHash}`,
+  });
   return {
     emailSealed: `crove:cs1:${sealed.keyId}:${sealed.envelope.toString('base64url')}`,
     unsubTokenSha256,
+    unsubTokenSealed: `crove:cs1:${sealedUnsub.keyId}:${sealedUnsub.envelope.toString('base64url')}`,
   };
 }
 
@@ -284,6 +291,7 @@ export async function runPublicRoadmapView(
       board: res.board,
       viewer: res.viewer,
       items: res.items,
+      announcements: Array.isArray(res.announcements) ? res.announcements : [],
     },
   };
 }
@@ -531,8 +539,10 @@ export async function runPublicRoadmapVote(
   if (effectiveNotify === undefined) effectiveNotify = null;
   let emailSealed: string | null = null;
   let unsubTokenSha256: string | null = null;
+  let unsubTokenSealed: string | null = null;
 
-  if (effectiveNotify === true) {
+  const shouldSealForNotify = effectiveNotify === true;
+  if (shouldSealForNotify) {
     if (auth.claimSha256) {
       const claimRow = await runtime.orgless(async (db) => {
         const { rows } = await sql<{
@@ -549,16 +559,17 @@ export async function runPublicRoadmapVote(
       if (!claimRow.valid || !claimRow.email || !claimRow.voterEmailHash) {
         throw new DomainError('ROADMAP_OTP_REQUIRED', 401, 'Phiên xác thực OTP đã hết hạn, vui lòng xác thực lại');
       }
-      if (!claimRow.hasSubscriber) {
+      if (!claimRow.hasSubscriber || parsed.data.action === 'subscribe') {
         const sealed = sealSubscriberEmail(broker, claimRow.orgId, claimRow.boardId, claimRow.voterEmailHash, claimRow.email);
         emailSealed = sealed.emailSealed;
         unsubTokenSha256 = sealed.unsubTokenSha256;
+        unsubTokenSealed = sealed.unsubTokenSealed;
       }
     } else if (auth.voterEmail) {
       if (!resolved.voterEmailHash) {
         throw new DomainError('VALIDATION', 422, 'Email không hợp lệ');
       }
-      if (!resolved.hasSubscriber) {
+      if (!resolved.hasSubscriber || parsed.data.action === 'subscribe') {
         const sealed = sealSubscriberEmail(
           broker,
           resolved.orgId,
@@ -568,8 +579,29 @@ export async function runPublicRoadmapVote(
         );
         emailSealed = sealed.emailSealed;
         unsubTokenSha256 = sealed.unsubTokenSha256;
+        unsubTokenSealed = sealed.unsubTokenSealed;
       }
     }
+  }
+
+  if (parsed.data.action === 'subscribe') {
+    const subRes = await runtime.orgless(async (db) => {
+      const { rows } = await sql<{ result: ({ orgId: string; status: 'ok'; notifyOnShip: boolean }) | SqlErrorPayload | null }>`
+        SELECT crove_projects.public_roadmap_subscribe(
+          ${cleanOrgSlug},
+          ${cleanBoardSlug},
+          ${Boolean(parsed.data.notifyOnShip)}::boolean,
+          ${auth.claimSha256},
+          ${auth.voterEmail},
+          ${emailSealed},
+          ${unsubTokenSha256},
+          ${unsubTokenSealed}
+        ) AS result`.execute(db);
+      return rows[0]?.result ?? null;
+    });
+    if (!subRes) return { status: 'not_found' };
+    if (subRes.status === 'error') throwSqlDomainError(subRes);
+    return { status: 'ok', result: { notifyOnShip: subRes.notifyOnShip } };
   }
 
   type SqlVoteRow =

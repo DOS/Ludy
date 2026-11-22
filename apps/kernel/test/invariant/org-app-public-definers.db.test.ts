@@ -65,6 +65,7 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_projects.public_roadmap_claim_resolve(text,text,text)', 'projects'],
   ['crove_projects.public_roadmap_submit_idea(text,text,text,text,text,text,text,text,uuid)', 'projects'],
   ['crove_projects.public_roadmap_vote(text,text,uuid,text,text,text,boolean,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_subscribe(text,text,boolean,text,text,text,text,text)', 'projects'],
   ['crove_projects.public_roadmap_unsubscribe(text,text,text)', 'projects'],
 ];
 

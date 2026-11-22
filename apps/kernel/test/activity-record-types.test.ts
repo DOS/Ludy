@@ -27,6 +27,7 @@ const ORG_LEVEL = new Map<string, string>([
   ['kernel.tenant', "the org's own settings"],
   ['kernel.user', "a member's sessions"],
   ['projects.project', 'a project (created, updated, status, owner, members, tasks)'],
+  ['projects.roadmap_announcement', 'a public roadmap changelog announcement (published or subscriber notifications queued; org-wide)'],
   ['projects.roadmap_board', 'a public roadmap board (created and configuration updated; org-wide)'],
   ['projects.roadmap_item', 'a public roadmap item (created, moderated, merged, or converted to a task; org-wide)'],
 ]);

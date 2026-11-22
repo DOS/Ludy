@@ -286,6 +286,7 @@ export const EXPORT_TABLES = {
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'crove_projects.roadmap_board', omit: [] },
   'projects.roadmap_item': { from: 'crove_projects.roadmap_item', omit: [] },
+  'projects.roadmap_announcement': { from: 'crove_projects.roadmap_announcement', omit: [] },
   'projects.roadmap_vote': { from: 'crove_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'crove_projects.task_dependency', omit: [] },
   'projects.time_entry': { from: 'crove_projects.time_entry', omit: [] },

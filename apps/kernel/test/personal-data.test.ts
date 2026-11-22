@@ -167,7 +167,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of crove_projects for erasure', () => {
-    expect(personal.length).toBe(14);
+    expect(personal.length).toBe(16);
     expect(personal).toEqual(
       expect.arrayContaining([
         'crove_projects.project.name',
@@ -181,6 +181,8 @@ describe('personal-data registry: projects (#2591)', () => {
         'crove_projects.roadmap_item.public_title',
         'crove_projects.roadmap_item.public_summary',
         'crove_projects.roadmap_item.submitter_display_name',
+        'crove_projects.roadmap_announcement.title',
+        'crove_projects.roadmap_announcement.body_md',
         'crove_projects.roadmap_otp.email',
         'crove_projects.roadmap_subscriber.email_sealed',
         'crove_projects.time_entry.note',
@@ -194,6 +196,7 @@ describe('personal-data registry: projects (#2591)', () => {
       }
     }
     expect(entries['crove_projects.roadmap_vote.voter_email_hash']).toMatchObject({ kind: 'other', handling: 'hashed' });
+    expect(entries['crove_projects.roadmap_subscriber.mail_hash']).toMatchObject({ kind: 'other', handling: 'hashed', machinery: true });
   });
 });
 

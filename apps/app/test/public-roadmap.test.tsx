@@ -56,7 +56,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 const { ProjectRoadmapPanel } = await import('../src/components/project-roadmap-panel.tsx');
-const { PublicRoadmapPage, isRoadmapEmbedQuery } = await import('../src/routes/public-roadmap.tsx');
+const { SafeRoadmapMarkdown } = await import('../src/components/roadmap-markdown.tsx');
+const { PublicRoadmapPage, initialRoadmapTab, isRoadmapEmbedQuery } = await import('../src/routes/public-roadmap.tsx');
 const { ProjectsPage } = await import('../src/routes/projects.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
@@ -170,6 +171,22 @@ describe('PublicRoadmapPage & ProjectRoadmapPanel SSR (#4399)', () => {
           updatedAt: '2027-01-01T00:00:00.000Z',
         },
       ],
+      announcements: [
+        {
+          id: '40000000-0000-4000-8000-000000000001',
+          boardId,
+          title: 'Release March 2027',
+          bodyMd: '## Highlights\n- Shipped PDF bulk export',
+          status: 'published',
+          publishedAt: '2027-03-15T10:00:00.000Z',
+          linkedItemIds: [],
+          linkedItems: [],
+          notificationsSentAt: null,
+          createdAt: '2027-03-15T09:00:00.000Z',
+          updatedAt: '2027-03-15T10:00:00.000Z',
+        },
+      ],
+      activeSubscriberCount: 3,
       canWrite: true,
       canManageBoard: true,
     };
@@ -180,6 +197,33 @@ describe('PublicRoadmapPage & ProjectRoadmapPanel SSR (#4399)', () => {
     expect(enPanelHtml).toContain('Export PDF invoices in bulk');
     expect(enPanelHtml).toContain('External submission');
     expect(enPanelHtml).toContain('4 votes');
+    expect(enPanelHtml).toContain('Release March 2027');
+    expect(enPanelHtml).toContain('Notify subscribers (3)');
+    expect(enPanelHtml).toContain('data-testid="roadmap-admin-vy-dedupe-btn"');
+    expect(enPanelHtml).toContain('data-testid="roadmap-admin-changelog-card"');
+  });
+
+  it('parses ?tab=changelog and sanitizes markdown without raw HTML or javascript: links (#4400)', () => {
+    expect(initialRoadmapTab('?tab=changelog')).toBe('changelog');
+    expect(initialRoadmapTab('?tab=roadmap&embed=1')).toBe('roadmap');
+    expect(initialRoadmapTab('')).toBe('ideas');
+
+    const rendered = renderToStaticMarkup(
+      <SafeRoadmapMarkdown
+        markdown={[
+          '## New release',
+          '- **Fast filters** with `CSV` and [docs](https://docs.example.com/v2)',
+          '- Bad link [click](javascript:alert(1)) and <script>alert(2)</script>',
+        ].join('\n')}
+      />,
+    );
+    expect(rendered).toContain('<h3');
+    expect(rendered).toContain('Fast filters</strong>');
+    expect(rendered).toContain('href="https://docs.example.com/v2"');
+    expect(rendered).not.toContain('href="javascript:');
+    expect(rendered).toContain('[click](javascript:alert(1))');
+    expect(rendered).not.toContain('<script>');
+    expect(rendered).toContain('&lt;script&gt;alert(2)&lt;/script&gt;');
   });
 
   it('renders PublicRoadmapPage cleanly in standalone and ?embed=1 modes without user session', () => {

@@ -135,6 +135,10 @@ export const AI_FEATURES = {
   'projects.weekly_status': 'projects',
   // Vy's cycle summary for one project sprint/cycle (#4361): transient 3 to 5 plain sentences from deterministic cycle metrics and task titles/comments only, never reading notes.
   'projects.cycle_summary': 'projects',
+  // Vy's duplicate-idea suggestions on a public roadmap board (#4400): reads bounded item titles/summaries only, never auto-merges.
+  'projects.roadmap_dedupe': 'projects',
+  // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
+  'projects.roadmap_changelog_draft': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.
