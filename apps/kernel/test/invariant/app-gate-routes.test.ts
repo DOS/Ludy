@@ -86,6 +86,13 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap OTP verify gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap idea submission gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap vote/unsubscribe gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
+  // #4438 / #4441 (eSign Slice 5c): Step 0 pre-registration; Slice 5c (#4441) moves each route from 'pending' to 'sql' (crove_sign.api_key_* definer gates org_app_on + entitlement -> opaque 404).
+  '/api/v1/sign/envelopes': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST envelope list pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
+  '/api/v1/sign/envelopes/:id': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST envelope detail pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
+  '/api/v1/sign/envelopes/:id/sealed': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST sealed PDF download pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
+  '/api/v1/sign/envelopes/:id/certificate': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST audit certificate pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
+  '/api/v1/sign/templates': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST template list pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
+  '/api/v1/sign/envelopes/from-template': { app: 'sign', gate: 'pending', why: '#4438 / #4441 (external eSign REST draft envelope creation pre-registration; gated in SQL via crove_sign.api_key_* + org_app_on + entitlement -> 404)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

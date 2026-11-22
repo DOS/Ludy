@@ -90,6 +90,9 @@ const MACHINERY = new Set([
   // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
   'crove_projects.roadmap_otp',
   'crove_projects.roadmap_subscriber',
+  // #4438 / #4441 (eSign Slice 5c): scoped org API keys storing SHA-256 key hashes only (key_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  'crove_sign.api_key',
   // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
   // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
   'crove_sign.ca_connection',
@@ -100,6 +103,10 @@ const MACHINERY = new Set([
   // #3510 (eSign Slice 2): hashed template direct link capability tokens (token_sha256):
   // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
   'crove_sign.template_direct_link',
+  // #4438 / #4440 (eSign Slice 5b): outbound webhook endpoints with broker-sealed HMAC secrets (secret_envelope) and safe-metadata delivery logs:
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_sign.webhook',
+  'crove_sign.webhook_delivery',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -129,6 +136,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_projects.roadmap_announcement',
   'crove_projects.time_entry',
+  'crove_sign.api_key',
+  'crove_sign.kyc_check',
+  'crove_sign.playbook_check',
+  'crove_sign.playbook_rule',
+  'crove_sign.webhook',
+  'crove_sign.webhook_delivery',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -854,6 +867,17 @@ const signTemplateRoleRow = (org: string, templateId: string) => ({
   routing_order: 1,
   delivery_mode: 'link',
   require_email_otp: 'false',
+});
+const signWebhookRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  url: 'https://hooks.example.com/ludy-sign',
+  events: '{sign.envelope.completed}',
+  enabled: 'true',
+  key_id: 'rls-matrix',
+  secret_envelope: 'A'.repeat(16),
+  secret_hint: 'whk_00000000',
+  created_by: o.owner,
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -3654,6 +3678,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Definer-only machinery (eSign Slice 5c, #4441, step 0 via #4438): scoped org API keys storing SHA-256 key hashes only.
+  'crove_sign.api_key': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix API key ${tag()}`,
+        key_prefix: `ludy_${'sk'}_${'0'.repeat(8)}`,
+        key_sha256: hex64(),
+        scopes: '{sign:read}',
+        created_by: o.owner,
+      },
+    }),
+  },
   // Definer-only machinery (eSign Slice 2c, #3510): org-level remote CA credentials with encrypted secret_envelope.
   'crove_sign.ca_connection': {
     make: (o) => {
@@ -3748,6 +3786,45 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // eSign Slice 5e (#4443, step 0 via #4438): sender-side KYC attachment verification check bound to an envelope, an attachment field, and a file.
+  'crove_sign.kyc_check': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      const field = {
+        org_id: o.id,
+        id: randomUUID(),
+        envelope_id: envelope.id,
+        signer_id: signer.id,
+        field_type: 'attachment',
+        page_number: 1,
+        x_norm: '0.100000',
+        y_norm: '0.100000',
+        w_norm: '0.300000',
+        h_norm: '0.080000',
+        required: 'true',
+        proposed_by_ai: 'false',
+      };
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+          { table: 'crove_sign.field', values: field },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          field_id: field.id,
+          file_id: o.file,
+          file_sha256: hex64(),
+          status: 'pending',
+          mode: 'deterministic',
+          findings_json: '{}',
+        },
+      };
+    },
+  },
   // eSign Slice 4a (#3817): a member's own saved handwritten or typed signature and initials (one row per member and kind), read and written by that member alone in a user context.
   'crove_sign.member_signature': {
     noInsertControl:
@@ -3780,6 +3857,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         width_px: 1,
         height_px: 1,
         status: 'active',
+        created_by: o.owner,
+      },
+    }),
+  },
+  // eSign Slice 5d (#4442, step 0 via #4438): contract playbook evaluation findings bound to one envelope.
+  'crove_sign.playbook_check': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          source_sha256: envelope.source_sha256,
+          mode: 'deterministic',
+          findings_json: '[]',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // eSign Slice 5d (#4442, step 0 via #4438): org-editable SME contract playbook checklist rule.
+  'crove_sign.playbook_rule': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        title: `RLS matrix playbook rule ${tag()}`,
+        guidance: 'Cap breach penalty at 8 percent of breached obligation value.',
+        severity: 'warn',
+        match_keywords: '{phat}',
+        active: 'true',
         created_by: o.owner,
       },
     }),
@@ -3906,6 +4016,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_sign.template', values: template }],
         row: signTemplateRoleRow(o.id, template.id),
+      };
+    },
+  },
+  // Definer-only machinery (eSign Slice 5b, #4440, step 0 via #4438): outbound webhook endpoint with broker-sealed HMAC secret_envelope.
+  'crove_sign.webhook': {
+    make: (o) => ({ row: signWebhookRow(o) }),
+  },
+  // Definer-only machinery (eSign Slice 5b, #4440, step 0 via #4438): outbound webhook delivery log carrying safe metadata only.
+  'crove_sign.webhook_delivery': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const webhook = signWebhookRow(o);
+      const id = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.webhook', values: webhook },
+        ],
+        row: {
+          org_id: o.id,
+          id,
+          webhook_id: webhook.id,
+          envelope_id: envelope.id,
+          event_type: 'sign.envelope.completed',
+          status: 'queued',
+          payload_json: JSON.stringify({
+            eventId: id,
+            eventType: 'sign.envelope.completed',
+            occurredAt: '2026-11-22T00:00:00.000Z',
+            orgId: o.id,
+            envelopeId: envelope.id,
+            status: 'completed',
+          }),
+        },
       };
     },
   },
