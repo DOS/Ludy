@@ -551,8 +551,8 @@ export const projectColumnDelete = defineCommand({
     const remainingBeforeUpdate = existing.filter((c) => c.id !== target.id);
     assertTodoAndDoneRemain(remainingBeforeUpdate);
 
-    // Inspect and lock visible tasks attached to the deleted column so status migration respects
-    // agent checkout leases and never alters cancelled or le_scope-hidden tasks.
+    // Inspect and lock visible tasks whose canonical status still matches the deleted column so stale
+    // column_id pointers left by direct kernel.task.set_status updates are never pulled back or lease-checked.
     const { rows: attachedTasks } = await sql<{
       id: string;
       status: TaskStatus;
@@ -565,33 +565,36 @@ export const projectColumnDelete = defineCommand({
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${project.id}::uuid
         AND pt.column_id = ${target.id}::uuid
-        AND t.status <> 'cancelled'
+        AND t.status = ${target.taskStatus}
       FOR UPDATE OF t`.execute(ctx.trx);
 
     if (target.taskStatus !== fallback.taskStatus) {
       for (const task of attachedTasks) {
-        if (task.status !== fallback.taskStatus) {
-          const locked = task.checkout_run_id !== null && task.lock_expires_at !== null && new Date(task.lock_expires_at) > ctx.now;
-          if (locked) {
-            throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
-          }
+        const locked = task.checkout_run_id !== null && task.lock_expires_at !== null && new Date(task.lock_expires_at) > ctx.now;
+        if (locked) {
+          throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
         }
       }
       for (const task of attachedTasks) {
-        if (task.status !== fallback.taskStatus) {
-          await ctx.run('kernel.task.set_status', { id: task.id, status: fallback.taskStatus });
-        }
+        await ctx.run('kernel.task.set_status', { id: task.id, status: fallback.taskStatus });
       }
     }
 
     if (target.taskStatus === fallback.taskStatus) {
-      await ctx.trx
-        .updateTable('crove_projects.project_task')
-        .set({ column_id: fallback.id })
-        .where('org_id', '=', ctx.orgId)
-        .where('project_id', '=', project.id)
-        .where('column_id', '=', target.id)
-        .execute();
+      // Move active same-status tasks and le_scope-hidden tasks (NOT EXISTS hides callers from seeing hidden rows)
+      // while leaving visible stale/cancelled tasks pointing at target so ON DELETE SET NULL clears their column_id.
+      await sql`UPDATE crove_projects.project_task AS pt
+        SET column_id = ${fallback.id}::uuid
+        WHERE pt.org_id = ${ctx.orgId}::uuid
+          AND pt.project_id = ${project.id}::uuid
+          AND pt.column_id = ${target.id}::uuid
+          AND NOT EXISTS (
+            SELECT 1
+              FROM crove_kernel.task t
+             WHERE t.org_id = pt.org_id
+               AND t.id = pt.task_id
+               AND t.status <> ${target.taskStatus}
+          )`.execute(ctx.trx);
     } else if (attachedTasks.length > 0) {
       const visibleIds = attachedTasks.map((t) => t.id);
       await ctx.trx
@@ -604,8 +607,8 @@ export const projectColumnDelete = defineCommand({
         .execute();
     }
 
-    // Any remaining project_task rows pointing to target (e.g. cancelled or le_scope-hidden tasks when statuses differed)
-    // fall back to column_id = NULL via ON DELETE SET NULL (column_id).
+    // Any remaining project_task rows pointing to target (stale status mismatches, cancelled, or le_scope-hidden
+    // tasks when statuses differed) fall back to column_id = NULL via ON DELETE SET NULL (column_id).
     await ctx.trx
       .deleteFrom('crove_projects.project_column')
       .where('org_id', '=', ctx.orgId)

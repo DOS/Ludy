@@ -435,6 +435,26 @@ suite('projects custom board columns (#2605)', () => {
     expect(weekly.columns?.find((c) => c.id === reviewCol.id)?.taskCount).toBe(1);
     expect(weekly.columns?.find((c) => c.id === extraColRes.column.id)?.taskCount).toBe(0);
 
+    // Deleting the apparently empty extra column with a different-status fallback (todoCol) must NOT revert
+    // agentTaskId back to todo and must reset its stale project_task.column_id to NULL so reads keep resolving reviewCol.
+    await exec(owner.userId, org.orgId, 'projects.column.delete', {
+      projectId,
+      columnId: extraColRes.column.id,
+      fallbackColumnId: todoCol.id,
+    });
+    await withAdmin(async (c) => {
+      const { rows } = await c.query<{ column_id: string | null }>(
+        'SELECT column_id FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2 AND task_id = $3',
+        [org.orgId, projectId, agentTaskId],
+      );
+      expect(rows[0]?.column_id).toBeNull();
+    });
+    const boardAfterDelete = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId });
+    expect(boardAfterDelete.tasks.find((t) => t.id === agentTaskId)).toMatchObject({
+      status: 'in_review',
+      columnId: reviewCol.id,
+    });
+
     // Cross-org isolation: orgB cannot see or mutate org's columns; agent actor cannot call column commands.
     await expect(
       exec(owner.userId, orgB.orgId, 'projects.column.init_defaults', { projectId }),
