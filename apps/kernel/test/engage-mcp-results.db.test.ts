@@ -689,6 +689,15 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       for (const bad of [{ orgId: orgs.b }, { limit: 1 }, { status: 'paused' }]) expect((await refusal(seats('owner', orgs.a, bad))).status, JSON.stringify(bad)).toBeLessThan(500);
     });
 
+    it('is for an owner or an admin only: a member or a viewer is refused even on a company grant (the member-bound grants are refused with the other reads below)', async () => {
+      for (const who of ['member', 'viewer']) {
+        const error = await refusal(seats(who));
+        // The grant of a member or a viewer is no company grant at all (its consenting user must be an owner or an admin), so the call is refused before the query: 401 or 403, never an answer.
+        expect([401, 403], `company grant of ${who}`).toContain(error.status);
+      }
+      for (const who of ['owner', 'admin']) await expect(seats(who), who).resolves.toMatchObject({ truncated: false });
+    });
+
     it('stops at 50 seats and says there are more', async () => {
       for (let i = 0; i < 51; i += 1) await seat(orgs.d, `Vị trí ${String(i).padStart(2, '0')}`);
       const got = await seats('owner', orgs.d);
