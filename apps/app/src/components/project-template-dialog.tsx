@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Dialogs to create a project from a starter or org template, or save an existing project as a template (#2607).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { BuiltinProjectTemplateKey, ProjectTemplateSummary } from '@ludy/kernel-contract';
+import type { BuiltinProjectTemplateKey, ProjectTemplateSummary, ProjectVisibility } from '@ludy/kernel-contract';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
@@ -13,7 +13,7 @@ import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
-import { refreshProjectQueries } from './project-task-dialog.tsx';
+import { ProjectVisibilityField, refreshProjectQueries } from './project-task-dialog.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -61,6 +61,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [description, setDescription] = useState('');
   const [descEdited, setDescEdited] = useState(false);
   const [startDate, setStartDate] = useState(() => localTodayInZone(tz));
+  const [visibility, setVisibility] = useState<ProjectVisibility>('org');
   const [nameError, setNameError] = useState(false);
   const [templateError, setTemplateError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
@@ -99,6 +100,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
       setNameEdited(false);
       setDescEdited(false);
       setStartDate(localTodayInZone(tz));
+      setVisibility('org');
       createFromTemplate.reset();
       archiveTemplate.reset();
     }
@@ -171,6 +173,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
         name: trimmedName,
         description: trimmedDesc || null,
         ...(startDate ? { startDate } : {}),
+        visibility,
         timeZone: tz,
         language,
         idempotencyKey: idemKey,
@@ -354,14 +357,17 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
           </div>
 
           {mode === 'create' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="template-start-date">{t('templates.startDateLabel')}</Label>
-              <DateInput
-                id="template-start-date"
-                value={startDate}
-                onChange={setStartDate}
-                aria-label={t('templates.startDateLabel')}
-              />
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="template-start-date">{t('templates.startDateLabel')}</Label>
+                <DateInput
+                  id="template-start-date"
+                  value={startDate}
+                  onChange={setStartDate}
+                  aria-label={t('templates.startDateLabel')}
+                />
+              </div>
+              <ProjectVisibilityField id="template-project-visibility" value={visibility} onChange={setVisibility} />
             </div>
           )}
 

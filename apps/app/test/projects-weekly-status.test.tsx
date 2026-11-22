@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectWeeklyStatus as ProjectWeeklyStatusData } from '@ludy/kernel-contract';
+import type { ProjectVisibility, ProjectWeeklyStatus as ProjectWeeklyStatusData } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 
@@ -28,6 +28,7 @@ const {
   buildWeeklyStatusDraftSeed,
   projectWeeklyStatusQueryKey,
   updateWeeklyStatusDraftBody,
+  weeklyStatusShareSuccessKey,
 } = await import('../src/components/project-weekly-status.tsx');
 const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 
@@ -70,6 +71,7 @@ function renderCard({
   defaultComposerOpen = false,
   canManage = false,
   projectStatus,
+  projectVisibility,
   otherMemberCount,
   notesEnabled,
   data,
@@ -79,6 +81,7 @@ function renderCard({
   defaultComposerOpen?: boolean;
   canManage?: boolean;
   projectStatus?: string;
+  projectVisibility?: ProjectVisibility;
   otherMemberCount?: number;
   notesEnabled?: boolean;
   data?: ProjectWeeklyStatusData;
@@ -100,6 +103,7 @@ function renderCard({
             defaultComposerOpen={defaultComposerOpen}
             canManage={canManage}
             projectStatus={projectStatus}
+            projectVisibility={projectVisibility}
             otherMemberCount={otherMemberCount}
             notesEnabled={notesEnabled}
           />
@@ -255,5 +259,19 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
       deterministicBody: (v) => v.done,
     });
     expect(Array.from(longSeeded.title).length).toBeLessThanOrEqual(200);
+
+    const privateHtml = renderCard({
+      locale: 'vi',
+      data: aiData,
+      canManage: true,
+      projectVisibility: 'private',
+      otherMemberCount: 1,
+      notesEnabled: true,
+      defaultComposerOpen: true,
+    });
+    expect(privateHtml).toContain('data-testid="project-weekly-status-private-note-hint"');
+    expect(weeklyStatusShareSuccessKey('private')).toBe('composer.sharedPrivateSuccess');
+    expect(weeklyStatusShareSuccessKey('org')).toBe('composer.sharedSuccess');
+    expect(weeklyStatusShareSuccessKey(undefined)).toBe('composer.sharedSuccess');
   });
 });

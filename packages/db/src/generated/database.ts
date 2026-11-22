@@ -3833,6 +3833,7 @@ export interface ProjectsProjectTable {
   cycles_enabled: Generated<boolean>;
   cycle_duration_weeks: Generated<number>;
   points_enabled: Generated<boolean>;
+  visibility: Generated<string>;
 }
 
 /** crove_projects.project_task */

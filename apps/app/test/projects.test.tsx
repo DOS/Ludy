@@ -68,6 +68,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
 const { ProjectsPage, ProjectDetailPage, boardOrderClientForOrg, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
+const { buildProjectDetailsUpdateInput, ProjectVisibilityField } = await import('../src/components/project-task-dialog.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
   <QueryClientProvider client={queryClientState.current}>
@@ -284,6 +285,7 @@ describe('projects SSR screens & board (#2591)', () => {
           ownerUserId: 'u1',
           ownerName: 'Minh',
           status: 'active',
+          visibility: 'org',
           memberCount: 2,
           openTaskCount: 4,
           doneTaskCount: 1,
@@ -309,6 +311,7 @@ describe('projects SSR screens & board (#2591)', () => {
         ownerUserId: 'u1',
         ownerName: 'Minh',
         status: 'active',
+        visibility: 'org',
         canManage: true,
         canWrite: true,
         createdAt: '2026-11-01T00:00:00.000Z',
@@ -483,6 +486,7 @@ describe('projects SSR screens & board (#2591)', () => {
         name: 'Dự án A',
         description: null,
         status: 'active',
+        visibility: 'org',
         ownerUserId: 'u1',
         ownerName: 'Minh',
         canWrite: true,
@@ -548,6 +552,7 @@ describe('projects SSR screens & board (#2591)', () => {
         name: 'Dự án A',
         description: null,
         status: 'active',
+        visibility: 'org',
         ownerUserId: 'u1',
         ownerName: 'Minh',
         canWrite: true,
@@ -758,5 +763,110 @@ describe('projects SSR screens & board (#2591)', () => {
         input: { projectId: baseBoard.project.id, taskId: 't1', place: 'before', anchorId: 't2', idempotencyKey: 'k-4' },
       },
     ]);
+  });
+
+  it('renders private lock badge, member count pill, and visibility selector notices (#2604)', () => {
+    const qc = queryClientState.current;
+    qc.clear();
+    const privateId = '00000000-0000-4000-8000-000000000009';
+    const listData: ProjectListResult = {
+      canWrite: true,
+      truncated: false,
+      projects: [
+        {
+          id: privateId,
+          name: 'Chiến lược M&A',
+          description: 'Tài liệu bảo mật',
+          ownerUserId: 'u1',
+          ownerName: 'Minh',
+          status: 'active',
+          visibility: 'private',
+          memberCount: 2,
+          openTaskCount: 1,
+          doneTaskCount: 0,
+          canManage: true,
+          createdAt: '2026-11-01T00:00:00.000Z',
+          updatedAt: '2026-11-12T00:00:00.000Z',
+        },
+      ],
+    };
+    qc.setQueryData(['projects', 'list', { status: ['active', 'on_hold', 'done'] }], listData);
+
+    const listHtml = renderToStaticMarkup(wrap('vi', <ProjectsPage />));
+    expect(listHtml).toContain('data-testid="project-private-badge"');
+    expect(listHtml).toContain('Riêng tư');
+    expect(listHtml).toContain('data-testid="project-member-count-pill"');
+    expect(listHtml).toContain('2 thành viên');
+
+    const boardData: ProjectBoard = {
+      project: {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: 'Chiến lược M&A',
+        description: null,
+        ownerUserId: 'u1',
+        ownerName: 'Minh',
+        status: 'active',
+        visibility: 'private',
+        canManage: true,
+        canWrite: true,
+        createdAt: '2026-11-01T00:00:00.000Z',
+        updatedAt: '2026-11-12T00:00:00.000Z',
+      },
+      members: [
+        { userId: 'u1', role: 'owner', displayName: 'Minh', email: null, onProject: true },
+        { userId: 'u2', role: 'member', displayName: 'Lan', email: null, onProject: true },
+        { userId: 'u3', role: 'member', displayName: 'Hoa', email: null, onProject: false },
+      ],
+      seats: [],
+      isTeamOrg: true,
+      viewerHasSeat: true,
+      tasks: [],
+      totalVisible: 0,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+    qc.setQueryData(['projects', 'board', { projectId: '00000000-0000-4000-8000-000000000001' }], boardData);
+
+    const detailHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
+    expect(detailHtml).toContain('data-testid="project-detail-private-badge"');
+    expect(detailHtml).toContain('data-testid="project-detail-members-pill"');
+    expect(detailHtml).toContain('2 thành viên');
+
+    const orgNoticeHtml = renderToStaticMarkup(
+      wrap('vi', <ProjectVisibilityField id="vis-org" value="org" onChange={() => undefined} />),
+    );
+    expect(orgNoticeHtml).toContain('data-visibility="org"');
+    expect(orgNoticeHtml).toContain('Mọi thành viên trong tổ chức đều thấy dự án này');
+    expect(orgNoticeHtml).toContain('[&amp;&gt;select]:min-h-11');
+
+    const privateNoticeHtml = renderToStaticMarkup(
+      wrap('en', <ProjectVisibilityField id="vis-priv" value="private" onChange={() => undefined} />),
+    );
+    expect(privateNoticeHtml).toContain('data-visibility="private"');
+    expect(privateNoticeHtml).toContain('Only organization owners, admins, and invited project members');
+
+    const unchangedDetails = buildProjectDetailsUpdateInput({
+      projectId: '00000000-0000-4000-8000-000000000001',
+      name: 'Chiến dịch Tết',
+      description: null,
+      visibility: 'org',
+      currentVisibility: 'org',
+      cyclesEnabled: false,
+      cycleDurationWeeks: 2,
+      pointsEnabled: false,
+    });
+    expect('visibility' in unchangedDetails).toBe(false);
+
+    const changedDetails = buildProjectDetailsUpdateInput({
+      projectId: '00000000-0000-4000-8000-000000000001',
+      name: 'Chiến dịch Tết',
+      description: null,
+      visibility: 'private',
+      currentVisibility: 'org',
+      cyclesEnabled: false,
+      cycleDurationWeeks: 2,
+      pointsEnabled: false,
+    });
+    expect(changedDetails.visibility).toBe('private');
   });
 });

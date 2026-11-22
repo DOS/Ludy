@@ -1396,9 +1396,11 @@ export type MeetingsCaptureSessionTable = Refine<
   { kind: MeetingCaptureKind; ended_reason: MeetingCaptureEndedReason | null }
 >;
 
-// Projects that group kernel tasks (#2591, ADR-0048) and custom board columns (#2605, ADR-0056).
+// Projects that group kernel tasks (#2591, ADR-0048), custom board columns (#2605, ADR-0056), and private projects (#2604, ADR-0056).
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+export const PROJECT_VISIBILITIES = ['org', 'private'] as const;
+export type ProjectVisibility = (typeof PROJECT_VISIBILITIES)[number];
 export const PROJECT_COLUMN_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
 export type ProjectColumnStatus = (typeof PROJECT_COLUMN_STATUSES)[number];
 export const PROJECT_COLUMN_COLORS = ['neutral', 'primary', 'warning', 'proposal', 'success', 'destructive'] as const;
@@ -1417,6 +1419,7 @@ export type ProjectsProjectTable = Refine<
   G.ProjectsProjectTable,
   {
     status: Generated<ProjectStatus>;
+    visibility: Generated<ProjectVisibility>;
   }
 >;
 

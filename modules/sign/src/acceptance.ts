@@ -4,9 +4,9 @@
 // caller's own transaction so per-org 'projects' enablement, project access, and le_scope task RLS all apply unchanged.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@ludy/db';
+import type { MemberRole, SignSourceKind } from '@ludy/db';
 import { zId, type ProjectBoard, type ProjectDetail, type ProjectStatus } from '@ludy/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { DomainError, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
@@ -59,6 +59,13 @@ export const signAcceptanceSource = defineQuery({
 
     const meta = metaRows[0];
     const board = boardRes.value;
+    if (board.project.visibility === 'private') {
+      throw new DomainError(
+        'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN',
+        422,
+        'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
+      );
+    }
     const completedTasks: SignAcceptanceSourceTask[] = board.tasks
       .filter((t) => t.status === 'done')
       .map((t) => ({ id: t.id, title: t.title }));
@@ -93,6 +100,13 @@ export const signAcceptanceAiStatus = defineQuery({
         module: 'projects',
       });
     }
+    if (projRes.value.visibility === 'private') {
+      throw new DomainError(
+        'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN',
+        422,
+        'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
+      );
+    }
 
     const { rows } = await sql<{ ai_stopped: boolean }>`
       SELECT
@@ -110,5 +124,69 @@ export const signAcceptanceAiStatus = defineQuery({
     return { aiStopped: rows[0]?.ai_stopped === true };
   },
 });
+
+export async function assertCanUseProjectAcceptanceSource(
+  ctx: Pick<CommandContext, 'trx' | 'orgId' | 'actor'> & Partial<Pick<CommandContext, 'installed'>>,
+  sourceKind: SignSourceKind | string,
+  sourceId: string | null,
+): Promise<void> {
+  if (sourceKind !== 'project_acceptance') return;
+  if (ctx.actor.type === 'system') return;
+  if (ctx.actor.type !== 'user') {
+    throw new DomainError('SIGN_FORBIDDEN', 403, 'Only authenticated members can create acceptance envelopes');
+  }
+  if (!sourceId) {
+    throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
+  }
+  if (typeof ctx.installed === 'function' && !ctx.installed('projects')) {
+    throw new DomainError('SIGN_SOURCE_NOT_FOUND', 404, 'Project not found');
+  }
+
+  const { rows } = await sql<{ state: number }>`
+    SELECT crove_sign.check_project_acceptance_source(${ctx.orgId}::uuid, ${sourceId}::uuid) AS state
+  `.execute(ctx.trx);
+  const state = Number(rows[0]?.state ?? 0);
+  if (state === 0) {
+    throw new DomainError('SIGN_SOURCE_NOT_FOUND', 404, 'Project not found');
+  }
+  if (state === 1) {
+    throw new DomainError(
+      'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN',
+      422,
+      'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
+    );
+  }
+}
+
+function isAcceptanceCheckViolation(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const pgErr = err as { code?: unknown; message?: unknown };
+  return (
+    pgErr.code === '23514' &&
+    typeof pgErr.message === 'string' &&
+    pgErr.message.includes('SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN')
+  );
+}
+
+export async function insertEnvelopeGuardingProjectAcceptance<T>(
+  sourceKind: SignSourceKind | string,
+  insertFn: () => Promise<T>,
+): Promise<T> {
+  if (sourceKind !== 'project_acceptance') {
+    return await insertFn();
+  }
+  try {
+    return await insertFn();
+  } catch (err) {
+    if (!isAcceptanceCheckViolation(err)) {
+      throw err;
+    }
+    throw new DomainError(
+      'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN',
+      422,
+      'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
+    );
+  }
+}
 
 export const signAcceptanceQueries = [signAcceptanceSource, signAcceptanceAiStatus];

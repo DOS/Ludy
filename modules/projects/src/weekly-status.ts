@@ -474,7 +474,7 @@ export const projectWeeklyStatusShareNote = defineCommand({
       title: input.title,
       body: input.body,
       tags: [PROJECT_WEEKLY_STATUS_NOTE_TAG],
-      visibility: 'org',
+      visibility: project.visibility === 'private' ? 'private' : 'org',
       tainted: Boolean(input.tainted),
       link: { targetType: 'projects.project', targetId: project.id },
     });

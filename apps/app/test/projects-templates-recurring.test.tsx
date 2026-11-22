@@ -116,6 +116,7 @@ describe('projects templates & recurring UI (#2607)', () => {
         ownerUserId: null,
         ownerName: null,
         status: 'active',
+        visibility: 'org',
         canManage: true,
         canWrite: true,
         createdAt: '2026-11-01T00:00:00.000Z',
@@ -148,6 +149,13 @@ describe('projects templates & recurring UI (#2607)', () => {
     expect(detailHtml).toContain('Lưu làm mẫu');
     expect(detailHtml).toContain('task-recurrence-badge');
     expect(detailHtml).toContain('Hàng tháng');
+
+    qc.setQueryData(
+      ['projects', 'board', { projectId: '00000000-0000-4000-8000-000000000001' }],
+      { ...boardData, project: { ...boardData.project, visibility: 'private' } },
+    );
+    const privateDetailHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
+    expect(privateDetailHtml).not.toContain('save-as-template-button');
   });
 
   it('renders repeat badge on both board and list views and renders recurrence control on TaskDetailPage', () => {

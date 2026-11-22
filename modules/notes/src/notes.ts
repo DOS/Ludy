@@ -46,7 +46,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { loadNoteAttachments } from './attachments.ts';
-import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
+import { canOpen, insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
 
@@ -691,6 +691,14 @@ export const recordPanel = defineQuery({
   access: READERS,
   handler: async (ctx, input): Promise<NoteRecordPanel> => {
     const userId = userOf(ctx.actor);
+    if (
+      input.targetType === 'kernel.task' ||
+      (input.targetType === 'projects.project' && ctx.installed('projects'))
+    ) {
+      if (!(await canOpen(ctx, input.targetType, input.targetId))) {
+        return { pinned: [], latest: [], todos: [] };
+      }
+    }
     const base = ctx.trx
       .selectFrom('crove_notes.note as n')
       .innerJoin('crove_notes.link as l', (j) => j.onRef('l.org_id', '=', 'n.org_id').onRef('l.note_id', '=', 'n.id'))
