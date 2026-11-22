@@ -182,6 +182,19 @@ describe('the follow-up task card (#4148)', () => {
     }
   });
 
+  it('tells the approver that every member reads the task title, on this kind of card only (#4370)', () => {
+    const en = render('en', 'pending', task, 'kernel.conversation_follow_up');
+    expect(en).toContain('data-testid="engage-followup-visible"');
+    expect(en).toContain('Every member of the company can read this task and its title');
+    const vi = render('vi', 'pending', task, 'kernel.conversation_follow_up');
+    expect(vi).toContain('Mọi thành viên trong công ty đều đọc được công việc này');
+    expect(vi).not.toMatch(/trợ lý/i);
+    // Another kind of ask has no such line, and the key shows as words, never as a key.
+    const other = render('en', 'pending', { command: 'kernel.conversation.hide_approved', fields: [{ key: 'hidden', value: 'true', long: false }], about: [] } satisfies EngageProposalView, 'kernel.conversation_hide');
+    expect(other).not.toContain('engage-followup-visible');
+    for (const html of [en, vi]) expect(html).not.toContain('engageFollowUpVisible');
+  });
+
   it('says in words that the seat is archived or paused, so the approver sees it before approving (#4370)', () => {
     const archived = { ...task, about: [...task.about, { label: 'assigneeState', value: 'archived' }] } satisfies EngageProposalView;
     const en = render('en', 'pending', archived, 'kernel.conversation_follow_up');

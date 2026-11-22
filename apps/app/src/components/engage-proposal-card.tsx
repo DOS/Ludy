@@ -134,6 +134,12 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
           </div>
         ))}
       </dl>
+      {kindKey === 'kernel_conversation_follow_up' && (
+        // A task is read by every member, and the title is the AI's text: the approver is told before approving, since the title may carry what the customer wrote in a thread other members cannot read (#4370).
+        <p className="text-sm text-muted-foreground" data-testid="engage-followup-visible">
+          {t('engageFollowUpVisible')}
+        </p>
+      )}
       {client && <p className="text-sm text-muted-foreground">{t('engageWhoAsked', { client: client.client, host: client.host })}</p>}
       {/* What is true now: nothing yet while it waits; once decided, what was decided. */}
       <p role="note" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">

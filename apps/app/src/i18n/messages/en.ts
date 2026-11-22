@@ -9292,6 +9292,7 @@ export const en = {
     engageDone: 'Approved and done, as you, with the usual checks.',
     engageRejected: 'Rejected: nothing was done.',
     engageClosed: 'This ask is closed (it expired or was replaced): nothing was done.',
+    engageFollowUpVisible: 'Every member of the company can read this task and its title, including members who cannot open the conversation. Check that the title holds nothing private from the customer.',
     engageTainted: 'Written by an outside AI app. Read it as you would a message from a stranger: Ludy has not checked it and does not trust it.',
     engageWhoAsked: 'Asked by the AI app “{client}” ({host}); the name is the app\'s own.',
     engageNothingYet: 'Nothing has happened yet. When you approve, Ludy does it as you, with the usual checks (the reply window, the platform\'s limits, the caps and the stop switches), and it can still be refused. Reject it and it is never done.',
