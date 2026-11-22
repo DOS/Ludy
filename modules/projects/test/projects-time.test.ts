@@ -18,6 +18,7 @@ import {
   sumTimeBillableAmounts,
   validateEndedAndDuration,
 } from '../src/index.ts';
+import { computeStoppedTimeEntry } from '../src/shared.ts';
 
 describe('@ludy/mod-projects time tracking helpers (#2600)', () => {
   it('computes billable amounts with decimal precision and avoids IEEE-754 float drift', () => {
@@ -121,5 +122,31 @@ describe('@ludy/mod-projects time tracking helpers (#2600)', () => {
       resolveUpdatedCompletedTimestamps(start, end60, 60, { startedAt: '2026-11-22T02:00:00.000Z' }).endedAt.toISOString(),
     ).toBe('2026-11-22T03:00:00.000Z');
     expect(new Date(zonedInstant('+07:00', '2026-11-22', 0)).toISOString()).toBe('2026-11-21T17:00:00.000Z');
+  });
+
+  it('clamps stopped timer timing cleanly to 1..14400 minutes and handles clock skew', () => {
+    const started = new Date('2026-11-22T01:00:00.000Z');
+    expect(computeStoppedTimeEntry(started, new Date('2026-11-22T01:00:10.000Z'))).toEqual({
+      endedAt: new Date('2026-11-22T01:00:10.000Z'),
+      durationMinutes: 1,
+      clampedToMax: false,
+    });
+    expect(computeStoppedTimeEntry(started, new Date('2026-11-22T01:45:00.000Z'))).toEqual({
+      endedAt: new Date('2026-11-22T01:45:00.000Z'),
+      durationMinutes: 45,
+      clampedToMax: false,
+    });
+    const wayLater = new Date(started.getTime() + 20 * 24 * 60 * 60_000);
+    expect(computeStoppedTimeEntry(started, wayLater)).toEqual({
+      endedAt: wayLater,
+      durationMinutes: 14400,
+      clampedToMax: true,
+    });
+    const skewedPast = new Date(started.getTime() - 5 * 60_000);
+    expect(computeStoppedTimeEntry(started, skewedPast)).toEqual({
+      endedAt: started,
+      durationMinutes: 1,
+      clampedToMax: false,
+    });
   });
 });

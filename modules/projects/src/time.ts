@@ -41,6 +41,7 @@ import {
   assertNotArchived,
   canManageProject,
   canWriteProject,
+  computeStoppedTimeEntry,
   loadProject,
   memberProfilesMap,
   taskNotFound,
@@ -375,15 +376,6 @@ async function hydrateSingleTimeEntry(
   return hydrateTimeEntries([row], profiles, callerUserId, role, metaMap)[0]!;
 }
 
-function computeStoppedDuration(startedAt: Date, now: Date): { endedAt: Date; durationMinutes: number; clampedToMax: boolean } {
-  const startedMs = startedAt.getTime();
-  const endedAt = now.getTime() < startedMs ? new Date(startedMs) : now;
-  const rawMinutes = Math.round((endedAt.getTime() - startedMs) / 60_000);
-  const clampedToMax = rawMinutes > PROJECT_TIME_DURATION_MAX;
-  const durationMinutes = Math.min(PROJECT_TIME_DURATION_MAX, Math.max(PROJECT_TIME_DURATION_MIN, rawMinutes));
-  return { endedAt, durationMinutes, clampedToMax };
-}
-
 export function validateEndedAndDuration(startedAt: Date, endedAt: Date, durationMinutesInput?: number): number {
   const rawMinutes = Math.round((endedAt.getTime() - startedAt.getTime()) / 60_000);
   if (rawMinutes > PROJECT_TIME_DURATION_MAX) {
@@ -569,8 +561,8 @@ export const projectTimeStart = defineCommand({
         runningProject = await loadTimeProject(ctx.trx, ctx.orgId, existingRunning.project_id, true);
       }
 
-      assertTimeProjectWritable(runningProject);
-      const stoppedTiming = computeStoppedDuration(toDate(existingRunning.started_at), ctx.now);
+      // Allow stopExisting to close an older running timer even if that prior project was archived.
+      const stoppedTiming = computeStoppedTimeEntry(existingRunning.started_at, ctx.now);
       const updatedOld = await ctx.trx
         .updateTable('crove_projects.time_entry')
         .set({
@@ -734,11 +726,11 @@ export const projectTimeStop = defineCommand({
     if (existing.ended_at !== null) {
       throw new DomainError('TIME_ENTRY_NOT_RUNNING', 409, 'Đồng hồ bấm giờ này đã dừng trước đó');
     }
-    if (existing.task_id !== null && !existing.task_visible) {
-      throw taskNotFound();
-    }
     if (existing.user_id !== userId && !canManageProject(ctx.role, userId, project.owner_user_id)) {
       throw new DomainError('FORBIDDEN', 403, 'Bạn chỉ có thể dừng đồng hồ của chính mình hoặc khi phụ trách dự án');
+    }
+    if (existing.task_id !== null && !existing.task_visible && existing.user_id !== userId) {
+      throw taskNotFound();
     }
 
     const nextBillable = input.billable ?? existing.billable;
@@ -746,7 +738,7 @@ export const projectTimeStop = defineCommand({
       input.hourlyRate !== undefined ? normalizeHourlyRateInput(input.hourlyRate) ?? null : existing.hourly_rate;
     const nextNote = input.note !== undefined ? normalizeNoteInput(input.note) ?? null : existing.note;
 
-    const timing = computeStoppedDuration(toDate(existing.started_at), ctx.now);
+    const timing = computeStoppedTimeEntry(existing.started_at, ctx.now);
 
     await ctx.trx
       .updateTable('crove_projects.time_entry')

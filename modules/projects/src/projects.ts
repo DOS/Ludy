@@ -5,8 +5,6 @@ import { z } from 'zod';
 import {
   PROJECT_BOARD_LIMIT,
   PROJECT_LIST_LIMIT,
-  PROJECT_TIME_DURATION_MAX,
-  PROJECT_TIME_DURATION_MIN,
   PROJECT_UNASSIGNED_LIMIT,
   auditValue,
   normalizeFilter,
@@ -65,6 +63,7 @@ import {
   memberProfilesMap,
   ownerDisplayName,
   resolveCreateMemberIds,
+  stopRunningProjectTimers,
   taskNotFound,
   userOf,
 } from './shared.ts';
@@ -74,6 +73,7 @@ export { READERS, loadProject, userOf };
 
 const TABLES = projectsManifest.tables;
 const PROJECT = TABLES.crove_projects.project;
+const TIME_ENTRY_STOP_WRITE = tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']);
 
 type TaskStatus = ProjectTaskCard['status'];
 
@@ -172,6 +172,7 @@ export const projectUpdate = defineCommand({
       'updated_at',
     ]),
     tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+    TIME_ENTRY_STOP_WRITE,
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string }> => {
@@ -222,6 +223,10 @@ export const projectUpdate = defineCommand({
           );
         }
         await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [row.owner_user_id], ctx.now);
+        await stopRunningProjectTimers(ctx, row.id, {
+          kind: 'excluded_on_private',
+          ownerUserId: row.owner_user_id,
+        });
       }
       await ctx.trx
         .updateTable('crove_projects.project')
@@ -263,7 +268,7 @@ export const projectSetStatus = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: ProjectStatus }> => {
     const userId = userOf(ctx.actor);
@@ -271,6 +276,9 @@ export const projectSetStatus = defineCommand({
     assertCanManage(ctx, row, userId);
 
     if (row.status !== input.status) {
+      if (input.status === 'archived') {
+        await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
+      }
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({ status: input.status, updated_at: ctx.now })
@@ -292,7 +300,7 @@ export const projectArchive = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: 'archived' }> => {
     const userId = userOf(ctx.actor);
@@ -300,6 +308,7 @@ export const projectArchive = defineCommand({
     assertCanManage(ctx, row, userId);
 
     if (row.status !== 'archived') {
+      await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
       await ctx.trx
         .updateTable('crove_projects.project')
         .set({ status: 'archived', updated_at: ctx.now })
@@ -407,7 +416,7 @@ export const projectMemberRemove = defineCommand({
   access: WRITERS,
   writes: [
     tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id']),
-    tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']),
+    TIME_ENTRY_STOP_WRITE,
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; userId: string; removed: boolean }> => {
@@ -433,27 +442,7 @@ export const projectMemberRemove = defineCommand({
 
     const removed = deleted !== undefined;
     if (removed && row.visibility === 'private') {
-      const runningTimers = await ctx.trx
-        .selectFrom('crove_projects.time_entry')
-        .select(['id', 'started_at'])
-        .where('org_id', '=', ctx.orgId)
-        .where('project_id', '=', row.id)
-        .where('user_id', '=', input.userId)
-        .where('ended_at', 'is', null)
-        .forUpdate()
-        .execute();
-      for (const timer of runningTimers) {
-        const startedMs = new Date(timer.started_at).getTime();
-        const endedAt = ctx.now.getTime() < startedMs ? new Date(startedMs) : ctx.now;
-        const rawMinutes = Math.round((endedAt.getTime() - startedMs) / 60_000);
-        const durationMinutes = Math.min(PROJECT_TIME_DURATION_MAX, Math.max(PROJECT_TIME_DURATION_MIN, rawMinutes));
-        await ctx.trx
-          .updateTable('crove_projects.time_entry')
-          .set({ ended_at: endedAt, duration_minutes: durationMinutes, updated_at: ctx.now })
-          .where('org_id', '=', ctx.orgId)
-          .where('id', '=', timer.id)
-          .execute();
-      }
+      await stopRunningProjectTimers(ctx, row.id, { kind: 'user', userId: input.userId });
     }
     ctx.audit({ projectId: row.id, memberUserId: input.userId, removed });
     if (removed) {

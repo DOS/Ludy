@@ -520,6 +520,105 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     });
     await exec(memberA.userId, org.orgId, 'projects.time.stop', { entryId: restartA.entry.id });
 
+    // 7c. org -> private stops excluded members' running timers while preserving project members' running timers (#2600 + #2604).
+    const { projectId: orgToPrivProj } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án chuyển riêng tư',
+      visibility: 'org',
+      memberUserIds: [memberA.userId],
+    });
+    const timerMemberA = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
+      projectId: orgToPrivProj,
+      note: 'Thành viên được giữ quyền xem',
+    });
+    const timerExcludedB = await exec<ProjectTimeStartResult>(memberB.userId, org.orgId, 'projects.time.start', {
+      projectId: orgToPrivProj,
+      note: 'Thành viên bị loại khi chuyển riêng tư',
+    });
+    await exec(owner.userId, org.orgId, 'projects.project.update', {
+      projectId: orgToPrivProj,
+      visibility: 'private',
+    });
+    await expect(query(memberB.userId, org.orgId, 'projects.time.summary', { projectId: orgToPrivProj })).rejects.toMatchObject({
+      code: 'PROJECT_NOT_FOUND',
+      status: 404,
+    });
+    const orgToPrivOwnerSum = await query<ProjectTimeSummaryResult>(owner.userId, org.orgId, 'projects.time.summary', {
+      projectId: orgToPrivProj,
+    });
+    expect(orgToPrivOwnerSum.entries.find((e) => e.id === timerExcludedB.entry.id)?.running).toBe(false);
+    expect(orgToPrivOwnerSum.entries.find((e) => e.id === timerMemberA.entry.id)?.running).toBe(true);
+    const restartB = await exec<ProjectTimeStartResult>(memberB.userId, org.orgId, 'projects.time.start', {
+      projectId: projA,
+    });
+    await exec(memberB.userId, org.orgId, 'projects.time.stop', { entryId: restartB.entry.id });
+    const stopAInPriv = await exec<ProjectTimeStopResult>(memberA.userId, org.orgId, 'projects.time.stop', {
+      projectId: orgToPrivProj,
+      entryId: timerMemberA.entry.id,
+    });
+    expect(stopAInPriv.entry.running).toBe(false);
+
+    // 7d. Archiving (via archive & set_status) auto-stops running timers, and stopExisting clears an archived prior project's timer.
+    const archivedTimerA = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
+      projectId: orgToPrivProj,
+    });
+    await exec(owner.userId, org.orgId, 'projects.project.archive', { projectId: orgToPrivProj });
+    const afterArchiveSum = await query<ProjectTimeSummaryResult>(owner.userId, org.orgId, 'projects.time.summary', {
+      projectId: orgToPrivProj,
+    });
+    expect(afterArchiveSum.entries.find((e) => e.id === archivedTimerA.entry.id)?.running).toBe(false);
+
+    const { projectId: setStatusArchProj } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án đóng bằng set_status',
+    });
+    const setStatusTimerA = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
+      projectId: setStatusArchProj,
+    });
+    await exec(owner.userId, org.orgId, 'projects.project.set_status', {
+      projectId: setStatusArchProj,
+      status: 'archived',
+    });
+    const afterSetStatusSum = await query<ProjectTimeSummaryResult>(owner.userId, org.orgId, 'projects.time.summary', {
+      projectId: setStatusArchProj,
+    });
+    expect(afterSetStatusSum.entries.find((e) => e.id === setStatusTimerA.entry.id)?.running).toBe(false);
+
+    const { projectId: legacyArchProj } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án giả lập timer còn mở khi đã lưu trữ',
+    });
+    const legacyArchTimer = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
+      projectId: legacyArchProj,
+    });
+    await withAdmin(async (c) => {
+      await c.query(`UPDATE crove_projects.project SET status = 'archived' WHERE org_id = $1 AND id = $2`, [org.orgId, legacyArchProj]);
+    });
+    const switchedOutOfArchived = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
+      projectId: projA,
+      stopExisting: true,
+    });
+    expect(switchedOutOfArchived.stoppedEntry?.id).toBe(legacyArchTimer.entry.id);
+    expect(switchedOutOfArchived.stoppedEntry?.running).toBe(false);
+    await exec(memberA.userId, org.orgId, 'projects.time.stop', { entryId: switchedOutOfArchived.entry.id });
+
+    // 7e. Timer owner can stop their own running timer even if its task was later moved to a hidden le_scope entity.
+    const { taskId: movableTaskId } = await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
+      projectId: projA,
+      title: 'Nhiệm vụ chuyển chi nhánh',
+      assigneePositionId: null,
+    });
+    const startedOnMovable = await exec<ProjectTimeStartResult>(memberB.userId, org.orgId, 'projects.time.start', {
+      projectId: projA,
+      taskId: movableTaskId,
+    });
+    await withAdmin(async (c) => {
+      await c.query(`UPDATE crove_kernel.task SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3`, [leB, org.orgId, movableTaskId]);
+    });
+    const stoppedMovedTaskTimer = await exec<ProjectTimeStopResult>(memberB.userId, org.orgId, 'projects.time.stop', {
+      projectId: projA,
+      entryId: startedOnMovable.entry.id,
+    });
+    expect(stoppedMovedTaskTimer.entry.running).toBe(false);
+    expect(stoppedMovedTaskTimer.entry.taskTitle).toBeNull();
+
     // 8. Delete entry works for authorized owner/creator.
     const deleted = await exec<ProjectTimeDeleteResult>(owner.userId, org.orgId, 'projects.time.delete', {
       projectId: projA,

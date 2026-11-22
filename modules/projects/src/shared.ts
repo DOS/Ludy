@@ -2,7 +2,14 @@
 // Shared database loaders and permission checks for the projects module.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
-import type { ProjectSeat, ProjectSeatHolder, ProjectStatus, ProjectVisibility } from '@ludy/kernel-contract';
+import {
+  PROJECT_TIME_DURATION_MAX,
+  PROJECT_TIME_DURATION_MIN,
+  type ProjectSeat,
+  type ProjectSeatHolder,
+  type ProjectStatus,
+  type ProjectVisibility,
+} from '@ludy/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -349,4 +356,93 @@ export async function loadProjectTaskCounts(
   for (const b of blockerRows) openBlockerCounts.set(b.task_id, Number(b.n));
   for (const b of blockingRows) blockingCounts.set(b.task_id, Number(b.n));
   return { commentCounts, openBlockerCounts, blockingCounts };
+}
+
+export interface StoppedTimeEntryTiming {
+  endedAt: Date;
+  durationMinutes: number;
+  clampedToMax: boolean;
+}
+
+/** Computes clamped 1..14400 minute duration when stopping an active timer at `now`. */
+export function computeStoppedTimeEntry(startedAt: Date | string, now: Date): StoppedTimeEntryTiming {
+  const startedMs = startedAt instanceof Date ? startedAt.getTime() : Date.parse(startedAt);
+  const endedAt = now.getTime() < startedMs ? new Date(startedMs) : now;
+  const rawMinutes = Math.round((endedAt.getTime() - startedMs) / 60_000);
+  const clampedToMax = rawMinutes > PROJECT_TIME_DURATION_MAX;
+  const durationMinutes = Math.min(PROJECT_TIME_DURATION_MAX, Math.max(PROJECT_TIME_DURATION_MIN, rawMinutes));
+  return { endedAt, durationMinutes, clampedToMax };
+}
+
+export type StopRunningProjectTimersScope =
+  | { kind: 'all' }
+  | { kind: 'user'; userId: string }
+  | { kind: 'excluded_on_private'; ownerUserId: string | null };
+
+/**
+ * Stops active timers (`ended_at IS NULL`) inside an already-locked project (`FOR UPDATE` on `project` first)
+ * so archive, private visibility, or membership revocation transitions never lock users out of `time_entry_running_uq`.
+ */
+export async function stopRunningProjectTimers(
+  ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now' | 'emit'>,
+  projectId: string,
+  scope: StopRunningProjectTimersScope,
+): Promise<string[]> {
+  let scopeFilter = sql`TRUE`;
+  if (scope.kind === 'user') {
+    scopeFilter = sql`te.user_id = ${scope.userId}::uuid`;
+  } else if (scope.kind === 'excluded_on_private') {
+    const ownerCheck = scope.ownerUserId === null ? sql`TRUE` : sql`te.user_id <> ${scope.ownerUserId}::uuid`;
+    scopeFilter = sql`
+      te.user_id IS NOT NULL
+      AND ${ownerCheck}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM crove_projects.project_member pm
+        WHERE pm.org_id = te.org_id
+          AND pm.project_id = te.project_id
+          AND pm.user_id = te.user_id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM crove_kernel.tenant_member tm
+        WHERE tm.org_id = te.org_id
+          AND tm.user_id = te.user_id
+          AND tm.role IN ('owner', 'admin')
+      )`;
+  }
+
+  const { rows: runningTimers } = await sql<{ id: string; task_id: string | null; started_at: Date | string }>`
+    SELECT te.id, te.task_id, te.started_at
+      FROM crove_projects.time_entry te
+     WHERE te.org_id = ${ctx.orgId}::uuid
+       AND te.project_id = ${projectId}::uuid
+       AND te.ended_at IS NULL
+       AND ${scopeFilter}
+     ORDER BY te.id ASC
+     FOR UPDATE OF te`.execute(ctx.trx);
+
+  const stoppedIds: string[] = [];
+  for (const timer of runningTimers) {
+    const timing = computeStoppedTimeEntry(timer.started_at, ctx.now);
+    await ctx.trx
+      .updateTable('crove_projects.time_entry')
+      .set({
+        ended_at: timing.endedAt,
+        duration_minutes: timing.durationMinutes,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', timer.id)
+      .execute();
+    stoppedIds.push(timer.id);
+    await ctx.emit('projects.time.stopped', {
+      projectId,
+      entryId: timer.id,
+      taskId: timer.task_id,
+      durationMinutes: timing.durationMinutes,
+      autoStopped: true,
+    });
+  }
+  return stoppedIds;
 }
