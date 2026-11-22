@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS candidate_analytics_idx
   WHERE erased_at IS NULL;
 
 GRANT UPDATE (source, hired_at)
-  ON crove_hr.candidate TO crove_tenant;
+  ON crove_hr.candidate TO ludy_tenant;
 
 -- Dead-lettered pg-boss queue for worker-side CV parsing in crove-extract (gate T12).
-SELECT crove_jobs.create_queue('hr-cv-extract', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT ludy_jobs.create_queue('hr-cv-extract', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);

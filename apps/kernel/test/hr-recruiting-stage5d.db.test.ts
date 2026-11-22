@@ -138,7 +138,7 @@ function buildMinimalDocx(paragraphs: readonly string[]): Uint8Array {
 }
 
 suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extract CV, and Engage invite drafts (#4446)', () => {
-  const dbName = `crove_test_hr5d_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr5d_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;
@@ -184,7 +184,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     const viewer = await person('viewer');
     const { orgId, slug } = await createOrg(rt, asUser(owner), `HR Stage5D ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [
         orgId,
         admin,
         member,
@@ -291,12 +291,12 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     const events = await withAdmin((c) =>
       c.query<{ id: string; payload: Omit<HrCvExtractJob, 'orgId'> }>(
         `SELECT e.id, e.payload
-         FROM crove_kernel.outbox_event e
+         FROM ludy_kernel.outbox_event e
          WHERE e.org_id = $1
            AND e.type = 'hr.recruiting.cv_extract_queued'
            AND NOT EXISTS (
              SELECT 1
-             FROM crove_kernel.audit_event a
+             FROM ludy_kernel.audit_event a
              WHERE a.org_id = e.org_id
                AND a.command = 'hr.recruiting.cv_extract.complete'
                AND a.detail ->> 'jobId' = e.payload ->> 'jobId'
@@ -318,7 +318,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
   }
 
   beforeAll(async () => {
-    blobDir = mkdtempSync(join(tmpdir(), 'crove-hr5d-blobs-'));
+    blobDir = mkdtempSync(join(tmpdir(), 'ludy-hr5d-blobs-'));
     store = new LocalDiskStore(blobDir);
     const rootDb = new pg.Client({ connectionString: ADMIN });
     await rootDb.connect();
@@ -328,13 +328,13 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appConn = new URL(adminUrl);
-    appConn.username = 'crove_app';
+    appConn.username = 'ludy_app';
     appConn.password = 'test-app-pw';
     appUrl = appConn.toString();
     const workerConn = new URL(adminUrl);
-    workerConn.username = 'crove_worker';
+    workerConn.username = 'ludy_worker';
     workerConn.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl, max: 6 });
@@ -619,14 +619,14 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
         const pending = await withAdmin((c) =>
           c.query<{ count: string }>(
             `SELECT pg_catalog.count(*)::text AS count
-             FROM crove_kernel.outbox_event e
-             JOIN crove_kernel.outbox_pending p
+             FROM ludy_kernel.outbox_event e
+             JOIN ludy_kernel.outbox_pending p
                ON p.org_id = e.org_id AND p.event_id = e.id
              WHERE e.org_id = $1
                AND e.type = 'hr.recruiting.cv_extract_queued'
                AND NOT EXISTS (
                  SELECT 1
-                 FROM crove_kernel.audit_event a
+                 FROM ludy_kernel.audit_event a
                  WHERE a.org_id = e.org_id
                    AND a.command = 'hr.recruiting.cv_extract.complete'
                    AND a.detail ->> 'jobId' = e.payload ->> 'jobId'
@@ -664,7 +664,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     // Check meter usage recorded for hr.cv_extract and NO raw PII/text in audit_event
     const usageRows = await withAdmin((c) =>
       c.query<{ feature: string; module: string }>(
-        `SELECT feature, module FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'hr.cv_extract'`,
+        `SELECT feature, module FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'hr.cv_extract'`,
         [o.orgId],
       ),
     );
@@ -672,7 +672,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(usageRows.rows[0]).toEqual({ feature: 'hr.cv_extract', module: 'hr' });
 
     const auditText = JSON.stringify(
-      (await withAdmin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.cv_extract.%'`, [o.orgId]))).rows,
+      (await withAdmin((c) => c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.cv_extract.%'`, [o.orgId]))).rows,
     );
     expect(auditText).not.toContain('ha.ketoan@example.test');
     expect(auditText).not.toContain('Phạm Quang Huy');
@@ -696,7 +696,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(cvExtractSpy).toHaveBeenCalledTimes(1);
     const repeatUsageRows = await withAdmin((c) =>
       c.query<{ count: string }>(
-        `SELECT pg_catalog.count(*)::text AS count FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'hr.cv_extract'`,
+        `SELECT pg_catalog.count(*)::text AS count FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'hr.cv_extract'`,
         [o.orgId],
       ),
     );
@@ -704,7 +704,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     const auditCounts = await withAdmin((c) =>
       c.query<{ job_id: string; count: string }>(
         `SELECT detail ->> 'jobId' AS job_id, pg_catalog.count(*)::text AS count
-         FROM crove_kernel.audit_event
+         FROM ludy_kernel.audit_event
          WHERE org_id = $1 AND command = 'hr.recruiting.cv_extract.audit'
          GROUP BY 1`,
         [o.orgId],

@@ -1,10 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Crove kernel health(): add the optional hr module (#4446 Stage 5D) to the optional module list so
+-- Ludy kernel health(): add the optional hr module (#4446 Stage 5D) to the optional module list so
 -- deployments without hr do not page on hr-cv-extract job age (Gate T6, jobs-schema.test.ts).
+-- Preserves 20270315090000 ludy_* schema, ludy.prober_modules fallback, and ludy_prober execute grant.
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
-CREATE OR REPLACE FUNCTION crove_kernel.health(p_dead_letter_window_seconds integer DEFAULT 3600)
+CREATE OR REPLACE FUNCTION ludy_kernel.health(p_dead_letter_window_seconds integer DEFAULT 3600)
  RETURNS TABLE(checked_at timestamp with time zone, outbox_pending integer, outbox_oldest_age_seconds double precision, inbound_pending integer, inbound_oldest_age_seconds double precision, jobs_schema_present boolean, jobs_queued integer, job_oldest_queued_age_seconds double precision, dead_letter_count integer, worker_heartbeat_age_seconds double precision)
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
@@ -13,34 +14,37 @@ AS $$
 DECLARE
   v_window interval := pg_catalog.make_interval(secs => LEAST(GREATEST(COALESCE(p_dead_letter_window_seconds, 3600), 60), 604800));
   v_worked text[];
-  v_expected text[] := pg_catalog.string_to_array(COALESCE(pg_catalog.current_setting('crove.prober_modules', true), ''), ',');
+  v_expected text[] := pg_catalog.string_to_array(
+    COALESCE(NULLIF(pg_catalog.current_setting('ludy.prober_modules', true), ''), pg_catalog.current_setting('crove.prober_modules', true), ''),
+    ','
+  );
 BEGIN
   checked_at := pg_catalog.now();
 
   SELECT pg_catalog.count(*)::int INTO outbox_pending
-  FROM (SELECT 1 FROM crove_kernel.outbox_pending LIMIT 10000) s;
+  FROM (SELECT 1 FROM ludy_kernel.outbox_pending LIMIT 10000) s;
   SELECT EXTRACT(EPOCH FROM checked_at - e.created_at)::double precision INTO outbox_oldest_age_seconds
-  FROM crove_kernel.outbox_pending p
-  JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
+  FROM ludy_kernel.outbox_pending p
+  JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
   ORDER BY p.seq LIMIT 1;
 
   SELECT pg_catalog.count(*)::int INTO inbound_pending
-  FROM (SELECT 1 FROM crove_kernel.inbound_pending LIMIT 10000) s;
+  FROM (SELECT 1 FROM ludy_kernel.inbound_pending LIMIT 10000) s;
   SELECT EXTRACT(EPOCH FROM checked_at - i.received_at)::double precision INTO inbound_oldest_age_seconds
-  FROM crove_kernel.inbound_pending i ORDER BY i.seq LIMIT 1;
+  FROM ludy_kernel.inbound_pending i ORDER BY i.seq LIMIT 1;
 
-  IF NOT EXISTS (SELECT 1 FROM crove_kernel.worker_heartbeat h WHERE h.beat_at > checked_at - interval '1 hour' AND h.modules IS NULL) THEN
+  IF NOT EXISTS (SELECT 1 FROM ludy_kernel.worker_heartbeat h WHERE h.beat_at > checked_at - interval '1 hour' AND h.modules IS NULL) THEN
     SELECT pg_catalog.array_agg(DISTINCT m) INTO v_worked
-    FROM crove_kernel.worker_heartbeat h, pg_catalog.unnest(h.modules) m
+    FROM ludy_kernel.worker_heartbeat h, pg_catalog.unnest(h.modules) m
     WHERE h.beat_at > checked_at - interval '7 days';
   END IF;
 
-  jobs_schema_present := pg_catalog.to_regclass('crove_jobs.job') IS NOT NULL;
+  jobs_schema_present := pg_catalog.to_regclass('ludy_jobs.job') IS NOT NULL;
   IF jobs_schema_present THEN
     SELECT pg_catalog.count(*)::int, EXTRACT(EPOCH FROM checked_at - pg_catalog.min(q.start_after))::double precision
     INTO jobs_queued, job_oldest_queued_age_seconds
     FROM (
-      SELECT j.start_after FROM crove_jobs.job j
+      SELECT j.start_after FROM ludy_jobs.job j
       WHERE j.state IN ('created', 'retry') AND j.start_after <= checked_at
         AND (v_worked IS NULL OR pg_catalog.split_part(j.name, '-', 1) <> ALL (ARRAY['finance', 'social', 'ads', 'crm', 'notes', 'meetings', 'sign', 'hr'])
              OR pg_catalog.split_part(j.name, '-', 1) = ANY (v_worked)
@@ -49,17 +53,16 @@ BEGIN
     ) q;
     SELECT pg_catalog.count(*)::int INTO dead_letter_count
     FROM (
-      SELECT 1 FROM crove_jobs.job j
+      SELECT 1 FROM ludy_jobs.job j
       WHERE j.state = 'failed' AND COALESCE(j.completed_on, j.created_on) > checked_at - v_window
       LIMIT 10000
     ) d;
   END IF;
 
   SELECT EXTRACT(EPOCH FROM checked_at - pg_catalog.max(h.beat_at))::double precision INTO worker_heartbeat_age_seconds
-  FROM crove_kernel.worker_heartbeat h;
+  FROM ludy_kernel.worker_heartbeat h;
 
   RETURN NEXT;
 END $$;
-
-REVOKE ALL ON FUNCTION crove_kernel.health(integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_kernel.health(integer) TO crove_prober;
+REVOKE ALL ON FUNCTION ludy_kernel.health(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ludy_kernel.health(integer) TO ludy_prober;

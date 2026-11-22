@@ -349,7 +349,7 @@ export const cvExtractContextQuery = defineQuery({
         detail ->> 'legalEntityId' AS legal_entity_id,
         detail ->> 'openingId' AS opening_id,
         detail ->> 'resultSha256' AS result_sha256
-      FROM crove_kernel.audit_event
+      FROM ludy_kernel.audit_event
       WHERE org_id = ${ctx.orgId}::uuid
         AND command IN ('hr.recruiting.cv_extract.request', 'hr.recruiting.cv_extract.complete')
         AND detail ->> 'jobId' = ${input.jobId}
@@ -430,7 +430,7 @@ export const inviteDraftContextQuery = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
-      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+      .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
       .select([
