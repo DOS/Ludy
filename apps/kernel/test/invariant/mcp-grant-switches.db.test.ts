@@ -12,14 +12,15 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -31,6 +32,7 @@ const SOCIAL = 'ludy.social.draft';
 suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   const dbName = `crove_test_mcp_grant_switches_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let orgId = '';
@@ -41,7 +43,7 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   let counter = 0;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -111,11 +113,12 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
-    const pool = createPool({ connectionString: app.toString(), max: 6 });
+    const pool = createDbPool({ connectionString: app.toString(), max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -241,11 +244,10 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
 
   it('gives the switch check to the API login alone, with a pinned search path, and refuses a name that is not a module', async () => {
     const fn = 'crove_kernel.mcp_switch_check(uuid,uuid,text)';
-    const logins = (await q<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows.map((r) => r.rolname);
-    expect(logins).toContain('crove_app');
-    for (const rolname of logins) {
-      const ok = (await q<{ ok: boolean }>(`SELECT has_function_privilege($1, '${fn}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
-      expect(ok, `${rolname} executes the switch check`).toBe(rolname === 'crove_app');
+    const { rows: logins, activeAllowed } = await admin((c) => auditRoleFunctionExecute(c, dbIds, fn, ['crove_app'], 'non_system'));
+    expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} executes the switch check`).toBe(true);
+    for (const { rolname, ok, expected } of logins) {
+      expect(ok, `${rolname} executes the switch check`).toBe(expected);
     }
     expect((await q<{ ok: boolean }>(`SELECT has_function_privilege('public', '${fn}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
     expect((await q(`SELECT proconfig FROM pg_proc WHERE oid = '${fn}'::regprocedure`)).rows[0]).toEqual({ proconfig: ['search_path=pg_catalog, pg_temp'] });
@@ -261,9 +263,9 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
       await expect(q(`SELECT crove_kernel.mcp_switch_check($1::uuid, $2::uuid, 'crm')`, [orgId, g.grantId])).rejects.toThrow(/MCP_SWITCH_CONTEXT/);
       // The API login, in the entered context of the first grant.
       const app = new URL(adminUrl);
-      app.username = 'crove_app';
+      app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
       app.password = 'test-app-pw';
-      const c = new pg.Client({ connectionString: app.toString() });
+      const c = createDbClient({ connectionString: app.toString() }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');

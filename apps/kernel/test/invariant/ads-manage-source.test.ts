@@ -161,11 +161,23 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     expect(commands).toMatch(/name: 'ads\.manage\.record',[\s\S]*?risk: 'R1',\s*sideEffect: 'internal',\s*access: 'system'/);
     const begin = between(commands, "name: 'ads.manage.begin'", "name: 'ads.manage.record'");
     // Before the ledger row of the call is made, begin takes the org's lock, the launch's row, and re-checks the launch, the stop conditions and, for what can raise spend, the caps.
-    const order = ['lockedSetting(ctx)', ".forUpdate().executeTakeFirstOrThrow()", 'stopConditions(', 'manageCapsProblems(', "insertInto('crove_kernel.external_call')"];
+    const order: Array<string | RegExp> = [
+      'lockedSetting(ctx)',
+      '.forUpdate().executeTakeFirstOrThrow()',
+      'stopConditions(',
+      'manageCapsProblems(',
+      /insertInto\('(?:crove|ludy)_kernel\.external_call'\)/,
+    ];
     let at = -1;
     for (const part of order) {
-      const next = begin.indexOf(part);
-      expect(next, part).toBeGreaterThan(at);
+      let next = -1;
+      if (typeof part === 'string') {
+        next = begin.indexOf(part);
+      } else {
+        const match = part.exec(begin);
+        next = match?.index ?? -1;
+      }
+      expect(next, String(part)).toBeGreaterThan(at);
       at = next;
     }
     expect(begin).toContain("settle('cancelled', 'cap_lowered'");
@@ -176,7 +188,10 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     // The record never calls anything and writes nothing of the launch, its commitment or the caps: the change's state and the call's ledger row only.
     const record = commands.slice(commands.indexOf("name: 'ads.manage.record'"), commands.indexOf('export const adsManageState'));
     expect(record).not.toMatch(/ad_launch|ad_spend_cap|ad_org_setting|insertInto/);
-    expect([...new Set([...record.matchAll(/updateTable\('([a-z_.]+)'\)/g)].map((m) => m[1]))].sort()).toEqual(['crove_ads.ad_manage_change', 'crove_kernel.external_call']);
+    expect([...new Set([...record.matchAll(/updateTable\('([a-z_.]+)'\)/g)].map((m) => m[1]?.replace(/^ludy_/, 'crove_')))].sort()).toEqual([
+      'crove_ads.ad_manage_change',
+      'crove_kernel.external_call',
+    ]);
   });
 });
 
@@ -187,7 +202,7 @@ describe('what settles a change whose answer could not be told (#3898)', () => {
     // The settle branch comes before every check that gates a call and before the ledger row of a call, and neither makes nor changes a row.
     const branch = between(begin, 'if (input.settle === true) {', "return workOf('settle'");
     expect(begin.indexOf('if (input.settle === true) {')).toBeLessThan(begin.indexOf('stopConditions('));
-    expect(begin.indexOf('if (input.settle === true) {')).toBeLessThan(begin.indexOf("insertInto('crove_kernel.external_call')"));
+    expect(begin.indexOf('if (input.settle === true) {')).toBeLessThan(begin.search(/insertInto\('(?:crove|ludy)_kernel\.external_call'\)/));
     expect(branch).not.toMatch(/insertInto|updateTable|deleteFrom|settle\('|\.emit\(/);
     // Only a change that is still unclear, that nothing newer of its family overtook, whose call is old enough, is read for.
     expect(begin).toContain("input.settle === true ? 'unclear' : 'queued'");
@@ -216,7 +231,7 @@ describe('what settles a change whose answer could not be told (#3898)', () => {
   it('is queued by the worker\'s sweep from the migration\'s pick function, ids only, on the manage queue, and the one move out of unclear is the system\'s', () => {
     const worker = code('apps/kernel/src/worker.ts');
     const block = between(worker, 'const adManagers = deps.channels?.adManagers;', 'await dropCron(QUEUES.adsManage);');
-    expect(block).toContain('crove_ads.manage_unclear_pick(');
+    expect(block).toMatch(/(?:crove|ludy)_ads\.manage_unclear_pick\(/);
     expect(block).toMatch(/boss\.send\(QUEUES\.adsManage, \{ orgId: pick\.org_id, changeId: pick\.change_id, settle: true \} satisfies AdsManageJob/);
     const file = readdirSync(join(ROOT, 'supabase/migrations')).find((f) => f.endsWith('_crove_ads_manage_unclear_settle.sql')) as string;
     const sql = read(`supabase/migrations/${file}`);
@@ -258,10 +273,10 @@ describe('what can raise spend of a running ad (#3835, W4)', () => {
   it('inserts a change of a kind that can raise spend from the approved commands only: no other command, and no other file, writes the table', () => {
     const commands = code('modules/ads/src/manage.ts');
     // The one INSERT into the table is `insertChange`, in this file; the one update of its state is begin, record and the cancel, in this file.
-    expect(codeNaming(/insertInto\('crove_ads\.ad_manage_change'\)/)).toEqual(['modules/ads/src/manage.ts']);
-    expect(commands.match(/insertInto\('crove_ads\.ad_manage_change'\)/g)).toHaveLength(1);
-    expect(codeNaming(/updateTable\('crove_ads\.ad_manage_change'\)/)).toEqual(['modules/ads/src/manage.ts']);
-    expect(codeNaming(/deleteFrom\('crove_ads\.ad_manage_change'\)/)).toEqual([]);
+    expect(codeNaming(/insertInto\('(?:crove|ludy)_ads\.ad_manage_change'\)/)).toEqual(['modules/ads/src/manage.ts']);
+    expect(commands.match(/insertInto\('(?:crove|ludy)_ads\.ad_manage_change'\)/g)).toHaveLength(1);
+    expect(codeNaming(/updateTable\('(?:crove|ludy)_ads\.ad_manage_change'\)/)).toEqual(['modules/ads/src/manage.ts']);
+    expect(codeNaming(/deleteFrom\('(?:crove|ludy)_ads\.ad_manage_change'\)/)).toEqual([]);
     // Every call of insertChange: the reducing commands name their own kind and never a proposal; the approved ones go through approvedHandler, which names the proposal of the approval.
     const calls = [...commands.matchAll(/insertChange\(ctx, control, \{([^}]*)\}\)/g)].map((m) => m[1] as string);
     expect(calls).toHaveLength(5);

@@ -20,6 +20,7 @@ const ENVELOPE_ID = '00000000-0000-7000-8000-000000000020';
 const SIGNER_1_ID = '00000000-0000-7000-8000-000000000031';
 const CC_SIGNER_ID = '00000000-0000-7000-8000-000000000032';
 const DOC_SHA = 'a'.repeat(64);
+const canonTable = (table?: string) => table?.replace(/^ludy_/, 'crove_');
 
 const INJECTED_PDF_PAGE_1 = [
   'MASTER SERVICES CONTRACT',
@@ -159,19 +160,20 @@ describe('sign AI module red-team invariants', () => {
 
   it('writes ONLY crove_sign.ai_analysis via command declarations and blocks non-draft, system-user mixups, or stale hashes', async () => {
     // Verify write declarations cannot touch crove_sign.field, crove_sign.signer, or crove_sign.envelope.
-    expect(envelopeProposeFields.writes?.map((w) => w.table)).toEqual(['crove_sign.ai_analysis']);
-    expect(aiAnalysisRecord.writes?.map((w) => w.table)).toEqual(['crove_sign.ai_analysis']);
+    expect(envelopeProposeFields.writes?.map((w) => canonTable(w.table))).toEqual(['crove_sign.ai_analysis']);
+    expect(aiAnalysisRecord.writes?.map((w) => canonTable(w.table))).toEqual(['crove_sign.ai_analysis']);
 
     const fakeTrx = (envRow: Record<string, unknown> | undefined) => {
       const state = { inserted: null as Record<string, unknown> | null };
       const mkChain = (table?: string) => {
+        const canon = canonTable(table);
         const chain = {
           select: () => chain,
           where: () => chain,
           forUpdate: () => chain,
           orderBy: () => chain,
           limit: () => chain,
-          executeTakeFirst: async () => (table === 'crove_kernel.kill_switch' ? undefined : envRow),
+          executeTakeFirst: async () => (canon === 'crove_kernel.kill_switch' ? undefined : envRow),
           execute: async () => [{ id: SIGNER_1_ID, role_label: 'Customer', signer_role: 'signer', routing_order: 1 }],
           values: (vals: Record<string, unknown>) => {
             state.inserted = vals;
@@ -481,10 +483,10 @@ describe('sign AI module red-team invariants', () => {
                 return chain;
               },
               orderBy: () => chain,
-              execute: async () => (table === 'crove_sign.signer' ? [{ id: SIGNER_1_ID }] : []),
+              execute: async () => (canonTable(table) === 'crove_sign.signer' ? [{ id: SIGNER_1_ID }] : []),
               executeTakeFirst: async () => {
-                if (table === 'crove_sign.envelope') return { id: ENVELOPE_ID, source_sha256: DOC_SHA };
-                if (table === 'crove_sign.ai_analysis' && filters.status === 'completed') return completedRow;
+                if (canonTable(table) === 'crove_sign.envelope') return { id: ENVELOPE_ID, source_sha256: DOC_SHA };
+                if (canonTable(table) === 'crove_sign.ai_analysis' && filters.status === 'completed') return completedRow;
                 return null;
               },
             };
@@ -905,11 +907,11 @@ describe('sign AI module red-team invariants', () => {
           orderBy: () => chain,
           limit: () => chain,
           execute: async () =>
-            table === 'crove_sign.signer'
+            canonTable(table) === 'crove_sign.signer'
               ? [{ id: SIGNER_1_ID, role_label: 'Signer 1', signer_role: 'signer', routing_order: 1 }]
               : [],
           executeTakeFirst: async () => {
-            if (table === 'crove_sign.envelope') {
+            if (canonTable(table) === 'crove_sign.envelope') {
               return {
                 id: ENVELOPE_ID,
                 version: 1,
@@ -921,7 +923,7 @@ describe('sign AI module red-team invariants', () => {
                 page_dimensions_json: [],
               };
             }
-            if (table === 'crove_kernel.kill_switch') {
+            if (canonTable(table) === 'crove_kernel.kill_switch') {
               return opts.orgOrModuleStopped ? { id: 'ks-1' } : undefined;
             }
             return undefined;
@@ -967,11 +969,11 @@ describe('sign AI module red-team invariants', () => {
           orderBy: () => chain,
           limit: () => chain,
           execute: async () =>
-            table === 'crove_sign.signer'
+            canonTable(table) === 'crove_sign.signer'
               ? [{ id: SIGNER_1_ID, role_label: 'Signer 1', signer_role: 'signer', routing_order: 1 }]
               : [],
           executeTakeFirst: async () => {
-            if (table === 'crove_sign.envelope') {
+            if (canonTable(table) === 'crove_sign.envelope') {
               return {
                 id: ENVELOPE_ID,
                 org_id: ORG_ID,
@@ -982,7 +984,7 @@ describe('sign AI module red-team invariants', () => {
                 page_count: 1,
               };
             }
-            if (table === 'crove_kernel.kill_switch') {
+            if (canonTable(table) === 'crove_kernel.kill_switch') {
               return opts.orgOrModuleStopped ? { id: 'ks-1' } : undefined;
             }
             return undefined;
@@ -1497,7 +1499,7 @@ describe('sign AI module red-team invariants', () => {
           orderBy: () => chain,
           limit: () => chain,
           execute: async () =>
-            table === 'crove_sign.signer'
+            canonTable(table) === 'crove_sign.signer'
               ? [
                   {
                     id: SIGNER_1_ID,
@@ -1508,7 +1510,7 @@ describe('sign AI module red-team invariants', () => {
                 ]
               : [],
           executeTakeFirst: async () => {
-            if (table === 'crove_sign.envelope') {
+            if (canonTable(table) === 'crove_sign.envelope') {
               return {
                 id: ENVELOPE_ID,
                 org_id: ORG_ID,
@@ -1523,7 +1525,7 @@ describe('sign AI module red-team invariants', () => {
                 page_dimensions_json: [],
               };
             }
-            if (table === 'crove_sign.ai_analysis' && filters.status === 'completed') {
+            if (canonTable(table) === 'crove_sign.ai_analysis' && filters.status === 'completed') {
               return {
                 id: '00000000-0000-7000-8000-000000000155',
                 org_id: ORG_ID,

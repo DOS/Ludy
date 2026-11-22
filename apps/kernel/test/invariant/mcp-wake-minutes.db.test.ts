@@ -15,16 +15,25 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { wakeMinutesPublished } from '../../src/mcp-wake-minutes.ts';
 import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
+import {
+  auditRoleFunctionExecute,
+  createDbClient,
+  createDbPool,
+  rawQuery,
+  resolveDbIdentifiers,
+  setActiveRolePasswords,
+  type DbIdentifiers,
+} from './fixtures/db-identifiers.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -39,6 +48,7 @@ const CANARY_SUMMARY = 'BÍ MẬT-3803 tóm tắt';
 suite('the wake-up for published minutes of an org-visible meeting (#3803, invariants first)', () => {
   const dbName = `crove_test_mcp_wake_minutes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds!: DbIdentifiers;
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let worker: Runtime;
@@ -51,7 +61,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
   const exec = (who: keyof typeof users, name: string, input: unknown, org = orgA) => runtime.execute(name, input, { actor: browser(users[who]), orgId: org });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -126,15 +136,16 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 }, dbIds);
+    const workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 }, dbIds);
     pools.push(appPool, workerPool);
     const defs = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(defs);
@@ -276,7 +287,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const url = new URL(adminUrl);
     url.username = 'crove_worker';
     url.password = 'test-worker-pw';
-    const asWorker = new pg.Client({ connectionString: url.toString() });
+    const asWorker = createDbClient({ connectionString: url.toString() }, dbIds);
     await asWorker.connect();
     try {
       const open = await asWorker.query<{ id: string; kind: string }>(`SELECT id, kind FROM crove_kernel.mcp_wake_open(100)`);
@@ -344,16 +355,17 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
   it('lists the grants to wake through a definer of the worker\'s login alone, which returns ids and nothing else and pins its search path', async () => {
     const fn = 'crove_kernel.mcp_wake_company_targets(uuid, integer)';
     await admin(async (c) => {
-      const roles = (await c.query(`SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\\_%'`)).rows.map((r: { rolname: string }) => r.rolname);
-      for (const role of roles) expect((await c.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, fn])).rows[0].ok, `${role} execute ${fn}`).toBe(role === 'crove_worker');
-      expect((await c.query(`SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok`, [fn])).rows[0].ok).toBe(false);
+      const { rows } = await auditRoleFunctionExecute(c, dbIds, fn, ['crove_worker']);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row.ok, `${row.rolname} execute ${fn}`).toBe(row.expected);
+      expect((await rawQuery<{ ok: boolean }>(c, `SELECT pg_catalog.has_function_privilege('public', $1::regprocedure, 'EXECUTE') AS ok`, [dbIds.rewriteSql(fn)])).rows[0]?.ok).toBe(false);
       const meta = (await c.query(`SELECT proconfig, prosecdef FROM pg_catalog.pg_proc WHERE oid = $1::regprocedure`, [fn])).rows[0];
       expect(meta.prosecdef).toBe(true);
       expect(JSON.stringify(meta.proconfig)).toContain('search_path=pg_catalog, pg_temp');
       const def = (await c.query(`SELECT pg_get_functiondef($1::regprocedure) AS def`, [fn])).rows[0].def as string;
       expect(def, 'it names no sealed kind').not.toMatch(/mcp_company|mcp_member/);
     });
-    const asWorker = new pg.Client({ connectionString: (() => { const url = new URL(adminUrl); url.username = 'crove_worker'; url.password = 'test-worker-pw'; return url.toString(); })() });
+    const asWorker = createDbClient({ connectionString: (() => { const url = new URL(adminUrl); url.username = 'crove_worker'; url.password = 'test-worker-pw'; return url.toString(); })() }, dbIds);
     await asWorker.connect();
     try {
       const listed = await asWorker.query(`SELECT * FROM crove_kernel.mcp_wake_company_targets($1::uuid, 100)`, [orgA]);

@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { applyAuthGrants, migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { applyAuthGrants, migrate } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { Runtime, contentGeneration, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
@@ -19,6 +19,7 @@ import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -38,6 +39,7 @@ type Factor = 'none' | 'verified' | 'unverified';
 suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126, self-host db adapter)', () => {
   const dbName = `crove_test_mfa_required_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let app: ReturnType<typeof createHttpApp>;
@@ -45,7 +47,7 @@ suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126
   const orgs = new Map<string, string>();
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -135,7 +137,8 @@ suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw' }, dbIds);
     // Supabase Auth starts and runs its migrations as supabase_auth_admin, the owner of the auth schema.
     await sql('CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin');
     await admin(async (c) => {
@@ -160,9 +163,9 @@ suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126
     });
     await applyAuthGrants({ adminUrl, timeoutMs: 5000, pollMs: 100 });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 4 }, dbIds);
     db = createDb(pool);
     const config = loadConfig({
       DATABASE_URL: appUrl.toString(),

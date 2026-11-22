@@ -3,20 +3,24 @@
 // re-applicable. Set CROVE_TEST_ADMIN_URL to a superuser URL; the test creates and drops its own database.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyConcurrentIndexes, CONCURRENT_INDEX_MARKER, concurrentIndexes, hardeningViolations, migrate, readMigrations } from '../../src/migrate.ts';
+import { resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const RUNNER = 'crove_test_runner';
 // Roles are cluster-wide. When an earlier run already created them, the runner gets the ADMIN OPTION it
 // would hold as their creator.
-const CROVE_ROLES = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_auth_reader'];
+const EXPECTED_ROLE_DOMAINS = ['tenant', 'app', 'worker', 'definer_tenant', 'definer_einvoice', 'auth_reader'] as const;
+const ALL_RUNTIME_ROLES = EXPECTED_ROLE_DOMAINS.flatMap((r) => [`crove_${r}`, `ludy_${r}`]);
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // A run's database is crove_test_runner_<id> (plus <id>_notowner) and its roles t100_test_runner_<id>_*, with
 // <id> = <Date.now()>_<random>. Another run's leftovers are swept once they are this old and unused.
@@ -91,7 +95,7 @@ async function dropStaleRuns(): Promise<void> {
     const idle: string[] = [];
     for (const id of stale) {
       const { rows: busy } = await admin.query('SELECT 1 FROM pg_stat_activity WHERE datname = ANY($1::text[])', [
-        [`crove_test_runner_${id}`, `crove_test_runner_${id}_notowner`],
+        [`crove_test_runner_${id}`, `crove_test_runner_${id}_notowner`, `crove_test_runner_${id}_upgrade`],
       ]);
       if (busy.length === 0) idle.push(id);
     }
@@ -101,6 +105,7 @@ async function dropStaleRuns(): Promise<void> {
     // No FORCE: a session that connected since the check above (55006) means the run is not dead after all.
     const dropped = await withClient(ADMIN as string, async (admin) => {
       try {
+        await admin.query(`DROP DATABASE IF EXISTS crove_test_runner_${id}_upgrade`);
         await admin.query(`DROP DATABASE IF EXISTS crove_test_runner_${id}_notowner`);
         await admin.query(`DROP DATABASE IF EXISTS crove_test_runner_${id}`);
         return true;
@@ -113,21 +118,24 @@ async function dropStaleRuns(): Promise<void> {
   }
 }
 
-// G3 (plan §10): re-applying the migrations must change nothing. The fingerprint maps every object of the crove_*
-// schemas (plus the event triggers, the Crove roles and their memberships) to its definition, and every table to
+// G3 (plan §10): re-applying the migrations must change nothing. The fingerprint maps every object of the crove_* and
+// ludy_* schemas (plus the event triggers, runtime roles and their memberships) to its definition, and every table to
 // its row count, so a file that re-runs without error but adds a seed row, widens a grant, toggles a setting or
 // leaves an older function body behind shows up as a named difference. Names, never OIDs: re-created objects get
 // new ones. ACLs are sorted, since a REVOKE and GRANT may reorder them without changing what they allow.
+const BRAND_NS = `(n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%')`;
+const BRAND_ROLE = (col: string) =>
+  `(${col} LIKE 'crove\\_%' OR ${col} LIKE 'ludy\\_%') AND ${col} NOT LIKE '%\\_test\\_%' AND ${col} NOT LIKE 'crove\\_test%' AND ${col} NOT LIKE 'ludy\\_test%' AND ${col} <> 'ludy_migrate_test'`;
 const acl = (column: string) => `'acl=' || (SELECT string_agg(x::text, ',' ORDER BY x::text) FROM unnest(${column}) x)`;
 const FINGERPRINT_QUERIES: Record<string, string> = {
   schema: `
     SELECT n.nspname AS key, concat_ws(' ', pg_get_userbyid(n.nspowner), ${acl('n.nspacl')}) AS def
-    FROM pg_namespace n WHERE n.nspname LIKE 'crove\\_%'`,
+    FROM pg_namespace n WHERE ${BRAND_NS}`,
   relation: `
     SELECT format('%s.%s', n.nspname, c.relname) AS key,
            concat_ws(' ', c.relkind, c.relpersistence, pg_get_userbyid(c.relowner), ${acl('c.relacl')}, 'rls=' || c.relrowsecurity,
                      'force=' || c.relforcerowsecurity, 'replica=' || c.relreplident::text, c.reloptions::text) AS def
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname LIKE 'crove\\_%'`,
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE ${BRAND_NS}`,
   column: `
     SELECT format('%s.%s.%s', n.nspname, c.relname, a.attname) AS key,
            concat_ws(' ', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'not null' END,
@@ -138,7 +146,7 @@ const FINGERPRINT_QUERIES: Record<string, string> = {
     JOIN pg_class c ON c.oid = a.attrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
     LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-    WHERE n.nspname LIKE 'crove\\_%' AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'c')`,
+    WHERE ${BRAND_NS} AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'c')`,
   constraint: `
     SELECT format('%s.%s.%s', n.nspname, COALESCE(c.relname, t.typname), k.conname) AS key,
            concat_ws(' ', pg_get_constraintdef(k.oid), CASE WHEN NOT k.convalidated THEN 'not valid' END) AS def
@@ -146,36 +154,36 @@ const FINGERPRINT_QUERIES: Record<string, string> = {
     JOIN pg_namespace n ON n.oid = k.connamespace
     LEFT JOIN pg_class c ON c.oid = k.conrelid
     LEFT JOIN pg_type t ON t.oid = k.contypid
-    WHERE n.nspname LIKE 'crove\\_%'`,
+    WHERE ${BRAND_NS}`,
   index: `
     SELECT format('%s.%s', n.nspname, c.relname) AS key, pg_get_indexdef(c.oid) AS def
     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname LIKE 'crove\\_%'`,
+    WHERE ${BRAND_NS}`,
   view: `
     SELECT format('%s.%s', n.nspname, c.relname) AS key, pg_get_viewdef(c.oid) AS def
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname LIKE 'crove\\_%' AND c.relkind IN ('v', 'm')`,
+    WHERE ${BRAND_NS} AND c.relkind IN ('v', 'm')`,
   sequence: `
     SELECT s.seqrelid::regclass::text AS key,
            concat_ws(' ', format_type(s.seqtypid, NULL), s.seqstart, s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle) AS def
     FROM pg_sequence s JOIN pg_class c ON c.oid = s.seqrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname LIKE 'crove\\_%'`,
+    WHERE ${BRAND_NS}`,
   policy: `
     SELECT format('%s.%s.%s', p.schemaname, p.tablename, p.policyname) AS key,
            concat_ws(' ', p.permissive, p.cmd, (SELECT string_agg(r, ',' ORDER BY r) FROM unnest(p.roles) r),
                      'using=' || p.qual, 'check=' || p.with_check) AS def
-    FROM pg_policies p WHERE p.schemaname LIKE 'crove\\_%'`,
+    FROM pg_policies p WHERE (p.schemaname LIKE 'crove\\_%' OR p.schemaname LIKE 'ludy\\_%')`,
   trigger: `
     SELECT format('%s.%s.%s', n.nspname, c.relname, t.tgname) AS key, concat_ws(' ', pg_get_triggerdef(t.oid), t.tgenabled) AS def
     FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname LIKE 'crove\\_%' AND NOT t.tgisinternal`,
+    WHERE ${BRAND_NS} AND NOT t.tgisinternal`,
   function: `
     SELECT p.oid::regprocedure::text AS key,
            concat_ws(' ', p.prokind, pg_get_function_result(p.oid), pg_get_userbyid(p.proowner), ${acl('p.proacl')},
                      CASE WHEN p.prosecdef THEN 'definer' END, p.provolatile, p.proparallel,
                      CASE WHEN p.proleakproof THEN 'leakproof' END, CASE WHEN p.proisstrict THEN 'strict' END,
                      p.proconfig::text, md5(p.prosrc)) AS def
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname LIKE 'crove\\_%'`,
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE ${BRAND_NS}`,
   type: `
     SELECT format('%s.%s', n.nspname, t.typname) AS key,
            concat_ws(' ', t.typtype, pg_get_userbyid(t.typowner), ${acl('t.typacl')}, format_type(NULLIF(t.typbasetype, 0), NULLIF(t.typtypmod, -1)),
@@ -183,12 +191,12 @@ const FINGERPRINT_QUERIES: Record<string, string> = {
                      (SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = t.oid)) AS def
     FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
     LEFT JOIN pg_class c ON c.oid = t.typrelid
-    WHERE n.nspname LIKE 'crove\\_%' AND (t.typtype IN ('e', 'd', 'r', 'm') OR c.relkind = 'c')`,
+    WHERE ${BRAND_NS} AND (t.typtype IN ('e', 'd', 'r', 'm') OR c.relkind = 'c')`,
   comment: `
     SELECT format('%s:%s', d.classoid::regclass, pg_describe_object(d.classoid, d.objoid, d.objsubid)) AS key, d.description AS def
     FROM pg_description d
     WHERE d.classoid IN ('pg_class'::regclass, 'pg_proc'::regclass, 'pg_namespace'::regclass, 'pg_type'::regclass)
-      AND pg_describe_object(d.classoid, d.objoid, d.objsubid) ~ '(^| )crove_'`,
+      AND pg_describe_object(d.classoid, d.objoid, d.objsubid) ~ '(^| )(crove|ludy)_'`,
   'event trigger': `
     SELECT e.evtname AS key,
            concat_ws(' ', e.evtevent, e.evtfoid::regprocedure, e.evtenabled, pg_get_userbyid(e.evtowner),
@@ -205,13 +213,12 @@ const FINGERPRINT_QUERIES: Record<string, string> = {
                      (SELECT s.setconfig::text FROM pg_db_role_setting s
                       WHERE s.setrole = r.oid AND s.setdatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
                       ORDER BY s.setdatabase LIMIT 1)) AS def
-    FROM pg_roles r WHERE r.rolname LIKE 'crove\\_%' AND r.rolname NOT LIKE 'crove\\_test\\_%'`,
+    FROM pg_roles r WHERE ${BRAND_ROLE('r.rolname')}`,
   membership: `
     SELECT format('%s in %s', pg_get_userbyid(m.member), pg_get_userbyid(m.roleid)) AS key,
            concat_ws(' ', 'admin=' || m.admin_option, 'inherit=' || m.inherit_option, 'set=' || m.set_option) AS def
     FROM pg_auth_members m
-    WHERE pg_get_userbyid(m.roleid) LIKE 'crove\\_%' AND pg_get_userbyid(m.member) LIKE 'crove\\_%'
-      AND pg_get_userbyid(m.member) NOT LIKE 'crove\\_test\\_%' AND pg_get_userbyid(m.roleid) NOT LIKE 'crove\\_test\\_%'`,
+    WHERE ${BRAND_ROLE('pg_get_userbyid(m.roleid)')} AND ${BRAND_ROLE('pg_get_userbyid(m.member)')}`,
 };
 
 // Tables whose rows record the re-application itself rather than what the migrations define.
@@ -225,7 +232,7 @@ async function catalogFingerprint(client: pg.Client): Promise<Map<string, string
   }
   const { rows: tables } = await client.query<{ name: string }>(
     `SELECT format('%I.%I', n.nspname, c.relname) AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname LIKE 'crove\\_%' AND c.relkind IN ('r', 'p') ORDER BY 1`,
+     WHERE ${BRAND_NS} AND c.relkind IN ('r', 'p') ORDER BY 1`,
   );
   for (const { name } of tables) {
     if (ROWS_EXEMPT.has(name)) continue;
@@ -249,6 +256,8 @@ suite('migrations with a runner that is not a superuser', () => {
   const dbName = `crove_test_runner_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const tag = dbName.replace(/^crove_/, 't100_');
   let runnerUrl = '';
+  let ids: DbIdentifiers | undefined;
+  const getIds = async (): Promise<DbIdentifiers> => (ids ??= await resolveDbIdentifiers(runnerUrl));
 
   beforeAll(async () => {
     await dropStaleRuns();
@@ -270,7 +279,7 @@ suite('migrations with a runner that is not a superuser', () => {
         password,
       ]);
       await admin.query(rows[0]?.sql ?? '');
-      for (const role of CROVE_ROLES) {
+      for (const role of ALL_RUNTIME_ROLES) {
         await admin.query(`DO $$ BEGIN
           IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN
             GRANT ${role} TO ${RUNNER} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
@@ -291,6 +300,7 @@ suite('migrations with a runner that is not a superuser', () => {
     if (!ADMIN) return;
     try {
       await withClient(ADMIN, async (admin) => {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName}_upgrade WITH (FORCE)`);
         await admin.query(`DROP DATABASE IF EXISTS ${dbName}_notowner WITH (FORCE)`);
         await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       });
@@ -303,12 +313,24 @@ suite('migrations with a runner that is not a superuser', () => {
     const files = await readMigrations(MIGRATIONS);
     expect(await migrate({ adminUrl: runnerUrl, dir: MIGRATIONS })).toEqual(files.map((f) => f.name));
     expect(await migrate({ adminUrl: runnerUrl, dir: MIGRATIONS })).toEqual([]);
+    ids = await resolveDbIdentifiers(runnerUrl);
 
+    let firstRenameIdx = -1;
+    let lastRenameIdx = -1;
+    for (let i = 0; i < files.length; i++) {
+      const sql = files[i]?.sql ?? '';
+      if (/^--\s*(?:crove|ludy):contract\s+adr=0054\b/m.test(sql) && /\bALTER\s+SCHEMA\s+crove_[a-z0-9_]+\s+RENAME\s+TO\s+ludy_[a-z0-9_]+/i.test(sql)) {
+        if (firstRenameIdx === -1) firstRenameIdx = i;
+        lastRenameIdx = i;
+      }
+    }
+
+    let before!: Map<string, string>;
     await withClient(runnerUrl, async (runner) => {
       const { rows } = await runner.query<{ rolsuper: boolean }>('SELECT rolsuper FROM pg_roles WHERE rolname = current_user');
       expect(rows[0]?.rolsuper).toBe(false);
-      const before = await catalogFingerprint(runner);
-      for (const file of files) {
+      before = await catalogFingerprint(runner);
+      for (const file of files.slice(lastRenameIdx === -1 ? 0 : lastRenameIdx)) {
         // A file that builds indexes concurrently runs outside a transaction, as the runner applies it (#1791).
         const indexes = concurrentIndexes(file.name, file.sql);
         if (indexes !== null) {
@@ -326,63 +348,103 @@ suite('migrations with a runner that is not a superuser', () => {
       }
       expect(fingerprintDiff(before, await catalogFingerprint(runner))).toEqual([]);
     });
-  });
+
+    // ADR-0054 §3: prove upgrading an already-migrated pre-cutover DB matches a fresh single-pass install.
+    const splitIdx = firstRenameIdx === -1 ? files.length - 1 : firstRenameIdx;
+    const upgradeDb = `${dbName}_upgrade`;
+    const upgradeUrl = new URL(runnerUrl);
+    upgradeUrl.pathname = `/${upgradeDb}`;
+    const preDir = await mkdtemp(join(tmpdir(), 'crove-migrate-upgrade-'));
+    await withClient(ADMIN as string, (admin) => admin.query(`CREATE DATABASE ${upgradeDb} OWNER ${RUNNER}`));
+    try {
+      for (const file of files.slice(0, splitIdx)) {
+        await symlink(join(MIGRATIONS, file.name), join(preDir, file.name));
+      }
+      expect(await migrate({ adminUrl: upgradeUrl.toString(), dir: preDir })).toEqual(files.slice(0, splitIdx).map((f) => f.name));
+      expect(await migrate({ adminUrl: upgradeUrl.toString(), dir: preDir })).toEqual([]);
+      expect(await migrate({ adminUrl: upgradeUrl.toString(), dir: MIGRATIONS })).toEqual(files.slice(splitIdx).map((f) => f.name));
+      expect(await migrate({ adminUrl: upgradeUrl.toString(), dir: MIGRATIONS })).toEqual([]);
+      const upgraded = await withClient(upgradeUrl.toString(), catalogFingerprint);
+      // 20270128300000 bakes clock_timestamp() - interval '1 hour' into agent_grant.engage_reads_due's DEFAULT when the
+      // table is empty, so two separate databases created seconds apart carry distinct literal timestamps.
+      const normalizeUpgradeClock = (fp: Map<string, string>) => {
+        const out = new Map(fp);
+        for (const key of ['column crove_kernel.agent_grant.engage_reads_due', 'column ludy_kernel.agent_grant.engage_reads_due']) {
+          const val = out.get(key);
+          if (val) out.set(key, val.replace(/\(now\(\) < '[^']+'::timestamp with time zone\)/, "(now() < '<MIGRATION_CLOCK>'::timestamp with time zone)"));
+        }
+        return out;
+      };
+      expect(fingerprintDiff(normalizeUpgradeClock(before), normalizeUpgradeClock(upgraded))).toEqual([]);
+    } finally {
+      await rm(preDir, { recursive: true, force: true });
+      await withClient(ADMIN as string, (admin) => admin.query(`DROP DATABASE IF EXISTS ${upgradeDb} WITH (FORCE)`));
+    }
+  }, 180_000);
 
   it('hands the posting function to the definer role with only the intended privileges', async () => {
+    const resolved = await getIds();
+    const finance = resolved.schema('finance');
+    const tenant = resolved.role('tenant');
+    const definerTenant = resolved.role('definer_tenant');
     await withClient(runnerUrl, async (runner) => {
-      const { rows } = await runner.query<{ owner: string; tenant: boolean; public: boolean; definer_create: boolean }>(`
-        SELECT pg_get_userbyid(p.proowner) AS owner,
-               has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant,
-               EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public,
-               has_schema_privilege('crove_definer_tenant', 'crove_finance', 'CREATE') AS definer_create
-        FROM pg_proc p WHERE p.oid = 'crove_finance.post_journal_entry(date, text, text, uuid, jsonb)'::regprocedure`);
-      expect(rows).toEqual([{ owner: 'crove_definer_tenant', tenant: true, public: false, definer_create: false }]);
+      const { rows } = await runner.query<{ owner: string; tenant: boolean; public: boolean; definer_create: boolean }>(
+        `SELECT pg_get_userbyid(p.proowner) AS owner,
+                has_function_privilege($1, p.oid, 'EXECUTE') AS tenant,
+                EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public,
+                has_schema_privilege($2, $3, 'CREATE') AS definer_create
+         FROM pg_proc p WHERE p.oid = ($3 || '.post_journal_entry(date, text, text, uuid, jsonb)')::regprocedure`,
+        [tenant, definerTenant, finance],
+      );
+      expect(rows).toEqual([{ owner: definerTenant, tenant: true, public: false, definer_create: false }]);
     });
   });
 
-  it('hands the Supabase Auth readers to crove_auth_reader, callable only through the session check', async () => {
+  it('hands the Supabase Auth readers to the auth reader role, callable only through the session check', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
+    const app = resolved.role('app');
+    const authReader = resolved.role('auth_reader');
     await withClient(runnerUrl, async (runner) => {
-      const { rows } = await runner.query<{ fn: string; owner: string; app: boolean; public: boolean }>(`
-        SELECT p.oid::regprocedure::text AS fn, pg_get_userbyid(p.proowner) AS owner,
-               has_function_privilege('crove_app', p.oid, 'EXECUTE') AS app,
-               EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public
-        FROM pg_proc p
-        WHERE p.oid IN ('crove_kernel.auth_session_valid(uuid, uuid)'::regprocedure, 'crove_kernel.auth_user_sessions(uuid)'::regprocedure,
-                        'crove_kernel.auth_user_has_verified_factor(uuid)'::regprocedure,
-                        'crove_kernel.auth_session_oauth_bound(uuid)'::regprocedure)
-        ORDER BY 1`);
+      const { rows } = await runner.query<{ fn: string; owner: string; app: boolean; public: boolean }>(
+        `SELECT p.oid::regprocedure::text AS fn, pg_get_userbyid(p.proowner) AS owner,
+                has_function_privilege($1, p.oid, 'EXECUTE') AS app,
+                EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public
+         FROM pg_proc p
+         WHERE p.oid IN (($2 || '.auth_session_valid(uuid, uuid)')::regprocedure, ($2 || '.auth_user_sessions(uuid)')::regprocedure,
+                         ($2 || '.auth_user_has_verified_factor(uuid)')::regprocedure,
+                         ($2 || '.auth_session_oauth_bound(uuid)')::regprocedure)
+         ORDER BY 1`,
+        [app, kernel],
+      );
       expect(rows).toEqual([
-        { fn: 'crove_kernel.auth_session_oauth_bound(uuid)', owner: 'crove_auth_reader', app: false, public: false },
-        { fn: 'crove_kernel.auth_session_valid(uuid,uuid)', owner: 'crove_auth_reader', app: false, public: false },
-        { fn: 'crove_kernel.auth_user_has_verified_factor(uuid)', owner: 'crove_auth_reader', app: false, public: false },
-        { fn: 'crove_kernel.auth_user_sessions(uuid)', owner: 'crove_auth_reader', app: false, public: false },
+        { fn: `${kernel}.auth_session_oauth_bound(uuid)`, owner: authReader, app: false, public: false },
+        { fn: `${kernel}.auth_session_valid(uuid,uuid)`, owner: authReader, app: false, public: false },
+        { fn: `${kernel}.auth_user_has_verified_factor(uuid)`, owner: authReader, app: false, public: false },
+        { fn: `${kernel}.auth_user_sessions(uuid)`, owner: authReader, app: false, public: false },
       ]);
       const role = await runner.query(
-        `SELECT rolcanlogin, rolsuper, rolbypassrls, has_schema_privilege('crove_auth_reader', 'crove_kernel', 'CREATE') AS can_create
-         FROM pg_roles WHERE rolname = 'crove_auth_reader'`,
+        `SELECT rolcanlogin, rolsuper, rolbypassrls, has_schema_privilege($1, $2, 'CREATE') AS can_create
+         FROM pg_roles WHERE rolname = $1`,
+        [authReader, kernel],
       );
       expect(role.rows).toEqual([{ rolcanlogin: false, rolsuper: false, rolbypassrls: false, can_create: false }]);
     });
   });
 
-  // External-tenant gate T17: every crove_* function pins search_path, and Crove roles have no TEMP.
-  it('pins search_path on every function and leaves Crove roles without TEMPORARY', async () => {
+  // External-tenant gate T17: every crove_*/ludy_* function pins search_path, and runtime roles have no TEMP.
+  it('pins search_path on every function and leaves runtime roles without TEMPORARY', async () => {
+    const resolved = await getIds();
+    const expectedRoles = [...EXPECTED_ROLE_DOMAINS.map((r) => resolved.role(r)).sort(), 'supabase_auth_admin'];
     await withClient(runnerUrl, async (runner) => {
       expect(await hardeningViolations(runner)).toEqual([]);
       const { rows } = await runner.query<{ role: string; temp: boolean }>(
-        `SELECT r AS role, has_database_privilege(r, current_database(), 'TEMPORARY') AS temp
-         FROM unnest(ARRAY[${CROVE_ROLES.map((r) => `'${r}'`).join(', ')}, 'supabase_auth_admin']) r ORDER BY 1`,
+        `SELECT r.rolname AS role, has_database_privilege(r.oid, current_database(), 'TEMPORARY') AS temp
+         FROM pg_roles r WHERE r.rolname = ANY($1::text[]) ORDER BY 1`,
+        [expectedRoles],
       );
-      // The bundled Supabase Auth keeps what PUBLIC gave it; only Crove roles lose it.
-      expect(rows).toEqual([
-        { role: 'crove_app', temp: false },
-        { role: 'crove_auth_reader', temp: false },
-        { role: 'crove_definer_einvoice', temp: false },
-        { role: 'crove_definer_tenant', temp: false },
-        { role: 'crove_tenant', temp: false },
-        { role: 'crove_worker', temp: false },
-        { role: 'supabase_auth_admin', temp: true },
-      ]);
+      // The bundled Supabase Auth keeps what PUBLIC gave it; only runtime roles lose it.
+      expect(rows).toEqual(expectedRoles.sort().map((r) => ({ role: r, temp: r === 'supabase_auth_admin' })));
       const { rows: pub } = await runner.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM pg_database d, aclexplode(d.datacl) a
          WHERE d.datname = current_database() AND a.grantee = 0 AND a.privilege_type = 'TEMPORARY'`,
@@ -409,29 +471,36 @@ suite('migrations with a runner that is not a superuser', () => {
   });
 
   it('reports planted functions that do not pin search_path, and TEMPORARY granted back', async () => {
+    const resolved = await getIds();
+    const finance = resolved.schema('finance');
+    const jobs = resolved.schema('jobs');
+    const app = resolved.role('app');
+    const worker = resolved.role('worker');
     await withClient(runnerUrl, async (runner) => {
       await runner.query('BEGIN');
       try {
         await runner.query(`
           CREATE SCHEMA crove_t17;
-          CREATE FUNCTION crove_finance.t17_none() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
-          CREATE FUNCTION crove_finance.t17_empty() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$;
+          CREATE FUNCTION ${finance}.t17_none() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
+          CREATE FUNCTION ${finance}.t17_empty() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$;
           CREATE FUNCTION crove_t17.t17_partial() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$ SELECT 1 $$;
           CREATE FUNCTION crove_t17.t17_extra() RETURNS int LANGUAGE sql SET search_path = pg_catalog, pg_temp SET work_mem = '64kB' AS $$ SELECT 1 $$;
           CREATE PROCEDURE crove_t17.t17_proc() LANGUAGE sql AS $$ SELECT 1 $$;
           CREATE FUNCTION crove_t17.t17_ok() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$;
-          CREATE SCHEMA IF NOT EXISTS crove_jobs;
-          CREATE FUNCTION crove_jobs.t17_invoker() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
-          CREATE FUNCTION crove_jobs.t17_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-          GRANT CREATE ON SCHEMA crove_jobs TO crove_worker;`);
-        await runner.query(`GRANT TEMPORARY ON DATABASE ${dbName} TO crove_app`);
+          CREATE SCHEMA IF NOT EXISTS ${jobs};
+          CREATE FUNCTION ${jobs}.t17_invoker() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
+          CREATE FUNCTION ${jobs}.t17_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+          GRANT CREATE ON SCHEMA ${jobs} TO ${worker};`);
+        await runner.query(`GRANT TEMPORARY ON DATABASE ${dbName} TO ${app}`);
         const unpinned = (fn: string, settings: string, fix: string) =>
           `function ${fn} has settings ${settings}, expected "search_path=pg_catalog, pg_temp"; fix in a new migration: ${fix}`;
         const pin = (fn: string, kind = 'FUNCTION') => `ALTER ${kind} ${fn} SET search_path = pg_catalog, pg_temp`;
-        expect(await hardeningViolations(runner)).toEqual([
-          unpinned('crove_finance.t17_empty()', '"search_path="""', pin('crove_finance.t17_empty()')),
-          unpinned('crove_finance.t17_none()', '(none)', pin('crove_finance.t17_none()')),
-          unpinned('crove_jobs.t17_definer()', '(none)', pin('crove_jobs.t17_definer()')),
+        const violations = await hardeningViolations(runner);
+        expect(violations).toHaveLength(8);
+        expect(violations.slice(0, 6).sort()).toEqual([
+          unpinned(`${finance}.t17_empty()`, '"search_path="""', pin(`${finance}.t17_empty()`)),
+          unpinned(`${finance}.t17_none()`, '(none)', pin(`${finance}.t17_none()`)),
+          unpinned(`${jobs}.t17_definer()`, '(none)', pin(`${jobs}.t17_definer()`)),
           unpinned(
             'crove_t17.t17_extra()',
             '"search_path=pg_catalog, pg_temp; work_mem=64kB"',
@@ -439,11 +508,19 @@ suite('migrations with a runner that is not a superuser', () => {
           ),
           unpinned('crove_t17.t17_partial()', '"search_path=pg_catalog"', pin('crove_t17.t17_partial()')),
           unpinned('crove_t17.t17_proc()', '(none)', pin('crove_t17.t17_proc()', 'PROCEDURE')),
-          'role crove_worker may CREATE in schema crove_jobs, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA crove_jobs FROM crove_worker',
-          `role crove_app can create temporary objects (TEMPORARY on database ${dbName}); fix as the database owner or a superuser: ` +
-            `GRANT TEMPORARY ON DATABASE ${dbName} directly to any non-Crove role that needs it, then ` +
-            `REVOKE TEMPORARY ON DATABASE ${dbName} FROM PUBLIC, crove_app`,
-        ]);
+        ].sort());
+        expect(violations[6]).toBe(
+          `role ${worker} may CREATE in schema ${jobs}, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA ${jobs} FROM ${worker}`,
+        );
+        expect(violations[7]).toEqual(
+          expect.stringMatching(
+            new RegExp(
+              `^role ${escapeRegExp(app)} can create temporary objects \\(TEMPORARY on database ${escapeRegExp(dbName)}\\); fix as the database owner or a superuser: ` +
+                `GRANT TEMPORARY ON DATABASE ${escapeRegExp(dbName)} directly to any non-(?:Crove|Ludy) role that needs it, then ` +
+                `REVOKE TEMPORARY ON DATABASE ${escapeRegExp(dbName)} FROM PUBLIC, ${escapeRegExp(app)}$`,
+            ),
+          ),
+        );
       } finally {
         await runner.query('ROLLBACK');
       }
@@ -451,13 +528,16 @@ suite('migrations with a runner that is not a superuser', () => {
     });
   });
 
-  // #100: functions outside crove_* schemas that crove_* objects reach without naming them, and TEMPORARY for
-  // non-Crove roles that can act as a Crove role. Each planted function is reached through exactly one path.
+  // #100: functions outside crove_*/ludy_* schemas that crove_*/ludy_* objects reach without naming them, and
+  // TEMPORARY for non-Ludy roles that can act as a Ludy role. Each planted function is reached through one path.
   it('reports reachable functions outside crove_* schemas, and TEMPORARY for members of Crove roles', async () => {
-    // Acts as every owner of a crove_* definer (through the runner), so TEMPORARY gains it nothing. Granting the
+    const resolved = await getIds();
+    const tenant = resolved.role('tenant');
+    const definerTenant = resolved.role('definer_tenant');
+    // Acts as every owner of a crove_*/ludy_* definer (through the runner), so TEMPORARY gains it nothing. Granting the
     // runner role needs a superuser, and the runner's transaction cannot see an uncommitted role. The role is
     // committed, so a concurrent run of this file on the same cluster sees it: INHERIT FALSE (it still acts as the
-    // runner through SET) keeps it from holding CREATE on the crove_jobs schema that run's runner owns.
+    // runner through SET) keeps it from holding CREATE on the jobs schema that run's runner owns.
     await withClient(ADMIN as string, (admin) =>
       admin.query(`CREATE ROLE ${tag}_proxy; GRANT ${RUNNER} TO ${tag}_proxy WITH INHERIT FALSE`),
     );
@@ -512,21 +592,25 @@ suite('migrations with a runner that is not a superuser', () => {
             CREATE TRIGGER t_when BEFORE INSERT ON crove_t100.t FOR EACH ROW WHEN (t100_ext.when_fn(NEW.a))
               EXECUTE FUNCTION t100_ext.trg_invoker();
             CREATE ROLE ${tag}_member;
-            GRANT crove_tenant TO ${tag}_member WITH INHERIT TRUE, SET FALSE;
+            GRANT ${tenant} TO ${tag}_member WITH INHERIT TRUE, SET FALSE;
             CREATE ROLE ${tag}_group;
-            GRANT crove_definer_tenant TO ${tag}_group;
+            GRANT ${definerTenant} TO ${tag}_group;
             CREATE ROLE ${tag}_nested;
             GRANT ${tag}_group TO ${tag}_nested;
             CREATE ROLE ${tag}_setonly;
-            GRANT crove_tenant TO ${tag}_setonly WITH INHERIT FALSE, SET TRUE;
+            GRANT ${tenant} TO ${tag}_setonly WITH INHERIT FALSE, SET TRUE;
             CREATE ROLE ${tag}_admin;
-            GRANT crove_tenant TO ${tag}_admin WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
+            GRANT ${tenant} TO ${tag}_admin WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
             CREATE ROLE ${tag}_outsider;
             GRANT TEMPORARY ON DATABASE ${dbName}
               TO ${tag}_member, ${tag}_nested, ${tag}_setonly, ${tag}_admin, ${tag}_outsider, ${tag}_proxy;`);
           const reached = (fn: string, via: string, setting: string) =>
-            `function ${fn} is reached from crove_* objects (${via}) and ${setting}, expected "search_path=pg_catalog, pg_temp"; ` +
-            `fix in a new migration as its owner: ALTER FUNCTION ${fn} SET search_path = pg_catalog, pg_temp, or stop using it from crove_* objects`;
+            expect.stringMatching(
+              new RegExp(
+                `^function ${escapeRegExp(fn)} is reached from (?:crove|ludy)_\\* objects \\(${escapeRegExp(via)}\\) and ${escapeRegExp(setting)}, expected "search_path=pg_catalog, pg_temp"; ` +
+                  `fix in a new migration as its owner: ALTER FUNCTION ${escapeRegExp(fn)} SET search_path = pg_catalog, pg_temp, or stop using it from (?:crove|ludy)_\\* objects$`,
+              ),
+            );
           const member = (role: string, via: string, grants: string) =>
             `role ${role} can create temporary objects (TEMPORARY on database ${dbName}) and can act as ${via}; ` +
             `fix as the database owner or a superuser: REVOKE ${grants} FROM ${role}, or take TEMPORARY away from ${role} ` +
@@ -548,10 +632,10 @@ suite('migrations with a runner that is not a superuser', () => {
             reached('t100_ext.op_fn(integer,integer)', 'constraint t_a_same on table crove_t100.t', 'sets "search_path="""'),
             reached('t100_ext.trg_definer()', 'trigger t_definer on table crove_t100.t', definer),
             reached('t100_ext.when_fn(integer)', 'trigger t_when on table crove_t100.t', definer),
-            member(`${tag}_admin`, 'crove_tenant', 'crove_tenant'),
-            member(`${tag}_member`, 'crove_tenant', 'crove_tenant'),
-            member(`${tag}_nested`, 'crove_definer_tenant, crove_tenant', `${tag}_group`),
-            member(`${tag}_setonly`, 'crove_tenant', 'crove_tenant'),
+            member(`${tag}_admin`, tenant, tenant),
+            member(`${tag}_member`, tenant, tenant),
+            member(`${tag}_nested`, [definerTenant, tenant].sort().join(', '), `${tag}_group`),
+            member(`${tag}_setonly`, tenant, tenant),
           ]);
         } finally {
           await runner.query('ROLLBACK');
@@ -566,15 +650,17 @@ suite('migrations with a runner that is not a superuser', () => {
   });
 
   it('fails the migration run loudly while an unpinned function exists', async () => {
+    const resolved = await getIds();
+    const finance = resolved.schema('finance');
     await withClient(runnerUrl, (runner) =>
-      runner.query(`CREATE FUNCTION crove_finance.t17_unpinned() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$`),
+      runner.query(`CREATE FUNCTION ${finance}.t17_unpinned() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$`),
     );
     try {
       await expect(migrate({ adminUrl: runnerUrl, dir: MIGRATIONS })).rejects.toThrow(
-        /database hardening check failed[\s\S]*crove_finance\.t17_unpinned\(\)/,
+        new RegExp(`database hardening check failed[\\s\\S]*${escapeRegExp(finance)}\\.t17_unpinned\\(\\)`),
       );
     } finally {
-      await withClient(runnerUrl, (runner) => runner.query('DROP FUNCTION crove_finance.t17_unpinned()'));
+      await withClient(runnerUrl, (runner) => runner.query(`DROP FUNCTION ${finance}.t17_unpinned()`));
     }
     expect(await migrate({ adminUrl: runnerUrl, dir: MIGRATIONS })).toEqual([]);
   });
@@ -616,9 +702,12 @@ suite('migrations with a runner that is not a superuser', () => {
   // in the catalog; meanwhile an audit_event insert gets its lock at once and writes (a plain CREATE INDEX would hold a
   // SHARE lock for the whole build, and the insert would time out).
   it('builds an index on audit_event concurrently while an insert goes through (#1791)', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
+    const meta = resolved.schema('meta');
     const file = '29990101000000_crove_kernel_concurrent_index_test.sql';
     const dir = await withExtraMigrations({
-      [file]: `-- An index on a hot table, built without blocking writes.\n${CONCURRENT_INDEX_MARKER}\n\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_event_t1791_idx ON crove_kernel.audit_event (org_id, command);\n`,
+      [file]: `-- An index on a hot table, built without blocking writes.\n${CONCURRENT_INDEX_MARKER}\n\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_event_t1791_idx ON ${kernel}.audit_event (org_id, command);\n`,
     });
     const db = adminUrlFor(dbName);
     await withClient(db, async (blocker) => {
@@ -632,7 +721,7 @@ suite('migrations with a runner that is not a superuser', () => {
         for (let i = 0; ; i++) {
           const { rows } = await watch.query(
             `SELECT 1 FROM pg_catalog.pg_stat_activity
-             WHERE application_name = 'crove-migrate' AND query LIKE 'CREATE INDEX CONCURRENTLY%' AND wait_event_type = 'Lock'`,
+             WHERE application_name IN ('crove-migrate', 'ludy-migrate') AND query LIKE 'CREATE INDEX CONCURRENTLY%' AND wait_event_type = 'Lock'`,
           );
           if (rows.length > 0) break;
           if (i > 200) throw new Error('the concurrent build never started waiting');
@@ -645,7 +734,7 @@ suite('migrations with a runner that is not a superuser', () => {
         // Triggers and foreign keys off: the row only has to reach the table, not pass the audit rules.
         await writer.query('SET LOCAL session_replication_role = replica');
         await writer.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256)
+          `INSERT INTO ${kernel}.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256)
            VALUES (gen_random_uuid(), 'system', 't1791', gen_random_uuid(), 'ok', 'x')`,
         );
         await writer.query('ROLLBACK');
@@ -655,21 +744,21 @@ suite('migrations with a runner that is not a superuser', () => {
     });
     await withClient(runnerUrl, async (runner) => {
       const { rows } = await runner.query<{ valid: boolean }>(
-        "SELECT i.indisvalid AND i.indisready AS valid FROM pg_index i WHERE i.indexrelid = 'crove_kernel.audit_event_t1791_idx'::regclass",
+        `SELECT i.indisvalid AND i.indisready AS valid FROM pg_index i WHERE i.indexrelid = '${kernel}.audit_event_t1791_idx'::regclass`,
       );
       expect(rows).toEqual([{ valid: true }]);
-      expect((await runner.query('SELECT 1 FROM crove_meta.schema_migrations WHERE name = $1', [file])).rowCount).toBe(1);
+      expect((await runner.query(`SELECT 1 FROM ${meta}.schema_migrations WHERE name = $1`, [file])).rowCount).toBe(1);
     });
     // The contrast: while a plain CREATE INDEX holds its SHARE lock, the same insert cannot get its lock.
     await withClient(runnerUrl, async (builder) => {
       await builder.query('BEGIN');
-      await builder.query('CREATE INDEX audit_event_t1791_plain_idx ON crove_kernel.audit_event (command)');
+      await builder.query(`CREATE INDEX audit_event_t1791_plain_idx ON ${kernel}.audit_event (command)`);
       try {
         await withClient(db, async (writer) => {
           await writer.query("SET lock_timeout = '1s'");
           await expect(
             writer.query(
-              `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256)
+              `INSERT INTO ${kernel}.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256)
                VALUES (gen_random_uuid(), 'system', 't1791', gen_random_uuid(), 'ok', 'x')`,
             ),
           ).rejects.toThrow(/lock timeout/);
@@ -681,53 +770,58 @@ suite('migrations with a runner that is not a superuser', () => {
   });
 
   it('refuses to build concurrently on a partitioned table, where PostgreSQL cannot (#1791)', async () => {
+    const resolved = await getIds();
+    const jobs = resolved.schema('jobs');
     const dir = await withExtraMigrations({
-      '29990103000000_crove_jobs_concurrent_index_partitioned.sql': `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS job_t1791_idx ON crove_jobs.job (name);\n`,
+      '29990103000000_crove_jobs_concurrent_index_partitioned.sql': `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS job_t1791_idx ON ${jobs}.job (name);\n`,
     });
-    const kind = await withClient(runnerUrl, async (runner) => (await runner.query<{ kind: string }>("SELECT relkind::text AS kind FROM pg_class WHERE oid = 'crove_jobs.job'::regclass")).rows[0]?.kind);
+    const kind = await withClient(runnerUrl, async (runner) => (await runner.query<{ kind: string }>(`SELECT relkind::text AS kind FROM pg_class WHERE oid = '${jobs}.job'::regclass`)).rows[0]?.kind);
     expect(kind).toBe('p');
-    await expect(migrate({ adminUrl: runnerUrl, dir })).rejects.toThrow(/crove_jobs\.job is partitioned/);
+    await expect(migrate({ adminUrl: runnerUrl, dir })).rejects.toThrow(new RegExp(`${escapeRegExp(jobs)}\\.job is partitioned`));
   });
 
   it('records nothing when a build fails, and drops the INVALID index a failed build left before the retry (#1791)', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
+    const meta = resolved.schema('meta');
     const file = '29990102000000_crove_kernel_concurrent_index_retry.sql';
     await withClient(runnerUrl, async (runner) => {
-      await runner.query('CREATE TABLE crove_kernel.t1791 (id int, k int)');
-      await runner.query('INSERT INTO crove_kernel.t1791 VALUES (1, 1), (2, 1)');
+      await runner.query(`CREATE TABLE ${kernel}.t1791 (id int, k int)`);
+      await runner.query(`INSERT INTO ${kernel}.t1791 VALUES (1, 1), (2, 1)`);
     });
     const dir = await withExtraMigrations({
-      [file]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1791_id_idx ON crove_kernel.t1791 (id);\nCREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS t1791_k_key ON crove_kernel.t1791 (k);\n`,
+      [file]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1791_id_idx ON ${kernel}.t1791 (id);\nCREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS t1791_k_key ON ${kernel}.t1791 (k);\n`,
     });
     const indexes = () =>
       withClient(runnerUrl, async (runner) =>
         (
           await runner.query<{ name: string; valid: boolean }>(
             `SELECT c.relname AS name, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-             WHERE i.indrelid = 'crove_kernel.t1791'::regclass ORDER BY 1`,
+             WHERE i.indrelid = '${kernel}.t1791'::regclass ORDER BY 1`,
           )
         ).rows,
       );
     const recorded = () =>
-      withClient(runnerUrl, async (runner) => (await runner.query('SELECT 1 FROM crove_meta.schema_migrations WHERE name = $1', [file])).rowCount);
+      withClient(runnerUrl, async (runner) => (await runner.query(`SELECT 1 FROM ${meta}.schema_migrations WHERE name = $1`, [file])).rowCount);
 
     // The unique build fails on the duplicate: the first index stays, the failed one leaves nothing, the file is not
     // recorded.
-    await expect(migrate({ adminUrl: runnerUrl, dir })).rejects.toThrow(/failed building crove_kernel\.t1791_k_key/);
+    await expect(migrate({ adminUrl: runnerUrl, dir })).rejects.toThrow(new RegExp(`failed building ${escapeRegExp(kernel)}\\.t1791_k_key`));
     expect(await indexes()).toEqual([{ name: 't1791_id_idx', valid: true }]);
     expect(await recorded()).toBe(0);
 
     // A build that failed outside the runner (a killed deploy) leaves an INVALID index behind.
-    await withClient(runnerUrl, (runner) => runner.query('CREATE UNIQUE INDEX CONCURRENTLY t1791_k_key ON crove_kernel.t1791 (k)').catch(() => {}));
+    await withClient(runnerUrl, (runner) => runner.query(`CREATE UNIQUE INDEX CONCURRENTLY t1791_k_key ON ${kernel}.t1791 (k)`).catch(() => {}));
     expect(await indexes()).toEqual([
       { name: 't1791_id_idx', valid: true },
       { name: 't1791_k_key', valid: false },
     ]);
 
     // Once the data allows it, the retry drops the INVALID index, builds it again and records the file once.
-    await withClient(runnerUrl, (runner) => runner.query('DELETE FROM crove_kernel.t1791 WHERE id = 2'));
+    await withClient(runnerUrl, (runner) => runner.query(`DELETE FROM ${kernel}.t1791 WHERE id = 2`));
     const log: string[] = [];
     expect(await migrate({ adminUrl: runnerUrl, dir, log: (m) => log.push(m) })).toEqual([file]);
-    expect(log).toContain('dropping the INVALID index crove_kernel.t1791_k_key a failed build left');
+    expect(log).toContain(`dropping the INVALID index ${kernel}.t1791_k_key a failed build left`);
     expect(await indexes()).toEqual([
       { name: 't1791_id_idx', valid: true },
       { name: 't1791_k_key', valid: true },
@@ -739,29 +833,32 @@ suite('migrations with a runner that is not a superuser', () => {
   // #1803: IF NOT EXISTS keeps any index of the name, so the runner compares it with the one the statement asks for
   // (pg_get_indexdef of a build on an empty copy). The same definition written another way passes; another one fails.
   it('refuses an index of the same name with another definition, and accepts the same one written another way (#1803)', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
+    const meta = resolved.schema('meta');
     await withClient(runnerUrl, async (runner) => {
-      await runner.query('CREATE TABLE crove_kernel.t1803 (a int, b int, c text)');
-      await runner.query('CREATE INDEX t1803_same_idx ON crove_kernel.t1803 (lower(c)) WHERE a > 1');
-      await runner.query('CREATE INDEX t1803_other_idx ON crove_kernel.t1803 (b)');
+      await runner.query(`CREATE TABLE ${kernel}.t1803 (a int, b int, c text)`);
+      await runner.query(`CREATE INDEX t1803_same_idx ON ${kernel}.t1803 (lower(c)) WHERE a > 1`);
+      await runner.query(`CREATE INDEX t1803_other_idx ON ${kernel}.t1803 (b)`);
     });
     const same = '29990104000000_crove_kernel_concurrent_index_same.sql';
     const sameDir = await withExtraMigrations({
-      [same]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_same_idx ON crove_kernel.t1803 USING btree ( pg_catalog.lower( c ) )\n  WHERE (a > 1);\n`,
+      [same]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_same_idx ON ${kernel}.t1803 USING btree ( pg_catalog.lower( c ) )\n  WHERE (a > 1);\n`,
     });
     expect(await migrate({ adminUrl: runnerUrl, dir: sameDir })).toEqual([same]);
 
     const other = '29990105000000_crove_kernel_concurrent_index_other.sql';
     const otherDir = await withExtraMigrations({
-      [same]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_same_idx ON crove_kernel.t1803 USING btree ( pg_catalog.lower( c ) )\n  WHERE (a > 1);\n`,
-      [other]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_other_idx ON crove_kernel.t1803 (a);\n`,
+      [same]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_same_idx ON ${kernel}.t1803 USING btree ( pg_catalog.lower( c ) )\n  WHERE (a > 1);\n`,
+      [other]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_other_idx ON ${kernel}.t1803 (a);\n`,
     });
     await expect(migrate({ adminUrl: runnerUrl, dir: otherDir })).rejects.toThrow(
       /t1803_other_idx already exists with another definition, so IF NOT EXISTS kept it: USING btree \(b\) instead of USING btree \(a\)/,
     );
-    const recorded = await withClient(runnerUrl, async (runner) => (await runner.query('SELECT 1 FROM crove_meta.schema_migrations WHERE name = $1', [other])).rowCount);
+    const recorded = await withClient(runnerUrl, async (runner) => (await runner.query(`SELECT 1 FROM ${meta}.schema_migrations WHERE name = $1`, [other])).rowCount);
     expect(recorded).toBe(0);
     // The probe the comparison builds is rolled back with its transaction.
-    const probe = await withClient(runnerUrl, async (runner) => (await runner.query("SELECT to_regclass('crove_meta.concurrent_index_probe') AS t")).rows[0]?.t);
+    const probe = await withClient(runnerUrl, async (runner) => (await runner.query(`SELECT to_regclass('${meta}.concurrent_index_probe') AS t`)).rows[0]?.t);
     expect(probe).toBeNull();
   });
 
@@ -769,19 +866,21 @@ suite('migrations with a runner that is not a superuser', () => {
   // runs the cast's function; and a range column's comparisons run the range type's functions. The probe's pg_depend
   // shows both, and the runner refuses before the build outside a transaction.
   it('refuses an index that would run user code through a cast or a range type, before it builds (#1803)', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
     await withClient(runnerUrl, async (runner) => {
       await runner.query(`
-        CREATE TYPE crove_kernel.t1803_state AS ENUM ('a', 'b');
-        CREATE FUNCTION crove_kernel.t1803_cast(crove_kernel.t1803_state) RETURNS text IMMUTABLE LANGUAGE sql
+        CREATE TYPE ${kernel}.t1803_state AS ENUM ('a', 'b');
+        CREATE FUNCTION ${kernel}.t1803_cast(${kernel}.t1803_state) RETURNS text IMMUTABLE LANGUAGE sql
           SET search_path = pg_catalog, pg_temp AS 'SELECT $1::text';
-        CREATE CAST (crove_kernel.t1803_state AS text) WITH FUNCTION crove_kernel.t1803_cast(crove_kernel.t1803_state);
-        CREATE TYPE crove_kernel.t1803_range AS RANGE (subtype = int4);
-        CREATE TABLE crove_kernel.t1803_user (s crove_kernel.t1803_state, r crove_kernel.t1803_range)`);
+        CREATE CAST (${kernel}.t1803_state AS text) WITH FUNCTION ${kernel}.t1803_cast(${kernel}.t1803_state);
+        CREATE TYPE ${kernel}.t1803_range AS RANGE (subtype = int4);
+        CREATE TABLE ${kernel}.t1803_user (s ${kernel}.t1803_state, r ${kernel}.t1803_range)`);
     });
     try {
       for (const [file, statement, why] of [
-        ['29990106000000_crove_kernel_concurrent_index_cast.sql', 't1803_cast_idx ON crove_kernel.t1803_user ((s::text))', /function crove_kernel\.t1803_cast\(crove_kernel\.t1803_state\)/],
-        ['29990107000000_crove_kernel_concurrent_index_range.sql', 't1803_range_idx ON crove_kernel.t1803_user USING gist (r)', /column r of type crove_kernel\.t1803_range/],
+        ['29990106000000_crove_kernel_concurrent_index_cast.sql', `t1803_cast_idx ON ${kernel}.t1803_user ((s::text))`, new RegExp(`function ${escapeRegExp(kernel)}\\.t1803_cast\\(${escapeRegExp(kernel)}\\.t1803_state\\)`)],
+        ['29990107000000_crove_kernel_concurrent_index_range.sql', `t1803_range_idx ON ${kernel}.t1803_user USING gist (r)`, new RegExp(`column r of type ${escapeRegExp(kernel)}\\.t1803_range`)],
       ] as const) {
         const dir = await withExtraMigrations({ [file]: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS ${statement};\n` });
         const failure = migrate({ adminUrl: runnerUrl, dir });
@@ -789,27 +888,29 @@ suite('migrations with a runner that is not a superuser', () => {
         await expect(failure).rejects.toThrow(why);
       }
       const left = await withClient(runnerUrl, async (runner) =>
-        (await runner.query("SELECT to_regclass('crove_kernel.t1803_cast_idx') AS a, to_regclass('crove_kernel.t1803_range_idx') AS b")).rows[0],
+        (await runner.query(`SELECT to_regclass('${kernel}.t1803_cast_idx') AS a, to_regclass('${kernel}.t1803_range_idx') AS b`)).rows[0],
       );
       expect(left).toEqual({ a: null, b: null });
     } finally {
       await withClient(runnerUrl, (runner) =>
         runner.query(`
-          DROP TABLE crove_kernel.t1803_user;
-          DROP CAST (crove_kernel.t1803_state AS text);
-          DROP FUNCTION crove_kernel.t1803_cast(crove_kernel.t1803_state);
-          DROP TYPE crove_kernel.t1803_state, crove_kernel.t1803_range`),
+          DROP TABLE ${kernel}.t1803_user;
+          DROP CAST (${kernel}.t1803_state AS text);
+          DROP FUNCTION ${kernel}.t1803_cast(${kernel}.t1803_state);
+          DROP TYPE ${kernel}.t1803_state, ${kernel}.t1803_range`),
       );
     }
   });
 
   it('refuses to build while the session has temporary types an expression could resolve to (#1803)', async () => {
+    const resolved = await getIds();
+    const kernel = resolved.schema('kernel');
     await withClient(runnerUrl, async (runner) => {
-      await runner.query('CREATE TABLE IF NOT EXISTS crove_kernel.t1803_temp (a int)');
+      await runner.query(`CREATE TABLE IF NOT EXISTS ${kernel}.t1803_temp (a int)`);
       await runner.query('CREATE TEMP TABLE t1803_shadow (a int)');
-      const indexes = concurrentIndexes('a.sql', `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_temp_idx ON crove_kernel.t1803_temp (a);\n`) ?? [];
+      const indexes = concurrentIndexes('a.sql', `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t1803_temp_idx ON ${kernel}.t1803_temp (a);\n`) ?? [];
       await expect(applyConcurrentIndexes(runner, 'a.sql', indexes)).rejects.toThrow(/this session has temporary types/);
-      expect((await runner.query("SELECT to_regclass('crove_kernel.t1803_temp_idx') AS i")).rows[0]?.i).toBeNull();
+      expect((await runner.query(`SELECT to_regclass('${kernel}.t1803_temp_idx') AS i`)).rows[0]?.i).toBeNull();
     });
   });
 
@@ -817,7 +918,7 @@ suite('migrations with a runner that is not a superuser', () => {
     const holder = new pg.Client({ connectionString: runnerUrl, application_name: 't1803-holder' });
     await holder.connect();
     try {
-      await holder.query("SELECT pg_advisory_lock(hashtext('crove_migrate'))");
+      await holder.query("SELECT pg_advisory_lock(hashtext('crove_migrate')), pg_advisory_lock(hashtext('ludy_migrate'))");
       const log: string[] = [];
       await expect(migrate({ adminUrl: runnerUrl, dir: MIGRATIONS, log: (m) => log.push(m), lockWaitMs: 1500 })).rejects.toThrow(
         /another run has held the migration lock for longer than 2s \(pid \d+ \(t1803-holder, idle\)\)/,

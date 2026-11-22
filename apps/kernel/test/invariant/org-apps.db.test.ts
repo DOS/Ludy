@@ -10,13 +10,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type AgentActor, type CommandDef } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -29,6 +30,7 @@ type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: s
 suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
   const dbName = `crove_test_orgapps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;
@@ -44,14 +46,14 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
   const asMfa = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal2', sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) });
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -117,12 +119,13 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     const definitions = {
       commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands],
       queries: [
@@ -136,10 +139,10 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     };
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(definitions);
     const wurl = new URL(adminUrl);
-    wurl.username = 'crove_worker';
+    wurl.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     wurl.password = 'test-worker-pw';
     workerUrl = wurl.toString();
-    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(definitions);
   }, 120_000);
 
@@ -272,7 +275,7 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     });
     // A direct write in the agent's own context: the database refuses it, whatever the agent's grants. The kernel's own agent
     // write guard (AGENT_FORBIDDEN, on every tenant table) answers first; tenant_apps_guard refuses a non-user context too.
-    const direct = new pg.Client({ connectionString: workerUrl });
+    const direct = createDbClient({ connectionString: workerUrl }, dbIds);
     await direct.connect();
     clients.push(direct);
     await direct.query('BEGIN');

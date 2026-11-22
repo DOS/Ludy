@@ -15,13 +15,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, PERSONAL_DATA_COLUMNS, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -49,6 +50,7 @@ const ROW_KIND_TABLE: Record<number, string> = { 1: 'transcript_segment', 2: 'me
 suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   const dbName = `crove_test_meetings_personal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -66,7 +68,7 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -94,7 +96,7 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   const owner = member('an owner', () => users.owner);
   // Runs fn as a login role in a context, always rolled back.
   async function run<T>(actor: Actor, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: actor.url() });
+    const c = createDbClient({ connectionString: actor.url() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -125,17 +127,18 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       const db = createDb(pool);
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] }) };
@@ -204,7 +207,11 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   it('shows the owner no title, line, summary or item of a meeting they cannot read, in the finder\'s answer or its audit row', async () => {
     const found = await api.execute<{ matches: Array<{ column: string; row: Record<string, unknown> }> }>('kernel.personal_data.find', { value: EMAIL }, { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() });
     // Rows of meetings the owner reads (the org-shared one) may be listed; no row of the hidden meeting is, whatever its table.
-    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.') && (m.row.meeting_id === meetingId || m.row.id === meetingId))).toEqual([]);
+    expect(
+      found.matches.filter(
+        (m) => (m.column.startsWith('crove_meetings.') || m.column.startsWith('ludy_meetings.')) && (m.row.meeting_id === meetingId || m.row.id === meetingId),
+      ),
+    ).toEqual([]);
     const answer = JSON.stringify(found);
     for (const secret of [TITLE, LINE, SUMMARY, 'Tuấn']) expect(answer, secret).not.toContain(secret);
     const audit = JSON.stringify(
@@ -260,7 +267,9 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
       'crove_meetings.action_item.when_drafted',
     ];
     for (const key of columns) {
-      const entry = (PERSONAL_DATA_COLUMNS as Record<string, { handling: string; kind: string }>)[key];
+      const entry =
+        (PERSONAL_DATA_COLUMNS as Record<string, { handling: string; kind: string }>)[key] ??
+        (PERSONAL_DATA_COLUMNS as Record<string, { handling: string; kind: string }>)[key.replace(/^crove_meetings\./, 'ludy_meetings.')];
       expect(entry, key).toBeDefined();
       expect(entry?.handling, key).toBe('erase');
       expect(['other', 'free_text'], key).toContain(entry?.kind);
