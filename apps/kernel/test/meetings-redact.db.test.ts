@@ -21,7 +21,7 @@ import {
   type TranscriptRedacted,
 } from '@ludy/kernel-contract';
 import { Runtime, type AgentActor, type SystemActor, type UserActor } from '@ludy/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
+import { encodeTranscriptResult, meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const SYSTEM_ACTOR: SystemActor = { type: 'system', component: 'redact-test' };
@@ -82,6 +82,18 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<R>(text, params)).rows);
+
+  async function waitForBlockedOnPid(holdPid: number, minBlocked = 1): Promise<number[]> {
+    for (let i = 0; i < 200; i += 1) {
+      const blocked = await sqlAdmin<{ pid: number }>(
+        `SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid)) ORDER BY pid`,
+        [holdPid],
+      );
+      if (blocked.length >= minBlocked) return blocked.map((r) => r.pid);
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    throw new Error(`Timed out waiting for ${minBlocked} transaction(s) to block on pid ${holdPid}`);
+  }
 
   async function seedMeeting(
     opts: { recorder?: string; readers?: string[]; title?: string; visibility?: 'attendees' | 'org'; org?: string } = {},
@@ -838,18 +850,6 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       });
     };
 
-    const waitForBlockedOnPid = async (holdPid: number) => {
-      for (let i = 0; i < 200; i += 1) {
-        const blocked = await sqlAdmin<{ pid: number }>(
-          `SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`,
-          [holdPid],
-        );
-        if (blocked.length > 0) return;
-        await new Promise((r) => setTimeout(r, 15));
-      }
-      throw new Error('Timed out waiting for drop transaction to block on ai_run lock');
-    };
-
     const cHold = new pg.Client({ connectionString: adminUrl });
     await cHold.connect();
     try {
@@ -892,6 +892,228 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       );
       expect(Number(zeroLeft[0]?.c)).toBe(0);
     } finally {
+      await cHold.query('ROLLBACK').catch(() => {});
+      await cHold.end();
+    }
+  });
+
+  it('locks meeting before reading member_vy.result.get in transcript, summary (and notes enhance), and chapters copy_result (#4415)', async () => {
+    const mRaceCopy = await seedMeeting({ readers: ['attendee'], title: 'Họp 4415 lock order' });
+
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: mRaceCopy,
+      segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: 'An', text: `Liên hệ ${PHONE_PII}` }],
+    });
+
+    const startAndStore = async (feature: string, body: string, targetMeetingId = mRaceCopy) => {
+      const started = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', {
+        feature,
+        subjectType: 'meeting',
+        subjectId: targetMeetingId,
+      });
+      await exec('recorder', 'kernel.member_vy.result.store', {
+        runId: started.runId,
+        outcome: { status: 'ready', body },
+      });
+      return started.runId;
+    };
+
+    const cHold = new pg.Client({ connectionString: adminUrl });
+    await cHold.connect();
+    setSummaryEnabled(true);
+    try {
+      const holdPid = (await cHold.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+
+      const assertBlockedUntilRedactDrops = async (opts: {
+        seedDraft: () => Promise<void>;
+        feature: string;
+        resultBody: string;
+        copyCommand: string;
+        expectedCode: string;
+      }) => {
+        await opts.seedDraft();
+        const resultRunId = await startAndStore(opts.feature, opts.resultBody);
+        const rHold = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', {
+          feature: 'meetings.title',
+          subjectType: 'meeting',
+          subjectId: mRaceCopy,
+        });
+        const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId: mRaceCopy });
+        expect(scan.candidates.length).toBeGreaterThanOrEqual(1);
+
+        await cHold.query('BEGIN');
+        await cHold.query(`SELECT id FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, rHold.runId]);
+        const pRedact = exec<TranscriptRedacted>('recorder', 'meetings.transcript.redact', {
+          meetingId: mRaceCopy,
+          confirmed: true,
+          items: scan.candidates.map((c) => ({
+            surface: c.surface,
+            targetId: c.targetId,
+            decisionIndex: c.decisionIndex,
+            kind: c.kind,
+            startPos: c.startPos,
+            version: c.version,
+          })),
+        });
+        const [redactPid] = await waitForBlockedOnPid(holdPid, 1);
+
+        // The copy command must block on crove_meetings.meeting (held by pRedact) BEFORE calling kernel.member_vy.result.get.
+        const pCopy = refuses(exec('recorder', opts.copyCommand, { meetingId: mRaceCopy, runId: resultRunId }));
+        await waitForBlockedOnPid(redactPid!, 1);
+
+        await cHold.query('COMMIT');
+
+        const redacted = await pRedact;
+        expect(redacted.redactedCount).toBe(scan.candidates.length);
+        expect(redacted.droppedVyResults).toBe(2);
+        expect(redacted.cancelledVyRuns).toBe(1);
+        expect(await pCopy).toBe(opts.expectedCode);
+      };
+
+      await assertBlockedUntilRedactDrops({
+        seedDraft: async () => {
+          await exec('recorder', 'meetings.transcript.draft_store', {
+            meetingId: mRaceCopy,
+            segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: 'An', text: `Liên hệ ${PHONE_PII}` }],
+          });
+        },
+        feature: 'meetings.transcribe',
+        resultBody: encodeTranscriptResult([{ startSeconds: 0, endSeconds: 5, speakerLabel: 'An', text: `Chép lại ${PHONE_PII}` }]),
+        copyCommand: 'meetings.transcript.copy_result',
+        expectedCode: 'RESULT_NOT_FOUND',
+      });
+
+      await assertBlockedUntilRedactDrops({
+        seedDraft: async () => {
+          await exec('recorder', 'meetings.summary.save', {
+            meetingId: mRaceCopy,
+            summary: `Email ${EMAIL_PII}`,
+            decisions: [],
+          });
+        },
+        feature: 'meetings.summary',
+        resultBody: JSON.stringify({ template: 'general', summary: `Tóm tắt ${EMAIL_PII}`, decisions: [], items: [], dropped: 0 }),
+        copyCommand: 'meetings.summary.copy_result',
+        expectedCode: 'SUMMARY_RESULT_NOT_FOUND',
+      });
+
+      await assertBlockedUntilRedactDrops({
+        seedDraft: async () => {
+          await exec('recorder', 'meetings.summary.save', {
+            meetingId: mRaceCopy,
+            summary: `Nháp ${PHONE_PII}`,
+            decisions: [],
+          });
+        },
+        feature: 'meetings.summary',
+        resultBody: JSON.stringify({
+          template: 'general',
+          enhanced: { sections: [{ key: null, lines: [{ own: true, text: `Ghi chú ${EMAIL_PII}`, seconds: null }] }] },
+          summary: '',
+          decisions: [],
+          items: [],
+          dropped: 0,
+        }),
+        copyCommand: 'meetings.summary.copy_result',
+        expectedCode: 'SUMMARY_RESULT_NOT_FOUND',
+      });
+
+      await assertBlockedUntilRedactDrops({
+        seedDraft: async () => {
+          await exec('recorder', 'meetings.chapters.save', {
+            meetingId: mRaceCopy,
+            chapters: [{ title: 'Phần gọi', startSeconds: 0 }],
+          });
+          const draftChapId = (
+            await sqlAdmin<{ id: string }>(
+              `SELECT id FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`,
+              [orgId, mRaceCopy],
+            )
+          )[0]!.id;
+          await sqlAdmin(
+            `UPDATE crove_meetings.meeting_chapter SET title = $1 WHERE org_id = $2 AND id = $3`,
+            [`Phần gọi ${CHAPTER_PHONE}`, orgId, draftChapId],
+          );
+        },
+        feature: 'meetings.chapters',
+        resultBody: JSON.stringify({ chapters: [{ title: `Chương ${CHAPTER_PHONE}`, startSeconds: 0 }], dropped: 0 }),
+        copyCommand: 'meetings.chapters.copy_result',
+        expectedCode: 'SUMMARY_RESULT_NOT_FOUND',
+      });
+
+      // All draft surfaces stay redacted and zero private Vy results remain.
+      const segRows = await sqlAdmin<{ text: string }>(
+        `SELECT text FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`,
+        [orgId, mRaceCopy],
+      );
+      expect(segRows).toEqual([{ text: `Liên hệ ${REDACTION_MARK_BY_KIND.phone}` }]);
+      const resRows = await sqlAdmin<{ summary: string }>(
+        `SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`,
+        [orgId, mRaceCopy],
+      );
+      expect(resRows).toEqual([{ summary: `Nháp ${REDACTION_MARK_BY_KIND.phone}` }]);
+      const chapRows = await sqlAdmin<{ title: string }>(
+        `SELECT title FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2`,
+        [orgId, mRaceCopy],
+      );
+      expect(chapRows).toEqual([{ title: `Phần gọi ${REDACTION_MARK_BY_KIND.phone}` }]);
+      const vyLeft = await sqlAdmin<{ c: string }>(
+        `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        [orgId, mRaceCopy],
+      );
+      expect(Number(vyLeft[0]?.c)).toBe(0);
+
+      // Concurrent same-command copy_result calls serialize on crove_meetings.meeting with zero lock-upgrade deadlock.
+      const mSerial = await seedMeeting({ readers: ['attendee'], title: 'Họp 4415 serialize' });
+
+      const rT1 = await startAndStore(
+        'meetings.transcribe',
+        encodeTranscriptResult([{ startSeconds: 0, endSeconds: 5, speakerLabel: 'An', text: 'Bản sạch 1' }]),
+        mSerial,
+      );
+      const rT2 = await startAndStore(
+        'meetings.transcribe',
+        encodeTranscriptResult([{ startSeconds: 0, endSeconds: 5, speakerLabel: 'An', text: 'Bản sạch 2' }]),
+        mSerial,
+      );
+      const [t1, t2] = await Promise.all([
+        exec<{ stored: number }>('recorder', 'meetings.transcript.copy_result', { meetingId: mSerial, runId: rT1 }),
+        exec<{ stored: number }>('recorder', 'meetings.transcript.copy_result', { meetingId: mSerial, runId: rT2 }),
+      ]);
+      expect(t1.stored).toBe(1);
+      expect(t2.stored).toBe(1);
+
+      const rS = await startAndStore(
+        'meetings.summary',
+        JSON.stringify({ template: 'general', summary: 'Tóm tắt sạch', decisions: [], items: [], dropped: 0 }),
+        mSerial,
+      );
+      const [s1, s2] = await Promise.allSettled([
+        exec('recorder', 'meetings.summary.copy_result', { meetingId: mSerial, runId: rS }),
+        exec('recorder', 'meetings.summary.copy_result', { meetingId: mSerial, runId: rS }),
+      ]);
+      const sFulfilled = [s1, s2].filter((r) => r.status === 'fulfilled');
+      const sRejected = [s1, s2].filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(sFulfilled).toHaveLength(1);
+      expect(sRejected).toHaveLength(1);
+      expect((sRejected[0]!.reason as { code?: string }).code).toBe('SUMMARY_ALREADY_COPIED');
+
+      const rC = await startAndStore(
+        'meetings.chapters',
+        JSON.stringify({ chapters: [{ title: 'Chương sạch', startSeconds: 0 }], dropped: 0 }),
+        mSerial,
+      );
+      const [ch1, ch2] = await Promise.allSettled([
+        exec('recorder', 'meetings.chapters.copy_result', { meetingId: mSerial, runId: rC }),
+        exec('recorder', 'meetings.chapters.copy_result', { meetingId: mSerial, runId: rC }),
+      ]);
+      const chFulfilled = [ch1, ch2].filter((r) => r.status === 'fulfilled');
+      const chRejected = [ch1, ch2].filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(chFulfilled).toHaveLength(1);
+      expect(chRejected).toHaveLength(1);
+      expect((chRejected[0]!.reason as { code?: string }).code).toBe('CHAPTERS_ALREADY_COPIED');
+    } finally {
+      setSummaryEnabled(false);
       await cHold.query('ROLLBACK').catch(() => {});
       await cHold.end();
     }
