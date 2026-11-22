@@ -48,6 +48,7 @@ export * from './numbering.ts';
 export * from './manifest.ts';
 export { zMcpPartiesInput } from './mcp.ts';
 export { zMcpConversationsInput, zMcpConversationInput } from './mcp-conversations.ts';
+export { zMcpSeatsInput } from './mcp-seats.ts';
 export { mcpConversationAssign, mcpConversationResolve, mcpConversationReopen, mcpConversationNote, mcpConversationLinkContact, mcpPartyCreate } from './mcp-write.ts';
 export { MCP_PROPOSAL_NOTICE_SWEEP_MS, sweepMcpProposalNotices } from './mcp-proposal-notice.ts';
 export { MCP_ENGAGE_READS_NOTICE_SWEEP_MS, sweepMcpEngageReadsNotices } from './mcp-engage-reads-notice.ts';

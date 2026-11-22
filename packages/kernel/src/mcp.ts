@@ -25,6 +25,7 @@ import { APPROVAL_WAITING, MCP_ENGAGE_READS_NOTICE, notifyMembers } from './noti
 import { approversNow } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpConversationQueries } from './mcp-conversations.ts';
+import { mcpSeatQueries } from './mcp-seats.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
@@ -438,4 +439,4 @@ export const mcpEngageReadsNotify = defineCommand({
 });
 
 export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, mcpEngageReadsNotify, ...mcpWakeCommands];
-export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpConversationQueries, ...mcpWakeQueries];
+export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpSeatQueries, ...mcpConversationQueries, ...mcpWakeQueries];
