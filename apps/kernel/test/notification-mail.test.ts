@@ -99,3 +99,19 @@ describe('notification mail for an assignment and its due date (#1359)', () => {
     }
   });
 });
+
+describe('notification mail for the late posts a long switch-off failed (#3462)', () => {
+  it('says how many, and links to the posts that need a person', async () => {
+    const mail = await render({ kind: 'failed', org: 'Cửa hàng A', post: null, channel: null, late: '1', count: '12', path: '/o/cua-hang-a/social?tab=attention' });
+    expect(mail?.text).toContain('12 bài đăng không thành công vì đã quá giờ hẹn');
+    expect(mail?.text).toContain('Xem các bài cần xử lý: https://crove.example/o/cua-hang-a/social?tab=attention');
+    expect(mail?.html).toContain('12 bài đăng');
+  });
+
+  it('refuses the link for any other kind, and a count it did not write', async () => {
+    expect(await render({ kind: 'review_requested', org: 'A', path: '/o/cua-hang-a/social?tab=attention' })).toBeNull();
+    for (const count of [undefined, '', '1', '0', '12a', '<b>', 5]) {
+      expect(await render({ kind: 'failed', org: 'A', late: '1', count, path: '/o/cua-hang-a/social?tab=attention' }), String(count)).toBeNull();
+    }
+  });
+});

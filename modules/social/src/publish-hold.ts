@@ -94,8 +94,8 @@ export const publishingHold = defineCommand({
 
 // Fails, with HELD_TOO_LONG, the scheduled variants of the org due more than HELD_TOO_LONG_MS before now, except one
 // waiting in a paused queue (its queue holds it, not this hold). Posts are locked one by one in id order, as every
-// command locks a post before its variants. Returns how many variants failed.
-async function failStale(ctx: CommandContext): Promise<number> {
+// command locks a post before its variants. Returns the variants it failed, with their posts.
+async function failStale(ctx: CommandContext): Promise<Array<{ postId: string; variantId: string }>> {
   const cutoff = new Date(ctx.now.getTime() - HELD_TOO_LONG_MS);
   const stale = (postId: string | null) => sql<{ id: string; post_id: string }>`
     SELECT v.id, v.post_id FROM crove_social.post_variant v
@@ -107,7 +107,7 @@ async function failStale(ctx: CommandContext): Promise<number> {
     ORDER BY v.post_id, v.id`;
   const { rows } = await stale(null).execute(ctx.trx);
   const posts = [...new Set(rows.map((r) => r.post_id))];
-  let failed = 0;
+  const failed: Array<{ postId: string; variantId: string }> = [];
   for (const postId of posts) {
     await lockPost(ctx.trx, ctx.orgId, postId);
     const variants = new Map((await lockVariants(ctx.trx, ctx.orgId, postId)).map((v) => [v.id, v]));
@@ -116,7 +116,7 @@ async function failStale(ctx: CommandContext): Promise<number> {
       const v = variants.get(id);
       if (!v) continue;
       await setVariant(ctx, id, { ...CLEAR_ERROR, status: step(v, { type: 'held_too_long' }), error_code: HELD_TOO_LONG });
-      failed += 1;
+      failed.push({ postId, variantId: id });
     }
     await refreshPostStatus(ctx, postId);
   }
@@ -140,7 +140,7 @@ export const publishingRelease = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
       .execute();
-    const heldTooLong = await failStale(ctx);
+    const heldTooLong = (await failStale(ctx)).length;
     ctx.audit({ hold_id: live.id, reason: live.reason, held_too_long: heldTooLong });
     await ctx.emit('social.publishing.released', { hold_id: live.id, held_too_long: heldTooLong });
     return { released: true, heldTooLong };
@@ -168,5 +168,42 @@ export const publishingHoldGet = defineQuery({
   },
 });
 
-export const publishHoldCommands = [publishingHold, publishingRelease];
+// The late variants of one org, failed in one step (#3462). The publish sweep runs this for an org before it queues jobs, so a long switch-off or a worker outage that left many
+// posts more than an hour late fails them together and tells the team once (social.publishing.late_failed, with the count), where each job's own social.publish.begin would
+// send one failed notice and one chat alert per post. A live hold is left alone (the release fails them, with its own notice); begin keeps the same rule for a variant that
+// becomes late after the sweep looked, and for a job that was already queued, which fail one by one. One variant fails as before (social.variant.failed); two or more send
+// the one event, with the people to tell: the authors of the failed posts, besides the owners and admins.
+export const publishFailLate = defineCommand({
+  name: 'social.publish.fail_late',
+  input: z.strictObject({}),
+  // Its event goes to the team chat alert, a post outside Crove (#1578).
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  handler: async (ctx): Promise<{ failed: number; variantIds: string[] }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    // The hold's lock shared, as the publish steps take it: a hold in progress commits first, and a sweep every few seconds never blocks a publish step.
+    if (await publishingHeld(ctx)) return { failed: 0, variantIds: [] };
+    const failed = await failStale(ctx);
+    const [only] = failed;
+    if (!only) return { failed: 0, variantIds: [] };
+    ctx.audit({ failed: failed.length });
+    if (failed.length === 1) {
+      await ctx.emit('social.variant.failed', { post_id: only.postId, variant_id: only.variantId });
+    } else {
+      const posts = [...new Set(failed.map((f) => f.postId))];
+      const authors = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts.slice(0, 1000)).execute();
+      await ctx.emit('social.publishing.late_failed', {
+        count: failed.length,
+        authors: authors.map((a) => a.author_user_id).filter((u): u is string => u !== null).slice(0, LATE_FAILED_AUTHORS_MAX),
+      });
+    }
+    return { failed: failed.length, variantIds: failed.map((f) => f.variantId) };
+  },
+});
+
+// The authors one combined notice names, at most: the notice's people are these and the org's owners and admins.
+export const LATE_FAILED_AUTHORS_MAX = 100;
+
+export const publishHoldCommands = [publishingHold, publishingRelease, publishFailLate];
 export const publishHoldQueries = [publishingHoldGet];

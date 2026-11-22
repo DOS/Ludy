@@ -41,6 +41,8 @@ export const NOTIFYING_EVENTS = [
   'social.post.submitted',
   'social.variant.decided',
   'social.variant.failed',
+  // The late posts a long switch-off or an outage failed together, told once with their count (#3462).
+  'social.publishing.late_failed',
   'social.variant.needs_attention',
   // A planned takedown that did not happen (#861); a person's own failed ask shows on the post they were looking at.
   'social.variant.remove_failed',
@@ -143,6 +145,12 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
         connectionId: v?.channel_connection_id ?? null,
         detail: v ? { provider: v.provider } : {},
       };
+    }
+    // Many late posts failed in one step (#3462): one notice with the count, to the owners, admins and the authors of those posts. It opens the posts that need a person.
+    case 'social.publishing.late_failed': {
+      const e = z.object({ count: z.number().int().min(2).max(100_000), authors: z.array(zId).max(100) }).safeParse(payload);
+      if (!e.success) return null;
+      return { ...base, kind: 'failed', users: [...(await deciders(ctx)), ...e.data.authors], postId: null, detail: { late: '1', count: String(e.data.count) } };
     }
     // A failed removal tells the owners and admins only when it was the planned takedown's (#861): nobody was watching
     // it. It counts as a failed post (kind failed, muted and mailed with it), worded as a removal.
@@ -375,6 +383,7 @@ function subjectOf(kind: SocialNotificationKind, detail: Record<string, string>,
     case 'decided':
       return `${detail.decision === 'approved' ? 'Bài của bạn đã được duyệt' : detail.decision === 'rejected' ? 'Bài của bạn bị từ chối' : 'Bài của bạn cần sửa'}${about}`;
     case 'failed':
+      if (detail.late && detail.count) return `${detail.count} bài đăng không thành công vì đã quá giờ hẹn`;
       if (detail.removal === 'scheduled') return `Tự gỡ bài không thành công${channel ? ` trên ${oneLine(channel, 60)}` : ''}${about}`;
       return `Đăng bài không thành công${channel ? ` trên ${oneLine(channel, 60)}` : ''}${about}`;
     case 'needs_attention':
@@ -400,6 +409,8 @@ function subjectOf(kind: SocialNotificationKind, detail: Record<string, string>,
 export function notificationPath(slug: string, kind: SocialNotificationKind, postId: string | null, connectionId: string | null): string {
   if (postId) return `/o/${slug}/social/${postId}`;
   if (kind === 'queue_low' && connectionId) return `/o/${slug}/social/new?channel=${connectionId}`;
+  // The late posts a long switch-off failed (#3462): the posts that need a person.
+  if (kind === 'failed') return `/o/${slug}/social?tab=attention`;
   if (kind === 'assigned') return `/o/${slug}/social?assignee=me`;
   return `/o/${slug}/social/channels`;
 }
@@ -455,6 +466,7 @@ async function mailNotifications(ctx: CommandContext, plan: Plan, created: reado
         ...(plan.kind === 'queue_low' ? { days: plan.detail.days ?? null } : {}),
         ...(plan.kind === 'post_outperforming' ? { ratio: plan.detail.ratio ?? null, reach: plan.detail.reach ?? null } : {}),
         ...(plan.kind === 'assigned' && plan.detail.count ? { count: plan.detail.count } : {}),
+        ...(plan.kind === 'failed' && plan.detail.late && plan.detail.count ? { count: plan.detail.count, late: '1' } : {}),
         // The due date in the post's own time zone (#1359).
         ...(plan.kind === 'assignment_due' ? { stage: plan.detail.stage ?? null, due: plan.detail.due ? dueLabel(new Date(plan.detail.due), post?.time_zone ?? null) : null } : {}),
         path,
@@ -466,6 +478,71 @@ async function mailNotifications(ctx: CommandContext, plan: Plan, created: reado
   return queued;
 }
 
+// Writes the notifications of one outbox event, mails and lists the pushes (what the two dispatch commands below share). `only` limits it to one event type.
+async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string): Promise<{ sent: number; mailed: number; push: string[] }> {
+  const event = await ctx.trx
+    .selectFrom('crove_kernel.outbox_event')
+    .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', eventId)
+    .executeTakeFirst();
+  if (!event || (only !== undefined && event.type !== only)) return { sent: 0, mailed: 0, push: [] };
+  const plan = await planFor(ctx, event.type, event.payload);
+  if (!plan) return { sent: 0, mailed: 0, push: [] };
+  const actor = event.actor_type === 'user' || event.actor_type === null ? event.actor_id : null;
+  const wanted = [...new Set(plan.users)].filter((u) => u !== actor);
+  if (wanted.length === 0) return { sent: 0, mailed: 0, push: [] };
+  // Members now, who have not turned this kind off.
+  const { rows } = await sql<{ user_id: string }>`
+    SELECT m.user_id FROM crove_kernel.tenant_member m
+    WHERE m.org_id = ${ctx.orgId} AND m.user_id = ANY(${wanted}::uuid[])
+      AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${plan.kind})`.execute(ctx.trx);
+  if (rows.length === 0) return { sent: 0, mailed: 0, push: [] };
+  // A member limited to some channels (#1081) hears only of those and of the posts on them.
+  const users = await usersInScope(
+    ctx.trx,
+    ctx.orgId,
+    rows.map((r) => r.user_id),
+    { postId: plan.postId, connectionId: plan.connectionId },
+  );
+  if (users.length === 0) return { sent: 0, mailed: 0, push: [] };
+  const inserted = await ctx.trx
+    .insertInto('crove_social.notification')
+    .values(
+      users.map((userId) => ({
+        org_id: ctx.orgId,
+        user_id: userId,
+        kind: plan.kind,
+        event_id: event.id,
+        post_id: plan.postId,
+        connection_id: plan.connectionId,
+        actor_user_id: actor,
+        detail: JSON.stringify(plan.detail),
+        created_at: ctx.now,
+      })),
+    )
+    .onConflict((oc) => oc.columns(['org_id', 'event_id', 'user_id']).doNothing())
+    .returning(['id', 'user_id'])
+    .execute();
+  // Only the notifications this run wrote: a replayed event mails nobody twice.
+  const mailed = await mailNotifications(ctx, plan, inserted);
+  // A post's newest reminder replaces the ones before it (of a review, or of its due date, #1359).
+  if ((plan.kind === 'review_reminder' || plan.kind === 'assignment_due') && plan.postId) {
+    await sql`
+      DELETE FROM crove_social.notification
+      WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[]) AND kind = ${plan.kind} AND post_id = ${plan.postId} AND event_id <> ${event.id}`.execute(ctx.trx);
+  }
+  // The recipients' old ones go.
+  await sql`
+    DELETE FROM crove_social.notification
+    WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[])
+      AND (read_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_READ_KEEP_DAYS}::int)
+           OR created_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_KEEP_DAYS}::int))`.execute(ctx.trx);
+  // The notifications this run wrote that also go out as browser push (#1238): the worker queues one push job each,
+  // after this commits, when the deployment has VAPID keys.
+  return { sent: inserted.length, mailed, push: PUSHED_KINDS.has(plan.kind) ? inserted.map((n) => n.id) : [] };
+}
+
 export const notificationDispatch = defineCommand({
   name: 'social.notification.dispatch',
   input: z.object({ eventId: zId }),
@@ -473,68 +550,23 @@ export const notificationDispatch = defineCommand({
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
-  handler: async (ctx, input): Promise<{ sent: number; mailed: number; push: string[] }> => {
-    const event = await ctx.trx
-      .selectFrom('crove_kernel.outbox_event')
-      .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.eventId)
-      .executeTakeFirst();
-    if (!event) return { sent: 0, mailed: 0, push: [] };
-    const plan = await planFor(ctx, event.type, event.payload);
-    if (!plan) return { sent: 0, mailed: 0, push: [] };
-    const actor = event.actor_type === 'user' || event.actor_type === null ? event.actor_id : null;
-    const wanted = [...new Set(plan.users)].filter((u) => u !== actor);
-    if (wanted.length === 0) return { sent: 0, mailed: 0, push: [] };
-    // Members now, who have not turned this kind off.
-    const { rows } = await sql<{ user_id: string }>`
-      SELECT m.user_id FROM crove_kernel.tenant_member m
-      WHERE m.org_id = ${ctx.orgId} AND m.user_id = ANY(${wanted}::uuid[])
-        AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${plan.kind})`.execute(ctx.trx);
-    if (rows.length === 0) return { sent: 0, mailed: 0, push: [] };
-    // A member limited to some channels (#1081) hears only of those and of the posts on them.
-    const users = await usersInScope(
-      ctx.trx,
-      ctx.orgId,
-      rows.map((r) => r.user_id),
-      { postId: plan.postId, connectionId: plan.connectionId },
-    );
-    if (users.length === 0) return { sent: 0, mailed: 0, push: [] };
-    const inserted = await ctx.trx
-      .insertInto('crove_social.notification')
-      .values(
-        users.map((userId) => ({
-          org_id: ctx.orgId,
-          user_id: userId,
-          kind: plan.kind,
-          event_id: event.id,
-          post_id: plan.postId,
-          connection_id: plan.connectionId,
-          actor_user_id: actor,
-          detail: JSON.stringify(plan.detail),
-          created_at: ctx.now,
-        })),
-      )
-      .onConflict((oc) => oc.columns(['org_id', 'event_id', 'user_id']).doNothing())
-      .returning(['id', 'user_id'])
-      .execute();
-    // Only the notifications this run wrote: a replayed event mails nobody twice.
-    const mailed = await mailNotifications(ctx, plan, inserted);
-    // A post's newest reminder replaces the ones before it (of a review, or of its due date, #1359).
-    if ((plan.kind === 'review_reminder' || plan.kind === 'assignment_due') && plan.postId) {
-      await sql`
-        DELETE FROM crove_social.notification
-        WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[]) AND kind = ${plan.kind} AND post_id = ${plan.postId} AND event_id <> ${event.id}`.execute(ctx.trx);
-    }
-    // The recipients' old ones go.
-    await sql`
-      DELETE FROM crove_social.notification
-      WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[])
-        AND (read_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_READ_KEEP_DAYS}::int)
-             OR created_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_KEEP_DAYS}::int))`.execute(ctx.trx);
-    // The notifications this run wrote that also go out as browser push (#1238): the worker queues one push job each,
-    // after this commits, when the deployment has VAPID keys.
-    return { sent: inserted.length, mailed, push: PUSHED_KINDS.has(plan.kind) ? inserted.map((n) => n.id) : [] };
+  handler: (ctx, input) => dispatchEvent(ctx, input.eventId),
+});
+
+// The failed planned takedown's notice while Social is off (#3456, ADR-0053 section 4): the takedown itself goes out, so its failure must reach the owners and admins by mail too
+// and not wait for the app. The worker calls this when social.notification.dispatch is refused for an app that is off; it handles that one event type only, and starts no push
+// (the push commands are Social's and stay off with the app), so it reaches nothing else of the app.
+export const NOTIFY_WHEN_OFF_EVENT = 'social.variant.remove_failed';
+export const notificationDispatchRemoval = defineCommand({
+  name: 'social.notification.dispatch_removal',
+  input: z.object({ eventId: zId }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  runsWhenOff: 'tells the owners and admins that a planned takedown failed, by mail, while the app is off: the post is still up and nobody else would know (ADR-0053)',
+  handler: async (ctx, input): Promise<{ sent: number; mailed: number }> => {
+    const done = await dispatchEvent(ctx, input.eventId, NOTIFY_WHEN_OFF_EVENT);
+    return { sent: done.sent, mailed: done.mailed };
   },
 });
 
@@ -683,5 +715,5 @@ export const notificationMail = defineCommand({
   },
 });
 
-export const notificationCommands = [notificationDispatch, notificationRead, notificationMute, notificationMail];
+export const notificationCommands = [notificationDispatch, notificationDispatchRemoval, notificationRead, notificationMute, notificationMail];
 export const notificationQueries = [notificationList];

@@ -15,7 +15,7 @@ import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credent
 import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
 import type { ExtractClient } from '@ludy/extract-contract';
 import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, MARKETPLACE_POLL_DUE_PAGE, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, marketplacePollDue, type MarketplaceProvider, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@ludy/mod-finance';
-import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@ludy/mod-social';
+import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, NOTIFY_WHEN_OFF_EVENT, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@ludy/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
 import { BACK_PRESSURE_CHECK_MS, DEFAULT_OUTBOX_LAG_PAUSE_SECONDS, PausableWork, checkBackPressure, outboxLagSeconds } from './back-pressure.ts';
@@ -686,7 +686,15 @@ interface SocialPublishJob {
 }
 
 /** Sends a publish job for each variant with publishing work, for the providers this worker can publish to. */
-export async function sweepSocialPublishing(boss: PgBoss, workerDb: Db, providers: ReadonlySet<string>, appOn: (orgId: string) => Promise<boolean> = async () => true): Promise<number> {
+export async function sweepSocialPublishing(
+  boss: PgBoss,
+  workerDb: Db,
+  providers: ReadonlySet<string>,
+  appOn: (orgId: string) => Promise<boolean> = async () => true,
+  // Fails the org's variants that are more than an hour late in one step (social.publish.fail_late, #3462) and answers their ids, so a long switch-off tells the team once and no
+  // job is queued for them. A failure here leaves them to the jobs' own begin, which fails them one by one.
+  failLate: (orgId: string) => Promise<readonly string[]> = async () => [],
+): Promise<number> {
   const { rows } = await sql<{ org_id: string; variant_id: string; provider: string }>`
     SELECT org_id, variant_id, provider FROM crove_social.publish_due(${SOCIAL_SWEEP_LIMIT}::int, ${PUBLISH_STALE_SECONDS}::int, ${[...providers]}::text[])`.execute(workerDb);
   // An org whose Social is off (ADR-0053) gets no job: its overdue variants would be queued every 15 seconds, refused at the first gated call, retried and
@@ -706,7 +714,21 @@ export async function sweepSocialPublishing(boss: PgBoss, workerDb: Db, provider
   for (let i = 0; i < distinct.length; i += 20) {
     await Promise.all(distinct.slice(i, i + 20).map(async (org) => void on.set(org, await orgOn(org))));
   }
-  const due = candidates.filter((r) => on.get(r.org_id) === true);
+  const failedLate = new Set<string>();
+  const onOrgs = distinct.filter((org) => on.get(org) === true);
+  for (let i = 0; i < onOrgs.length; i += 20) {
+    await Promise.all(
+      onOrgs.slice(i, i + 20).map(async (org) => {
+        for (const id of await failLate(org).catch((error: unknown) => {
+          console.warn(`[social-publish] late posts of org ${org.slice(0, 8)} not failed together (${error instanceof Error ? error.name : typeof error})`);
+          return [] as readonly string[];
+        })) {
+          failedLate.add(id);
+        }
+      }),
+    );
+  }
+  const due = candidates.filter((r) => on.get(r.org_id) === true && !failedLate.has(r.variant_id));
   await Promise.all(
     due.map((r) =>
       boss.send(socialPublishQueue(r.provider), { orgId: r.org_id, variantId: r.variant_id, provider: r.provider } satisfies SocialPublishJob, {
@@ -2118,7 +2140,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (job.data.type === 'social.review.answered') {
         await deps.runtime.execute('social.review.client_settle', { eventId: job.data.eventId }, { actor: { type: 'system', component: 'social.review' }, orgId: job.data.orgId });
       }
-      const done = await deps.runtime.execute<{ push?: string[] }>('social.notification.dispatch', { eventId: job.data.eventId }, { actor: { type: 'system', component: 'social.notify' }, orgId: job.data.orgId });
+      const as = { actor: { type: 'system', component: 'social.notify' }, orgId: job.data.orgId } as const;
+      const done = await deps.runtime
+        .execute<{ push?: string[] }>('social.notification.dispatch', { eventId: job.data.eventId }, as)
+        .catch(async (error: unknown) => {
+          // The failed planned takedown goes out while Social is off, so its notice must too (#3456): the owners are told by mail, whatever the switch says. No other event takes this way.
+          if (job.data.type === NOTIFY_WHEN_OFF_EVENT && moduleOffOf(error) === 'social') {
+            await deps.runtime.execute('social.notification.dispatch_removal', { eventId: job.data.eventId }, as);
+            return {} as { push?: string[] };
+          }
+          throw error;
+        });
       // Browser push (#1238): one job per new notification of a pushed kind, after the dispatch committed. A replayed
       // event wrote none, so nobody is pushed twice; a job lost here leaves the notification and its mail.
       if (deps.push) {
@@ -2245,7 +2277,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (sweeping || publishing.size === 0) return;
     sweeping = true;
     try {
-      await sweepSocialPublishing(boss, deps.workerDb, publishing, (orgId) => deps.runtime.appOn(orgId, 'social'));
+      await sweepSocialPublishing(
+        boss,
+        deps.workerDb,
+        publishing,
+        (orgId) => deps.runtime.appOn(orgId, 'social'),
+        async (orgId) => (await deps.runtime.execute<{ variantIds: string[] }>('social.publish.fail_late', {}, { actor: { type: 'system', component: 'social.publish' }, orgId })).variantIds,
+      );
     } catch (error) {
       console.error('[social-publish] sweep', error);
     } finally {

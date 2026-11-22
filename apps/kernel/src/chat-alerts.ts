@@ -74,6 +74,10 @@ export function chatAlertText(facts: ChatAlertFacts, options: { publicUrl: strin
       line = `${post(true)}${on('trên')} đang chờ duyệt`;
       break;
     case 'failed':
+      if (facts.count !== undefined) {
+        line = `${facts.count} bài không đăng được vì đã quá giờ hẹn`;
+        break;
+      }
       line = facts.event === 'social.variant.needs_attention' ? `${post(true)}${on('trên')} cần bạn kiểm tra` : `${post(true)} không đăng được${on('lên')}`;
       break;
     case 'published':
@@ -87,7 +91,9 @@ export function chatAlertText(facts: ChatAlertFacts, options: { publicUrl: strin
     }
   }
   const base = options.publicUrl.trim().replace(/\/+$/, '');
-  return base ? `${line}: ${base}/o/${facts.slug}/social/${facts.postId}` : `${line}.`;
+  // A combined alert (no post) opens the posts that need a person.
+  const path = facts.postId === null ? `social?tab=attention` : `social/${facts.postId}`;
+  return base ? `${line}: ${base}/o/${facts.slug}/${path}` : `${line}.`;
 }
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ const oneLine = (text: string) => text.replace(/[\r\n\t]+/g, ' ').trim();
 // An app path the notification names: the org's post or channels page, a new post for a channel (a queue running
 // low, #1079), or the posts assigned to the reader (a bulk assignment, #1359), nothing else.
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const PATH = new RegExp(`^/o/[a-z0-9][a-z0-9-]{0,62}/social(/(channels|${UUID}|new\\?channel=${UUID})|\\?assignee=me)$`);
+const PATH = new RegExp(`^/o/[a-z0-9][a-z0-9-]{0,62}/social(/(channels|${UUID}|new\\?channel=${UUID})|\\?assignee=me|\\?tab=attention)$`);
 
 const LEAD: Record<string, string> = {
   review_requested: 'Có một bài đang chờ bạn duyệt.',
@@ -15,6 +15,8 @@ const LEAD: Record<string, string> = {
   decided_changes_requested: 'Người duyệt đề nghị sửa bài của bạn.',
   decided_rejected: 'Bài của bạn bị từ chối.',
   failed: 'Một bài đăng không thành công.',
+  // Many late posts failed together (#3462).
+  failed_late: '{count} bài đăng không thành công vì đã quá giờ hẹn mà chưa đăng được (ví dụ do ứng dụng bị tắt hoặc hệ thống ngừng chạy lâu). Hãy mở danh sách để đăng ngay, sửa hoặc huỷ từng bài.',
   // A planned takedown (#861) that did not happen.
   failed_removal: '{brand} chưa tự gỡ được một bài đã hẹn giờ gỡ; bài vẫn còn trên kênh. Hãy gỡ lại từ trang bài viết hoặc gỡ trực tiếp trên nền tảng.',
   needs_attention: 'Một bài đăng cần bạn xử lý trước khi đăng tiếp.',
@@ -44,11 +46,18 @@ export async function renderNotificationMail(input: MailTemplateInput): Promise<
   // The posts assigned to the reader are a bulk assignment's link only (#1359).
   const mine = path.endsWith('/social?assignee=me');
   if (mine && kind !== 'assigned') return null;
-  const many = kind === 'assigned' && typeof count === 'string' && COUNT.test(count);
+  // The posts that need a person are a combined failed notice's link only (#3462).
+  const attention = path.endsWith('/social?tab=attention');
+  if (attention && kind !== 'failed') return null;
+  const lateMany = kind === 'failed' && typeof count === 'string' && COUNT.test(count) && Number(count) >= 2;
+  if (attention && !lateMany) return null;
+  const many = (kind === 'assigned' || lateMany) && typeof count === 'string' && COUNT.test(count);
   const key =
     kind === 'decided'
       ? `decided_${typeof decision === 'string' ? decision : ''}`
-      : kind === 'failed' && removal === 'scheduled'
+      : lateMany
+        ? 'failed_late'
+        : kind === 'failed' && removal === 'scheduled'
         ? 'failed_removal'
         : kind === 'assignment_due'
           ? `assignment_due_${typeof stage === 'string' ? stage : ''}`
@@ -59,7 +68,7 @@ export async function renderNotificationMail(input: MailTemplateInput): Promise<
   if (!lead) return null;
   const leadText = lead.replaceAll('{brand}', input.brand).replaceAll('{count}', many ? (count as string) : '');
   const url = `${input.publicUrl.replace(/\/+$/, '')}${path}`;
-  const open = path.endsWith('/channels') ? 'Mở trang kênh' : path.includes('/social/new?') ? 'Viết bài cho kênh này' : mine ? 'Xem các bài được giao cho bạn' : 'Mở bài viết';
+  const open = attention ? 'Xem các bài cần xử lý' : path.endsWith('/channels') ? 'Mở trang kênh' : path.includes('/social/new?') ? 'Viết bài cho kênh này' : mine ? 'Xem các bài được giao cho bạn' : 'Mở bài viết';
   // When the assigned post is due (#1359).
   const dueLine = kind === 'assignment_due' && typeof due === 'string' && DUE.test(due) ? `Hạn: ${due}` : null;
   // The window the warning looks at (#1079).

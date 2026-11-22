@@ -11174,6 +11174,7 @@ export const vi = {
         changes_requested: '{actor} đề nghị sửa bài của bạn',
         rejected: '{actor} đã từ chối bài của bạn',
         failed: 'Bài đăng lên {provider} không thành công',
+        failed_late: '{count, plural, other {# bài}} đã quá giờ hẹn hơn một giờ nên chưa đăng; mở ra để đăng ngay, sửa hoặc huỷ',
         remove_failed: '{brand} chưa tự gỡ được bài trên {provider} như đã hẹn; bài vẫn còn trên kênh',
         needs_attention: 'Bài trên {provider} cần kiểm tra lại',
         channel_expired: 'Kênh {channel} đã hết hạn kết nối, hãy kết nối lại',

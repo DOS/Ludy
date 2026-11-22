@@ -11174,6 +11174,7 @@ export const en = {
         changes_requested: '{actor} asked for changes to your post',
         rejected: '{actor} rejected your post',
         failed: 'A post to {provider} failed',
+        failed_late: '{count, plural, one {# post was} other {# posts were}} more than an hour past their time and did not go out; open them to publish now, edit or cancel',
         remove_failed: '{brand} could not take the post down on {provider} as planned; the post is still up',
         needs_attention: 'A post on {provider} needs checking',
         channel_expired: 'The channel {channel} expired; connect it again',
