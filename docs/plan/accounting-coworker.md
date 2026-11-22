@@ -1,22 +1,11 @@
-# Accounting coworker: month close, cash flow, cost variance
+# The Accounting coworker (Ly, Ludy Kế toán): features beyond the books' own screens
 
-> Plan for the three AI features the owner asked to build on 2026-11-22 (JOY, Accounting PO popup). Each is a screen of Kế toán where code computes every number and the finance coworker only phrases, orders or explains. Milestone GA gate, `priority:P2`, `line:accounting`.
+One scope line per owner-approved feature, each linked to its issue. Code computes every figure, the coworker explains in words, a person decides, nothing moves money. Every model call is metered under its own `AI_FEATURES` key and the core works with AI off. Whoever merges a feature adds its line here.
 
-The finance coworker is named in the screens through the `{finance}` placeholder (never written in copy). Every model call goes through the AI budget meter (`metered()`, one `AI_FEATURES` key each), the core works with AI off, and a person approves every step that changes money, a message or a spend. The coworker's text is tainted: a deterministic check after the call refuses it, and the screen then shows the same figures without it.
-
-## The rule that holds for all three
-
-A text the coworker writes about a screen may state **no number and no date** that code did not give it. The first feature goes furthest: it is told no number at all, so a misplaced figure is impossible by construction, and the card shows every count itself. The other two follow the same rule for the figures their cards show.
-
-## Features
-
-| Feature | Scope line | Issue |
-| --- | --- | --- |
-| Month-close checklist | For one legal entity and month, on the Kế toán overview: seven items counted by code (pending proposals dated in the month, tax-portal invoices that match no voucher, unbooked bank lines, marketplace settlements and payouts not recorded, the stock close not run, the VAT return not marked as filed, the period lock not covering the month), each with a count, a link and fixed text. The coworker puts the open items in order and says why in one short note; the order is accepted only if it is exactly the open items. | [#4390](https://github.com/DOS/Ludy/issues/4390) |
-| Cash-flow forecast | A forecast card on the Kế toán overview: the figures are computed by code, and the coworker explains them. | [#4391](https://github.com/DOS/Ludy/issues/4391) |
-| Cost variance | An expense variance explanation. | [#4392](https://github.com/DOS/Ludy/issues/4392) |
-
-The lines for the second and third feature are placeholders written by the first PR that merged: the worker of each issue replaces its line with the final scope when its own PR merges.
+| Feature | Scope | Issue | Plan |
+|---|---|---|---|
+| Cash-flow forecast, 30/60/90 days | A read-only card on the Tổng quan: booked cash, receipts and payments dated from the books, the lowest balance and its day; the coworker's note on the low point states no figure and no date. | [#4391](https://github.com/DOS/Ludy/issues/4391) | [cash-forecast.md](cash-forecast.md) |
+| Month-close checklist | For one legal entity and month, on the Tổng quan: seven items counted by code (pending proposals dated in the month, tax-portal invoices that match no voucher, unbooked bank lines, marketplace settlements and payouts not recorded, the stock close not run, the VAT return not marked as filed, the period lock not covering the month), each with a count, a link and fixed text. The coworker is told which items are open and no count or date, puts them in order and says why in one short note; the order is accepted only if it is exactly the open items. | [#4390](https://github.com/DOS/Ludy/issues/4390) | [below](#month-close-checklist-4390) |
 
 ## Month-close checklist (#4390)
 

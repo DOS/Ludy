@@ -45,6 +45,9 @@ export const AI_FEATURES = {
   'finance.overview_explain': 'finance',
   // The finance coworker's note on the month-close checklist: it puts the open items in the order to do them and says why, told which items are open and no count or date; refused when it states a number, a date, a link, a promise or a done step, or when its order is not exactly the open items.
   'finance.month_close_explain': 'finance',
+  // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
+  // when it holds a digit, a link, advice about money or a promise.
+  'finance.cash_forecast_explain': 'finance',
   // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
   'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder

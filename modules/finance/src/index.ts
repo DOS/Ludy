@@ -40,6 +40,7 @@ import { customersList } from './parties.ts';
 import { financeNotificationCommands } from './notifications.ts';
 import { collectionSettingCommands, collectionSettingQueries } from './collection-settings.ts';
 import { paymentReminderCommands, paymentReminderQueries } from './payment-reminders.ts';
+import { financeCashForecastQuery } from './cash-forecast.ts';
 import { financeOverviewQuery } from './overview.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
@@ -333,6 +334,7 @@ export const financeQueries = [
   ledgerAccountQuery,
   ledgerBookQuery,
   statementsPeriodQuery,
+  financeCashForecastQuery,
   financeOverviewQuery,
   financeMonthCloseQuery,
   openingBalancePreview,

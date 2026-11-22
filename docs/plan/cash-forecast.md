@@ -1,0 +1,33 @@
+# Cash-flow forecast, 30/60/90 days (#4391)
+
+Owner decision 2026-11-22 (popup to the Accounting PO): a 30/60/90-day cash-flow view per legal entity, computed by code, with the Accounting coworker (Ly) explaining the low point. Listed in [accounting-coworker.md](accounting-coworker.md). Plan line for the issue; the design and the PO's four decisions are on [#4391](https://github.com/DOS/Ludy/issues/4391).
+
+## What it is
+
+A read-only card on the Kế toán Tổng quan (`finance.cash_forecast`, `modules/finance/src/cash-forecast.ts`, pure rules in `domain/cash-forecast.ts`). One legal entity at a time, VND only, day 0 to day 90, every amount a decimal string. Nothing is posted, paid or stored.
+
+| Part | Rule |
+|---|---|
+| Opening cash | The booked cash by **the rule of B01 line 110** (the overview's cash card): the summed balance of each account of 111 and 112, counted only when it is a debit balance. So an account overdrawn on its own adds nothing, as it adds nothing to the card, and the opening cash equals `finance.overview`'s cash for the same day (a DB test pins that). A bank line not yet booked is not in it. |
+| Receipts | The open sales invoices of the reminders' loader (`loadCustomers`: the 131 balance laid over the invoices, newest first), each on its due date (invoice date + the customer's or the org's terms). **An overdue invoice is not counted**; it is shown apart. The part of 131 no invoice covers is not counted either. |
+| Payments | The 331 balance per supplier laid over its purchase invoices, newest first, each on invoice date + 30 days (**an estimate, Uncertain**: a received invoice has no due date); an invoice dated after day 0 is not laid under day 0's balance. An overdue one counts on day 0. The part of 331 no invoice covers counts on day 0. **331 lines that name no party** (a manual journal) are netted: a credit counts on day 0 like any debt no invoice covers; a debit is a payment already made (the cash has left), so it lowers what is owed, the largest supplier first (the books do not say which one it paid). |
+| Approved supplier payments (#3113) | A dated outflow on the first day the bank file may go (the end of the 24-hour hold, else today). Its amount is still inside 331 until a bank line is matched, so it is taken out of that supplier's pool first: **what it pays comes off its own invoice** (the whole invoice leaves the allocation only when the payment covers all of it, a partial payment leaves the rest). What it counts for is capped by the supplier's 331 balance, so a payment already booked by hand leaves once; **an approved payment to a supplier with no positive 331 balance is not counted at all**. A payment in another currency than the books' is ignored and its invoice stays in the pool. |
+| Left out, always said | Payroll, social insurance, tax payments, rent, loans and any other recurring cost. Finance cannot read payroll (ADR-0046: `hr` depends on `finance`; no pay date or amount is stored), and no tax amount is computed anywhere. The tax due dates are shown as markers with no amount, **of the chosen entity and only for the tax calendar's own window, the next 30 days** (not the whole 90). |
+| Low point | The lowest balance of the 91 days and its day (the earliest on a tie), shown with or without AI. The five largest items up to that day drive the note; no party names. |
+
+Asymmetry on purpose: an overdue receivable is not expected, an overdue payable is. Every date is derived (terms, the first day a file may go); none is stated by a document.
+
+## The coworker's note
+
+`finance.cash_forecast_explain` in `AI_FEATURES` (the finance budget line), the same flow as the overview sentence: the model is told the figures and dates to reason on, no name, and answers up to 3 sentences **in words only**. The note states **no figure and no date**: the card beside it shows every one, and a model allowed to write a figure can put a real one on the wrong label (the balance of day 90 as "the lowest balance") and still pass a check that only asks whether the number is among the given ones (review of #4389, finding B3). So a text with a digit (even one the facts hold), a number in words, a scaled number, a month or day name, a link, **advice about money** (move, transfer, borrow, delay, chase, cut) or **a promise or certainty** (will, sẽ, guaranteed) is refused and the card shows the figures alone. The advice and promise words are checked in code (`packages/agent/src/cash-forecast.ts`), not only asked for in the prompt. No model call when nothing is expected in the 90 days; the core works with AI off.
+
+## Bounds (performance)
+
+At most 500 customers and 500 suppliers (largest balances first), 10,000 sales invoices and 10,000 purchase invoices (newest first) and 1,000 approved payments are read; past a bound the forecast says it is partial (`truncated`). The invoices of the customers are grouped once by customer, not filtered per customer. Reads are aggregates on `journal_line` by org, entity, account prefix and entry date, the predicates the overview and the customers list already run; invoice reads are bounded by invoice date up to day 0. No new table, index or migration. The coworker's note is a separate call (`explain`) that reads the forecast again; the same aggregates run twice, which is cheap at these bounds and keeps the note tied to the figures it is asked for; a refused or failed note is kept by its facts (30 minutes, 5 minutes after a failed call) so the card's 60-second reads do not pay for it again.
+
+## Not built
+
+- Owner-entered expected items (rent, loans, payroll, a one-off), the way to bring the left-out costs in: a later slice with its own table and command.
+- Supplier payment terms on a purchase invoice, so the payable date is real: [#4395](https://github.com/DOS/Ludy/issues/4395) (Icebox, P3).
+- A chart of the daily series (the card shows the three checkpoints and the low point; the daily series is in the answer).
+- MCP exposure and a client-facing page.
