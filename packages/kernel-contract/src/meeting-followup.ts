@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The follow-up email after a meeting (L3, issue #2590, plan docs/plan/meetings.md section 11 and 15, ADR-0047): the recorder, with a published summary, opens a draft, edits the
-// words around the facts and the recipients, and sends it. The meetings module decides every rule: the facts (the published summary, decisions and action items) are rebuilt from
-// the published result at the moment of the send, the recipients are checked, and nothing is sent without the recorder's own send command. Vy only words the lead-in and the
-// closing (apps/kernel followup-ai.ts, packages/agent followup.ts), told none of the meeting's facts; with AI off the same draft is built from fixed words.
+// The follow-up email after a meeting (L3, issue #2590, plan docs/plan/meetings.md section 11 and 15, ADR-0047; personal note & unpublished draft #4292):
+// the recorder of a meeting with a published summary (or, for the recorder alone, an unpublished draft) opens a follow-up draft, picks either the structured minutes layout or
+// a personal note prose style (optionally drafted by their own member-scoped Vy under meetings.followup_note), edits it and the recipients, and sends it.
+// Every text is cleaned and checked by code on send, and facts are rebuilt from the chosen stage at send time (refusing STALE_FOLLOWUP if the result changed).
 import { z } from 'zod';
 import { isMailAddress } from './mail-address.ts';
 import { zMeetingLanguage, zMeetingRef } from './meetings.ts';
@@ -17,18 +17,29 @@ export const FOLLOWUP_LEAD_MAX = 600;
 export const FOLLOWUP_CLOSING_MAX = 300;
 export const FOLLOWUP_SUBJECT_MAX = 200;
 export const FOLLOWUP_HINT_MAX = 200;
+export const FOLLOWUP_NOTE_MAX = 4000;
 // The mail's source (mail_message.source): the follow-up of a meeting, source_id the meeting.
 export const FOLLOWUP_MAIL_SOURCE = 'meetings.followup';
 export const FOLLOWUP_MAIL_TEMPLATE = 'meetings.followup';
 
-export type FollowupTextProblem = 'EMPTY' | 'TOO_LONG' | 'FIGURES' | 'LINK';
+export const FOLLOWUP_STYLES = ['structured', 'personal_note'] as const;
+export type FollowupStyle = (typeof FOLLOWUP_STYLES)[number];
+export const FOLLOWUP_STAGES = ['published', 'draft'] as const;
+export type FollowupStage = (typeof FOLLOWUP_STAGES)[number];
 
-// Text as it is checked and stored: Unicode NFKC, no format characters (bidi marks, zero-width joiners: they would hide a digit or a dot from the checks below) and no control
+export type FollowupTextProblem = 'EMPTY' | 'TOO_LONG' | 'FIGURES' | 'LINK' | 'CONTACT';
+
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const EXTRA_INVISIBLE = /[\u00ad\u061c\u115f\u1160\u180b-\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]|\u034f/gu;
+
+// Text as it is checked and stored: Unicode NFKC, no format or invisible characters (bidi marks, zero-width joiners, fillers: they would hide a digit or a dot from the checks below) and no control
 // characters other than a line break, no carriage returns, blank lines folded. The server stores and sends this form, never what the client sent.
 export function followupClean(text: string, oneLine: boolean): string {
   const flat = text
+    .replace(LONE_SURROGATE, '')
     .normalize('NFKC')
     .replace(/\p{Cf}+/gu, '')
+    .replace(EXTRA_INVISIBLE, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[^\P{Cc}\n]/gu, ' ')
     .replace(/\p{Zl}|\p{Zp}/gu, '\n');
@@ -52,6 +63,76 @@ const CURRENCY_SIGN = /[$€£¥₫₩₹]/u;
 // Anything that reads as an address: a dot between letters, an obfuscated dot or at sign, a scheme, "www", "@".
 const ADDRESS = /\p{L}\p{M}*[.。．｡]\p{L}|\p{L}\s*[[(]\s*(?:\.|dot)\s*[\])]\s*\p{L}|\p{L}\s+dot\s+\p{L}|[[(]\s*at\s*[\])]|@|:\/\/|(?<![\p{L}])www(?![\p{L}])/iu;
 
+const BARE_TLDS = new Set([
+  'com', 'net', 'org', 'vn', 'io', 'co', 'me', 'ly', 'app', 'info', 'biz', 'edu', 'gov', 'xyz', 'site', 'link', 'shop', 'online',
+  'cc', 'tv', 'ai', 'dev', 'ink', 'top', 'club', 'live', 'store', 'page', 'click', 'to', 'gl', 'cn', 'ru', 'us', 'uk', 'jp', 'kr', 'test',
+]);
+const IS_WORD_CHAR = /^[\p{L}\p{N}]$/u;
+function trimToWord(token: string): string {
+  const chars = [...token];
+  let from = 0;
+  let to = chars.length;
+  while (from < to && !IS_WORD_CHAR.test(chars[from] as string)) from += 1;
+  while (to > from && !IS_WORD_CHAR.test(chars[to - 1] as string)) to -= 1;
+  return chars.slice(from, to).join('');
+}
+
+/** Whether a text carries a bare domain link (including numeric-prefix domains such as 123.com or 1.ai). */
+export function followupHasBareLink(text: string): boolean {
+  for (const raw of text.normalize('NFKC').split(/\s+/u)) {
+    const token = trimToWord(raw).toLowerCase();
+    if (token === '') continue;
+    const host = token.split(/[/?#:]/)[0] as string;
+    const labels = host.split('.');
+    if (labels.length < 2 || labels.some((l) => l === '')) continue;
+    const tld = labels[labels.length - 1] as string;
+    if (BARE_TLDS.has(tld) && labels.every((l) => [...l].every((c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '-'))) return true;
+  }
+  return false;
+}
+
+const GROUPED_INTEGER = /^[1-9]\d{0,2}(?:\.\d{3})+$/;
+const DASH_DATE = /^(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|[12]\d|3[01])-(?:0[1-9]|1[0-2])-\d{4})$/;
+
+/** Whether a cleaned text holds a phone number or an 8+-digit contact/ID run (allowing grouped thousands integers like 15.000.000 and dash dates like 2026-11-15). */
+export function followupHasPhoneOrLongDigits(text: string): boolean {
+  const normalized = text.normalize('NFKC');
+  let start = -1;
+  let last = -1;
+  let digitCount = 0;
+  const flush = () => {
+    if (start >= 0) {
+      const span = normalized.slice(start, last + 1);
+      if (digitCount >= 8 && !GROUPED_INTEGER.test(span) && !DASH_DATE.test(span)) return true;
+    }
+    start = -1;
+    last = -1;
+    digitCount = 0;
+    return false;
+  };
+  for (let i = 0; i <= normalized.length; i += 1) {
+    const c = i < normalized.length ? (normalized[i] as string) : '';
+    const digit = c >= '0' && c <= '9';
+    if (digit) {
+      if (start < 0) start = i;
+      last = i;
+      digitCount += 1;
+      continue;
+    }
+    const joinSpace =
+      start >= 0 &&
+      (c === ' ' || c === '\t') &&
+      normalized[i + 1] !== '-' &&
+      !GROUPED_INTEGER.test(normalized.slice(start, last + 1)) &&
+      !DASH_DATE.test(normalized.slice(start, last + 1));
+    const joinDash = start >= 0 && c === '-' && normalized[i - 1] !== ' ' && normalized[i + 1] !== ' ';
+    const joinParen = start >= 0 && (c === ')' || (c === '(' && digitCount <= 3));
+    if (joinSpace || joinDash || joinParen || (start >= 0 && c === '.')) continue;
+    if (flush()) return true;
+  }
+  return false;
+}
+
 const lengthOf = (text: string): number => Array.from(text).length;
 
 /** Why a piece of words (greeting, lead, closing) may not be sent, or null. The text is the cleaned one (followupClean). */
@@ -67,7 +148,20 @@ export function followupWordsProblem(clean: string, max: number): FollowupTextPr
 export function followupSubjectProblem(clean: string): FollowupTextProblem | null {
   if (clean === '') return 'EMPTY';
   if (lengthOf(clean) > FOLLOWUP_SUBJECT_MAX) return 'TOO_LONG';
-  if (ADDRESS.test(clean)) return 'LINK';
+  if (ADDRESS.test(clean) || followupHasBareLink(clean)) return 'LINK';
+  return null;
+}
+
+/**
+ * Why a personal note body sent by the recorder may not be sent, or null.
+ * Intentionally allows the recorder to keep grounded figures from the meeting facts or edit dates/counts in their own voice, while strictly blocking
+ * empty/overlong notes, links/domains, email addresses, and phone numbers / 8+-digit contact runs (Vy's generated note is additionally held to exact numeric grounding in packages/agent).
+ */
+export function followupNoteProblem(clean: string): FollowupTextProblem | null {
+  if (clean === '') return 'EMPTY';
+  if (lengthOf(clean) > FOLLOWUP_NOTE_MAX) return 'TOO_LONG';
+  if (ADDRESS.test(clean) || followupHasBareLink(clean)) return 'LINK';
+  if (followupHasPhoneOrLongDigits(clean)) return 'CONTACT';
   return null;
 }
 
@@ -79,7 +173,7 @@ export const zFollowupWords = z.strictObject({
 });
 export type FollowupWords = z.infer<typeof zFollowupWords>;
 
-// The facts of the mail: the meeting's published summary, decisions and action items, as the readers of the meeting read them.
+// The facts of the mail: the meeting's summary, decisions and action items from the chosen stage.
 export const zFollowupItem = z.strictObject({ title: z.string(), who: z.string(), when: z.string() });
 export const zFollowupFacts = z.strictObject({
   summary: z.string(),
@@ -88,7 +182,7 @@ export const zFollowupFacts = z.strictObject({
 });
 export type FollowupFacts = z.infer<typeof zFollowupFacts>;
 
-// Who the draft suggests: the meeting's attendees (the recorder and the readers that are members) and the contacts linked to the meeting (L1), each with an email address.
+// Who the draft suggests: on published, the meeting's attendees (readers that are members) and linked contacts; on unpublished draft, only linked external contacts.
 export const FOLLOWUP_RECIPIENT_KINDS = ['attendee', 'party'] as const;
 export const zFollowupRecipient = z.strictObject({
   kind: z.enum(FOLLOWUP_RECIPIENT_KINDS),
@@ -100,11 +194,20 @@ export const zFollowupRecipient = z.strictObject({
 });
 export type FollowupRecipient = z.infer<typeof zFollowupRecipient>;
 
+export const zFollowupDraftAsk = zMeetingRef.extend({
+  stage: z.enum(FOLLOWUP_STAGES).optional(),
+});
+export type FollowupDraftAsk = z.infer<typeof zFollowupDraftAsk>;
+
 export const zFollowupDraft = z.strictObject({
   meetingId: zId,
   lang: zMeetingLanguage,
   org: z.string(),
-  // What the recorder reviewed: a key over the facts. The send rebuilds the facts and refuses (STALE_FOLLOWUP) when the published result changed since.
+  // Which stage these facts and recipients came from ('published' by default when available, else 'draft').
+  stage: z.enum(FOLLOWUP_STAGES).optional(),
+  hasPublished: z.boolean().optional(),
+  hasDraft: z.boolean().optional(),
+  // What the recorder reviewed: a key over the stage + facts + ids + updated_at timestamps. The send rebuilds the facts and refuses (STALE_FOLLOWUP) when the stage changed since.
   factsKey: z.string(),
   facts: zFollowupFacts,
   // The fixed words, the same whether or not a model is on.
@@ -117,27 +220,68 @@ export type FollowupDraft = z.infer<typeof zFollowupDraft>;
 
 // Vy's words for the lead-in and the closing (ask, then answer): a read, nothing stored. `ai` names what happened; `words` is null unless it is 'used'.
 export const FOLLOWUP_AI_STATES = ['used', 'off', 'busy', 'budget', 'failed'] as const;
-export const zFollowupWordingAsk = zMeetingRef.extend({ hint: z.string().trim().max(FOLLOWUP_HINT_MAX).optional() });
+export const zFollowupWordingAsk = zMeetingRef.extend({
+  stage: z.enum(FOLLOWUP_STAGES).optional(),
+  hint: z.string().trim().max(FOLLOWUP_HINT_MAX).optional(),
+});
 export const zFollowupWording = z.strictObject({
   ai: z.enum(FOLLOWUP_AI_STATES),
   words: z.strictObject({ lead: z.string(), closing: z.string() }).nullable(),
 });
 export type FollowupWording = z.infer<typeof zFollowupWording>;
 
+// Member-scoped Vy generating a personal-note follow-up body from the recorder's minutes facts (#4292, ADR-0049 stage A).
+export const FOLLOWUP_NOTE_STATES = ['used', 'none', 'off', 'busy', 'budget', 'failed'] as const;
+export const zFollowupNoteStatus = z.strictObject({
+  meetingId: zId,
+  enabled: z.boolean(),
+  reason: z.enum(['off', 'forbidden', 'paused', 'budget', 'not_recorder']).nullable(),
+});
+export type FollowupNoteStatus = z.infer<typeof zFollowupNoteStatus>;
+
+export const zFollowupNoteStart = zMeetingRef.extend({
+  stage: z.enum(FOLLOWUP_STAGES).optional(),
+});
+export const zFollowupNoteStarted = z.strictObject({
+  meetingId: zId,
+  runId: zId,
+  stage: z.enum(FOLLOWUP_STAGES),
+});
+export type FollowupNoteStarted = z.infer<typeof zFollowupNoteStarted>;
+
+export const zFollowupNoteAsk = zMeetingRef.extend({
+  stage: z.enum(FOLLOWUP_STAGES).optional(),
+  hint: z.string().trim().max(FOLLOWUP_HINT_MAX).optional(),
+});
+export type FollowupNoteAsk = z.infer<typeof zFollowupNoteAsk>;
+
+export const zFollowupNoteAnswer = z.strictObject({
+  ai: z.enum(FOLLOWUP_NOTE_STATES),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  note: z.string().nullable(),
+  dropped: z.number().int().min(0).max(100),
+});
+export type FollowupNoteAnswer = z.infer<typeof zFollowupNoteAnswer>;
+
 const zAddress = z.string().trim().max(254);
 export const zFollowupSend = zMeetingRef.extend({
+  style: z.enum(FOLLOWUP_STYLES).default('structured'),
+  stage: z.enum(FOLLOWUP_STAGES).default('published'),
   factsKey: z.string().min(1).max(100),
   subject: z.string().max(1000),
-  greeting: z.string().max(2000),
-  lead: z.string().max(5000),
-  closing: z.string().max(3000),
+  greeting: z.string().max(2000).default(''),
+  lead: z.string().max(5000).default(''),
+  closing: z.string().max(3000).default(''),
+  body: z.string().max(12_000).optional(),
+  // Required true when sending from an unpublished draft (`stage: 'draft'`).
+  confirmUnpublished: z.boolean().default(false),
   // The addresses the recorder chose (the suggestions they kept and any they added), at most FOLLOWUP_RECIPIENTS_MAX.
   recipients: z.array(zAddress).min(1).max(FOLLOWUP_RECIPIENTS_MAX),
-  // Addresses that are neither an attendee nor a contact linked to the meeting, ticked one by one by the recorder: without the tick the send is refused.
+  // Addresses that are neither a suggested recipient nor the recorder, ticked one by one by the recorder: without the tick the send is refused.
   confirmedOutsiders: z.array(zAddress).max(FOLLOWUP_RECIPIENTS_MAX),
   // The recorder's tick that a mail already went to an address for this meeting and they mean to send again.
   confirmRepeat: z.boolean(),
-  // The lead-in or the closing came from Vy, and "Tôi đã đọc" is ticked. The server cannot know where a text came from, so it checks every text the same way whatever this says;
+  // The text came from Vy, and "Tôi đã đọc" is ticked. The server cannot know where a text came from, so it checks every text;
   // the flag is the recorder's own statement that they read it, and a send that says the words are Vy's without the tick is refused.
   fromVy: z.boolean(),
   reviewed: z.boolean(),
@@ -155,9 +299,10 @@ export const zFollowupSent = z.strictObject({
 });
 export type FollowupSent = z.infer<typeof zFollowupSent>;
 
-// The merge data of one queued mail (mail_message.payload), validated at the send and again by the worker's template: the cleaned words and the facts as the published result
-// held them at the moment of the send, and the id of the send (the cap counts these).
-export const zFollowupMail = z.strictObject({
+// The merge data of one queued mail (mail_message.payload), validated at the send and again by the worker's template:
+// keeps structured payloads 100% backward-compatible for any already-queued mail rows, and supports personal_note payloads.
+const zFollowupStructuredMail = z.strictObject({
+  style: z.literal('structured').optional(),
   lang: zMeetingLanguage,
   org: z.string().max(200),
   batch: zId,
@@ -166,7 +311,17 @@ export const zFollowupMail = z.strictObject({
   closing: z.string().max(FOLLOWUP_CLOSING_MAX),
   facts: zFollowupFacts,
 });
+const zFollowupPersonalNoteMail = z.strictObject({
+  style: z.literal('personal_note'),
+  lang: zMeetingLanguage,
+  org: z.string().max(200),
+  batch: zId,
+  body: z.string().min(1).max(FOLLOWUP_NOTE_MAX),
+});
+export const zFollowupMail = z.union([zFollowupStructuredMail, zFollowupPersonalNoteMail]);
 export type FollowupMail = z.infer<typeof zFollowupMail>;
+export type FollowupStructuredMail = z.infer<typeof zFollowupStructuredMail>;
+export type FollowupPersonalNoteMail = z.infer<typeof zFollowupPersonalNoteMail>;
 
 /** An address as the checks read it: trimmed and lower-cased, one valid mailbox, or null. */
 export function followupAddress(value: string): string | null {

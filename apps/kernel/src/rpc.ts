@@ -86,7 +86,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
+import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -1394,12 +1394,22 @@ export function createRpcHandler(
       ),
       followup: {
         draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
-        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).
+        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only).
         wording: os.meetings.followup.wording.handler(({ context, input }) =>
           inMeetings(context, async (orgId, actor) => {
-            const draft = await runtime.query<FollowupDraft>('meetings.followup.draft', { meetingId: input.meetingId }, { actor, orgId });
+            const draft = await runtime.query<FollowupDraft>(
+              'meetings.followup.draft',
+              { meetingId: input.meetingId, ...(input.stage ? { stage: input.stage } : {}) },
+              { actor, orgId },
+            );
             return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
           }),
+        ),
+        noteStatus: os.meetings.followup.noteStatus.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => followupNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        note: os.meetings.followup.note.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingFollowupNote({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input)),
         ),
         // A send runs once per idempotency key: a double click or a retry gets the first answer, never a second mail.
         send: os.meetings.followup.send.handler(({ context, input }) => inMeetings(context, (orgId, actor) => {

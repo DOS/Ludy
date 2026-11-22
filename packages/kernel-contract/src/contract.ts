@@ -719,7 +719,7 @@ import {
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
 } from './projects-roadmap.ts';
-import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
+import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -1508,11 +1508,13 @@ export const contract = {
       // Vy's tainted suggestion for the recorder (L1, #2587): contacts and deals the transcript names. Nothing is linked by it.
       suggest: oc.input(zMeetingRef).output(zMeetingLinkSuggested),
     },
-    // The follow-up email after a meeting (L3, #2590): the recorder drafts it from the published summary, words it (Vy words the lead-in and the closing only, told no fact; fixed words with
-    // AI off) and sends it, one mail per address, checked recipients. Nothing is sent without `send`, a person's own command.
+    // The follow-up email after a meeting (L3, #2590, #4292): the recorder drafts it from the published summary (or, for the recorder alone, an unpublished draft), picks either structured
+    // minutes or a personal note (optionally drafted by their own member-scoped Vy), edits it and sends it, one mail per address, checked recipients. Nothing is sent without `send`.
     followup: {
-      draft: oc.input(zMeetingRef).output(zFollowupDraft),
+      draft: oc.input(zFollowupDraftAsk).output(zFollowupDraft),
       wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
+      noteStatus: oc.input(zMeetingRef).output(zFollowupNoteStatus),
+      note: oc.input(zFollowupNoteAsk).output(zFollowupNoteAnswer),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
     },
     // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
