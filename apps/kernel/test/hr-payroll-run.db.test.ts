@@ -871,8 +871,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       opened.push(place);
       return real(dataKey, orgId, subjectId, place, packed);
     });
-    const IDENTITY = 'ludy_hr.payroll_employee.national_id_sealed';
-    const TAX = 'ludy_hr.payroll_employee.tax_code_sealed';
+    const IDENTITY = 'crove_hr.payroll_employee.national_id_sealed';
+    const TAX = 'crove_hr.payroll_employee.tax_code_sealed';
     try {
       const read = (kind: string, period: string) => rt.query('hr.payroll.declaration.get', { kind, period }, { actor: asMfa(o.owner), orgId: o.orgId });
       // August: only Bình has a change (leaves on the 15th) and has an identity number but no insurance number, so exactly one value is opened: no one else's, and never a tax code.

@@ -67,11 +67,12 @@ const DEPENDENT = hrManifest.tables.ludy_hr.payroll_dependent;
 export const EMPLOYMENT = hrManifest.tables.ludy_hr.payroll_employment;
 
 // Where the sealed values are stored: a value opens only at the place it was sealed for (ctx.open), so a sealed text copied to another column never reads.
-export const IDENTITY_PLACE = 'ludy_hr.payroll_employee.national_id_sealed';
-export const ACCOUNT_PLACE = 'ludy_hr.payroll_employee.bank_account_sealed';
-export const TAX_CODE_PLACE = 'ludy_hr.payroll_employee.tax_code_sealed';
-export const INSURANCE_PLACE = 'ludy_hr.payroll_employee.insurance_number_sealed';
-export const WORK_PERMIT_PLACE = 'ludy_hr.payroll_employee.work_permit_number_sealed';
+// Category B (ADR-0054 section 2): immutable AES-256-GCM SubjectVault AAD place strings; kept as crove_hr.* so pre-cutover sealed PII continues to open.
+export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
+export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
+export const TAX_CODE_PLACE = 'crove_hr.payroll_employee.tax_code_sealed';
+export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_sealed';
+export const WORK_PERMIT_PLACE = 'crove_hr.payroll_employee.work_permit_number_sealed';
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 

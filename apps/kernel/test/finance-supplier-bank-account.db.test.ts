@@ -24,7 +24,7 @@ const DIGITS = '012345678901';
 const LAST4 = '8901';
 const OTHER = '9988776655';
 const HOLDER = 'Nguyen Van Canary';
-const PLACE = 'ludy_finance.supplier_bank_account.number_sealed';
+const PLACE = 'crove_finance.supplier_bank_account.number_sealed';
 
 suite('a supplier\'s bank accounts (#3113 S1)', () => {
   const dbName = `crove_test_supplier_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;

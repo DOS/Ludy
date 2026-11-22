@@ -32,8 +32,9 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // Where each sealed value is stored: a value opens only at the place it was sealed for.
-export const NUMBER_PLACE = 'ludy_finance.supplier_bank_account.number_sealed';
-export const HOLDER_PLACE = 'ludy_finance.supplier_bank_account.account_holder_sealed';
+// Category B (ADR-0054 section 2): immutable AES-256-GCM SubjectVault AAD place strings; kept as crove_finance.* so pre-cutover sealed bank details continue to open.
+export const NUMBER_PLACE = 'crove_finance.supplier_bank_account.number_sealed';
+export const HOLDER_PLACE = 'crove_finance.supplier_bank_account.account_holder_sealed';
 // The subject every sealed value of one supplier is under: one key to shred.
 export const supplierSubject = (partyId: string): string => `supplier:${partyId}`;
 export const HASH_PURPOSE = 'supplier_bank_account.number';

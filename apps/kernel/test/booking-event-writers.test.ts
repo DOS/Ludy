@@ -30,7 +30,7 @@ describe('the writers of the booking request events (#2139)', () => {
           const before = text.slice(0, at);
           const insert = before.lastIndexOf('INSERT INTO');
           if (insert < 0 || before.slice(insert).includes(';')) continue;
-          const fn = [...before.matchAll(/CREATE (?:OR REPLACE )?FUNCTION (crove_[a-z_]+\.[a-z_]+)/g)].at(-1)?.[1]?.replace(/^crove_/, 'ludy_') ?? '(none)';
+          const fn = [...before.matchAll(/CREATE (?:OR REPLACE )?FUNCTION ((?:crove|ludy)_[a-z_]+\.[a-z_]+)/g)].at(-1)?.[1]?.replace(/^crove_/, 'ludy_') ?? '(none)';
           writers.push([event, fn, basename(path)]);
         }
       }

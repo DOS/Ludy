@@ -426,7 +426,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
       const bodyText = JSON.stringify(reg);
       for (const secret of [DUNG_NAME, DUNG_IDENTITY, DUNG_TAX, DUNG_INSURANCE, DUNG_ADDRESS]) expect(bodyText).not.toContain(secret);
       expect(openedRefs).not.toContain(`employee:${o.dungId}`);
-      expect(openedPlaces).toContain('ludy_hr.payroll_employee.tax_code_sealed');
+      expect(openedPlaces).toContain('crove_hr.payroll_employee.tax_code_sealed');
 
       // 01/PLI prints only identityNumber and insuranceNumber, so tax_code_sealed is never decrypted for 01pli.
       openedRefs.length = 0;
@@ -434,9 +434,9 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
       const pliRes = await getExport('01pli.json', 'period=2026-H1', o.owner);
       expect(pliRes.status).toBe(200);
       expect(openedRefs).not.toContain(`employee:${o.dungId}`);
-      expect(openedPlaces).toContain('ludy_hr.payroll_employee.national_id_sealed');
-      expect(openedPlaces).toContain('ludy_hr.payroll_employee.insurance_number_sealed');
-      expect(openedPlaces).not.toContain('ludy_hr.payroll_employee.tax_code_sealed');
+      expect(openedPlaces).toContain('crove_hr.payroll_employee.national_id_sealed');
+      expect(openedPlaces).toContain('crove_hr.payroll_employee.insurance_number_sealed');
+      expect(openedPlaces).not.toContain('crove_hr.payroll_employee.tax_code_sealed');
     } finally {
       spy.mockRestore();
     }

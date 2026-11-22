@@ -51,7 +51,7 @@ const IS_CATALOG_QUERY_RE =
 
 const WRAPPED = new WeakSet<object>();
 
-/** Rewrites post-#3970 core SQL identifiers (`ludy_kernel`/`meta`/`jobs`, roles, GUCs) back to `crove_*` for pre-cutover DB snapshots. */
+/** Rewrites post-#3970/#3971 core and module SQL identifiers (`ludy_*` schemas, core roles, GUCs) back to `crove_*` for pre-cutover DB snapshots. */
 export function rewritePreCutoverSql(sql: string): string {
   return sql
     .replace(PRE_SCHEMA_RE, 'crove_$1')
@@ -62,7 +62,7 @@ export function rewritePreCutoverSql(sql: string): string {
     .replace(PRE_TRY_RUN_RE, 'crove_try_run_');
 }
 
-/** Rewrites immutable pre-#3970 core identifiers in historical 2026 SQL snippets to `ludy_*` while preserving module schemas. */
+/** Rewrites immutable pre-#3970/#3971 `crove_*` core and module identifiers in historical 2026 SQL snippets to `ludy_*`. */
 export function rewriteHistoricalCoreSql(sql: string): string {
   return sql
     .replace(HIST_SCHEMA_RE, 'ludy_$1')

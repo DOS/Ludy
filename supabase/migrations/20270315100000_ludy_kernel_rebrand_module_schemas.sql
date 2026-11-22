@@ -3,6 +3,8 @@
 -- restate PL/pgSQL/SQL routine bodies and parent trigger definitions referencing module schemas,
 -- and update `ludy_kernel` catalog table registries.
 
+SET LOCAL lock_timeout = '2s';
+
 -- ---------------------------------------------------------------------------
 -- 1. Rename all 9 module schemas atomically and idempotently
 -- ---------------------------------------------------------------------------
