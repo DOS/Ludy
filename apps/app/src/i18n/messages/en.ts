@@ -403,6 +403,41 @@ export const en = {
       tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
     },
   },
+  // The 30/60/90-day cash forecast, a card on the Tổng quan of the Kế toán app (#4391).
+  financeCashForecast: {
+    title: 'Cash forecast, next 90 days',
+    subtitle: 'The cash in the books and what is expected to come in and go out, from the invoices and payments in the books. A forecast, not a promise.',
+    retry: 'Try again',
+    opening: 'Cash in the books on {date}: {amount}',
+    low: 'Lowest expected balance: {amount} on {date}',
+    lowNegative: 'The balance is expected to go below zero.',
+    table: {
+      caption: 'Expected balance after 30, 60 and 90 days, with what comes in and goes out',
+      after: 'After',
+      balance: 'Balance',
+      in: 'Coming in',
+      out: 'Going out',
+      days: '{days, plural, one {# day} other {# days}}',
+    },
+    explain: {
+      title: '{finance} notes',
+      note: '{finance} only reads the figures on this card. It does not advise and the figures are not a promise.',
+    },
+    estimates: 'Money coming in is dated by each customer\'s payment terms. A supplier invoice has no due date, so it is counted {days} days after the invoice date, and one already past that date counts today. These dates are estimates.',
+    overdue: '{amount} of sales invoices are already past their due date. They are not counted here.',
+    unlinked: '{amount} of what customers owe belongs to no sales invoice and is not counted here.',
+    taxMarkers: 'Tax due dates in the next 30 days (no amount is counted):',
+    truncated: 'The books hold more customers or invoices than one forecast reads, so these figures are partial.',
+    notIncluded: {
+      line: 'Not in these figures: {items}.',
+      payroll: 'payroll',
+      insurance: 'social insurance',
+      tax: 'tax payments',
+      rent: 'rent',
+      loans: 'loans',
+      recurring: 'other recurring costs',
+    },
+  },
   // The Tổng quan of the Kế toán app (#2631): the first screen of the app.
   financeOverview: {
     title: 'Finance overview',
@@ -10073,6 +10108,7 @@ export const en = {
       today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
+      finance_cash_forecast_explain: 'A short note on the lowest balance of the cash forecast',
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining a bank transaction (payroll match, candidates to choose from)',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
@@ -15899,6 +15935,7 @@ export const en = {
         preview: 'Preview opening balances',
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
+      cash_forecast: 'View the 30, 60 and 90-day cash forecast',
       payroll: {
         settlement: 'See where the posting and the payments of an approved pay month stand',
       },
