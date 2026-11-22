@@ -7,6 +7,7 @@
 //
 // One Google client: a token is refreshed by the calendar adapter's own refresh (`GoogleCalendarAdapter.refresh`, the same OAuth client and sealed-secret shape), passed in as `refresher`. This file only
 // calls `meet.googleapis.com`, through an allowlisted fetch (ADR-0025); an error message carries a short code and the HTTP status, never a token or a response body.
+import { revokeGoogleGrantBestEffort } from './google-oauth.ts';
 import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformError } from './meeting-platform.ts';
 import type { MeetingPlatformAccount, MeetingPlatformAdapter, MeetingPlatformAuthorizeInput, MeetingPlatformCredential, MeetingPlatformDownload, MeetingPlatformFormat, MeetingPlatformListed, MeetingPlatformOAuth, MeetingPlatformTranscript, MeetingPlatformTranscriptEntry } from './meeting-platform.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
@@ -151,17 +152,23 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     const accessToken = text(grant.access_token);
     const refreshToken = text(grant.refresh_token);
     if (accessToken === null) throw new MeetingPlatformError('platform_unavailable', 'Google answered without an access token');
-    if (refreshToken === null) throw new MeetingPlatformError('platform_refused', 'Google answered without a refresh token');
-    const granted = (text(grant.scope) ?? '').split(/\s+/).filter((scope) => scope !== '' && scope.length <= 200);
-    if (!granted.includes(GOOGLE_MEET_SPACE_READ_SCOPE)) throw new MeetingPlatformError('platform_refused', 'Google did not grant the Meet transcript permission');
-    const info = await this.oauthCall('https://www.googleapis.com/oauth2/v3/userinfo', { method: 'GET', headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, ...(signal ? { signal } : {}) });
-    const subject = (text(info.sub) ?? '').trim().toLowerCase();
-    const email = (text(info.email) ?? '').trim().toLowerCase();
-    // No subject or address (the profile scopes were unticked), or an address Google has not verified: nothing identifies the account, so nothing is stored.
-    if (subject === '' || subject.length > 200 || email === '' || email.length > 200 || info.email_verified === false) throw new MeetingPlatformError('platform_refused', 'Google did not return a verified account');
-    const seconds = Number(grant.expires_in);
-    const expiresAt = new Date(this.now().getTime() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
-    return { externalAccount: subject, displayName: email, scopes: granted.slice(0, 20), expiresAt, secret: JSON.stringify({ accessToken, refreshToken, expiresAt: expiresAt.toISOString() }) };
+    // From here Google has issued a grant. A refusal below leaves nothing in Ludy, so the grant is taken away at Google too (best effort), instead of staying in the member's Google Account unused.
+    try {
+      if (refreshToken === null) throw new MeetingPlatformError('platform_refused', 'Google answered without a refresh token');
+      const granted = (text(grant.scope) ?? '').split(/\s+/).filter((scope) => scope !== '' && scope.length <= 200);
+      if (!granted.includes(GOOGLE_MEET_SPACE_READ_SCOPE)) throw new MeetingPlatformError('platform_refused', 'Google did not grant the Meet transcript permission');
+      const info = await this.oauthCall('https://www.googleapis.com/oauth2/v3/userinfo', { method: 'GET', headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, ...(signal ? { signal } : {}) });
+      const subject = (text(info.sub) ?? '').trim().toLowerCase();
+      const email = (text(info.email) ?? '').trim().toLowerCase();
+      // No subject or address (the profile scopes were unticked), or an address Google has not verified: nothing identifies the account, so nothing is stored.
+      if (subject === '' || subject.length > 200 || email === '' || email.length > 200 || info.email_verified === false) throw new MeetingPlatformError('platform_refused', 'Google did not return a verified account');
+      const seconds = Number(grant.expires_in);
+      const expiresAt = new Date(this.now().getTime() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
+      return { externalAccount: subject, displayName: email, scopes: granted.slice(0, 20), expiresAt, secret: JSON.stringify({ accessToken, refreshToken, expiresAt: expiresAt.toISOString() }) };
+    } catch (error) {
+      await revokeGoogleGrantBestEffort(this.oauthFetch, refreshToken ?? accessToken, signal);
+      throw error;
+    }
   }
 
   // `skipMissing`: a 403 or 404 on this one resource answers null (one conference's transcripts are gone or not the member's) instead of failing the whole call.
