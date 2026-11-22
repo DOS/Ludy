@@ -604,6 +604,18 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_record',
     reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
   },
+  'crove_sign.member_signature.signature_typed_text': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved typed signature text, readable and deletable by that member alone and removed when the member leaves the org",
+  },
+  'crove_sign.member_signature.signature_png_base64': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved signature or initials PNG image, readable and deletable by that member alone and removed when the member leaves the org",
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;

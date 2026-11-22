@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes crove_hr.leave_request rows ahead of payroll_leave_entry, payroll_employee, and department (#4300).
--- This replaces crove_kernel.org_purge with the previous version (20270209100100_crove_kernel_org_purge_sign_obligations, which added crove_sign.envelope_obligation)
+-- This replaces crove_kernel.org_purge with the previous version (20270209140000_crove_kernel_org_purge_sign_stamps, which added crove_sign.member_signature and crove_sign.org_stamp)
 -- plus crove_hr.leave_request in v_kernel_first; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
@@ -34,6 +34,7 @@ DECLARE
   v_note_attachment_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
+    'crove_sign.member_signature', 'crove_sign.org_stamp',
     'crove_sign.envelope_obligation',
     'crove_sign.ca_signing_request', 'crove_sign.ca_connection',
     'crove_sign.template_direct_link', 'crove_sign.template_field', 'crove_sign.template_role', 'crove_sign.template',

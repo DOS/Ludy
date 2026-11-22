@@ -1429,10 +1429,26 @@ export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', '
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
 export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
 export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
 export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
+export const SIGN_MEMBER_SIGNATURE_KINDS = ['signature', 'initials'] as const;
+export type SignMemberSignatureKind = (typeof SIGN_MEMBER_SIGNATURE_KINDS)[number];
+export const SIGN_ORG_STAMP_KINDS = ['company', 'title', 'custom'] as const;
+export type SignOrgStampKind = (typeof SIGN_ORG_STAMP_KINDS)[number];
+export const SIGN_ORG_STAMP_STATUSES = ['active', 'archived'] as const;
+export type SignOrgStampStatus = (typeof SIGN_ORG_STAMP_STATUSES)[number];
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
@@ -1555,6 +1571,20 @@ export type SignEnvelopeObligationTable = Refine<
   G.SignEnvelopeObligationTable,
   { status: Generated<SignObligationStatus> }
 >;
+export type SignMemberSignatureTable = Refine<
+  G.SignMemberSignatureTable,
+  {
+    kind: SignMemberSignatureKind;
+    signature_kind: SignSignatureKind;
+  }
+>;
+export type SignOrgStampTable = Refine<
+  G.SignOrgStampTable,
+  {
+    stamp_kind: Generated<SignOrgStampKind>;
+    status: Generated<SignOrgStampStatus>;
+  }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1609,6 +1639,8 @@ type Refined = Tables<{
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
+  'crove_sign.member_signature': SignMemberSignatureTable;
+  'crove_sign.org_stamp': SignOrgStampTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;

@@ -4821,6 +4821,16 @@ export function createRpcHandler(
         dismiss_proposal: os.sign.obligation.dismiss_proposal.handler(signCommand('sign.obligation.dismiss_proposal')),
         complete_item: os.sign.obligation.complete_item.handler(signCommand('sign.obligation.complete_item')),
       },
+      member_signature: {
+        list: os.sign.member_signature.list.handler(signQuery('sign.member_signature.list')),
+        upsert: os.sign.member_signature.upsert.handler(signCommand('sign.member_signature.upsert')),
+        delete: os.sign.member_signature.delete.handler(signCommand('sign.member_signature.delete')),
+      },
+      stamp: {
+        list: os.sign.stamp.list.handler(signQuery('sign.stamp.list')),
+        create: os.sign.stamp.create.handler(signCommand('sign.stamp.create')),
+        archive: os.sign.stamp.archive.handler(signCommand('sign.stamp.archive')),
+      },
     },
   });
 
