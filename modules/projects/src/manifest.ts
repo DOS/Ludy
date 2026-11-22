@@ -25,6 +25,7 @@ export const projectsManifest = defineModule({
         'task_id',
         'column_id',
         'sort_key',
+        'start_on',
         'recurrence',
         'recurrence_count',
         'recurrence_last_due',

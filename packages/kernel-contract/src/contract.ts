@@ -627,6 +627,10 @@ import {
   zProjectTaskRecurrenceGetInput,
   zProjectTaskRecurrenceSetInput,
   zProjectTaskRecurrenceView,
+  zProjectTaskSetDatesInput,
+  zProjectTaskSetDatesResult,
+  zProjectTimeline,
+  zProjectTimelineInput,
   zProjectDependencyAddInput,
   zProjectDependencyAddResult,
   zProjectDependencyListInput,
@@ -3512,6 +3516,10 @@ export const contract = {
     moveTaskColumn: oc
       .input(zProjectTaskMoveColumnFields.extend({ idempotencyKey: zId }).refine(validTaskMoveColumnPlacement, TASK_MOVE_COLUMN_PLACEMENT_ISSUE))
       .output(zProjectTaskMoveColumnResult),
+    timeline: oc.input(zProjectTimelineInput).output(zProjectTimeline),
+    setTaskDates: oc
+      .input(zProjectTaskSetDatesInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskSetDatesResult),
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

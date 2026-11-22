@@ -3825,6 +3825,7 @@ export interface ProjectsProjectTaskTable {
   recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   recurrence_source_task_id: string | null;
   column_id: string | null;
+  start_on: string | null;
 }
 
 /** crove_projects.task_dependency */

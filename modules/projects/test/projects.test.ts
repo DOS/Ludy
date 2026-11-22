@@ -25,6 +25,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.project.owner_user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_member.user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.task_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_task.start_on).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocker_task_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
@@ -35,7 +36,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 31 commands and 14 queries with consistent module prefix', () => {
+  it('exports all 32 commands and 15 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -60,6 +61,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.task.recurrence.set',
       'projects.task.remove',
       'projects.task.reorder',
+      'projects.task.set_dates',
       'projects.tasks_from_note.confirm',
       'projects.tasks_from_note.start',
       'projects.tasks_from_source.confirm',
@@ -81,6 +83,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.tasks_from_source.seats',
       'projects.tasks_from_source.status',
       'projects.template.list',
+      'projects.timeline',
       'projects.today',
       'projects.unassigned_tasks',
       'projects.weekly_status_source',

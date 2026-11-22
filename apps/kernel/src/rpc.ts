@@ -4667,6 +4667,8 @@ export function createRpcHandler(
       reorderColumn: os.projects.reorderColumn.handler(projectsCommand('projects.column.reorder')),
       deleteColumn: os.projects.deleteColumn.handler(projectsCommand('projects.column.delete')),
       moveTaskColumn: os.projects.moveTaskColumn.handler(projectsCommand('projects.task.move_column')),
+      timeline: os.projects.timeline.handler(projectsQuery('projects.timeline')),
+      setTaskDates: os.projects.setTaskDates.handler(projectsCommand('projects.task.set_dates')),
     },
     sign: {
       envelope: {
