@@ -9,10 +9,9 @@ import type { Database } from '@ludy/db';
 const MAX_FIELDS = 40;
 const VALUE_MAX = 8000;
 const LONG_FROM = 80;
-// The characters the card writes out as a visible marker: the one class of the contract (packages/kernel-contract/src/invisible-chars.ts: controls other than a newline and a tab, soft hyphen, the Arabic letter mark, the Hangul
-// fillers, the direction marks, embeddings, overrides and isolates, the zero-width and invisible marks, the braille blank, line and paragraph separators, annotation marks and tag characters), the same set the database's
-// title filter (20270119150000) refuses and the screens use for an AI-written task title (#4423).
-
+// What the card writes out as a visible marker is the one class of the contract (markHiddenText in packages/kernel-contract/src/invisible-chars.ts): controls other than a newline and a tab, the soft hyphen, the Arabic letter
+// mark, the Hangul fillers, the direction marks, embeddings, overrides and isolates, the zero-width and invisible marks, the braille blank, line and paragraph separators, annotation marks and tag characters; the same
+// set the database's title filter (20270119150000) refuses and the screens use for an AI-written task title (#4423).
 const textOf = (value: unknown): string => {
   const raw = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
   return markHiddenText(raw.slice(0, VALUE_MAX)).slice(0, VALUE_MAX);

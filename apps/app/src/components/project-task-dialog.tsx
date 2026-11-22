@@ -29,7 +29,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
-import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
+import { ErrorText, FieldError, RowsSkeleton, fieldControl, fieldHintId } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -346,7 +346,9 @@ export function EditProjectTaskDialog({
 
   if (!task) return null;
 
-  const titleField = fieldControl(`edit-project-task-${task.id}`, { error: titleError });
+  // A tainted title that holds characters nobody can see in the field is written out beside it (#4423); the field is described by it.
+  const hiddenInTitle = taskTitleHidden({ title, tainted: task.tainted });
+  const titleField = fieldControl(`edit-project-task-${task.id}`, { error: titleError, hint: hiddenInTitle !== null });
   const activeSeats = seats.filter((s) => s.status !== 'archived' || s.id === task.assigneePositionId);
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
@@ -428,9 +430,9 @@ export function EditProjectTaskDialog({
               }}
             />
             <FieldError id={titleField.id}>{titleError ? t('errors.taskTitleRequired') : null}</FieldError>
-            {taskTitleHidden({ title, tainted: task.tainted }) !== null && (
-              <p className="break-words text-xs text-warning" data-testid="task-title-hidden">
-                {tt('titleHidden', { marked: taskTitleHidden({ title, tainted: task.tainted }) ?? '' })}
+            {hiddenInTitle !== null && (
+              <p id={fieldHintId(titleField.id)} className="break-words text-xs text-warning" data-testid="task-title-hidden">
+                {tt('titleHidden', { marked: hiddenInTitle })}
               </p>
             )}
           </div>

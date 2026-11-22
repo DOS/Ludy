@@ -20,7 +20,7 @@ import { useDebounced } from '../lib/use-debounced.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
-import { ErrorText, FieldError, fieldControl } from './ui.tsx';
+import { ErrorText, FieldError, fieldControl, fieldHintId } from './ui.tsx';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 type TaskDetail = Awaited<ReturnType<typeof orpc.tasks.get.call>>['task'];
@@ -208,11 +208,11 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
   const [stepDraft, setStepDraft] = useState('');
   const [key, setKey] = useState(() => crypto.randomUUID());
   const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
-  const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
+  // A tainted title that holds characters nobody can see in the field is written out beside it, so the person who edits it sees what it holds (#4423); the field is described by it, outside its label.
+  const hiddenInTitle = taskTitleHidden({ title, tainted: task.tainted });
+  const titleField = fieldControl(`task-${task.id}-title`, { error: titleError, hint: hiddenInTitle !== null });
 
   // What differs from the task as it was opened: the patch the server gets, and what a close would throw away.
-  // A tainted title that holds characters nobody can see in the field is written out beside it, so the person who edits it sees what it holds (#4423).
-  const hiddenInTitle = taskTitleHidden({ title, tainted: task.tainted });
   const nextTitle = title.trim();
   const nextAssignee = assignee || null;
   // A step typed in the new-step box and not added yet is saved with the form: pressing Save is the intent, not a reason to lose it.
@@ -293,12 +293,12 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
         <FieldError id={titleField.id} className="mt-1">
           {titleError ? t('titleRequired') : null}
         </FieldError>
-        {hiddenInTitle !== null && (
-          <span className="mt-1 block break-words text-warning" data-testid="task-title-hidden">
-            {t('titleHidden', { marked: hiddenInTitle })}
-          </span>
-        )}
       </label>
+      {hiddenInTitle !== null && (
+        <p id={fieldHintId(titleField.id)} className="-mt-2 break-words text-xs text-warning" data-testid="task-title-hidden">
+          {t('titleHidden', { marked: hiddenInTitle })}
+        </p>
+      )}
       <label className="block text-xs">
         <span className="text-subtle-foreground">{t('assignTo')}</span>
         <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
