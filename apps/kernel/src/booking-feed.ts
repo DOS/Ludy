@@ -43,8 +43,8 @@ const LOCATIONS: Record<BookingFeedEvent['locationKind'], string> = { in_person:
 // One line, at most 200 characters: a title or a name never breaks the event's layout.
 const oneLine = (text: string) => [...text.replace(/\s+/g, ' ').trim()].slice(0, 200).join('');
 
-// brand: the product name users see (BRAND_NAME, #1045). PRODID and UID keep "Crove": they identify the software. The
-// UID differs from the one in the booking's mails (booking-<id>@crove), so a host who also added the mail's event keeps
+// brand: the product name users see (BRAND_NAME, #1045). PRODID and UID keep "Ludy": they identify the software. The
+// UID differs from the one in the booking's mails (booking-<id>@ludy), so a host who also added the mail's event keeps
 // two entries in two calendars instead of one entry the calendar app may refuse as a duplicate.
 export function renderBookingFeedIcs(feed: BookingFeed, publicUrl: string, now: Date, brand = DEFAULT_BRAND_NAME): string {
   const base = publicUrl.replace(/\/+$/, '');
@@ -53,7 +53,7 @@ export function renderBookingFeedIcs(feed: BookingFeed, publicUrl: string, now: 
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Crove//Booking feed//VI',
+    'PRODID:-//Ludy//Booking feed//VI',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeText(`Lịch hẹn ${feed.name} - ${brand}`)}`,
@@ -69,7 +69,7 @@ export function renderBookingFeedIcs(feed: BookingFeed, publicUrl: string, now: 
     const where = `${LOCATIONS[e.locationKind] ?? e.locationKind}${e.location ? `: ${oneLine(e.location)}` : ''}`;
     lines.push(
       'BEGIN:VEVENT',
-      `UID:feed-booking-${e.id}@crove`,
+      `UID:feed-booking-${e.id}@ludy`,
       `SEQUENCE:${Number.isInteger(e.revision) && e.revision >= 0 ? e.revision : 0}`,
       `DTSTAMP:${stamp}`,
       `DTSTART:${icsTime(start)}`,

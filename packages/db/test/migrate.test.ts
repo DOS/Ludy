@@ -174,7 +174,7 @@ describe('shared-database mode (#2284)', () => {
     for (const off of [undefined, '', '  ', 'false']) expect(sharedDatabaseSetting(off), String(off)).toBe(false);
     expect(sharedDatabaseSetting('true')).toBe(true);
     expect(sharedDatabaseSetting(' true ')).toBe(true);
-    for (const bad of ['TRUE', '1', 'yes', 'on']) expect(() => sharedDatabaseSetting(bad), bad).toThrow(/CROVE_SHARED_DATABASE/);
+    for (const bad of ['TRUE', '1', 'yes', 'on']) expect(() => sharedDatabaseSetting(bad), bad).toThrow(/LUDY_SHARED_DATABASE/);
   });
 
   const migrations = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));

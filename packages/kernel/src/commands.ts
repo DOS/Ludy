@@ -1186,7 +1186,7 @@ export async function revokeOwnSessionsWithoutOrg(runtime: Runtime, actor: UserA
     throw new DomainError('VALIDATION', 422, 'Dữ liệu không hợp lệ', { issues: parsed.error.issues.slice(0, 10) });
   }
   const input = parsed.data;
-  if (input.userId !== actor.userId) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-crove-org)');
+  if (input.userId !== actor.userId) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-ludy-org)');
   // A second pass covers a user who joined an org between the lookup and the org-less definer.
   for (let pass = 0; pass < 2; pass += 1) {
     const orgs = await runtime.forUser(actor, (db) => myOrgs(db, actor.userId));

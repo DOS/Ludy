@@ -28,7 +28,7 @@ export type MailScope = 'all' | 'marketing';
 
 // The right-hand side of the Message-ID when the deployment names none: a reserved name (RFC 2606) no mail system
 // resolves, for tests and mail that is only logged.
-export const DEFAULT_MESSAGE_ID_DOMAIN = 'crove.invalid';
+export const DEFAULT_MESSAGE_ID_DOMAIN = 'ludy.invalid';
 // The deployment's own domain for the Message-ID (the SMTP_FROM domain, else the PUBLIC_URL host), set once at boot so
 // mail a module queues without naming one (the scheduled report, #704) is not sent with the reserved name.
 let deploymentMessageIdDomain: string | undefined;

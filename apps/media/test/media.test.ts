@@ -176,7 +176,7 @@ describe('crove-media HTTP server & client SDK', () => {
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json).toEqual({ ok: true, service: 'crove-media' });
+    expect(json).toEqual({ ok: true, service: 'ludy-media' });
   });
 
   it('rejects empty payload with 400 bad_request', async () => {

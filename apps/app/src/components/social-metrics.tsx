@@ -150,9 +150,9 @@ export function SocialMetrics({ slug, names, labelId, action }: { slug: string; 
                     .filter(Boolean)
                     .join(' · ');
                   return (
-                    <tr key={item.kind === 'crove' ? item.row.variantId : `outside-${item.row.id}`} className="border-t">
+                    <tr key={item.kind === 'ludy' ? item.row.variantId : `outside-${item.row.id}`} className="border-t">
                       <td className="max-w-md px-3 py-2">
-                        {item.kind === 'crove' ? (
+                        {item.kind === 'ludy' ? (
                           <>
                             <Link to="/o/$slug/social/$id" params={{ slug, id: item.row.postId }} className="line-clamp-1 text-foreground hover:underline">
                               {item.row.excerpt || t('emptyText')}
@@ -169,7 +169,7 @@ export function SocialMetrics({ slug, names, labelId, action }: { slug: string; 
                           {r.metrics[m] === undefined ? '-' : f.number(r.metrics[m])}
                         </td>
                       ))}
-                      {hasClicks && <td className="px-3 py-2 text-right text-foreground tabular-nums">{item.kind === 'crove' && item.row.clicks !== null ? f.number(item.row.clicks) : '-'}</td>}
+                      {hasClicks && <td className="px-3 py-2 text-right text-foreground tabular-nums">{item.kind === 'ludy' && item.row.clicks !== null ? f.number(item.row.clicks) : '-'}</td>}
                     </tr>
                   );
                 })}

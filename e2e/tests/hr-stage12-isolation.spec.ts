@@ -62,7 +62,7 @@ async function postRpc(
   const response = await request.post(`/api/rpc/${path}`, {
     headers: {
       authorization: `Bearer ${token}`,
-      'x-crove-org': slug,
+      'x-ludy-org': slug,
       'content-type': 'application/json',
     },
     data: { json: input },
@@ -482,7 +482,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
         const response = await memberPage.request.get(exportPath, {
           headers: {
             authorization: `Bearer ${memberToken}`,
-            'x-crove-org': slug,
+            'x-ludy-org': slug,
           },
         });
         expect(response.status(), `${exportPath} should return 403`).toBe(403);

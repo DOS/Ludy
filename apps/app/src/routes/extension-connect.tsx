@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ExtensionScopeId } from '@ludy/kernel-contract';
+import { ORG_HEADER, type ExtensionScopeId } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
@@ -37,7 +37,7 @@ export function ExtensionConnectPage() {
     queryFn: async () => {
       const response = await apiFetch('/api/rpc/org/apps', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-crove-org': org!.slug },
+        headers: { 'content-type': 'application/json', [ORG_HEADER]: org!.slug },
         body: JSON.stringify({ json: {} }),
       });
       const body = (await response.json()) as { json?: { apps?: Array<{ id: string; effective: boolean }> } };
@@ -54,7 +54,7 @@ export function ExtensionConnectPage() {
       if (!request || !org || effectiveScopes.length === 0) throw new Error('no request');
       const response = await apiFetch('/api/extension/authorize', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-crove-org': org.slug },
+        headers: { 'content-type': 'application/json', [ORG_HEADER]: org.slug },
         body: JSON.stringify({
           extensionId: request.extensionId,
           codeChallenge: request.codeChallenge,

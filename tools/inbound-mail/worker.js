@@ -54,7 +54,7 @@ export async function relay(message, env, fetchImpl = fetch) {
       authorization: `Bearer ${env.INBOUND_SECRET}`,
       'content-type': 'message/rfc822',
       // The envelope recipient, <token>@ or bounce+<token>@INBOUND_DOMAIN: the kernel's worker routes by it.
-      'x-crove-recipient': message.to,
+      'x-ludy-recipient': message.to,
     },
     // Streamed, not buffered: a large message never has to fit in the worker's memory.
     body: message.raw,
@@ -69,10 +69,10 @@ export async function relay(message, env, fetchImpl = fetch) {
   const answer = await response.json().catch(() => null);
   const code = answer && typeof answer.code === 'string' ? answer.code : `HTTP_${response.status}`;
   if (response.status >= 400 && response.status < 500 && !RETRY_STATUSES.has(response.status)) {
-    message.setReject(REASONS[/** @type {keyof typeof REASONS} */ (code)] ?? `Refused by Crove (${code})`);
+    message.setReject(REASONS[/** @type {keyof typeof REASONS} */ (code)] ?? `Refused by Ludy (${code})`);
     return 'rejected';
   }
-  throw new Error(`Crove did not accept the message: ${response.status} ${code}`);
+  throw new Error(`Ludy did not accept the message: ${response.status} ${code}`);
 }
 
 export default {

@@ -15,14 +15,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool } from '../src/index.ts';
 import { applyAuthGrants, hardeningViolations, installDdlWatch, migrate, readMigrations, readSharedVariants, setRolePasswords } from '../src/migrate.ts';
 
-const URL_ENV = process.env.CROVE_TEST_SUPABASE_URL;
+const URL_ENV = process.env.LUDY_TEST_SUPABASE_URL ?? process.env.CROVE_TEST_SUPABASE_URL;
+const REQUIRE_SUPABASE = Boolean(process.env.LUDY_REQUIRE_SUPABASE_TEST ?? process.env.CROVE_REQUIRE_SUPABASE_TEST);
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const REVOKE_TEMP = '20261015120000_crove_kernel_revoke_temp.sql';
 const DB = 'ludy_shared_test';
 const VARIANTS = fileURLToPath(new URL('../../../supabase/shared-variants', import.meta.url));
 // The CI job sets CROVE_REQUIRE_SUPABASE_TEST, so losing the URL there fails the job instead of skipping the suite.
-if (process.env.CROVE_REQUIRE_SUPABASE_TEST && !URL_ENV) {
-  throw new Error('CROVE_REQUIRE_SUPABASE_TEST is set but CROVE_TEST_SUPABASE_URL is not');
+if (REQUIRE_SUPABASE && !URL_ENV) {
+  throw new Error('LUDY_REQUIRE_SUPABASE_TEST / CROVE_REQUIRE_SUPABASE_TEST is set but LUDY_TEST_SUPABASE_URL / CROVE_TEST_SUPABASE_URL is not');
 }
 const suite = URL_ENV ? describe : describe.skip;
 
@@ -283,14 +284,14 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
   };
 
   it('locks the mode to the database: a run that asks for the other mode is refused unless a switch is set, both ways', async () => {
-    await expect(migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false })).rejects.toThrow(/migrated in shared-database mode and CROVE_SHARED_DATABASE asks for owned/);
+    await expect(migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false })).rejects.toThrow(/migrated in shared-database mode and LUDY_SHARED_DATABASE \/ CROVE_SHARED_DATABASE asks for owned/);
     expect((await client.query("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
     // The switch is explicit; the run that makes it is logged. The recorded mode follows, and so does the lock.
     logs.length = 0;
     try {
       await migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false, allowModeSwitch: true, log: (m) => logs.push(m) }).catch(() => undefined);
       expect(logs.some((l) => l.includes('switching the database from shared to owned-database mode'))).toBe(true);
-      await expect(migrateShared()).rejects.toThrow(/migrated in owned-database mode and CROVE_SHARED_DATABASE asks for shared/);
+      await expect(migrateShared()).rejects.toThrow(/migrated in owned-database mode and LUDY_SHARED_DATABASE \/ CROVE_SHARED_DATABASE asks for shared/);
     } finally {
       await migrateShared({ allowModeSwitch: true });
     }

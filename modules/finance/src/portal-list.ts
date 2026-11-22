@@ -41,7 +41,7 @@ import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, 
 import { isCalendarDate, parseTaxCode, toMoney, money } from '@ludy/l10n-vn';
 import { portalStatus } from './domain/portal-status.ts';
 import { PORTAL_SYNC_CONTENT_TYPE, readSyncedList } from './domain/portal-api.ts';
-import { reconcilePortalList, type CroveInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';
+import { reconcilePortalList, type LudyInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';
 import { vatPeriod, type VatPeriod } from './domain/vat-return.ts';
 import { defaultLegalEntityId, resolveLegalEntity } from './legal-entity.ts';
 import { isOwnTaxCode } from './own-tax-code.ts';
@@ -388,14 +388,14 @@ function addDays(date: string, days: number): string {
 // the portal row on series and number alone (reconcilePortalList does that only when exactly one portal invoice has
 // them, so two branches' invoices of the same series and number are flagged, never merged). The buyer is carried for
 // the screen.
-async function croveInvoices(
+async function ludyInvoices(
   ctx: QueryContext,
   from: string,
   to: string,
   period: { from: string; to: string },
   legalEntityId: string,
   direction: PortalListDirection,
-): Promise<CroveInvoice[]> {
+): Promise<LudyInvoice[]> {
   const sale = direction === 'sale';
   const documents = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
@@ -448,7 +448,7 @@ async function croveInvoices(
   if (documents.length + proposals.length > PORTAL_RECONCILE_LIMIT) {
     throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${PORTAL_RECONCILE_LIMIT} hóa đơn ${sale ? 'bán ra' : 'mua vào'}; hệ thống chưa đối chiếu được khối lượng này`);
   }
-  const out: CroveInvoice[] = documents.map((d) => ({
+  const out: LudyInvoice[] = documents.map((d) => ({
     kind: 'document',
     id: d.id,
     sellerTaxCode: sale ? null : d.tax_code,
@@ -551,7 +551,7 @@ export async function reconcilePeriod(
   const from = addDays([period.from, dates[0] ?? period.from].sort()[0] ?? period.from, -31);
   const to = addDays([period.to, dates.at(-1) ?? period.to].sort().at(-1) ?? period.to, 31);
   // Without a list there is nothing to compare: Crove's invoices are not all reported as "not on the portal".
-  const reconciliation = done.length === 0 ? reconcilePortalList([], [], period) : reconcilePortalList(rows, await croveInvoices(ctx, from, to, period, legalEntityId, direction), period);
+  const reconciliation = done.length === 0 ? reconcilePortalList([], [], period) : reconcilePortalList(rows, await ludyInvoices(ctx, from, to, period, legalEntityId, direction), period);
   return { period, lists, reconciliation };
 }
 

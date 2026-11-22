@@ -29,6 +29,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}

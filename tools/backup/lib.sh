@@ -9,7 +9,8 @@ umask 077
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CROVE_DIR="${CROVE_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+LUDY_DIR="${LUDY_DIR:-${CROVE_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}}"
+CROVE_DIR="$LUDY_DIR"
 
 # The MinIO client, from the same pinned image as the MinIO in docker-compose.split.yml (AGENTS.md, "Updating
 # pinned images").
@@ -203,8 +204,8 @@ sealed_size() {
   echo $((28 + $1 + chunks * 16))
 }
 
-# docker compose in CROVE_DIR, so it reads the same .env, COMPOSE_FILE and COMPOSE_PROJECT_NAME as the stack.
-dc() { (cd "$CROVE_DIR" && docker compose "$@"); }
+# docker compose in LUDY_DIR, so it reads the same .env, COMPOSE_FILE and COMPOSE_PROJECT_NAME as the stack.
+dc() { (cd "$LUDY_DIR" && docker compose "$@"); }
 
 # psql as the superuser inside the db container, over its local socket. Extra arguments go to psql.
 db_psql() { dc exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres "$@"; }

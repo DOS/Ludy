@@ -25,7 +25,7 @@ fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   printf 'image inspect %s\n' "${*: -1}" >>"$STUB_LOG"
   for pair in ${STUB_BUILD_TIMES:-}; do
-    case "${*: -1}" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nCROVE_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
+    case "${*: -1}" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nLUDY_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
   done
   exit 0
 fi
@@ -76,8 +76,11 @@ case "$sub" in
     case "$args" in
       *migrate*)
         # An environment variable of the caller must not reach the step: the env file is the one source of the key.
-        [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ] || echo seen >"$STUB_LOG.envvar"
-        key="$(sed -n 's/^CROVE_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
+        { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
+        key="$(sed -n 's/^LUDY_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
+        if [ -z "$key" ]; then
+          key="$(sed -n 's/^CROVE_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
+        fi
         if [ -n "$key" ]; then
           if [ -f "$STUB_LOG.installed" ] && [ "$(cat "$STUB_LOG.installed")" = "$key" ]; then echo 'context token key unchanged'; else
             printf '%s\n' "$key" >"$STUB_LOG.installed"

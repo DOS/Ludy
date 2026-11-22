@@ -6,7 +6,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
 import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
-import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
+import { contextTaint, readEnvPair, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
 import { DomainError, toDomainError } from './errors.ts';
 import { eventPayloadProblem, normalizeEventPayload } from './event-payload.ts';
 import { sha256Hex } from './storage.ts';
@@ -1614,7 +1614,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function contextTokenKeyBytes(value: string): Buffer {
   const trimmed = value.trim();
   const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed) ? Buffer.from(trimmed, 'base64') : Buffer.alloc(0);
-  if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  if (bytes.length < 32 || bytes.length > 64) throw new Error('LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   return bytes;
 }
 
@@ -1720,7 +1720,9 @@ export class Runtime {
     if (!(INPUT_HASH_MODES as readonly string[]).includes(inputHash)) throw new Error(`unknown input hash mode ${String(inputHash)}`);
     this.inputHash = inputHash;
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
-    const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
+    const contextTokenKey = options.contextTokenKey === undefined
+      ? readEnvPair(process.env, 'LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY')
+      : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
     this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
     this.#keyedHashRoots = (options.keyedHashRoots ?? []).map((root) => ({ id: root.id, key: Buffer.from(root.key) }));

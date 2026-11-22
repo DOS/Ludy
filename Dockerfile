@@ -40,11 +40,16 @@ COPY --from=kernel --chown=node:node /app /app
 COPY --from=web --chown=node:node /app/apps/app/dist /app/apps/app/dist
 RUN mkdir -p /data/files /data/keys /data/status /data/archive && chown node:node /data/files /data/keys /data/status /data/archive && chmod 700 /data/keys
 # The build id GET /version reports (#892): the release workflow passes the git SHA, and its committer date as
-# CROVE_BUILD_TIME, which orders builds for the API's /readyz (worker build >= API build, #1952). Last, so a new SHA
-# rebuilds no layer above.
+# LUDY_BUILD_TIME (or legacy CROVE_BUILD_TIME), which orders builds for the API's /readyz (worker build >= API build, #1952).
+# Last, so a new SHA rebuilds no layer above.
+ARG LUDY_BUILD=
 ARG CROVE_BUILD=
+ARG LUDY_BUILD_TIME=
 ARG CROVE_BUILD_TIME=
-ENV CROVE_BUILD=$CROVE_BUILD CROVE_BUILD_TIME=$CROVE_BUILD_TIME
+ENV LUDY_BUILD=${LUDY_BUILD:-$CROVE_BUILD} \
+    CROVE_BUILD=${CROVE_BUILD:-$LUDY_BUILD} \
+    LUDY_BUILD_TIME=${LUDY_BUILD_TIME:-$CROVE_BUILD_TIME} \
+    CROVE_BUILD_TIME=${CROVE_BUILD_TIME:-$LUDY_BUILD_TIME}
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=6 CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

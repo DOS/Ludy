@@ -87,7 +87,7 @@ const INTEGER_FLAGS = {
 } as const;
 
 export function parseLoadArgs(argv: readonly string[], env: Record<string, string | undefined> = {}): LoadArgs {
-  const args: LoadArgs = { adminUrl: env.CROVE_TEST_ADMIN_URL ?? '', ...DEFAULT_LOAD_ARGS };
+  const args: LoadArgs = { adminUrl: env.LUDY_TEST_ADMIN_URL ?? env.CROVE_TEST_ADMIN_URL ?? '', ...DEFAULT_LOAD_ARGS };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i] as string;
     if (flag === '--keep') {
@@ -106,7 +106,7 @@ export function parseLoadArgs(argv: readonly string[], env: Record<string, strin
     if (!Number.isInteger(n) || n < 1 || n > 1_000_000) throw new Error(`${flag} must be a whole number from 1 to 1000000`);
     args[key] = n;
   }
-  if (!args.adminUrl) throw new Error('--admin-url (or CROVE_TEST_ADMIN_URL) is required: a superuser URL of a PostgreSQL 17 server');
+  if (!args.adminUrl) throw new Error('--admin-url (or LUDY_TEST_ADMIN_URL / CROVE_TEST_ADMIN_URL) is required: a superuser URL of a PostgreSQL 17 server');
   return args;
 }
 

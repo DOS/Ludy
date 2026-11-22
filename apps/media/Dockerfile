@@ -42,7 +42,7 @@ COPY --from=build /app/packages/media-contract /app/packages/media-contract
 
 # Marker (apps/media/src/main.ts, IMAGE_MARKER): in this image the environment allowlist always applies,
 # even when NODE_ENV is overridden. Owned by root, so the service user cannot remove it.
-RUN echo 'crove-media image: the environment allowlist always applies' > /etc/crove-media-image
+RUN echo 'ludy-media image: the environment allowlist always applies' > /etc/ludy-media-image
 
 USER node
 EXPOSE 8095

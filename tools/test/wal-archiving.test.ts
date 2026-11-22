@@ -27,7 +27,7 @@ const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
 describe.skipIf(!hasBash)('wal.sh', () => {
   it('parses, and refuses an unknown command and a bad restore target', () => {
     expect(spawnSync('bash', ['-n', resolve(repo, 'tools/backup/wal.sh')]).status).toBe(0);
-    const env = { ...process.env, CROVE_DIR: repo, BACKUP_ALERT: 'off' };
+    const env = { ...process.env, LUDY_DIR: repo, CROVE_DIR: repo, BACKUP_ALERT: 'off' };
     const run = (...args: string[]) => spawnSync('bash', [resolve(repo, 'tools/backup/wal.sh'), ...args], { env, encoding: 'utf8' });
     const unknown = run('frobnicate');
     expect(unknown.status).toBe(2);

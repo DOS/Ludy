@@ -542,7 +542,7 @@ describe('crove-extract configuration', () => {
         expect(() => loadExtractConfig(env, () => {}, { markerPath: marker })).toThrow(/remove AI_API_KEY from/);
         expect(() => loadExtractConfig(env, () => {}, { markerPath: marker })).not.toThrow(/sk-secret-value/);
       }
-      expect(IMAGE_MARKER).toBe('/etc/crove-extract-image');
+      expect(IMAGE_MARKER).toBe('/etc/ludy-extract-image');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

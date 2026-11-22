@@ -7714,7 +7714,7 @@ export const vi = {
     tiles: {
       missing: '{brand} chưa có',
       amount_mismatch: 'Lệch số tiền',
-      void_in_crove: 'Đã hủy hoặc thay thế',
+      void_in_ludy: 'Đã hủy hoặc thay thế',
       not_on_portal: 'Không có trên cổng thuế',
     },
     sections: {
@@ -7722,7 +7722,7 @@ export const vi = {
         title: 'Cơ quan thuế có, {brand} chưa có ({count})',
         hint: 'Hãy xin người bán tệp XML của các hóa đơn này rồi tải lên Chứng từ chờ duyệt, hoặc chuyển tiếp email hóa đơn vào địa chỉ nhận chứng từ.',
       },
-      void_in_crove: {
+      void_in_ludy: {
         title: 'Đã hủy hoặc bị thay thế trên cổng thuế nhưng {brand} vẫn giữ ({count})',
         hint: 'Hóa đơn này không còn giá trị. Nếu đã ghi sổ, hãy đảo bút toán; nếu đang chờ duyệt, hãy từ chối. Hóa đơn thay thế cần được tải lên riêng.',
       },
@@ -7760,13 +7760,13 @@ export const vi = {
       invoice: 'Ký hiệu, số',
       seller: 'Người bán',
       portalTotal: 'Tổng tiền trên cổng thuế',
-      croveTotal: 'Tổng tiền trong {brand}',
+      ludyTotal: 'Tổng tiền trong {brand}',
       notes: 'Ghi chú',
     },
     notes: {
       outsidePeriod: 'Ngoài kỳ',
       withoutTaxCode: 'Khớp không theo MST',
-      duplicateInCrove: 'Trùng hóa đơn đã có trong {brand}',
+      duplicateInLudy: 'Trùng hóa đơn đã có trong {brand}',
       postedOn: 'Ghi sổ ngày {date}',
       declaredInLaterPeriod: 'Ghi sổ ngày {date}, kê khai vào kỳ sau',
       duplicateRows: 'Lặp {count, plural, other {# lần}} trong danh sách',
@@ -7812,7 +7812,7 @@ export const vi = {
       tiles: {
         missing: 'Hóa đơn bán {brand} chưa có',
         amount_mismatch: 'Lệch số tiền hoặc thuế',
-        void_in_crove: 'Đã hủy hoặc thay thế',
+        void_in_ludy: 'Đã hủy hoặc thay thế',
         not_on_portal: 'Không có trên cổng thuế',
       },
       sections: {
@@ -7820,7 +7820,7 @@ export const vi = {
           title: 'Cơ quan thuế có, sổ sách chưa có ({count})',
           hint: 'Các hóa đơn bán ra này đã phát hành nhưng chưa ghi sổ, nên thuế GTGT đầu ra đang bị kê thiếu. Hãy ghi sổ từng hóa đơn: tải tệp XML lên Chứng từ chờ duyệt, hoặc nhập như một hóa đơn bán ra.',
         },
-        void_in_crove: {
+        void_in_ludy: {
           title: 'Đã hủy hoặc bị thay thế trên cổng thuế nhưng {brand} vẫn giữ ({count})',
           hint: 'Hóa đơn bán ra này không còn giá trị, nên thuế GTGT đầu ra đang bị kê thừa khi còn giữ nó. Nếu đã ghi sổ, hãy đảo bút toán; nếu đang chờ duyệt, hãy từ chối.',
         },

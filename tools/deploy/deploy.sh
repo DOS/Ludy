@@ -62,23 +62,23 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 # The env file is the one source of the context token key (#3282): a variable of the SSH session would win over the file in
 # compose's interpolation, and `migrate` would install a key the file does not hold.
-unset CROVE_CONTEXT_TOKEN_KEY
+unset LUDY_CONTEXT_TOKEN_KEY CROVE_CONTEXT_TOKEN_KEY
 
-DEPLOY_DIR="${CROVE_DEPLOY_DIR:-/opt/crove}"
-ENV_FILE="${CROVE_ENV_FILE:-}"
+DEPLOY_DIR="${LUDY_DEPLOY_DIR:-${CROVE_DEPLOY_DIR:-/opt/crove}}"
+ENV_FILE="${LUDY_ENV_FILE:-${CROVE_ENV_FILE:-}}"
 # Seconds: `docker compose up --wait` per step (Supabase Auth may migrate for minutes on an upgrade), /readyz, and
 # how long a separate worker must stay running before the API is rolled.
-WAIT_TIMEOUT="${CROVE_WAIT_TIMEOUT:-600}"
-READY_TIMEOUT="${CROVE_READY_TIMEOUT:-300}"
-WORKER_SETTLE="${CROVE_WORKER_SETTLE:-15}"
+WAIT_TIMEOUT="${LUDY_WAIT_TIMEOUT:-${CROVE_WAIT_TIMEOUT:-600}}"
+READY_TIMEOUT="${LUDY_READY_TIMEOUT:-${CROVE_READY_TIMEOUT:-300}}"
+WORKER_SETTLE="${LUDY_WORKER_SETTLE:-${CROVE_WORKER_SETTLE:-15}}"
 # Release directories kept on the host (the current and previous ones are never removed).
-KEEP_RELEASES="${CROVE_KEEP_RELEASES:-5}"
+KEEP_RELEASES="${LUDY_KEEP_RELEASES:-${CROVE_KEEP_RELEASES:-5}}"
 # Dated copies of the env file kept next to it (the newest, and the one a rollback needs).
-KEEP_ENV_BACKUPS="${CROVE_KEEP_ENV_BACKUPS:-5}"
+KEEP_ENV_BACKUPS="${LUDY_KEEP_ENV_BACKUPS:-${CROVE_KEEP_ENV_BACKUPS:-5}}"
 # Base URL of the smoke test on the host; default: the loopback port the API service publishes.
-SMOKE_URL="${CROVE_SMOKE_URL:-}"
+SMOKE_URL="${LUDY_SMOKE_URL:-${CROVE_SMOKE_URL:-}}"
 # Seconds the account step of the smoke test waits for the worker to turn its upload into a proposal.
-SMOKE_POLL_SECONDS="${CROVE_SMOKE_POLL_SECONDS:-120}"
+SMOKE_POLL_SECONDS="${LUDY_SMOKE_POLL_SECONDS:-${CROVE_SMOKE_POLL_SECONDS:-120}}"
 
 # Output may go to an SSH session that has dropped (see the signal traps in main): a failed write never stops a
 # deploy halfway.
@@ -262,7 +262,7 @@ smoke_account() {
       err 'smoke: sign-in answered without an access token'
       exit 1
     }
-    printf 'authorization: Bearer %s\nx-crove-org: %s\n' "$token" "$SMOKE_ORG" >"$headers"
+    printf 'authorization: Bearer %s\nx-ludy-org: %s\n' "$token" "$SMOKE_ORG" >"$headers"
 
     number="$(date -u +%s)"
     smoke_invoice "$number" "$(date -u +%F)" >"$work/crove-smoke-$number.xml"
@@ -631,17 +631,20 @@ activate() {
   rm -f "$DEPLOY_DIR/compose.pilot.yml.tmp"
   cp -f "$rel/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml.tmp"
   cp -f "$rel/docker-compose.override.yml" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
-  CROVE_IMAGE="$(release_field "$1" IMAGE)"
-  CROVE_EXTRACT_IMAGE="$(release_field "$1" EXTRACT_IMAGE)"
+  LUDY_IMAGE="$(release_field "$1" IMAGE)"
+  LUDY_EXTRACT_IMAGE="$(release_field "$1" EXTRACT_IMAGE)"
   # Empty for a release staged before crove-media was published (a rollback to it): nothing is pulled for it and its override pins none; its
   # own compose files decide whether crove-media runs (a release from before #2988 keeps it behind the `media` profile).
-  CROVE_MEDIA_IMAGE="$(release_field "$1" MEDIA_IMAGE)"
+  LUDY_MEDIA_IMAGE="$(release_field "$1" MEDIA_IMAGE)"
+  CROVE_IMAGE="$LUDY_IMAGE"
+  CROVE_EXTRACT_IMAGE="$LUDY_EXTRACT_IMAGE"
+  CROVE_MEDIA_IMAGE="$LUDY_MEDIA_IMAGE"
   # The pins of `api` and `worker` follow the layout of now, whatever the release was staged under: taken out of a release
   # staged in the pilot layout when the host has gone back to one container (they would define bare services), put in
   # one staged before (#2133).
   { grep -v -E "^  (api|worker): \{ image:" "$DEPLOY_DIR/docker-compose.override.yml.tmp" || true; } >"$DEPLOY_DIR/docker-compose.override.yml.pins"
   mv -f "$DEPLOY_DIR/docker-compose.override.yml.pins" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
-  pilot_pins "$CROVE_IMAGE" >>"$DEPLOY_DIR/docker-compose.override.yml.tmp"
+  pilot_pins "$LUDY_IMAGE" >>"$DEPLOY_DIR/docker-compose.override.yml.tmp"
   # The pilot file ships with the release. A release staged before that (a rollback to it) keeps the host's copy.
   if pilot_layout; then
     if [ -f "$rel/compose.pilot.yml" ]; then
@@ -659,7 +662,7 @@ activate() {
   if [ -f "$DEPLOY_DIR/compose.pilot.yml.tmp" ]; then mv -f "$DEPLOY_DIR/compose.pilot.yml.tmp" "$DEPLOY_DIR/compose.pilot.yml"; fi
   mv -f "$DEPLOY_DIR/docker-compose.yml.tmp" "$DEPLOY_DIR/docker-compose.yml"
   mv -f "$DEPLOY_DIR/docker-compose.override.yml.tmp" "$DEPLOY_DIR/docker-compose.override.yml"
-  export CROVE_IMAGE CROVE_EXTRACT_IMAGE CROVE_MEDIA_IMAGE
+  export LUDY_IMAGE LUDY_EXTRACT_IMAGE LUDY_MEDIA_IMAGE CROVE_IMAGE CROVE_EXTRACT_IMAGE CROVE_MEDIA_IMAGE
   # The build the release's image reports on /version; empty for a release deployed without --build.
   ACTIVE_BUILD="$(release_field "$1" BUILD)"
 }
@@ -724,7 +727,7 @@ up() { dc up --detach --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT"
 # the image is not on the host.
 image_build_epoch() {
   local t
-  t="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n 's/^CROVE_BUILD_TIME=//p' | head -n 1)" || true
+  t="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n -e 's/^LUDY_BUILD_TIME=//p' -e 's/^CROVE_BUILD_TIME=//p' | head -n 1)" || true
   [ -n "$t" ] || return 0
   date -u -d "$t" +%s 2>/dev/null || true
 }
@@ -885,14 +888,14 @@ preflight() {
 # an argument or an environment variable of another process, and it is never printed.
 KEY_LINE=0 KEY_SET=0
 env_key_scan() {
-  local file="${1:-$ENV_FILE}" line raw value n=0
+  local file="${1:-$ENV_FILE}" line name raw value n=0 val_set=0 ludy_line=0 ludy_set=0 crove_line=0 crove_set=0
   KEY_LINE=0 KEY_SET=0
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
-      KEY_LINE=$n
-      raw="${BASH_REMATCH[2]}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_CONTEXT_TOKEN_KEY|CROVE_CONTEXT_TOKEN_KEY)[[:space:]]*[=:](.*)$ ]]; then
+      name="${BASH_REMATCH[2]}"
+      raw="${BASH_REMATCH[3]}"
       value="$raw"
       if [[ "$raw" =~ ^[[:space:]]+# ]]; then
         value=''
@@ -906,17 +909,26 @@ env_key_scan() {
           value="${value%"${value##*[![:space:]]}"}"
         fi
       fi
-      if [ -n "$value" ]; then KEY_SET=1; else KEY_SET=0; fi
+      if [ -n "$value" ]; then val_set=1; else val_set=0; fi
+      if [ "$name" = LUDY_CONTEXT_TOKEN_KEY ]; then
+        ludy_line=$n
+        ludy_set=$val_set
+      else
+        crove_line=$n
+        crove_set=$val_set
+      fi
     fi
   done <"$file"
+  if ((ludy_line > 0)); then KEY_LINE=$ludy_line; else KEY_LINE=$crove_line; fi
+  if ((ludy_set || crove_set)); then KEY_SET=1; else KEY_SET=0; fi
 }
 
 # Before anything changes: when the env file has no context token key, the deploy must be able to make one.
 context_token_key_preflight() {
   env_key_scan
   ((KEY_SET)) && return 0
-  command -v openssl >/dev/null || die "$EXIT_USAGE" "$ENV_FILE has no CROVE_CONTEXT_TOKEN_KEY and openssl is not installed to make one (docs/runbooks/context-token-key.md)"
-  [ -w "$ENV_FILE" ] || die "$EXIT_USAGE" "$ENV_FILE has no CROVE_CONTEXT_TOKEN_KEY and the deploy user cannot write to the file (docs/runbooks/context-token-key.md)"
+  command -v openssl >/dev/null || die "$EXIT_USAGE" "$ENV_FILE has no LUDY_CONTEXT_TOKEN_KEY and openssl is not installed to make one (docs/runbooks/context-token-key.md)"
+  [ -w "$ENV_FILE" ] || die "$EXIT_USAGE" "$ENV_FILE has no LUDY_CONTEXT_TOKEN_KEY and the deploy user cannot write to the file (docs/runbooks/context-token-key.md)"
 }
 
 # The temporary files while the key is written: the new env file (it holds the key) and a copy of the old one. Removed on
@@ -962,12 +974,12 @@ ensure_context_token_key() {
       if [ "$n" = "$KEY_LINE" ]; then
         # Keep a line break of CRLF as it was; the replaced line loses `export`, which compose does not need.
         if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
-        printf 'CROVE_CONTEXT_TOKEN_KEY=%s%s\n' "$key" "$cr" || bad=1
+        printf 'LUDY_CONTEXT_TOKEN_KEY=%s%s\n' "$key" "$cr" || bad=1
       else
         printf '%s\n' "$line" || bad=1
       fi
     done <"$ENV_FILE"
-    if [ "$KEY_LINE" = 0 ]; then printf 'CROVE_CONTEXT_TOKEN_KEY=%s\n' "$key" || bad=1; fi
+    if [ "$KEY_LINE" = 0 ]; then printf 'LUDY_CONTEXT_TOKEN_KEY=%s\n' "$key" || bad=1; fi
   } >"$KEY_TMP" || bad=1
   if ((bad)); then
     err 'writing the new env file failed (is the disk full?); the env file was not touched'
@@ -1010,7 +1022,7 @@ ensure_context_token_key() {
     return 1
   }
   log 'context token key generated'
-  log "person step: copy CROVE_CONTEXT_TOKEN_KEY from $ENV_FILE on the host into the secret store (open the file in an editor; never print it into a shared log), docs/runbooks/context-token-key.md"
+  log "person step: copy LUDY_CONTEXT_TOKEN_KEY from $ENV_FILE on the host into the secret store (open the file in an editor; never print it into a shared log), docs/runbooks/context-token-key.md"
   record 'context token key generated' || true
 }
 
@@ -1384,11 +1396,11 @@ apply_env_settings() {
     for key in "${AUTH_SETTING_NAMES[@]}" AUTH_SESSION_CHECK AUTH_UPSTREAM_URL "${AUTH_SETTING_DROPPED[@]}"; do managed[$key]=1; done
     for key in "${AUTH_SETTING_DROPPED[@]}"; do dropped[$key]=1; done
   fi
-  # Pre-scan for CRLF endings across the whole file and the last CROVE_MODULES assignment line.
+  # Pre-scan for CRLF endings across the whole file and the last LUDY_MODULES / CROVE_MODULES assignment line.
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
-    if ((has_modules)) && [[ "${line%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:] ]]; then
+    if ((has_modules)) && [[ "${line%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_MODULES|CROVE_MODULES)[[:space:]]*[=:] ]]; then
       mod_line=$n
     fi
   done <"$ENV_FILE"
@@ -1402,9 +1414,9 @@ apply_env_settings() {
           if [ -n "${dropped[$key]:-}" ]; then gone+=("$key"); fi
           continue
         fi
-        if ((has_modules)) && [ "$key" = CROVE_MODULES ]; then
+        if ((has_modules)) && { [ "$key" = LUDY_MODULES ] || [ "$key" = CROVE_MODULES ]; }; then
           if [ "$n" = "$mod_line" ]; then
-            printf 'CROVE_MODULES=%s%s\n' "$modules_list" "$cr"
+            printf 'LUDY_MODULES=%s%s\n' "$modules_list" "$cr"
             written_count=$((written_count + 1))
           fi
           continue
@@ -1414,7 +1426,7 @@ apply_env_settings() {
       written_count=$((written_count + 1))
     done <"$ENV_FILE"
     if ((has_modules && mod_line == 0)); then
-      printf 'CROVE_MODULES=%s%s\n' "$modules_list" "$cr"
+      printf 'LUDY_MODULES=%s%s\n' "$modules_list" "$cr"
       written_count=$((written_count + 1))
     fi
     # Lines added to a file with Windows line breaks get them too.
@@ -1437,10 +1449,10 @@ apply_env_settings() {
   mapfile -t written <"$ENV_TMP"
   if ((has_modules)); then
     for key in "${written[@]}"; do
-      if [ "$key" = "CROVE_MODULES=$modules_list$cr" ]; then
+      if [ "$key" = "LUDY_MODULES=$modules_list$cr" ]; then
         mod_seen=$((mod_seen + 1))
-      elif [[ "${key%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:] ]]; then
-        err 'the new env file has an unexpected CROVE_MODULES line; the env file was not touched'
+      elif [[ "${key%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_MODULES|CROVE_MODULES)[[:space:]]*[=:] ]]; then
+        err 'the new env file has an unexpected LUDY_MODULES line; the env file was not touched'
         return 1
       fi
     done
@@ -1512,7 +1524,7 @@ apply_env_settings() {
     log "identity provider settings written to $ENV_FILE; set: $(auth_set_names); removed: ${removed:-none}; the previous file is $ENV_BACKUP (mode 600)"
   fi
   if ((has_modules)); then
-    log "module settings written to $ENV_FILE: CROVE_MODULES=$modules_list; the previous file is $ENV_BACKUP (mode 600)"
+    log "module settings written to $ENV_FILE: LUDY_MODULES=$modules_list; the previous file is $ENV_BACKUP (mode 600)"
   fi
 }
 
@@ -1679,7 +1691,7 @@ do_deploy() {
     SMOKE_EXPECT_AUTH_URL=''
   fi
   if ((modules_given)); then
-    log "module settings given: CROVE_MODULES=$modules_list"
+    log "module settings given: LUDY_MODULES=$modules_list"
     SMOKE_EXPECT_MODULES="$modules_list"
   else
     SMOKE_EXPECT_MODULES=''
@@ -1866,7 +1878,7 @@ main() {
     check-modules)
       (($# == 1)) || die "$EXIT_USAGE" 'usage: deploy.sh check-modules <list>'
       modules_validate "$1" || die "$EXIT_USAGE" 'the module list is not valid (see above)'
-      log "module settings ok: CROVE_MODULES=$1"
+      log "module settings ok: LUDY_MODULES=$1"
       ;;
     smoke)
       [ -n "${1:-}" ] || die "$EXIT_USAGE" 'usage: deploy.sh smoke <base url> [build id]'

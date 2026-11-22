@@ -87,7 +87,10 @@ case "$url" in
         modules_json="[\"${STUB_CONFIG_MODULES//,/\",\"}\"]"
       fi
     else
-      configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
+      configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
+      if [ -z "$configured_modules" ]; then
+        configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
+      fi
       if [ -n "$configured_modules" ]; then
         modules_list='kernel'
         IFS=',' read -r -a stub_mods <<<"$configured_modules"
@@ -130,7 +133,7 @@ case "$url" in
     if [ -n "${STUB_SIGNIN_FAIL:-}" ]; then status=400 body='{"error":"invalid_grant"}'; else body='{"access_token":"stub-access-token","token_type":"bearer"}'; fi
     ;;
   */api/files | */api/rpc/*)
-    if [[ "$headers" != *'authorization: Bearer stub-access-token'* || "$headers" != *'x-crove-org: crove-smoke'* ]]; then
+    if [[ "$headers" != *'authorization: Bearer stub-access-token'* ]] || { [[ "$headers" != *'x-ludy-org: crove-smoke'* ]] && [[ "$headers" != *'x-crove-org: crove-smoke'* ]]; }; then
       status=401 body='{"code":"UNAUTHENTICATED"}'
     elif [[ "$url" == */api/files ]]; then
       file="${form#file=@}"

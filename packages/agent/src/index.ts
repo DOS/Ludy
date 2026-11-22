@@ -121,7 +121,7 @@ export class AiNotConfiguredError extends Error {}
 // checks the exact client configuration production runs.
 export function chatModel(config: AiConfig) {
   const provider = createOpenAICompatible({
-    name: 'crove-ai',
+    name: 'ludy-ai',
     baseURL: config.baseURL,
     ...(config.apiKey ? { apiKey: config.apiKey } : {}),
     supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,

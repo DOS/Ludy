@@ -42,7 +42,7 @@ async function postRpc(
   const response = await request.post(`/api/rpc/${path}`, {
     headers: {
       authorization: `Bearer ${token}`,
-      'x-crove-org': slug,
+      'x-ludy-org': slug,
       'content-type': 'application/json',
     },
     data: { json: input },

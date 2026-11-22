@@ -28,8 +28,8 @@ const BASE_URL = `http://127.0.0.1:${process.env.SPLIT_PORT ?? '18080'}`;
 const COMPOSE = ['compose', '-p', PROJECT, '-f', `${ROOT}docker-compose.yml`, '-f', `${ROOT}docker-compose.split.yml`];
 // The throwaway values in docker-compose.split.yml.
 const INBOUND_SECRET = 'split-stack-inbound-secret-0123456789abcdef';
-const BUCKET = 'crove-files';
-const ARCHIVE_BUCKET = 'crove-archive';
+const BUCKET = 'ludy-files';
+const ARCHIVE_BUCKET = 'ludy-archive';
 const FIRST_BATCH = 'chain/v1/000000000001.json';
 const INVOICE = readFileSync(`${ROOT}apps/extract/test/fixtures/einvoice-basic.xml`);
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -72,7 +72,7 @@ async function ok(path) {
 // oRPC RPC protocol, as the web app's RPCLink speaks it: POST /api/rpc/<path> with {"json": input}.
 async function rpc(token, path, input, org) {
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  if (org) headers['x-crove-org'] = org;
+  if (org) headers['x-ludy-org'] = org;
   const response = await fetch(`${BASE_URL}/api/rpc/${path}`, {
     method: 'POST',
     headers,
@@ -197,15 +197,15 @@ async function main() {
   const token = await signUp();
   const org = await rpc(token, 'org/create', { name: 'Công ty Split Stack', idempotencyKey: randomUUID() });
   const detail = await rpc(token, 'org/get', undefined, org.slug);
-  assert(typeof detail.inboundAddress === 'string' && detail.inboundAddress.endsWith('@inbound.crove.test'), 'the org has an inbound address');
-  log(`org ${org.slug} created, inbound address on inbound.crove.test`);
+  assert(typeof detail.inboundAddress === 'string' && detail.inboundAddress.endsWith('@inbound.ludy.test'), 'the org has an inbound address');
+  log(`org ${org.slug} created, inbound address on inbound.ludy.test`);
 
   // Upload through the API; only the worker can read it into a proposal.
   const form = new FormData();
   form.append('file', new Blob([INVOICE], { type: 'application/xml' }), 'einvoice-basic.xml');
   const upload = await fetch(`${BASE_URL}/api/files`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'x-crove-org': org.slug },
+    headers: { authorization: `Bearer ${token}`, 'x-ludy-org': org.slug },
     body: form,
     signal: AbortSignal.timeout(REQUEST_MS),
   });
@@ -222,7 +222,7 @@ async function main() {
   const post = (secret) =>
     fetch(`${BASE_URL}/api/inbound/email`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${secret}`, 'x-crove-recipient': detail.inboundAddress, 'content-type': 'message/rfc822' },
+      headers: { authorization: `Bearer ${secret}`, 'x-ludy-recipient': detail.inboundAddress, 'content-type': 'message/rfc822' },
       body: message,
       signal: AbortSignal.timeout(REQUEST_MS),
     });
@@ -254,7 +254,7 @@ async function main() {
     [mailed.id, second],
   ]) {
     const response = await fetch(`${BASE_URL}/api/files/${id}`, {
-      headers: { authorization: `Bearer ${token}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${token}`, 'x-ludy-org': org.slug },
       signal: AbortSignal.timeout(REQUEST_MS),
     });
     assert(response.ok && Buffer.from(await response.arrayBuffer()).equals(bytes), `file ${id} reads back from the bucket with its bytes`);

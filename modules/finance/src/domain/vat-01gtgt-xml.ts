@@ -27,7 +27,7 @@ export const HTKK_01GTGT = {
   xmlVersion: '2.8.3',
   // The software that made the file. GDT's own services name themselves here (a return filed through the public
   // service portal reads "TTGQ TTHC"); Crove names itself rather than pose as HTKK.
-  service: { code: 'CROVE', name: 'Crove', version: '1.0' },
+  service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
   // [01a] Ordinary production and business, the default line of business of the form.
   businessLine: { code: '00', name: 'Hoạt động sản xuất kinh doanh thông thường' },
   // The budget sub-item of domestic VAT.
