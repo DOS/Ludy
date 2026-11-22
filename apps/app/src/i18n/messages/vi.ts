@@ -317,6 +317,16 @@ export const vi = {
         obligationDueSoon: 'Một nghĩa vụ hợp đồng đến hạn trong {days, plural, other {# ngày}}',
         obligationMore: '{count, plural, other {# hợp đồng gia hạn hoặc nghĩa vụ khác}} cần bạn xem',
       },
+      hr: {
+        probationEnding: '{count, plural, other {# nhân sự sắp hết thử việc trong 7 ngày tới}}',
+        contractsExpiring: '{count, plural, other {# hợp đồng xác định thời hạn sắp hết hạn trong 30 ngày tới}}',
+        contractsExpired: '{count, plural, other {# nhân sự đang làm việc có hợp đồng xác định thời hạn đã quá hạn}}',
+        workPermitsExpiring: '{count, plural, other {# giấy phép lao động nước ngoài sắp hết hạn trong 60 ngày tới}}',
+        workPermitsExpired: '{count, plural, other {# nhân sự nước ngoài đang làm việc có giấy phép lao động đã quá hạn}}',
+        laborReport01Pli: 'Báo cáo tình hình thay đổi lao động mẫu 01/PLI kỳ {period} cần nộp trước {date}',
+        leaveApprovalsPending: '{count, plural, other {# đơn xin nghỉ phép đang chờ duyệt}}',
+        deptLeave: '{count, plural, other {# đơn xin nghỉ phép của bộ phận đang chờ bạn duyệt}}',
+      },
       ads: {
         paceOrg:'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
         paceAccount: 'Với tốc độ này, {account} sẽ vượt hạn mức chi tiêu tháng',
@@ -16704,6 +16714,7 @@ export const vi = {
       },
     },
     hr: {
+      today: 'Xem các cảnh báo nhân sự và đơn xin nghỉ phép cần bạn xử lý hôm nay',
       department: {
         add: 'Thêm phòng ban mới cho pháp nhân',
         archive: 'Lưu trữ một phòng ban',

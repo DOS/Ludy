@@ -494,3 +494,8 @@ export const zHrEmployeeContractPdf = z.strictObject({
 });
 export type HrEmployeeContractPdf = z.infer<typeof zHrEmployeeContractPdf>;
 
+export const zHrTodayAsk = z.strictObject({
+  now: z.iso.datetime({ offset: true }).optional(),
+});
+export type HrTodayAsk = z.infer<typeof zHrTodayAsk>;
+
