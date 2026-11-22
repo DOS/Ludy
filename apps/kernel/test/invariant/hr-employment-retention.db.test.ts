@@ -146,7 +146,7 @@ suite('HR employment append-only guard and employee retention DB guard (#2691)',
         }
         const { rows } = await c.query<{ n: string }>('SELECT crove_hr.t2691_probe($1, $2, $3) AS n', [
           mark,
-          statement,
+          dbIds ? dbIds.rewriteSql(statement) : statement,
           target,
         ]);
         return `${rows[0]?.n} row(s)`;
@@ -312,8 +312,8 @@ suite('HR employment append-only guard and employee retention DB guard (#2691)',
   });
 
   it('has no function in any user schema except crove_kernel.org_purge(integer) deleting from crove_hr.payroll_employment', async () => {
-    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?crove_hr"?\s*\.\s*"?payroll_employment\M`;
-    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?crove_hr"?\s*\.\s*)?%`;
+    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?(?:crove|ludy)_hr"?\s*\.\s*"?payroll_employment\M`;
+    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?(?:crove|ludy)_hr"?\s*\.\s*)?%`;
     const deleters = async (c: pg.Client, pattern: string) =>
       (
         await c.query<{ fn: string }>(
@@ -326,7 +326,9 @@ suite('HR employment append-only guard and employee retention DB guard (#2691)',
             ORDER BY 1`,
           [pattern],
         )
-      ).rows.map((r) => r.fn);
+      ).rows
+        .map((r) => r.fn)
+        .sort();
 
     await withClient(adminUrl, async (c) => {
       expect(await deleters(c, STATIC)).toEqual(['crove_kernel.org_purge(integer)']);
@@ -492,8 +494,8 @@ suite('HR employment append-only guard and employee retention DB guard (#2691)',
 
     expect(purgeResult).toMatchObject({ kind: 'purged', orgId: org.orgId });
     if (purgeResult.kind === 'purged') {
-      expect(purgeResult.result.counts.deleted['crove_hr.payroll_employee']).toBe(2);
-      expect(purgeResult.result.counts.deleted['crove_hr.payroll_employment']).toBe(1);
+      expect(purgeResult.result.counts.deleted[dbIds ? dbIds.table(EMPLOYEE_TABLE) : EMPLOYEE_TABLE]).toBe(2);
+      expect(purgeResult.result.counts.deleted[dbIds ? dbIds.table(EMPLOYMENT_TABLE) : EMPLOYMENT_TABLE]).toBe(1);
     }
     expect(await employmentCount(org.orgId)).toBe(0);
     await withClient(adminUrl, async (c) => {
