@@ -661,6 +661,16 @@ BEGIN
       'IF NOT pg_catalog.pg_has_role(SESSION_USER, ''ludy_reporter'', ''MEMBER'') THEN',
       'IF NOT (pg_catalog.pg_has_role(SESSION_USER, ''ludy_reporter'', ''MEMBER'') OR pg_catalog.pg_has_role(SESSION_USER, ''crove_reporter'', ''MEMBER'')) THEN'
     );
+    v_new_def := pg_catalog.replace(
+      v_new_def,
+      'IF (current_user = session_user OR current_user IN (''ludy_tenant'', ''ludy_tenant''))',
+      'IF (current_user = session_user OR current_user IN (''ludy_tenant'', ''crove_tenant''))'
+    );
+    v_new_def := pg_catalog.replace(
+      v_new_def,
+      'IF (current_user = session_user OR current_user = ''ludy_tenant'')',
+      'IF (current_user = session_user OR current_user IN (''ludy_tenant'', ''crove_tenant''))'
+    );
     IF v_new_def IS DISTINCT FROM v_def THEN
       EXECUTE v_new_def;
     END IF;
