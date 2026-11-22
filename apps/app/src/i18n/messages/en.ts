@@ -16762,6 +16762,9 @@ export const en = {
           live: 'Check whether my Vy is running for this item',
           start: 'Start a run of Vy working for you',
         },
+        subject_results: {
+          drop: 'Remove saved Vy results for an edited or redacted item',
+        },
       },
       since_yesterday: 'Read what the AI coworkers prepared since yesterday',
       vy_data: {
@@ -17213,6 +17216,8 @@ export const en = {
         correct: 'Correct a line of the draft transcript',
         draft_store: 'Store the draft transcript of a meeting',
         get: 'Read the transcript of a meeting',
+        redact: 'Hide confirmed personal data in the draft meeting text',
+        redact_candidates: 'Scan draft meeting text for personal numbers and email addresses',
         start: 'Ask Vy to transcribe a meeting',
         status: 'See how the transcription of a meeting is going',
       },

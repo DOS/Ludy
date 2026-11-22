@@ -501,6 +501,9 @@ import {
   zTranscriptCorrected,
   zTranscriptDraftStore,
   zTranscriptDraftStored,
+  zTranscriptRedact,
+  zTranscriptRedacted,
+  zTranscriptRedactCandidates,
   zTranscribeRunRef,
   zTranscribeCancel,
   zTranscribeCancelled,
@@ -1588,6 +1591,9 @@ export const contract = {
       cancel: oc.input(zTranscribeCancel).output(zTranscribeCancelled),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
+      // Code-assisted draft redaction (#4001): proposes sensitive values across draft publish surfaces and hides only confirmed selections.
+      redactCandidates: oc.input(zMeetingRef).output(zTranscriptRedactCandidates),
+      redact: oc.input(zTranscriptRedact).output(zTranscriptRedacted),
     },
     // The summary, the decisions and the action items (#2580): the recorder's drafts, published by one click to the meeting's readers, and the tasks made from items.
     results: {

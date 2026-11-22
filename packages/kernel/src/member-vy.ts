@@ -858,5 +858,102 @@ export const memberVyMemberDataPurge = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
+const SUBJECT_DROP_WRITES = [
+  tableWrite(kernelManifest.tables, 'crove_kernel', 'ai_run', ['status', 'finished_at', 'error', 'private_read']),
+  tableWrite(kernelManifest.tables, 'crove_kernel', 'member_vy_result', ['org_id', 'id']),
+];
+
+// Drops the calling member's own saved Vy results (and cancels any still-running runs) for one subject,
+// e.g. when a draft meeting is redacted so unredacted private results cannot be re-copied later (#4001).
+// User-only R1 internal command; holds no memberVy flag and locks ai_run before member_vy_result.
+export const memberVySubjectResultsDrop = defineCommand({
+  name: 'kernel.member_vy.subject_results.drop',
+  input: z.strictObject({
+    subjectType: z.string().trim().min(1).max(100),
+    subjectId: zId,
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  writes: SUBJECT_DROP_WRITES,
+  handler: async (ctx, input): Promise<{ subjectType: string; subjectId: string; cancelled: number; removed: number }> => {
+    const userId = requireUser(ctx);
+    let cancelled = 0;
+    let removed = 0;
+    const runById = new Map<string, { id: string; status: string }>();
+    for (let pass = 0; pass < 5; pass += 1) {
+      const seenRunIds = [...runById.keys()];
+      const { rows: runs } = await sql<{ id: string; status: string }>`
+        SELECT r.id, r.status
+        FROM crove_kernel.ai_run r
+        WHERE r.org_id = ${ctx.orgId}::uuid
+          ${seenRunIds.length > 0 ? sql`AND NOT (r.id = ANY(${sql.val(seenRunIds)}::uuid[]))` : sql``}
+          AND r.id IN (
+            SELECT v.run_id
+            FROM crove_kernel.member_vy_result v
+            WHERE v.org_id = ${ctx.orgId}::uuid
+              AND v.member_user_id = ${userId}::uuid
+              AND v.subject_type = ${input.subjectType}
+              AND v.subject_id = ${input.subjectId}::uuid
+          )
+        ORDER BY r.id
+        FOR UPDATE OF r`.execute(ctx.trx);
+      for (const r of runs) runById.set(r.id, r);
+
+      const { rows: results } = await sql<{ id: string; run_id: string; status: string; private_read: boolean }>`
+        SELECT v.id, v.run_id, v.status, v.private_read
+        FROM crove_kernel.member_vy_result v
+        WHERE v.org_id = ${ctx.orgId}::uuid
+          AND v.member_user_id = ${userId}::uuid
+          AND v.subject_type = ${input.subjectType}
+          AND v.subject_id = ${input.subjectId}::uuid
+        ORDER BY v.id`.execute(ctx.trx);
+
+      const missingRunLock = results.some((v) => !runById.has(v.run_id));
+      if (missingRunLock && pass < 4) continue;
+
+      const eligible = results.filter((v) => runById.has(v.run_id));
+      if (eligible.length > 0) {
+        const resultIds = eligible.map((r) => r.id);
+        await sql`
+          SELECT v.id
+          FROM crove_kernel.member_vy_result v
+          WHERE v.org_id = ${ctx.orgId}::uuid AND v.id = ANY(${sql.val(resultIds)}::uuid[])
+          ORDER BY v.id
+          FOR UPDATE OF v`.execute(ctx.trx);
+
+        for (const v of eligible) {
+          const run = runById.get(v.run_id);
+          if (!run || run.status !== 'running') continue;
+          if (v.status === 'ready') {
+            await sql`
+              UPDATE crove_kernel.ai_run
+              SET status = 'succeeded', finished_at = pg_catalog.now(), error = NULL, private_read = private_read OR ${v.private_read}
+              WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.run_id}::uuid AND status = 'running'`.execute(ctx.trx);
+            run.status = 'succeeded';
+          } else {
+            const res = await sql`
+              UPDATE crove_kernel.ai_run
+              SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'SUBJECT_REDACTED'
+              WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.run_id}::uuid AND status = 'running'`.execute(ctx.trx);
+            cancelled += Number(res.numAffectedRows ?? 0);
+            run.status = 'cancelled';
+          }
+        }
+
+        const del = await sql`
+          DELETE FROM crove_kernel.member_vy_result v
+          WHERE v.org_id = ${ctx.orgId}::uuid
+            AND v.member_user_id = ${userId}::uuid
+            AND v.id = ANY(${sql.val(resultIds)}::uuid[])`.execute(ctx.trx);
+        removed += Number(del.numAffectedRows ?? 0);
+      }
+      break;
+    }
+    ctx.audit({ subjectType: input.subjectType, subjectId: input.subjectId, cancelled, removed });
+    return { subjectType: input.subjectType, subjectId: input.subjectId, cancelled, removed };
+  },
+});
+
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

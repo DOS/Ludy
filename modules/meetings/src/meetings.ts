@@ -5,6 +5,7 @@ import type { MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
+import { redactCommands, redactQueries } from './redact.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
@@ -1018,6 +1019,7 @@ export const meetingsCommands = [
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
+  ...redactCommands,
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
@@ -1066,6 +1068,7 @@ export const meetingsQueries = [
   meetingConsentPolicyGet,
   meetingMediaOrphanKeys,
   transcriptGet,
+  ...redactQueries,
   meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,

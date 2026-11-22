@@ -16762,6 +16762,9 @@ export const vi = {
           live: 'Xem Vy của tôi có đang chạy cho mục này không',
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
+        subject_results: {
+          drop: 'Xóa kết quả Vy đã lưu cho mục vừa chỉnh hoặc ẩn dữ liệu',
+        },
       },
       since_yesterday: 'Xem việc các đồng nghiệp AI đã chuẩn bị từ hôm qua',
       vy_data: {
@@ -17213,6 +17216,8 @@ export const vi = {
         correct: 'Sửa một dòng của bản ghi nháp',
         draft_store: 'Lưu bản ghi nháp của cuộc họp',
         get: 'Xem bản ghi của cuộc họp',
+        redact: 'Ẩn dữ liệu cá nhân đã xác nhận trong bản nháp cuộc họp',
+        redact_candidates: 'Quét bản nháp cuộc họp tìm số cá nhân và địa chỉ email',
         start: 'Nhờ Vy ghi lời cuộc họp',
         status: 'Xem Vy ghi lời cuộc họp đến đâu',
       },

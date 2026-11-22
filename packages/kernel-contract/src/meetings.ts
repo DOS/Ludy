@@ -576,6 +576,98 @@ export const zTranscriptResult = z.strictObject({
   s: z.array(z.tuple([z.number(), z.number(), z.number().int().min(0), z.string()])).max(TRANSCRIPT_SEGMENTS_MAX),
 });
 
+// Code-assisted draft redaction (#4001, ADR-0047): deterministic detection on all draft publish surfaces; typed marks with zero original digits/chars; no undo store.
+export const REDACTION_KINDS = ['email', 'phone', 'national_id', 'tax_code', 'bank_account'] as const;
+export type RedactionKind = (typeof REDACTION_KINDS)[number];
+export const zRedactionKind = z.enum(REDACTION_KINDS);
+
+export const REDACTION_MARK_BY_KIND: Readonly<Record<RedactionKind, string>> = Object.freeze({
+  email: '[đã ẩn: email]',
+  phone: '[đã ẩn: số điện thoại]',
+  national_id: '[đã ẩn: CCCD]',
+  tax_code: '[đã ẩn: mã số thuế]',
+  bank_account: '[đã ẩn: số tài khoản]',
+});
+
+export const REDACTION_SURFACES = [
+  'transcript_segment.text',
+  'transcript_segment.speaker_label',
+  'meeting_result.summary',
+  'meeting_result.decision',
+  'action_item.title',
+  'action_item.who_drafted',
+  'action_item.when_drafted',
+  'meeting_chapter.title',
+  'meeting.title',
+] as const;
+export type RedactionSurface = (typeof REDACTION_SURFACES)[number];
+export const zRedactionSurface = z.enum(REDACTION_SURFACES);
+
+export const REDACTION_CANDIDATES_MAX = 2000;
+export const REDACTION_SELECTIONS_MAX = 500;
+
+export const zRedactionCandidate = z.strictObject({
+  surface: zRedactionSurface,
+  targetId: zId,
+  decisionIndex: z.number().int().min(0).max(50 - 1).nullable(),
+  kind: zRedactionKind,
+  startPos: z.number().int().min(1),
+  endPos: z.number().int().min(2),
+  matchText: z.string().min(1),
+  mark: z.string().min(1),
+  version: z.string().min(1),
+  startSeconds: z.number().nullable(),
+});
+export type RedactionCandidate = z.infer<typeof zRedactionCandidate>;
+
+export const zTranscriptRedactCandidates = z.strictObject({
+  meetingId: zId,
+  titleEditable: z.boolean(),
+  candidates: z.array(zRedactionCandidate).max(REDACTION_CANDIDATES_MAX),
+  truncated: z.boolean(),
+});
+export type TranscriptRedactCandidates = z.infer<typeof zTranscriptRedactCandidates>;
+
+export const zRedactionSelection = z
+  .strictObject({
+    surface: zRedactionSurface,
+    targetId: zId,
+    decisionIndex: z.number().int().min(0).max(50 - 1).nullable().default(null),
+    kind: zRedactionKind,
+    startPos: z.number().int().min(1),
+    version: z.string().trim().min(1).max(64),
+  })
+  .refine((v) => (v.surface === 'meeting_result.decision' ? v.decisionIndex !== null : v.decisionIndex === null), {
+    message: 'decisionIndex is required for meeting_result.decision and must be null otherwise',
+  });
+export type RedactionSelection = z.infer<typeof zRedactionSelection>;
+
+export const zTranscriptRedact = z.strictObject({
+  meetingId: zId,
+  confirmed: z.literal(true),
+  items: z.array(zRedactionSelection).min(1).max(REDACTION_SELECTIONS_MAX),
+});
+export type TranscriptRedact = z.infer<typeof zTranscriptRedact>;
+
+export const zRedactionCountsByKind = z.strictObject({
+  email: z.number().int().min(0),
+  phone: z.number().int().min(0),
+  national_id: z.number().int().min(0),
+  tax_code: z.number().int().min(0),
+  bank_account: z.number().int().min(0),
+});
+export type RedactionCountsByKind = z.infer<typeof zRedactionCountsByKind>;
+
+export const zTranscriptRedacted = z.strictObject({
+  meetingId: zId,
+  redactedCount: z.number().int().min(0),
+  countsByKind: zRedactionCountsByKind,
+  droppedVyResults: z.number().int().min(0),
+  cancelledVyRuns: z.number().int().min(0),
+  droppedTranslations: z.number().int().min(0),
+});
+export type TranscriptRedacted = z.infer<typeof zTranscriptRedacted>;
+
 // The summary, the decisions and the action items of a meeting (#2580, M6 part A). The recorder types them or copies them from the result of their own Vy;
 // they are drafts only the recorder reads until the recorder's one click publishes them to the meeting's readers.
 export const RESULT_SUMMARY_MAX = 8000;
