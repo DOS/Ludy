@@ -7,6 +7,7 @@ import {
   HR_CANDIDATE_SOURCES,
   HR_CV_MAX_BYTES,
   zHrCvExtractAuditInput,
+  zHrCvExtractAuthorizeInput,
   zHrCvExtractCompleteInput,
   zHrCvExtractContextInput,
   zHrCvExtractRequestInput,
@@ -215,40 +216,50 @@ export interface HrCvExtractContext {
   requiredSkills: string[];
   storageKey: string;
   resultKey: string | null;
+  resultSha256: string | null;
 }
 
 async function resolveOpeningContext(
-  trx: Parameters<typeof resolveEntity>[0]['trx'],
-  orgId: string,
+  ctx: Parameters<typeof resolveEntity>[0],
   openingId: string | undefined,
   requestedEntityId: string | undefined,
-  resolveDefaultEntity: () => Promise<string>,
 ): Promise<{ legalEntityId: string; openingId: string | null; openingTitle: string | null; requiredSkills: string[] }> {
   if (!openingId) {
     return {
-      legalEntityId: await resolveDefaultEntity(),
+      legalEntityId: await resolveEntity(ctx, requestedEntityId),
       openingId: null,
       openingTitle: null,
       requiredSkills: [],
     };
   }
-  const opening = await trx
+  const opening = await ctx.trx
     .selectFrom('crove_hr.job_opening')
     .select(['id', 'legal_entity_id', 'title', 'required_skills', 'status'])
-    .where('org_id', '=', orgId)
+    .where('org_id', '=', ctx.orgId)
     .where('id', '=', openingId)
     .executeTakeFirst();
   if (!opening) throw openingNotFound();
   if (requestedEntityId !== undefined && opening.legal_entity_id !== requestedEntityId) {
     throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không thuộc pháp nhân đã chọn');
   }
+  const legalEntityId = await resolveEntity(ctx, opening.legal_entity_id);
   return {
-    legalEntityId: opening.legal_entity_id,
+    legalEntityId,
     openingId: opening.id,
     openingTitle: opening.title,
     requiredSkills: opening.required_skills,
   };
 }
+
+export const cvExtractAuthorizeQuery = defineQuery({
+  name: 'hr.recruiting.cv_extract.authorize',
+  input: zHrCvExtractAuthorizeInput,
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<{ legalEntityId: string; openingId: string | null }> => {
+    const resolved = await resolveOpeningContext(ctx, input.openingId, input.legalEntityId);
+    return { legalEntityId: resolved.legalEntityId, openingId: resolved.openingId };
+  },
+});
 
 export const cvExtractRequestCommand = defineCommand({
   name: 'hr.recruiting.cv_extract.request',
@@ -258,13 +269,7 @@ export const cvExtractRequestCommand = defineCommand({
   access: MANAGERS,
   writes: [],
   handler: async (ctx, input): Promise<HrCvExtractContext> => {
-    const resolved = await resolveOpeningContext(
-      ctx.trx,
-      ctx.orgId,
-      input.openingId,
-      input.legalEntityId,
-      () => resolveEntity(ctx, input.legalEntityId),
-    );
+    const resolved = await resolveOpeningContext(ctx, input.openingId, input.legalEntityId);
     const storageKey = hrCvBlobKey(ctx.orgId, input.sha256);
 
     ctx.emit('hr.recruiting.cv_extract_queued', {
@@ -288,6 +293,7 @@ export const cvExtractRequestCommand = defineCommand({
       ...resolved,
       storageKey,
       resultKey: null,
+      resultSha256: null,
     };
   },
 });
@@ -314,50 +320,55 @@ export const cvExtractContextQuery = defineQuery({
   input: zHrCvExtractContextInput,
   access: MANAGERS,
   handler: async (ctx, input): Promise<HrCvExtractContext> => {
-    const requestRow = await sql<{ input_sha256: string | null; legal_entity_id: string | null; opening_id: string | null }>`
-      SELECT detail ->> 'inputSha256' AS input_sha256,
-             detail ->> 'legalEntityId' AS legal_entity_id,
-             detail ->> 'openingId' AS opening_id
+    const eventsRes = await sql<{
+      command: string;
+      input_sha256: string | null;
+      legal_entity_id: string | null;
+      opening_id: string | null;
+      result_sha256: string | null;
+    }>`
+      SELECT
+        command,
+        detail ->> 'inputSha256' AS input_sha256,
+        detail ->> 'legalEntityId' AS legal_entity_id,
+        detail ->> 'openingId' AS opening_id,
+        detail ->> 'resultSha256' AS result_sha256
       FROM crove_kernel.audit_event
       WHERE org_id = ${ctx.orgId}::uuid
-        AND command = 'hr.recruiting.cv_extract.request'
+        AND command IN ('hr.recruiting.cv_extract.request', 'hr.recruiting.cv_extract.complete')
         AND detail ->> 'jobId' = ${input.jobId}
         AND outcome = 'ok'
+        AND occurred_at >= pg_catalog.now() - interval '24 hours'
       ORDER BY id DESC
-      LIMIT 1
+      LIMIT 10
     `.execute(ctx.trx);
-    const req = requestRow.rows[0];
+
+    const req = eventsRes.rows.find((row) => row.command === 'hr.recruiting.cv_extract.request');
     if (!req?.input_sha256) {
       throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Không tìm thấy yêu cầu tách CV này');
     }
 
-    const openingId = input.openingId ?? req.opening_id ?? undefined;
-    const requestedEntityId = input.legalEntityId ?? req.legal_entity_id ?? undefined;
-    const resolved = await resolveOpeningContext(
-      ctx.trx,
-      ctx.orgId,
-      openingId,
-      requestedEntityId,
-      () => resolveEntity(ctx, requestedEntityId),
-    );
+    if (req.legal_entity_id !== null && input.legalEntityId !== undefined && input.legalEntityId !== req.legal_entity_id) {
+      throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Yêu cầu tách CV không thuộc pháp nhân đã chọn');
+    }
+    if (req.opening_id !== null && input.openingId !== undefined && input.openingId !== req.opening_id) {
+      throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không khớp yêu cầu tách CV');
+    }
 
-    const completeRow = await sql<{ result_sha256: string | null }>`
-      SELECT detail ->> 'resultSha256' AS result_sha256
-      FROM crove_kernel.audit_event
-      WHERE org_id = ${ctx.orgId}::uuid
-        AND command = 'hr.recruiting.cv_extract.complete'
-        AND detail ->> 'jobId' = ${input.jobId}
-        AND outcome = 'ok'
-      ORDER BY id DESC
-      LIMIT 1
-    `.execute(ctx.trx);
-    const resultSha256 = completeRow.rows[0]?.result_sha256 ?? null;
+    const openingId = req.opening_id ?? input.openingId ?? undefined;
+    const requestedEntityId = req.legal_entity_id ?? input.legalEntityId ?? undefined;
+    const resolved = await resolveOpeningContext(ctx, openingId, requestedEntityId);
+
+    const completeRow = eventsRes.rows.find((row) => row.command === 'hr.recruiting.cv_extract.complete');
+    const rawSha = completeRow?.result_sha256 ?? null;
+    const resultSha256 = rawSha && /^[0-9a-f]{64}$/.test(rawSha) ? rawSha : null;
 
     return {
       jobId: input.jobId,
       ...resolved,
       storageKey: hrCvBlobKey(ctx.orgId, req.input_sha256),
-      resultKey: resultSha256 && /^[0-9a-f]{64}$/.test(resultSha256) ? hrCvBlobKey(ctx.orgId, resultSha256) : null,
+      resultKey: resultSha256 ? hrCvBlobKey(ctx.orgId, resultSha256) : null,
+      resultSha256,
     };
   },
 });
@@ -508,6 +519,7 @@ export const hrRecruitingIntakeCommands = [
 ];
 
 export const hrRecruitingIntakeQueries = [
+  cvExtractAuthorizeQuery,
   cvExtractContextQuery,
   inviteDraftContextQuery,
 ];

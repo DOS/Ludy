@@ -40,8 +40,7 @@ export const recruitingAnalyticsQuery = defineQuery({
   input: zHrRecruitingAnalyticsQuery,
   access: MANAGERS,
   handler: async (ctx, input): Promise<HrRecruitingAnalyticsResult> => {
-    const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
-
+    let targetEntityId = input.legalEntityId;
     if (input.openingId !== undefined) {
       const opening = await ctx.trx
         .selectFrom('crove_hr.job_opening')
@@ -50,10 +49,12 @@ export const recruitingAnalyticsQuery = defineQuery({
         .where('id', '=', input.openingId)
         .executeTakeFirst();
       if (!opening) throw openingNotFound();
-      if (opening.legal_entity_id !== legalEntityId) {
+      if (targetEntityId !== undefined && opening.legal_entity_id !== targetEntityId) {
         throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không thuộc pháp nhân đã chọn');
       }
+      targetEntityId = opening.legal_entity_id;
     }
+    const legalEntityId = await resolveEntity(ctx, targetEntityId);
 
     if (input.from !== undefined && input.to !== undefined && input.from > input.to) {
       throw new DomainError('VALIDATION', 422, 'Ngày bắt đầu không được sau ngày kết thúc');

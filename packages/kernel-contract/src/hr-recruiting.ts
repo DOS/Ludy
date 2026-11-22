@@ -527,6 +527,12 @@ export const zHrInviteDraftResult = z.strictObject({
 });
 export type HrInviteDraftResult = z.infer<typeof zHrInviteDraftResult>;
 
+export const zHrCvExtractAuthorizeInput = z.strictObject({
+  legalEntityId: zId.optional(),
+  openingId: zId.optional(),
+});
+export type HrCvExtractAuthorizeInput = z.infer<typeof zHrCvExtractAuthorizeInput>;
+
 export const zHrCvExtractContextInput = z.strictObject({
   jobId: zId,
   legalEntityId: zId.optional(),

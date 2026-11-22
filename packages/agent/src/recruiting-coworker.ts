@@ -939,12 +939,19 @@ export interface ProposeCvCandidateDraftOptions {
   onUsage?: (usage: AiUsage) => void;
 }
 
-/** Sanitizes untrusted CV text from crove-extract before passing to Ly so delimiter breaks and control bytes are removed. */
+const UNTRUSTED_CV_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_CV\s*\]/giu;
+const HAS_UNTRUSTED_CV_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_CV\s*\]/iu;
+
+/** Sanitizes untrusted CV text from crove-extract before passing to Ly so delimiter breaks, NFKC lookalikes, invisible format chars, and control bytes are removed. */
 export function sanitizeCvTextForPrompt(rawText: string): string {
-  // oxlint-disable-next-line no-control-regex
-  const cleaned = rawText.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ' ');
+  const cleaned = rawText
+    .normalize('NFKC')
+    .replace(/\p{Cf}/gu, '')
+    // oxlint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ' ');
   return cleaned
-    .replace(/\[\/?\s*UNTRUSTED_CV\s*\]/gi, ' ')
+    .replace(UNTRUSTED_CV_FENCE_TAG_RE, ' ')
+    .replace(UNTRUSTED_FENCE_TAG_RE, ' ')
     .replace(/\r\n?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -985,25 +992,40 @@ function buildCvExtractInstructions(language: 'vi' | 'en'): string {
   ].join('\n');
 }
 
+function isSafeCvTextField(value: string, maxChars: number): string | null {
+  if (/\p{Cf}/u.test(value)) return null;
+  if (hasMarkdownNoise(value)) return null;
+  const normalized = oneLine(value);
+  if (normalized === '' || Array.from(normalized).length > maxChars) return null;
+  if (HAS_UNTRUSTED_CV_FENCE_TAG_RE.test(normalized) || HAS_UNTRUSTED_FENCE_TAG_RE.test(normalized)) return null;
+  if (draftLinksOutside(normalized, []).length > 0) return null;
+  if (hasAutonomousHireRejectDirective(normalized)) return null;
+  return normalized;
+}
+
 function validateCvAiOutput(
   out: CvExtractAiOut | null,
   fallback: ReturnType<typeof extractCvFieldsDeterministically>,
 ): { displayName: string | null; email: string | null; phone: string | null; yearsExperience: number | null; matchedSkills: string[]; notes: string | null } | null {
   if (!out) return null;
-  const summary = out.summary?.trim() || null;
-  if (summary && (draftLinksOutside(summary, []).length > 0 || hasMarkdownNoise(summary))) {
-    return null;
+  const rawSummary = out.summary?.trim() || null;
+  let summary: string | null = null;
+  if (rawSummary !== null) {
+    summary = isSafeCvTextField(rawSummary, 600);
+    if (summary === null) return null;
   }
+  const emailCandidate = out.email?.trim() ?? '';
   const email =
-    out.email && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}$/.test(out.email.trim())
-      ? out.email.trim().toLowerCase()
+    /^[A-Za-z0-9](?:[A-Za-z0-9._%+-]*[A-Za-z0-9])?@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(
+      emailCandidate,
+    ) && emailCandidate.length <= 254
+      ? emailCandidate.toLowerCase()
       : fallback.email;
-  const displayName =
-    out.displayName && out.displayName.trim().length >= 2 && draftLinksOutside(out.displayName, []).length === 0
-      ? out.displayName.trim().slice(0, 200)
-      : fallback.displayName;
-  const rawPhone = out.phone?.replace(/[^\d+]/g, '') ?? '';
-  const phone = rawPhone.length >= 9 && rawPhone.length <= 15 ? rawPhone : fallback.phone;
+  const safeDisplayName =
+    out.displayName && out.displayName.trim().length >= 2 ? isSafeCvTextField(out.displayName, 200) : null;
+  const displayName = safeDisplayName ?? fallback.displayName;
+  const cleanedPhone = (out.phone ?? '').replace(/[\s().-]/g, '');
+  const phone = /^\+?\d{9,15}$/.test(cleanedPhone) ? cleanedPhone : fallback.phone;
   const yearsExperience =
     out.yearsExperience !== null && Number.isInteger(out.yearsExperience) && out.yearsExperience >= 0 && out.yearsExperience <= 80
       ? out.yearsExperience
@@ -1012,12 +1034,12 @@ function validateCvAiOutput(
   const seenSkill = new Set<string>();
   const matchedSkills: string[] = [];
   for (const raw of [...fallback.matchedSkills, ...out.matchedSkills]) {
-    const s = raw.trim();
+    const s = isSafeCvTextField(raw, 60);
     if (!s) continue;
     const key = s.toLowerCase();
     if (seenSkill.has(key)) continue;
     seenSkill.add(key);
-    matchedSkills.push(s.slice(0, 60));
+    matchedSkills.push(s);
     if (matchedSkills.length >= 20) break;
   }
 
@@ -1069,10 +1091,28 @@ export async function proposeCvCandidateDraft(
   }
 
   const language = input.lang ?? 'vi';
+  const safeOpening = input.openingTitle
+    ? cut(
+        fenced(
+          oneLine(
+            input.openingTitle
+              .normalize('NFKC')
+              .replace(/\p{Cf}/gu, '')
+              .replace(UNTRUSTED_CV_FENCE_TAG_RE, ' ')
+              .replace(UNTRUSTED_FENCE_TAG_RE, ' '),
+          ),
+        ),
+        120,
+      )
+    : '';
+  const safeRequiredSkills = cleanSkillList(input.requiredSkills)
+    .map((s) => s.replace(UNTRUSTED_CV_FENCE_TAG_RE, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 20);
   const prompt = [
-    input.openingTitle ? `Target opening: ${input.openingTitle.trim().slice(0, 120)}` : 'Target opening: (not selected)',
-    input.requiredSkills && input.requiredSkills.length > 0
-      ? `Required skills: ${input.requiredSkills.slice(0, 20).join(', ')}`
+    safeOpening ? `Target opening: ${safeOpening}` : 'Target opening: (not selected)',
+    safeRequiredSkills.length > 0
+      ? `Required skills: ${safeRequiredSkills.join(', ')}`
       : 'Required skills: (none specified)',
     '',
     '[UNTRUSTED_CV]',

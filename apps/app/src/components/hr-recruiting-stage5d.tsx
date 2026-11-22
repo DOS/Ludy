@@ -82,6 +82,7 @@ export function CvIntakePanel({
           <Input
             id="hr-cv-file"
             type="file"
+            className="max-md:min-h-11"
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
             data-testid="hr-cv-file-input"
@@ -89,7 +90,7 @@ export function CvIntakePanel({
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-cv-opening">{t('cvExtract.openingLabel')}</Label>
-          <NativeSelect id="hr-cv-opening" value={openingId} onChange={(e) => setOpeningId(e.target.value)} data-testid="hr-cv-opening-select">
+          <NativeSelect id="hr-cv-opening" className="max-md:min-h-11" value={openingId} onChange={(e) => setOpeningId(e.target.value)} data-testid="hr-cv-opening-select">
             <NativeSelectOption value="">{t('fields.noOpening')}</NativeSelectOption>
             {openOptions.map((o) => (
               <NativeSelectOption key={o.id} value={o.id}>
@@ -313,6 +314,7 @@ export function EngageInvitePanel({
           <Label htmlFor="hr-engage-channel-select">{t('engageInvite.channelLabel')}</Label>
           <NativeSelect
             id="hr-engage-channel-select"
+            className="max-md:min-h-11"
             value={channel}
             onChange={(e) => setChannel(e.target.value as HrEngageChannel)}
             data-testid="hr-engage-channel"
@@ -328,6 +330,7 @@ export function EngageInvitePanel({
           <Label htmlFor="hr-engage-interviewer">{t('interview.interviewer')}</Label>
           <NativeSelect
             id="hr-engage-interviewer"
+            className="max-md:min-h-11"
             value={interviewerUserId}
             onChange={(e) => setInterviewerUserId(e.target.value)}
           >

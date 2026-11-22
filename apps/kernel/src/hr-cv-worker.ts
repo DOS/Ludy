@@ -31,41 +31,48 @@ export async function runHrCvExtractJob(
   deps: { runtime: Pick<Runtime, 'execute' | 'appOn'>; store: BlobStore; extract: ExtractClient },
   job: HrCvExtractJob,
 ): Promise<HrCvExtractStoredResult> {
-  if (!(await deps.runtime.appOn(job.orgId, 'hr', { fresh: true }))) {
-    return { jobId: job.jobId, ok: false, kind: job.kind, errorCode: 'MODULE_OFF', errorMessage: 'Mô-đun Nhân sự đang tắt' };
-  }
   const expectedKey = hrCvBlobKey(job.orgId, job.sha256);
   if (job.storageKey !== expectedKey) {
     throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ tệp CV không hợp lệ');
   }
 
   let stored: HrCvExtractStoredResult;
-  try {
-    const bytes = await deps.store.get(job.storageKey, null, job.sizeBytes);
-    if (bytes.byteLength !== job.sizeBytes || sha256Hex(bytes) !== job.sha256) {
-      throw new DomainError('HR_CV_INTEGRITY', 422, 'Nội dung tệp CV không khớp chữ ký lưu trữ');
-    }
-    const extracted = await extractCvTextInSandbox({
-      extract: deps.extract,
-      kind: job.kind,
-      bytes,
-    });
-    stored = {
-      jobId: job.jobId,
-      ok: true,
-      kind: extracted.kind,
-      text: extracted.text,
-    };
-  } catch (error: unknown) {
-    const errorCode = error instanceof DomainError ? error.code : 'HR_CV_EXTRACT_FAILED';
-    const errorMessage = error instanceof DomainError ? error.message : 'Không đọc được nội dung tệp CV';
+  if (!(await deps.runtime.appOn(job.orgId, 'hr', { fresh: true }))) {
     stored = {
       jobId: job.jobId,
       ok: false,
       kind: job.kind,
-      errorCode,
-      errorMessage,
+      errorCode: 'MODULE_OFF',
+      errorMessage: 'Mô-đun Nhân sự đang tắt',
     };
+  } else {
+    try {
+      const bytes = await deps.store.get(job.storageKey, null, job.sizeBytes);
+      if (bytes.byteLength !== job.sizeBytes || sha256Hex(bytes) !== job.sha256) {
+        throw new DomainError('HR_CV_INTEGRITY', 422, 'Nội dung tệp CV không khớp chữ ký lưu trữ');
+      }
+      const extracted = await extractCvTextInSandbox({
+        extract: deps.extract,
+        kind: job.kind,
+        bytes,
+      });
+      stored = {
+        jobId: job.jobId,
+        ok: true,
+        kind: extracted.kind,
+        text: extracted.text,
+      };
+    } catch (error: unknown) {
+      const errorCode = error instanceof DomainError ? error.code : 'HR_CV_EXTRACT_FAILED';
+      const errorMessage = error instanceof DomainError ? error.message : 'Không đọc được nội dung tệp CV';
+      stored = {
+        jobId: job.jobId,
+        ok: false,
+        kind: job.kind,
+        errorCode,
+        errorMessage,
+      };
+    }
   }
 
   const encoded = new TextEncoder().encode(JSON.stringify(stored));

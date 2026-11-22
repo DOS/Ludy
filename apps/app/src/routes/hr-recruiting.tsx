@@ -458,7 +458,7 @@ export function CandidateForm({
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-cand-source">{t('sourceLabel')}</Label>
-          <NativeSelect id="hr-cand-source" value={source} onChange={(e) => setSource(e.target.value as HrCandidateSource)} data-testid="hr-candidate-source">
+          <NativeSelect id="hr-cand-source" className="max-md:min-h-11" value={source} onChange={(e) => setSource(e.target.value as HrCandidateSource)} data-testid="hr-candidate-source">
             {HR_CANDIDATE_SOURCES.map((src) => (
               <NativeSelectOption key={src} value={src}>
                 {t(`sources.${src}`)}
@@ -1229,9 +1229,19 @@ export function CandidateDetailPanel({
           <dd className="tabular-nums">{candidate.agreedWage ? f.money(candidate.agreedWage, 'VND') : '-'}</dd>
         </div>
         <div>
+          <dt className="text-xs text-subtle-foreground">{t('sourceLabel')}</dt>
+          <dd>{t(`sources.${candidate.source}`)}</dd>
+        </div>
+        <div>
           <dt className="text-xs text-subtle-foreground">{t('fields.plannedStartOn')}</dt>
           <dd>{candidate.plannedStartOn ? f.date(candidate.plannedStartOn) : '-'}</dd>
         </div>
+        {candidate.hiredAt && (
+          <div>
+            <dt className="text-xs text-subtle-foreground">{t('stages.hired')}</dt>
+            <dd>{f.dateTime(candidate.hiredAt)}</dd>
+          </div>
+        )}
         <div className="sm:col-span-2 lg:col-span-3">
           <dt className="text-xs text-subtle-foreground">{t('fields.matchedSkills')}</dt>
           <dd>{candidate.matchedSkills.length > 0 ? candidate.matchedSkills.join(', ') : '-'}</dd>
@@ -1286,7 +1296,7 @@ export function CandidateDetailPanel({
             candidateId={candidate.id}
             candidateVersion={`${candidate.updatedAt}:${candidate.openingId ?? ''}:${candidate.interviewEventId ?? ''}:${opening?.updatedAt ?? ''}:${candidate.openingTitle ?? ''}:${candidate.departmentName ?? ''}`}
           />
-          <EngageInvitePanel candidate={candidate} />
+          {candidate.stage !== 'hired' && candidate.stage !== 'rejected' && <EngageInvitePanel candidate={candidate} />}
           <HireCandidatePanel key={candidate.id} candidate={candidate} opening={opening} departments={departments} />
         </>
       )}
@@ -1541,7 +1551,7 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <NativeSelect value={selectedSource} onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')} aria-label={t('sourceLabel')} data-testid="hr-filter-source">
+            <NativeSelect className="max-md:min-h-11" value={selectedSource} onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')} aria-label={t('sourceLabel')} data-testid="hr-filter-source">
               <NativeSelectOption value="">{t('allSources')}</NativeSelectOption>
               {HR_CANDIDATE_SOURCES.map((src) => (
                 <NativeSelectOption key={src} value={src}>

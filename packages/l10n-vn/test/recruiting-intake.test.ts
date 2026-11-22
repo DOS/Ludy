@@ -7,14 +7,14 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
     const rawCv = [
       'CURRICULUM VITAE',
       'Trần Thị Bảo Ngọc',
-      'Email: BaoNgoc.HR@Example.VN | SĐT: +84 912 345 678',
+      'Email: BaoNgoc.HR@example.com | SĐT: +84 912 345 678',
       'Kinh nghiệm: 4 năm kinh nghiệm làm Kế toán tổng hợp tại doanh nghiệp SME',
       'Kỹ năng: Thành thạo MISA AMIS, Excel nâng cao, Thuế GTGT và BHXH.',
     ].join('\n');
 
     const extracted = extractCvFieldsDeterministically(rawCv, ['MISA AMIS', 'Thuế GTGT', 'Tiếng Anh']);
     expect(extracted.displayName).toBe('Trần Thị Bảo Ngọc');
-    expect(extracted.email).toBe('baongoc.hr@example.vn');
+    expect(extracted.email).toBe('baongoc.hr@example.com');
     expect(extracted.phone).toBe('0912345678');
     expect(extracted.yearsExperience).toBe(4);
     expect(extracted.matchedSkills).toEqual(expect.arrayContaining(['MISA AMIS', 'Thuế GTGT', 'Excel', 'BHXH']));
@@ -27,14 +27,14 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
     const rawCv = [
       'HỒ SƠ ỨNG VIÊN',
       'Họ và tên: Lê Hoàng Minh',
-      'SĐT: 0909.888.777',
+      'SĐT: 0912.345.678',
       '2021 - 2025: Chuyên viên kinh doanh B2B (Zalo OA, CSKH)',
     ].join('\n');
 
     const extracted = extractCvFieldsDeterministically(rawCv, ['Zalo OA']);
     expect(extracted.displayName).toBe('Lê Hoàng Minh');
     expect(extracted.email).toBeNull();
-    expect(extracted.phone).toBe('0909888777');
+    expect(extracted.phone).toBe('0912345678');
     expect(extracted.yearsExperience).toBe(4);
     expect(extracted.matchedSkills).toEqual(expect.arrayContaining(['Zalo OA', 'CSKH']));
   });

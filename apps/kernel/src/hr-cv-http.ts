@@ -6,10 +6,11 @@
 import { randomUUID } from 'node:crypto';
 import {
   HR_CV_MAX_BYTES,
+  zHrCvExtractAuthorizeInput,
   zHrCvExtractContextInput,
   type HrCvExtractResponse,
 } from '@ludy/kernel-contract';
-import { DomainError, sha256Hex, type BlobStore, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { BlobNotFoundError, DomainError, readVerified, sha256Hex, type BlobStore, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import {
   buildCvExtractDraft,
   hrCvBlobKey,
@@ -25,8 +26,9 @@ import type { HrCvExtractStoredResult } from './hr-cv-worker.ts';
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // PK\x03\x04
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const DEFAULT_CV_WAIT_MS = 12_000;
-const POLL_INTERVAL_MS = 100;
+const DEFAULT_CV_WAIT_MS = 1_500;
+const POLL_INTERVAL_MS = 250;
+const HR_CV_RESULT_MAX_BYTES = 2 * 1024 * 1024;
 
 function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
   if (bytes.byteLength < signature.length) return false;
@@ -69,7 +71,15 @@ async function readCvUploadForm(req: Request): Promise<{
   if (!contentType.toLowerCase().includes('multipart/form-data')) {
     throw new DomainError('INVALID', 400, 'Hãy gửi tệp CV dưới dạng multipart/form-data');
   }
-  const rawBody = await readBoundedStream(req.body, HR_CV_MAX_BYTES + 128 * 1024);
+  let rawBody: Uint8Array;
+  try {
+    rawBody = await readBoundedStream(req.body, HR_CV_MAX_BYTES + 128 * 1024);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === 'TOO_LARGE') {
+      throw new DomainError('TOO_LARGE', 413, 'Tệp CV vượt quá giới hạn 10 MB');
+    }
+    throw error;
+  }
   const copy = new Request(req.url, {
     method: req.method,
     headers: req.headers,
@@ -124,13 +134,25 @@ async function finalizeExtractedResult(deps: {
   actor: UserActor;
   context: HrCvExtractContext;
   resultKey: string;
+  resultSha256: string;
   lang: 'vi' | 'en';
   useAi: boolean;
   cvAi: RecruitingCvAi;
   runInAiScope: <T>(fn: () => Promise<T>) => Promise<T>;
 }): Promise<HrCvExtractResponse> {
-  const bytes = await deps.store.get(deps.resultKey);
-  await Promise.allSettled([deps.store.delete(deps.resultKey), deps.store.delete(deps.context.storageKey)]);
+  let bytes: Uint8Array;
+  try {
+    bytes = await readVerified(
+      deps.store,
+      { key: deps.resultKey, generation: null, sha256: deps.resultSha256 },
+      HR_CV_RESULT_MAX_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof BlobNotFoundError) {
+      throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Kết quả tách CV đã hết hạn, vui lòng tải lại tệp');
+    }
+    throw error;
+  }
 
   let parsed: HrCvExtractStoredResult;
   try {
@@ -188,35 +210,45 @@ export async function handleHrCvExtractUpload(deps: {
     throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
   }
   const actor = actorOf(deps.user);
+  // Check manager role, session standing, and MFA BEFORE reading form bytes or touching BlobStore.
+  await deps.runtime.query('hr.recruiting.cv_extract.authorize', {}, { actor, orgId: deps.orgId });
+
   const upload = await readCvUploadForm(deps.req);
   const { kind, contentType } = classifyCvUpload(upload.bytes, upload.rawName, upload.declaredType);
+
+  if (upload.openingId !== undefined || upload.legalEntityId !== undefined) {
+    await deps.runtime.query(
+      'hr.recruiting.cv_extract.authorize',
+      {
+        ...(upload.legalEntityId !== undefined ? { legalEntityId: upload.legalEntityId } : {}),
+        ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
+      },
+      { actor, orgId: deps.orgId },
+    );
+  }
+
   const jobId = randomUUID();
   const sha256 = sha256Hex(upload.bytes);
   const storageKey = hrCvBlobKey(deps.orgId, sha256);
 
   await deps.store.put(storageKey, upload.bytes, contentType);
-  let requested: HrCvExtractContext;
-  try {
-    requested = await deps.runtime.execute<HrCvExtractContext>(
-      'hr.recruiting.cv_extract.request',
-      {
-        jobId,
-        kind,
-        ...(upload.legalEntityId !== undefined ? { legalEntityId: upload.legalEntityId } : {}),
-        ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
-        sizeBytes: upload.bytes.byteLength,
-        sha256,
-      },
-      { actor, orgId: deps.orgId },
-    );
-  } catch (error) {
-    await deps.store.delete(storageKey).catch(() => undefined);
-    throw error;
-  }
+  const requested = await deps.runtime.execute<HrCvExtractContext>(
+    'hr.recruiting.cv_extract.request',
+    {
+      jobId,
+      kind,
+      ...(upload.legalEntityId !== undefined ? { legalEntityId: upload.legalEntityId } : {}),
+      ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
+      sizeBytes: upload.bytes.byteLength,
+      sha256,
+    },
+    { actor, orgId: deps.orgId },
+  );
 
   const deadline = Date.now() + (deps.waitMs ?? DEFAULT_CV_WAIT_MS);
   let context = requested;
   while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     context = await deps.runtime.query<HrCvExtractContext>(
       'hr.recruiting.cv_extract.context',
       {
@@ -226,7 +258,7 @@ export async function handleHrCvExtractUpload(deps: {
       },
       { actor, orgId: deps.orgId },
     );
-    if (context.resultKey) {
+    if (context.resultKey && context.resultSha256) {
       return finalizeExtractedResult({
         runtime: deps.runtime,
         store: deps.store,
@@ -234,13 +266,13 @@ export async function handleHrCvExtractUpload(deps: {
         actor,
         context,
         resultKey: context.resultKey,
+        resultSha256: context.resultSha256,
         lang: upload.lang,
         useAi: upload.useAi,
         cvAi: deps.cvAi,
         runInAiScope: deps.runInAiScope,
       });
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
   return {
@@ -265,20 +297,29 @@ export async function handleHrCvExtractPoll(deps: {
   if (deps.user.extension) {
     throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
   }
-  const parsed = zHrCvExtractContextInput.safeParse({
-    jobId: deps.jobId,
-    ...(deps.openingId ? { openingId: deps.openingId } : {}),
-    ...(deps.legalEntityId ? { legalEntityId: deps.legalEntityId } : {}),
-  });
-  if (!parsed.success) {
+  if (!zHrCvExtractContextInput.shape.jobId.safeParse(deps.jobId).success) {
     throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Không tìm thấy yêu cầu tách CV này');
   }
-  const actor = actorOf(deps.user);
-  const context = await deps.runtime.query<HrCvExtractContext>('hr.recruiting.cv_extract.context', parsed.data, {
-    actor,
-    orgId: deps.orgId,
+  const parsedIds = zHrCvExtractAuthorizeInput.safeParse({
+    ...(deps.openingId !== undefined ? { openingId: deps.openingId } : {}),
+    ...(deps.legalEntityId !== undefined ? { legalEntityId: deps.legalEntityId } : {}),
   });
-  if (!context.resultKey) {
+  if (!parsedIds.success) {
+    throw new DomainError('VALIDATION', 422, 'Thông tin vị trí tuyển dụng hoặc pháp nhân không hợp lệ');
+  }
+  const actor = actorOf(deps.user);
+  const context = await deps.runtime.query<HrCvExtractContext>(
+    'hr.recruiting.cv_extract.context',
+    {
+      jobId: deps.jobId,
+      ...parsedIds.data,
+    },
+    {
+      actor,
+      orgId: deps.orgId,
+    },
+  );
+  if (!context.resultKey || !context.resultSha256) {
     return { status: 'pending', jobId: context.jobId };
   }
   return finalizeExtractedResult({
@@ -288,6 +329,7 @@ export async function handleHrCvExtractPoll(deps: {
     actor,
     context,
     resultKey: context.resultKey,
+    resultSha256: context.resultSha256,
     lang: deps.lang ?? 'vi',
     useAi: deps.useAi !== false,
     cvAi: deps.cvAi,

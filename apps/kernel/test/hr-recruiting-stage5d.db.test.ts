@@ -38,6 +38,7 @@ import {
   SubjectVault,
   type UserActor,
   parseVaultKey,
+  sha256Hex,
 } from '@ludy/kernel-runtime';
 import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { memberMeter } from '../src/ai-meter.ts';
@@ -493,12 +494,18 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(jobBoardMetric?.totalCount).toBe(0);
     expect(JSON.stringify(analytics)).not.toContain('secret@erased.test');
 
-    // Verify Entity 2 analytics stays isolated (1 candidate)
+    // Verify Entity 2 analytics stays isolated (1 candidate), both with explicit legalEntityId and openingId-only lookup
     const ent2Analytics = await o.query<HrRecruitingAnalyticsResult>(o.owner, 'hr.recruiting.analytics', {
       legalEntityId: secondEntity.id,
     });
     expect(ent2Analytics.totalCandidates).toBe(1);
     expect(ent2Analytics.erasedExcludedCount).toBe(0);
+
+    const opening2OnlyAnalytics = await o.query<HrRecruitingAnalyticsResult>(o.owner, 'hr.recruiting.analytics', {
+      openingId: opening2.openingId,
+    });
+    expect(opening2OnlyAnalytics.legalEntityId).toBe(secondEntity.id);
+    expect(opening2OnlyAnalytics.totalCandidates).toBe(1);
 
     // RBAC & cross-org isolation
     await expect(o.query(o.member, 'hr.recruiting.analytics', {})).rejects.toMatchObject({ status: 403 });
@@ -520,12 +527,12 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
 
     const pdfBytes = buildMinimalPdf([
       'Le Thi Thanh Ha',
-      'Email: ha.ketoan@sme.vn | Phone: +84 912 345 678',
+      'Email: ha.ketoan@example.test | Phone: +84 912 345 678',
       '4 years of experience working with MISA AMIS and Excel.',
     ]);
     const docxBytes = buildMinimalDocx([
       'Phạm Quang Huy',
-      'Email: huy.pham@example.vn - ĐT: 0987654321',
+      'Email: huy.pham@example.com - ĐT: 0987654321',
       'Kinh nghiệm: 6 năm làm Thuế GTGT, MISA AMIS và Excel.',
     ]);
 
@@ -560,7 +567,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(pdfReady.body.draft.autoSaved).toBe(false);
     expect(pdfReady.body.draft.autonomousDecision).toBe('none');
     expect(pdfReady.body.draft.displayName).toBe('Le Thi Thanh Ha');
-    expect(pdfReady.body.draft.email).toBe('ha.ketoan@sme.vn');
+    expect(pdfReady.body.draft.email).toBe('ha.ketoan@example.test');
     expect(pdfReady.body.draft.phone).toBe('0912345678');
     expect(pdfReady.body.draft.yearsExperience).toBe(4);
     expect(pdfReady.body.draft.matchedSkills).toEqual(expect.arrayContaining(['MISA AMIS', 'Excel']));
@@ -577,7 +584,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
           metered('hr.cv_extract', async () => ({
             output: {
               displayName: 'Phạm Quang Huy',
-              email: 'huy.pham@example.vn',
+              email: 'huy.pham@example.com',
               phone: '0987654321',
               yearsExperience: 6,
               matchedSkills: ['Thuế GTGT', 'MISA AMIS', 'Excel'],
@@ -628,9 +635,22 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     const auditText = JSON.stringify(
       (await withAdmin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.cv_extract.%'`, [o.orgId]))).rows,
     );
-    expect(auditText).not.toContain('ha.ketoan@sme.vn');
+    expect(auditText).not.toContain('ha.ketoan@example.test');
     expect(auditText).not.toContain('Phạm Quang Huy');
     expect(auditText).not.toContain('0987654321');
+
+    // Verify non-manager member upload is refused 403 BEFORE touching BlobStore
+    const unauthPdf = buildMinimalPdf(['Unauthorized Member CV 2026']);
+    const unauthKey = `tmp/${o.orgId}/${sha256Hex(unauthPdf)}`;
+    const memberUpload = await httpAiOff.postCv(o.member, unauthPdf, 'unauth.pdf', 'application/pdf', { openingId: opening.openingId });
+    expect(memberUpload.status).toBe(403);
+    await expect(store.get(unauthKey)).rejects.toThrow();
+
+    // Verify repeated poll stays idempotent (200 ready) and cross-opening/invalid override fails 422
+    const pdfRepeatPoll = await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${opening.openingId}`);
+    expect(pdfRepeatPoll.status).toBe(200);
+    expect((await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${randomUUID()}`)).status).toBe(422);
+    expect((await httpAiOff.pollCv(o.admin, pdfJobId, '?openingId=not-a-uuid')).status).toBe(422);
 
     // Unsupported file type refused with 415
     const txtRefused = await httpAiOff.postCv(o.admin, new TextEncoder().encode('hello world'), 'cv.txt', 'text/plain');

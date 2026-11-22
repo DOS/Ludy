@@ -490,8 +490,8 @@ export async function extractRecruitingCv(
   if (options.useAi === false) params.set('useAi', 'false');
   const query = params.toString();
 
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
     const pollRes = await apiFetch(
       `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`,
       orgOpt,

@@ -122,11 +122,11 @@ function extractYearsExperience(text: string): number | null {
     if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 60) return parsed;
   }
   // Fallback heuristic: infer from year ranges inside employment history (e.g. 2021 - 2025 or 2022 - hiện tại).
-  const currentYear = 2026;
+  const currentYear = new Date().getUTCFullYear();
   let maxSpan = 0;
   let earliest = Number.POSITIVE_INFINITY;
   let latest = 0;
-  const ranges = text.matchAll(/\b(20[0-2]\d|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20[0-2]\d|present|hiện\s*tại|nay)\b/gi);
+  const ranges = text.matchAll(/\b(20\d{2}|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20\d{2}|present|hiện\s*tại|nay)\b/gi);
   for (const m of ranges) {
     const startYear = Number.parseInt(m[1] ?? '', 10);
     const endRaw = (m[2] ?? '').toLowerCase();
