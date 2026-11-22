@@ -17285,6 +17285,7 @@ export const vi = {
           authorize: 'Kiểm tra quyền tải CV tuyển dụng',
           complete: 'Ghi nhận kết quả tách văn bản CV từ hộp cát worker',
           context: 'Đọc ngữ cảnh vị trí tuyển dụng cho lượt trích xuất CV',
+          pending: 'Đọc danh sách yêu cầu tách CV đang chờ xử lý lại cho worker',
           request: 'Tạo yêu cầu tách văn bản CV qua hộp cát tách biệt',
         },
         invite_draft: {

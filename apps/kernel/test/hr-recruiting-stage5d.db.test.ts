@@ -642,7 +642,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       }
       throw new Error('timed out waiting for hr.recruiting.cv_extract_queued outbox row');
     })();
-    const docxReady = await httpAiOn.postCv(
+    const docxPost = await httpAiOn.postCv(
       o.owner,
       docxBytes,
       'cv-huy.docx',
@@ -650,6 +650,11 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       { openingId: opening.openingId, lang: 'vi' },
     );
     await workerDrainPromise;
+    expect([200, 202]).toContain(docxPost.status);
+    const docxReady =
+      docxPost.body.status === 'ready'
+        ? docxPost
+        : await httpAiOn.pollCv(o.owner, docxPost.body.jobId, `?openingId=${opening.openingId}&lang=vi`);
     expect(docxReady.status).toBe(200);
     expect(docxReady.body.status).toBe('ready');
     if (docxReady.body.status !== 'ready') throw new Error('expected ready');
@@ -713,6 +718,43 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(auditCounts.rows.map((r) => Number(r.count))).toEqual([1, 1]);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${randomUUID()}`)).status).toBe(422);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, '?openingId=not-a-uuid')).status).toBe(422);
+
+    // Job uploaded without openingId rejects explicit openingId override on poll (422), and worker retry/DLQ terminal states never hang 24h
+    const noOpeningPdf = buildMinimalPdf(['Tran Van Binh', 'binh.tran@example.test | +84 912 345 678']);
+    const noOpeningUpload = await httpAiOff.postCv(o.admin, noOpeningPdf, 'no-open.pdf', 'application/pdf', { lang: 'vi' });
+    expect(noOpeningUpload.status).toBe(202);
+    const noOpeningJobId = (noOpeningUpload.body as { jobId: string }).jobId;
+    expect((await httpAiOff.pollCv(o.admin, noOpeningJobId, `?openingId=${opening.openingId}`)).status).toBe(422);
+
+    // Transient store.get error throws on retryCount=0 so queue retries; final store.put failure records 422 terminal failure for poll
+    const jobRow = await withAdmin((c) =>
+      c.query<{ payload: Omit<HrCvExtractJob, 'orgId'> }>(
+        `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'hr.recruiting.cv_extract_queued' AND payload ->> 'jobId' = $2 LIMIT 1`,
+        [o.orgId, noOpeningJobId],
+      ),
+    );
+    const pendingJob: HrCvExtractJob = { orgId: o.orgId, ...(jobRow.rows[0]!.payload) };
+    const flakyGetStore = {
+      get: vi.fn(async () => {
+        throw new Error('transient blob outage');
+      }),
+      put: store.put.bind(store),
+    } as unknown as LocalDiskStore;
+    await expect(
+      runHrCvExtractJob({ runtime: workerRt, store: flakyGetStore, extract: realExtractClient }, pendingJob, 0),
+    ).rejects.toThrow('transient blob outage');
+
+    const flakyPutStore = {
+      get: store.get.bind(store),
+      put: vi.fn(async () => {
+        throw new Error('storage write outage');
+      }),
+    } as unknown as LocalDiskStore;
+    await expect(
+      runHrCvExtractJob({ runtime: workerRt, store: flakyPutStore, extract: realExtractClient }, pendingJob, 1),
+    ).rejects.toThrow('storage write outage');
+    const failedPoll = await httpAiOff.pollCv(o.admin, noOpeningJobId);
+    expect(failedPoll.status).toBe(422);
 
     // Unsupported file type refused with 415
     const txtRefused = await httpAiOff.postCv(o.admin, new TextEncoder().encode('hello world'), 'cv.txt', 'text/plain');

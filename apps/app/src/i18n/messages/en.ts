@@ -17285,6 +17285,7 @@ export const en = {
           authorize: 'Check permission to upload a recruiting CV',
           complete: 'Record worker isolated CV text extraction completion hash',
           context: 'Read job opening context for CV extraction draft',
+          pending: 'Read pending CV extraction requests for worker sweep recovery',
           request: 'Queue isolated sandbox parsing for an uploaded CV file',
         },
         invite_draft: {

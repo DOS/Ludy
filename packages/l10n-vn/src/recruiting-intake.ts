@@ -132,9 +132,14 @@ function extractEmail(text: string): string | null {
       domainEnd -= 1;
     }
 
+    if (domainEnd - localStart > 254) {
+      pos = at + 1;
+      continue;
+    }
+
     const domain = text.slice(at + 1, domainEnd);
     if (isValidEmailDomain(domain)) {
-      return text.slice(localStart, domainEnd).toLowerCase().slice(0, 254);
+      return text.slice(localStart, domainEnd).toLowerCase();
     }
     pos = at + 1;
   }
@@ -186,23 +191,40 @@ function extractYearsExperience(text: string): number | null {
     const parsed = Number.parseInt(directMatch[1], 10);
     if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 60) return parsed;
   }
-  // Fallback heuristic: infer from year ranges inside employment history (e.g. 2021 - 2025 or 2022 - hiện tại).
+  // Fallback heuristic: infer from year ranges inside employment history, merging overlapping spans without counting career gaps.
   const currentYear = new Date().getUTCFullYear();
-  let maxSpan = 0;
-  let earliest = Number.POSITIVE_INFINITY;
-  let latest = 0;
+  const intervals: Array<[number, number]> = [];
   const ranges = text.matchAll(/\b(20\d{2}|19[89]\d)\s*(?:-|\u2013|to|đến)\s*(20\d{2}|present|hiện\s*tại|nay)\b/gi);
   for (const m of ranges) {
     const startYear = Number.parseInt(m[1] ?? '', 10);
     const endRaw = (m[2] ?? '').toLowerCase();
     const endYear = /^\d{4}$/.test(endRaw) ? Number.parseInt(endRaw, 10) : currentYear;
     if (startYear <= endYear && endYear - startYear <= 45) {
-      earliest = Math.min(earliest, startYear);
-      latest = Math.max(latest, endYear);
-      maxSpan = Math.max(maxSpan, latest - earliest);
+      intervals.push([startYear, endYear]);
     }
   }
-  if (Number.isFinite(earliest) && maxSpan > 0 && maxSpan <= 50) return maxSpan;
+  if (intervals.length > 0) {
+    intervals.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const first = intervals[0];
+    if (first) {
+      let totalYears = 0;
+      let curStart = first[0];
+      let curEnd = first[1];
+      for (let i = 1; i < intervals.length; i += 1) {
+        const next = intervals[i];
+        if (!next) continue;
+        if (next[0] <= curEnd) {
+          curEnd = Math.max(curEnd, next[1]);
+        } else {
+          totalYears += curEnd - curStart;
+          curStart = next[0];
+          curEnd = next[1];
+        }
+      }
+      totalYears += curEnd - curStart;
+      if (totalYears > 0 && totalYears <= 50) return totalYears;
+    }
+  }
   return null;
 }
 

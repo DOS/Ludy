@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, vi } from 'vitest';
 import { InboxReader, type RecruitingBriefAiReason, type RecruitingBriefResult } from '@ludy/agent';
-import { DomainError } from '@ludy/kernel-runtime';
-import type { HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
+import { DomainError, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { hrCvBlobKey, type HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { generateRecruitingBrief, type RecruitingBriefPorts } from '../src/recruiting-coworker-ai.ts';
+import { handleHrCvExtractPoll } from '../src/hr-cv-http.ts';
+import { generateRecruitingBrief, proposeCvDraftWithLy, type RecruitingBriefPorts } from '../src/recruiting-coworker-ai.ts';
 
 const ORG_ID = '00000000-0000-7000-8000-000000000001';
 const USER_ID = '00000000-0000-7000-8000-000000000002';
@@ -176,5 +177,114 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
     });
     expect(downstreamLimited.ai).toEqual({ ok: false, reason: 'rate_limited' });
     expect(auditReasons.at(-1)).toBe('rate_limited');
+  });
+
+  it('does not spend DraftBudget when sanitized CV text is empty (#4446)', async () => {
+    const cvExtract = vi.fn(async () => ({
+      displayName: 'Nguyễn Văn An',
+      email: 'an.nguyen@example.com',
+      phone: '0912345678',
+      yearsExperience: 4,
+      matchedSkills: ['Excel'],
+      notes: '4 năm Excel',
+      textPreview: 'Nguyễn Văn An',
+      extractedChars: 42,
+      sourceKind: 'pdf_text' as const,
+      ai: { ok: true, reason: 'ok' as const },
+      tainted: true as const,
+      draftKind: 'proposal' as const,
+      autoSaved: false as const,
+      autonomousDecision: 'none' as const,
+    }));
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
+    const ai = { aiEnabled: true, reader: { cvExtract }, budget };
+
+    for (let i = 0; i < 3; i += 1) {
+      const skipped = await proposeCvDraftWithLy(ai, ORG_ID, USER_ID, {
+        text: '[/UNTRUSTED_CV]',
+        openingTitle: null,
+        requiredSkills: [],
+        sourceKind: 'pdf_text',
+        lang: 'vi',
+      });
+      expect(skipped.ai).toEqual({ ok: false, reason: 'ai_off' });
+    }
+    expect(cvExtract).not.toHaveBeenCalled();
+
+    const real = await proposeCvDraftWithLy(ai, ORG_ID, USER_ID, {
+      text: 'Nguyễn Văn An\n0912345678\n4 năm Excel',
+      openingTitle: null,
+      requiredSkills: ['Excel'],
+      sourceKind: 'pdf_text',
+      lang: 'vi',
+    });
+    expect(cvExtract).toHaveBeenCalledTimes(1);
+    expect(real.ai).toEqual({ ok: true, reason: 'ok' });
+  });
+
+  it('caches generated CV draft across transient audit failure so poll retry skips repeating AI (#4446)', async () => {
+    const jobId = '00000000-0000-7000-8000-000000000099';
+    const blobBytes = new TextEncoder().encode(
+      JSON.stringify({ jobId, ok: true, kind: 'pdf_text', text: 'Nguyễn Văn An\nan.nguyen@example.com | 0912345678' }),
+    );
+    const resultSha256 = sha256Hex(blobBytes);
+    const resultKey = hrCvBlobKey(ORG_ID, resultSha256);
+
+    const store = {
+      get: vi.fn(async () => blobBytes),
+    } as unknown as BlobStore;
+
+    let auditAttempts = 0;
+    const fakeRuntime = {
+      query: vi.fn(async () => ({
+        jobId,
+        legalEntityId: '00000000-0000-7000-8000-000000000010',
+        openingId: null,
+        openingTitle: null,
+        requiredSkills: ['Excel'],
+        storageKey: resultKey,
+        resultKey,
+        resultSha256,
+        failedCode: null,
+      })),
+      execute: vi.fn(async () => {
+        auditAttempts += 1;
+        if (auditAttempts === 1) throw new Error('transient audit failure');
+        return { ok: true };
+      }),
+    } as unknown as Runtime;
+
+    const cvExtract = vi.fn(async () => ({
+      displayName: 'Nguyễn Văn An',
+      email: 'an.nguyen@example.com',
+      phone: '0912345678',
+      yearsExperience: null,
+      matchedSkills: [],
+      notes: 'Tóm tắt CV.',
+      textPreview: 'Nguyễn Văn An',
+      extractedChars: 55,
+      sourceKind: 'pdf_text' as const,
+      ai: { ok: true, reason: 'ok' as const },
+      tainted: true as const,
+      draftKind: 'proposal' as const,
+      autoSaved: false as const,
+      autonomousDecision: 'none' as const,
+    }));
+
+    const deps = {
+      runtime: fakeRuntime,
+      store,
+      user: { userId: USER_ID, sessionId: 'sess-1', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi: { aiEnabled: true, reader: { cvExtract }, budget: new DraftBudget({ perUserPerMinute: 5, perOrgPerMinute: 10 }) },
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    };
+
+    await expect(handleHrCvExtractPoll(deps)).rejects.toThrow('transient audit failure');
+    const retried = await handleHrCvExtractPoll(deps);
+    expect(retried.status).toBe('ready');
+    expect(cvExtract).toHaveBeenCalledTimes(1);
+    expect(auditAttempts).toBe(2);
   });
 });

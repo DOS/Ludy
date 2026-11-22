@@ -13,6 +13,7 @@ import {
   PayrollPromptLeakError,
   proposeCvCandidateDraft,
   reviewCandidateProfile,
+  sanitizeCvTextForPrompt,
   type CvExtractProposal,
   type InboxReader,
   type RecruitingBriefAiReason,
@@ -131,7 +132,7 @@ export async function proposeCvDraftWithLy(
   input: CvDraftProposerInput,
   useAi = true,
 ): Promise<CvDraftProposerResult & CvExtractProposal> {
-  if (!useAi || !ai.aiEnabled || !ai.reader) {
+  if (!useAi || !ai.aiEnabled || !ai.reader || sanitizeCvTextForPrompt(input.text).length === 0) {
     return proposeCvCandidateDraft(input, { aiDisabledReason: 'ai_off' });
   }
   const ticket = ai.budget.take(orgId, userId);

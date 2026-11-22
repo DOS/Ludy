@@ -472,7 +472,7 @@ export async function extractRecruitingCv(
   if (options.lang) form.append('lang', options.lang);
   if (options.useAi === false) form.append('useAi', 'false');
 
-  const orgOpt = options.orgSlug === undefined ? {} : { orgSlug: options.orgSlug };
+  const orgOpt = { orgSlug: options.orgSlug === undefined ? currentOrg : options.orgSlug };
   const initialRes = await retryWhileBusy(() =>
     apiFetch('/api/hr/recruiting/cv-extract', {
       method: 'POST',

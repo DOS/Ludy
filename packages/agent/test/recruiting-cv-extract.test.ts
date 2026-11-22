@@ -165,4 +165,30 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     expect(draft.autoSaved).toBe(false);
     expect(draft.autonomousDecision).toBe('none');
   });
+
+  it('rejects hallucinated AI email, phone, years, name, and ungrounded skills absent from CV text', async () => {
+    const grounded = await proposeCvCandidateDraft(
+      { text: SAMPLE_CV_TEXT, sourceKind: 'pdf_text', requiredSkills: ['MISA'] },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Trần Giả Mạo',
+            email: 'attacker@other.test',
+            phone: '0999888777',
+            yearsExperience: 19,
+            matchedSkills: ['MISA', 'Kubernetes', 'SAP'],
+            summary: 'Kinh nghiệm triển khai hệ thống MISA.',
+          },
+        }),
+      },
+    );
+    expect(grounded.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(grounded.displayName).toBe('Nguyễn Văn An');
+    expect(grounded.email).toBe('an.nguyen@example.com');
+    expect(grounded.phone).toBe('0912345678');
+    expect(grounded.yearsExperience).toBe(5);
+    expect(grounded.matchedSkills).not.toContain('Kubernetes');
+    expect(grounded.matchedSkills).not.toContain('SAP');
+    expect(grounded.matchedSkills).toContain('MISA');
+  });
 });

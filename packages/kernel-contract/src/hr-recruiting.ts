@@ -559,10 +559,14 @@ export const zHrCvExtractAuditInput = z.strictObject({
 });
 export type HrCvExtractAuditInput = z.infer<typeof zHrCvExtractAuditInput>;
 
+export const zHrCvExtractPendingInput = z.strictObject({});
+export type HrCvExtractPendingInput = z.infer<typeof zHrCvExtractPendingInput>;
+
 export const zHrCvExtractCompleteInput = z.strictObject({
   jobId: zId,
   ok: z.boolean(),
-  resultSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  resultSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+  errorCode: z.string().trim().min(1).max(64).optional(),
 });
 export type HrCvExtractCompleteInput = z.infer<typeof zHrCvExtractCompleteInput>;
 

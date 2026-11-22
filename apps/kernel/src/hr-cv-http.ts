@@ -34,7 +34,9 @@ const FINALIZED_DRAFT_MAX_ENTRIES = 500;
 
 interface CachedFinalizedDraft {
   expiresAt: number;
-  response: HrCvExtractResponse;
+  kind: CvSandboxKind;
+  draft: Awaited<ReturnType<typeof buildCvExtractDraft>>;
+  auditRecorded: boolean;
 }
 
 interface RuntimeFinalizeCache {
@@ -181,10 +183,14 @@ async function finalizeExtractedResult(deps: {
   const state = getRuntimeFinalizeCache(deps.runtime);
   const now = Date.now();
   const cached = state.entries.get(cacheKey);
-  if (cached) {
-    if (cached.expiresAt > now) {
-      return structuredClone(cached.response);
-    }
+  if (cached && cached.expiresAt > now && cached.auditRecorded) {
+    return structuredClone({
+      status: 'ready',
+      jobId: deps.context.jobId,
+      draft: cached.draft,
+    });
+  }
+  if (cached && cached.expiresAt <= now) {
     state.entries.delete(cacheKey);
   }
 
@@ -194,66 +200,76 @@ async function finalizeExtractedResult(deps: {
   }
 
   const run = (async (): Promise<HrCvExtractResponse> => {
-    let bytes: Uint8Array;
-    try {
-      bytes = await readVerified(
-        deps.store,
-        { key: deps.resultKey, generation: null, sha256: deps.resultSha256 },
-        HR_CV_RESULT_MAX_BYTES,
-      );
-    } catch (error) {
-      if (error instanceof BlobNotFoundError) {
-        throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Kết quả tách CV đã hết hạn, vui lòng tải lại tệp');
+    let entry = state.entries.get(cacheKey);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await readVerified(
+          deps.store,
+          { key: deps.resultKey, generation: null, sha256: deps.resultSha256 },
+          HR_CV_RESULT_MAX_BYTES,
+        );
+      } catch (error) {
+        if (error instanceof BlobNotFoundError) {
+          throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Kết quả tách CV đã hết hạn, vui lòng tải lại tệp');
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    let parsed: HrCvExtractStoredResult;
-    try {
-      parsed = JSON.parse(new TextDecoder().decode(bytes)) as HrCvExtractStoredResult;
-    } catch {
-      throw new DomainError('HR_CV_EXTRACT_FAILED', 500, 'Không đọc được kết quả tách CV');
-    }
+      let parsed: HrCvExtractStoredResult;
+      try {
+        parsed = JSON.parse(new TextDecoder().decode(bytes)) as HrCvExtractStoredResult;
+      } catch {
+        throw new DomainError('HR_CV_EXTRACT_FAILED', 500, 'Không đọc được kết quả tách CV');
+      }
 
-    if (!parsed.ok || typeof parsed.text !== 'string') {
-      throw new DomainError(parsed.errorCode ?? 'HR_CV_EXTRACT_FAILED', 422, parsed.errorMessage ?? 'Không đọc được nội dung tệp CV');
-    }
+      if (!parsed.ok || typeof parsed.text !== 'string') {
+        throw new DomainError(parsed.errorCode ?? 'HR_CV_EXTRACT_FAILED', 422, parsed.errorMessage ?? 'Không đọc được nội dung tệp CV');
+      }
 
-    const draft = await deps.runInAiScope(() =>
-      buildCvExtractDraft({
-        text: parsed.text as string,
-        sourceKind: parsed.kind,
-        openingId: deps.context.openingId,
-        openingTitle: deps.context.openingTitle,
-        requiredSkills: deps.context.requiredSkills,
-        lang: deps.lang,
-        propose: (proposeInput) => proposeCvDraftWithLy(deps.cvAi, deps.orgId, deps.actor.userId, proposeInput, deps.useAi),
-      }),
-    );
+      const draft = await deps.runInAiScope(() =>
+        buildCvExtractDraft({
+          text: parsed.text as string,
+          sourceKind: parsed.kind,
+          openingId: deps.context.openingId,
+          openingTitle: deps.context.openingTitle,
+          requiredSkills: deps.context.requiredSkills,
+          lang: deps.lang,
+          propose: (proposeInput) => proposeCvDraftWithLy(deps.cvAi, deps.orgId, deps.actor.userId, proposeInput, deps.useAi),
+        }),
+      );
 
-    await deps.runtime.execute(
-      'hr.recruiting.cv_extract.audit',
-      {
-        jobId: deps.context.jobId,
-        openingId: deps.context.openingId,
+      // Persist the generated draft before auditing so a transient audit DB error retries audit without repeating AI calls.
+      pruneExpiredCacheEntries(state.entries, Date.now());
+      entry = {
+        expiresAt: Date.now() + FINALIZED_DRAFT_TTL_MS,
         kind: parsed.kind,
-        extractedChars: draft.extractedChars,
-        aiReason: draft.ai.reason,
-      },
-      { actor: deps.actor, orgId: deps.orgId },
-    );
+        draft,
+        auditRecorded: false,
+      };
+      state.entries.set(cacheKey, entry);
+    }
 
-    const response: HrCvExtractResponse = {
+    if (!entry.auditRecorded) {
+      await deps.runtime.execute(
+        'hr.recruiting.cv_extract.audit',
+        {
+          jobId: deps.context.jobId,
+          openingId: deps.context.openingId,
+          kind: entry.kind,
+          extractedChars: entry.draft.extractedChars,
+          aiReason: entry.draft.ai.reason,
+        },
+        { actor: deps.actor, orgId: deps.orgId },
+      );
+      entry.auditRecorded = true;
+    }
+
+    return {
       status: 'ready',
       jobId: deps.context.jobId,
-      draft,
+      draft: entry.draft,
     };
-    pruneExpiredCacheEntries(state.entries, Date.now());
-    state.entries.set(cacheKey, {
-      expiresAt: Date.now() + FINALIZED_DRAFT_TTL_MS,
-      response,
-    });
-    return response;
   })();
 
   state.inflight.set(cacheKey, run);
@@ -326,6 +342,9 @@ export async function handleHrCvExtractUpload(deps: {
       },
       { actor, orgId: deps.orgId },
     );
+    if (context.failedCode) {
+      throw new DomainError(context.failedCode, 422, 'Không đọc được nội dung tệp CV');
+    }
     if (context.resultKey && context.resultSha256) {
       return finalizeExtractedResult({
         runtime: deps.runtime,
@@ -387,6 +406,9 @@ export async function handleHrCvExtractPoll(deps: {
       orgId: deps.orgId,
     },
   );
+  if (context.failedCode) {
+    throw new DomainError(context.failedCode, 422, 'Không đọc được nội dung tệp CV');
+  }
   if (!context.resultKey || !context.resultSha256) {
     return { status: 'pending', jobId: context.jobId };
   }

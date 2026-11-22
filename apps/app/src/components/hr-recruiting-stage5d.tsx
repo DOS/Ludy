@@ -63,9 +63,6 @@ export function CvIntakePanel({
         lang: locale,
       });
     },
-    onSuccess: (draft) => {
-      onDraftReady(draft);
-    },
   });
 
   return (
@@ -96,7 +93,13 @@ export function CvIntakePanel({
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-cv-opening">{t('cvExtract.openingLabel')}</Label>
-          <NativeSelect id="hr-cv-opening" className="max-md:min-h-11" value={openingId} onChange={(e) => setOpeningId(e.target.value)} data-testid="hr-cv-opening-select">
+          <NativeSelect
+            id="hr-cv-opening"
+            className="max-md:[&_select]:min-h-11"
+            value={openingId}
+            onChange={(e) => setOpeningId(e.target.value)}
+            data-testid="hr-cv-opening-select"
+          >
             <NativeSelectOption value="">{t('fields.noOpening')}</NativeSelectOption>
             {openOptions.map((o) => (
               <NativeSelectOption key={o.id} value={o.id}>
@@ -112,7 +115,7 @@ export function CvIntakePanel({
           className="max-md:min-h-11"
           loading={extract.isPending}
           disabled={!selectedFile}
-          onClick={() => extract.mutate()}
+          onClick={() => extract.mutate(undefined, { onSuccess: (draft) => onDraftReady(draft) })}
           data-testid="hr-cv-extract-submit"
         >
           {extract.isPending ? t('cvExtract.extracting') : t('cvExtract.extractButton')}
@@ -272,11 +275,29 @@ export function EngageInvitePanel({
   const f = useFormat();
   const locale = useLocale() === 'en' ? 'en' : 'vi';
   const defaultChannel: HrEngageChannel = candidate.source === 'facebook' ? 'facebook' : 'zalo_oa';
+  const contextKey = [
+    candidate.id,
+    candidate.displayName,
+    candidate.openingId ?? '',
+    candidate.openingTitle ?? '',
+    candidate.interviewerUserId ?? '',
+    candidate.source,
+  ].join('|');
+  const [lastContextKey, setLastContextKey] = useState(contextKey);
   const [channel, setChannel] = useState<HrEngageChannel>(initialDraft?.channel ?? defaultChannel);
   const [interviewerUserId, setInterviewerUserId] = useState<string>(candidate.interviewerUserId ?? '');
   const [draft, setDraft] = useState<HrInviteDraftResult | null>(initialDraft ?? null);
   const [messageText, setMessageText] = useState(initialDraft?.message ?? '');
   const [copied, setCopied] = useState(false);
+
+  if (lastContextKey !== contextKey) {
+    setLastContextKey(contextKey);
+    setChannel(defaultChannel);
+    setInterviewerUserId(candidate.interviewerUserId ?? '');
+    setDraft(null);
+    setMessageText('');
+    setCopied(false);
+  }
 
   const interviewersQuery = useQuery({
     ...orpc.hr.recruiting.interviewers.list.queryOptions(),
@@ -330,7 +351,7 @@ export function EngageInvitePanel({
           <Label htmlFor="hr-engage-channel-select">{t('engageInvite.channelLabel')}</Label>
           <NativeSelect
             id="hr-engage-channel-select"
-            className="min-w-0 max-w-full max-md:min-h-11"
+            className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
             value={channel}
             onChange={(e) => setChannel(e.target.value as HrEngageChannel)}
             data-testid="hr-engage-channel"
@@ -346,7 +367,7 @@ export function EngageInvitePanel({
           <Label htmlFor="hr-engage-interviewer">{t('interview.interviewer')}</Label>
           <NativeSelect
             id="hr-engage-interviewer"
-            className="min-w-0 max-w-full max-md:min-h-11"
+            className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
             value={interviewerUserId}
             onChange={(e) => setInterviewerUserId(e.target.value)}
           >

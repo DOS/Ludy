@@ -10,6 +10,7 @@ import {
   zHrCvExtractAuthorizeInput,
   zHrCvExtractCompleteInput,
   zHrCvExtractContextInput,
+  zHrCvExtractPendingInput,
   zHrCvExtractRequestInput,
   zHrInviteDraftAsk,
   zHrInviteDraftAuditInput,
@@ -239,6 +240,15 @@ export interface HrCvExtractContext {
   storageKey: string;
   resultKey: string | null;
   resultSha256: string | null;
+  failedCode: string | null;
+}
+
+export interface HrCvPendingJobRow {
+  jobId: string;
+  storageKey: string;
+  kind: CvSandboxKind;
+  sha256: string;
+  sizeBytes: number;
 }
 
 async function resolveOpeningContext(
@@ -316,6 +326,7 @@ export const cvExtractRequestCommand = defineCommand({
       storageKey,
       resultKey: null,
       resultSha256: null,
+      failedCode: null,
     };
   },
 });
@@ -331,7 +342,8 @@ export const cvExtractCompleteCommand = defineCommand({
     ctx.audit({
       jobId: input.jobId,
       ok: input.ok,
-      resultSha256: input.resultSha256,
+      resultSha256: input.resultSha256 ?? null,
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
     });
     return { ok: true };
   },
@@ -348,13 +360,17 @@ export const cvExtractContextQuery = defineQuery({
       legal_entity_id: string | null;
       opening_id: string | null;
       result_sha256: string | null;
+      complete_ok: string | null;
+      complete_error_code: string | null;
     }>`
       SELECT
         command,
         detail ->> 'inputSha256' AS input_sha256,
         detail ->> 'legalEntityId' AS legal_entity_id,
         detail ->> 'openingId' AS opening_id,
-        detail ->> 'resultSha256' AS result_sha256
+        detail ->> 'resultSha256' AS result_sha256,
+        detail ->> 'ok' AS complete_ok,
+        detail ->> 'errorCode' AS complete_error_code
       FROM ludy_kernel.audit_event
       WHERE org_id = ${ctx.orgId}::uuid
         AND command IN ('hr.recruiting.cv_extract.request', 'hr.recruiting.cv_extract.complete')
@@ -370,20 +386,22 @@ export const cvExtractContextQuery = defineQuery({
       throw new DomainError('HR_CV_JOB_NOT_FOUND', 404, 'Không tìm thấy yêu cầu tách CV này');
     }
 
-    if (req.legal_entity_id !== null && input.legalEntityId !== undefined && input.legalEntityId !== req.legal_entity_id) {
+    if (input.legalEntityId !== undefined && input.legalEntityId !== req.legal_entity_id) {
       throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Yêu cầu tách CV không thuộc pháp nhân đã chọn');
     }
-    if (req.opening_id !== null && input.openingId !== undefined && input.openingId !== req.opening_id) {
+    if (input.openingId !== undefined && input.openingId !== req.opening_id) {
       throw new DomainError('HR_CANDIDATE_WRONG_ENTITY', 422, 'Vị trí tuyển dụng không khớp yêu cầu tách CV');
     }
 
-    const openingId = req.opening_id ?? input.openingId ?? undefined;
-    const requestedEntityId = req.legal_entity_id ?? input.legalEntityId ?? undefined;
+    const openingId = req.opening_id ?? undefined;
+    const requestedEntityId = req.legal_entity_id ?? undefined;
     const resolved = await resolveOpeningContext(ctx, openingId, requestedEntityId);
 
     const completeRow = eventsRes.rows.find((row) => row.command === 'hr.recruiting.cv_extract.complete');
     const rawSha = completeRow?.result_sha256 ?? null;
     const resultSha256 = rawSha && /^[0-9a-f]{64}$/.test(rawSha) ? rawSha : null;
+    const failedCode =
+      completeRow && !resultSha256 ? (completeRow.complete_error_code ?? 'HR_CV_EXTRACT_FAILED') : null;
 
     return {
       jobId: input.jobId,
@@ -391,7 +409,58 @@ export const cvExtractContextQuery = defineQuery({
       storageKey: hrCvBlobKey(ctx.orgId, req.input_sha256),
       resultKey: resultSha256 ? hrCvBlobKey(ctx.orgId, resultSha256) : null,
       resultSha256,
+      failedCode,
     };
+  },
+});
+
+export const cvExtractPendingQuery = defineQuery({
+  name: 'hr.recruiting.cv_extract.pending',
+  input: zHrCvExtractPendingInput,
+  access: 'system',
+  handler: async (ctx): Promise<HrCvPendingJobRow[]> => {
+    const res = await sql<{
+      job_id: string | null;
+      kind: string | null;
+      input_sha256: string | null;
+      size_bytes: string | null;
+    }>`
+      SELECT
+        r.detail ->> 'jobId' AS job_id,
+        r.detail ->> 'kind' AS kind,
+        r.detail ->> 'inputSha256' AS input_sha256,
+        r.detail ->> 'sizeBytes' AS size_bytes
+      FROM ludy_kernel.audit_event r
+      WHERE r.org_id = ${ctx.orgId}::uuid
+        AND r.command = 'hr.recruiting.cv_extract.request'
+        AND r.outcome = 'ok'
+        AND r.occurred_at >= pg_catalog.now() - interval '24 hours'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ludy_kernel.audit_event c
+          WHERE c.org_id = r.org_id
+            AND c.command = 'hr.recruiting.cv_extract.complete'
+            AND c.outcome = 'ok'
+            AND c.detail ->> 'jobId' = r.detail ->> 'jobId'
+        )
+      ORDER BY r.id ASC
+      LIMIT 50
+    `.execute(ctx.trx);
+
+    const out: HrCvPendingJobRow[] = [];
+    for (const row of res.rows) {
+      if (!row.job_id || !row.input_sha256 || !/^[0-9a-f]{64}$/.test(row.input_sha256)) continue;
+      const sizeBytes = Number(row.size_bytes ?? 0);
+      if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) continue;
+      out.push({
+        jobId: row.job_id,
+        storageKey: hrCvBlobKey(ctx.orgId, row.input_sha256),
+        kind: row.kind === 'docx_text' ? 'docx_text' : 'pdf_text',
+        sha256: row.input_sha256,
+        sizeBytes,
+      });
+    }
+    return out;
   },
 });
 
@@ -543,5 +612,6 @@ export const hrRecruitingIntakeCommands = [
 export const hrRecruitingIntakeQueries = [
   cvExtractAuthorizeQuery,
   cvExtractContextQuery,
+  cvExtractPendingQuery,
   inviteDraftContextQuery,
 ];

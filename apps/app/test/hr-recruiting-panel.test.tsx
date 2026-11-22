@@ -480,6 +480,7 @@ describe('HR recruiting UI (#3425)', () => {
     expect(cvIntakeVi).toContain('hr-cv-intake-panel');
     expect(cvIntakeVi).toContain('hr-cv-file-input');
     expect(cvIntakeVi).toContain('hr-cv-extract-submit');
+    expect(cvIntakeVi).toContain('max-md:[&amp;_select]:min-h-11');
     expect(cvIntakeVi).toContain(viMessages.hrRecruiting.cvExtract.proposalBadge);
 
     const sampleCvDraft: HrCvExtractDraft = {
@@ -508,6 +509,11 @@ describe('HR recruiting UI (#3425)', () => {
     expect(prefilledVi).toContain('0912345678');
     expect(prefilledVi).toContain('hr-candidate-source');
     expect(prefilledVi).toContain(viMessages.hrRecruiting.cvExtract.status.ai_off);
+
+    const noOpeningDraft: HrCvExtractDraft = { ...sampleCvDraft, openingId: null, openingTitle: null };
+    const noOpeningVi = wrap(<CandidateForm cvDraft={noOpeningDraft} defaultOpeningId={OPENING_ID} openings={[sampleOpening]} onClose={() => undefined} />, 'vi');
+    expect(noOpeningVi).toMatch(/<option\b[^>]*(?:\bvalue=""[^>]*\bselected\b|\bselected\b[^>]*\bvalue="")/);
+    expect(noOpeningVi).not.toMatch(new RegExp(`<option\\b[^>]*\\bvalue="${OPENING_ID}"[^>]*\\bselected\\b`));
 
     const analyticsSample: HrRecruitingAnalyticsResult = {
       legalEntityId: ENTITY_ID,

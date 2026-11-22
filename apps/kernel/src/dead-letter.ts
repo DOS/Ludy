@@ -100,6 +100,22 @@ export async function takeDeadLetter(runtime: Runtime, job: DeadLetter): Promise
     return 'refused';
   }
   console.log(`[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: ${done.raised ? 'Inbox item raised' : `counted on the open item (${done.failures} today)`}`);
+  // Mark permanently failed HR CV extraction jobs so GET /api/hr/recruiting/cv-extract/:jobId returns 422 instead of staying pending.
+  if (
+    queue === 'hr-cv-extract' &&
+    job.data !== null &&
+    typeof job.data === 'object' &&
+    typeof (job.data as { jobId?: unknown }).jobId === 'string' &&
+    UUID.test((job.data as { jobId: string }).jobId)
+  ) {
+    await runtime
+      .execute(
+        'hr.recruiting.cv_extract.complete',
+        { jobId: (job.data as { jobId: string }).jobId, ok: false, resultSha256: null, errorCode: 'HR_CV_EXTRACT_FAILED' },
+        { actor: { type: 'system', component: 'hr.cv_extract' }, orgId: owner.orgId },
+      )
+      .catch(() => undefined);
+  }
   return done.raised ? 'raised' : 'counted';
 }
 

@@ -1003,9 +1003,47 @@ function isSafeCvTextField(value: string, maxChars: number): string | null {
   return normalized;
 }
 
+function foldCvEvidence(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+function isPhoneGroundedInCv(cleanedPhone: string, cvText: string): boolean {
+  const digits = cleanedPhone.replace(/\D/g, '');
+  if (digits.length < 9) return false;
+  const variants = new Set<string>([digits]);
+  if (digits.startsWith('84') && digits.length >= 10) {
+    variants.add(`0${digits.slice(2)}`);
+  } else if (digits.startsWith('0') && digits.length >= 10) {
+    variants.add(`84${digits.slice(1)}`);
+  }
+  const chunks = cvText.replace(/[^0-9+()\-.\t ]+/g, '|').split('|');
+  for (const chunk of chunks) {
+    const chunkDigits = chunk.replace(/\D/g, '');
+    if (chunkDigits.length < 9) continue;
+    for (const variant of variants) {
+      if (chunkDigits.includes(variant)) return true;
+    }
+  }
+  return false;
+}
+
+function isDisplayNameGroundedInCv(displayName: string, foldedCv: string): boolean {
+  const tokens = foldCvEvidence(displayName)
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2);
+  if (tokens.length === 0) return false;
+  return tokens.every((token) => foldedCv.includes(token));
+}
+
 function validateCvAiOutput(
   out: CvExtractAiOut | null,
   fallback: ReturnType<typeof extractCvFieldsDeterministically>,
+  cvText: string,
 ): { displayName: string | null; email: string | null; phone: string | null; yearsExperience: number | null; matchedSkills: string[]; notes: string | null } | null {
   if (!out) return null;
   const rawSummary = out.summary?.trim() || null;
@@ -1014,26 +1052,46 @@ function validateCvAiOutput(
     summary = isSafeCvTextField(rawSummary, 600);
     if (summary === null) return null;
   }
+  const lowerCv = cvText.toLowerCase();
+  const foldedCv = foldCvEvidence(cvText);
+
   const emailCandidate = out.email?.trim() ?? '';
+  const emailLower = emailCandidate.toLowerCase();
   const email =
+    emailCandidate.length <= 254 &&
     /^[A-Za-z0-9](?:[A-Za-z0-9._%+-]*[A-Za-z0-9])?@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(
       emailCandidate,
-    ) && emailCandidate.length <= 254
-      ? emailCandidate.toLowerCase()
+    ) &&
+    lowerCv.includes(emailLower)
+      ? emailLower
       : fallback.email;
+
   const safeDisplayName =
     out.displayName && out.displayName.trim().length >= 2 ? isSafeCvTextField(out.displayName, 200) : null;
-  const displayName = safeDisplayName ?? fallback.displayName;
-  const cleanedPhone = (out.phone ?? '').replace(/[\s().-]/g, '');
-  const phone = /^\+?\d{9,15}$/.test(cleanedPhone) ? cleanedPhone : fallback.phone;
-  const yearsExperience =
-    out.yearsExperience !== null && Number.isInteger(out.yearsExperience) && out.yearsExperience >= 0 && out.yearsExperience <= 80
-      ? out.yearsExperience
-      : fallback.yearsExperience;
+  const displayName =
+    safeDisplayName &&
+    (safeDisplayName.toLowerCase() === fallback.displayName?.toLowerCase() || isDisplayNameGroundedInCv(safeDisplayName, foldedCv))
+      ? safeDisplayName
+      : fallback.displayName;
 
+  const cleanedPhone = (out.phone ?? '').replace(/[\s().-]/g, '');
+  const phone =
+    /^\+?\d{9,15}$/.test(cleanedPhone) && isPhoneGroundedInCv(cleanedPhone, cvText)
+      ? cleanedPhone
+      : fallback.phone;
+
+  const yearsNumberGrounded =
+    out.yearsExperience !== null &&
+    Number.isInteger(out.yearsExperience) &&
+    out.yearsExperience >= 0 &&
+    out.yearsExperience <= 80 &&
+    (out.yearsExperience === fallback.yearsExperience || new RegExp(`(?:^|\\D)${out.yearsExperience}(?!\\d)`).test(cvText));
+  const yearsExperience = yearsNumberGrounded ? out.yearsExperience : fallback.yearsExperience;
+
+  const fallbackSkillKeys = new Set(fallback.matchedSkills.map((skill) => foldCvEvidence(skill)));
   const seenSkill = new Set<string>();
   const matchedSkills: string[] = [];
-  for (const raw of [...fallback.matchedSkills, ...out.matchedSkills]) {
+  for (const raw of fallback.matchedSkills) {
     const s = isSafeCvTextField(raw, 60);
     if (!s) continue;
     const key = s.toLowerCase();
@@ -1041,6 +1099,17 @@ function validateCvAiOutput(
     seenSkill.add(key);
     matchedSkills.push(s);
     if (matchedSkills.length >= 20) break;
+  }
+  for (const raw of out.matchedSkills) {
+    if (matchedSkills.length >= 20) break;
+    const s = isSafeCvTextField(raw, 60);
+    if (!s) continue;
+    const foldedSkill = foldCvEvidence(s);
+    if (!fallbackSkillKeys.has(foldedSkill) && !foldedCv.includes(foldedSkill)) continue;
+    const key = s.toLowerCase();
+    if (seenSkill.has(key)) continue;
+    seenSkill.add(key);
+    matchedSkills.push(s);
   }
 
   return {
@@ -1144,7 +1213,7 @@ export async function proposeCvCandidateDraft(
   }
   if (generated.usage) options.onUsage?.(generated.usage);
 
-  const verified = validateCvAiOutput(generated.output, deterministic);
+  const verified = validateCvAiOutput(generated.output, deterministic, safeCvText);
   if (!verified) {
     return baseDraft('refused', false);
   }

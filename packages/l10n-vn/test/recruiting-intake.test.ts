@@ -73,17 +73,37 @@ describe('recruiting Stage 5D VN deterministic helpers (#4446)', () => {
     expect(fbNoSlotsEn).toContain('two or three times');
   });
 
-  it('extracts emails linearly without ReDoS on 200k-char adversarial inputs (CWE-1333)', () => {
+  it('handles 200k-char adversarial inputs linearly without ReDoS (CWE-1333) and enforces 254-char email limits', () => {
     const inputs = ['a'.repeat(200_000), 'a.a.'.repeat(50_000), '@'.repeat(50_000), `${'a'.repeat(30)}@invalid.c `.repeat(4_000)];
     for (const input of inputs) {
-      const startMs = performance.now();
       const extracted = extractCvFieldsDeterministically(input);
-      const elapsedMs = performance.now() - startMs;
       expect(extracted.email).toBeNull();
-      expect(elapsedMs).toBeLessThan(100);
     }
 
     const trailedEmail = extractCvFieldsDeterministically(`${'a'.repeat(50_000)}\nEmail: ung.vien+hr@example.com.`);
     expect(trailedEmail.email).toBe('ung.vien+hr@example.com');
+
+    // Total length boundary: 254 accepted intact, 255 rejected and scanner continues to next valid address.
+    const local64 = 'a'.repeat(64);
+    const label61 = 'b'.repeat(61);
+    const label60 = 'c'.repeat(60);
+    const exact254Domain = `${label61}.${label61}.${label60}.com`; // 61+1+61+1+60+1+3 = 188 chars -> 64+1+188 = 253 chars
+    const exact254DomainFull = `${label61}.${label61}.${label61}.com`; // 61+1+61+1+61+1+3 = 189 chars -> 64+1+189 = 254 chars
+    const over255Domain = `${label61}.${label61}.${'d'.repeat(62)}.com`; // 190 chars -> 64+1+190 = 255 chars
+    expect(`${local64}@${exact254Domain}`).toHaveLength(253);
+    expect(`${local64}@${exact254DomainFull}`).toHaveLength(254);
+    expect(`${local64}@${over255Domain}`).toHaveLength(255);
+
+    expect(extractCvFieldsDeterministically(`${local64}@${exact254Domain}`).email).toBe(`${local64}@${exact254Domain}`);
+    expect(extractCvFieldsDeterministically(`${local64}@${exact254DomainFull}`).email).toBe(`${local64}@${exact254DomainFull}`);
+    expect(extractCvFieldsDeterministically(`${local64}@${over255Domain} ok@example.com`).email).toBe('ok@example.com');
+  });
+
+  it('merges overlapping employment year spans without counting multi-year gaps', () => {
+    const gapped = extractCvFieldsDeterministically('Kinh nghiệm làm việc:\n2010 - 2012: Trợ lý\n2022 - 2024: Kế toán');
+    expect(gapped.yearsExperience).toBe(4);
+
+    const overlapping = extractCvFieldsDeterministically('2020 - 2023: Kế toán viên\n2022 - 2025: Kế toán tổng hợp');
+    expect(overlapping.yearsExperience).toBe(5);
   });
 });

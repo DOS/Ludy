@@ -352,7 +352,9 @@ export function CandidateForm({
 }) {
   const t = useTranslations('hrRecruiting');
   const openOptions = openings.filter((o) => o.status === 'open' || o.id === candidate?.openingId);
-  const [openingId, setOpeningId] = useState(candidate?.openingId ?? cvDraft?.openingId ?? defaultOpeningId ?? '');
+  const [openingId, setOpeningId] = useState(
+    candidate ? (candidate.openingId ?? '') : cvDraft ? (cvDraft.openingId ?? '') : (defaultOpeningId ?? ''),
+  );
   const [source, setSource] = useState<HrCandidateSource>(candidate?.source ?? cvDraft?.suggestedSource ?? 'direct');
   const [displayName, setDisplayName] = useState(candidate?.displayName ?? cvDraft?.displayName ?? '');
   const [email, setEmail] = useState(candidate?.email ?? cvDraft?.email ?? '');
@@ -458,7 +460,13 @@ export function CandidateForm({
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-cand-source">{t('sourceLabel')}</Label>
-          <NativeSelect id="hr-cand-source" className="max-md:min-h-11" value={source} onChange={(e) => setSource(e.target.value as HrCandidateSource)} data-testid="hr-candidate-source">
+          <NativeSelect
+            id="hr-cand-source"
+            className="max-md:[&_select]:min-h-11"
+            value={source}
+            onChange={(e) => setSource(e.target.value as HrCandidateSource)}
+            data-testid="hr-candidate-source"
+          >
             {HR_CANDIDATE_SOURCES.map((src) => (
               <NativeSelectOption key={src} value={src}>
                 {t(`sources.${src}`)}
@@ -1554,7 +1562,13 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <NativeSelect className="min-w-0 max-w-full max-md:min-h-11" value={selectedSource} onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')} aria-label={t('sourceLabel')} data-testid="hr-filter-source">
+            <NativeSelect
+              className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')}
+              aria-label={t('sourceLabel')}
+              data-testid="hr-filter-source"
+            >
               <NativeSelectOption value="">{t('allSources')}</NativeSelectOption>
               {HR_CANDIDATE_SOURCES.map((src) => (
                 <NativeSelectOption key={src} value={src}>
