@@ -26,6 +26,7 @@ import {
   type TaskPlacement,
 } from '../lib/projects.ts';
 import { seatOptionLabel } from './project-task-dialog.tsx';
+import { shouldConfirmBlockedStatusMove } from './project-dependencies.tsx';
 import { formatRecurrenceBadgeLabel } from './task-recurrence-control.tsx';
 import { taskTitleText } from '../lib/task-title.ts';
 
@@ -268,6 +269,18 @@ function TaskMetaBadges({
         </Badge>
       )}
       <TaskChecklistBadge steps={task.checklist ?? []} />
+      {(task.openBlockerCount ?? 0) > 0 && (
+        <Badge variant="warning" className="h-5 gap-1 px-1.5 text-[11px] tabular-nums" data-testid="task-blocked-by-badge">
+          <ProjectIcon name="link" className="size-3" />
+          <span>{t('dependencies.cardBlockedByBadge', { count: task.openBlockerCount ?? 0 })}</span>
+        </Badge>
+      )}
+      {(task.blockingCount ?? 0) > 0 && (
+        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] tabular-nums" data-testid="task-blocking-badge">
+          <ProjectIcon name="arrowUp" className="size-3" />
+          <span>{t('dependencies.cardBlockingBadge', { count: task.blockingCount ?? 0 })}</span>
+        </Badge>
+      )}
       {task.commentCount > 0 && (
         <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
           <NavIcon name="comments" className="size-3" />
@@ -500,11 +513,25 @@ export function ProjectBoardView({
   const [overStatus, setOverStatus] = useState<TaskStatus | null>(null);
   const [dropTarget, setDropTarget] = useState<{ anchorId: string; place: 'before' | 'after' } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ProjectTaskCard | null>(null);
+  const [pendingBlockedMove, setPendingBlockedMove] = useState<{
+    task: ProjectTaskCard;
+    nextStatus: TaskStatus;
+    placement?: TaskPlacement | undefined;
+  } | null>(null);
 
   const columns = boardColumns(includeCancelled);
   const grouped = groupBoardTasks(tasks, includeCancelled);
   const listTasks = includeCancelled ? tasks : tasks.filter((item) => item.status !== 'cancelled');
   const showReorder = canEdit && onReorderTask !== undefined;
+
+  const requestMoveStatus = (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => {
+    const targetTask = tasks.find((item) => item.id === taskId);
+    if (targetTask && shouldConfirmBlockedStatusMove(targetTask.status, nextStatus, targetTask.openBlockerCount ?? 0)) {
+      setPendingBlockedMove({ task: targetTask, nextStatus, placement });
+      return;
+    }
+    onMoveStatus(taskId, nextStatus, placement);
+  };
 
   const clearDrag = () => {
     setDraggingId(null);
@@ -530,7 +557,7 @@ export function ProjectBoardView({
       return;
     }
     if (task.checkedOut) return;
-    onMoveStatus(droppedId, targetStatus);
+    requestMoveStatus(droppedId, targetStatus);
   };
 
   const handleDragOverCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number) => {
@@ -569,7 +596,7 @@ export function ProjectBoardView({
       return;
     }
     if (droppedTask.checkedOut) return;
-    onMoveStatus(droppedId, targetTask.status, !customSortActive && onReorderTask ? { place, anchorId: targetTask.id } : undefined);
+    requestMoveStatus(droppedId, targetTask.status, !customSortActive && onReorderTask ? { place, anchorId: targetTask.id } : undefined);
   };
 
   return (
@@ -587,6 +614,28 @@ export function ProjectBoardView({
           onConfirm={() => {
             onRemoveTask(confirmRemove.id);
             setConfirmRemove(null);
+          }}
+        />
+      )}
+      {pendingBlockedMove && (
+        <ConfirmDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setPendingBlockedMove(null);
+          }}
+          title={t('dependencies.moveBlockedTitle')}
+          description={t('dependencies.moveBlockedDesc', {
+            title: pendingBlockedMove.task.title,
+            count: pendingBlockedMove.task.openBlockerCount ?? 0,
+          })}
+          confirm={t('dependencies.moveBlockedConfirm')}
+          onConfirm={() => {
+            onMoveStatus(
+              pendingBlockedMove.task.id,
+              pendingBlockedMove.nextStatus,
+              pendingBlockedMove.placement,
+            );
+            setPendingBlockedMove(null);
           }}
         />
       )}
@@ -681,7 +730,7 @@ export function ProjectBoardView({
                               onReorderTask(task.id, { place: 'after', anchorId: next.id });
                             }
                           }}
-                          onMoveStatus={(taskId, nextStatus) => onMoveStatus(taskId, nextStatus)}
+                          onMoveStatus={(taskId, nextStatus) => requestMoveStatus(taskId, nextStatus)}
                           onEdit={onEditTask}
                           onRemove={setConfirmRemove}
                         />
@@ -750,6 +799,18 @@ export function ProjectBoardView({
                             <span>{formatRecurrenceBadgeLabel(task.recurrence, t)}</span>
                           </Badge>
                         )}
+                        {(task.openBlockerCount ?? 0) > 0 && (
+                          <Badge variant="warning" className="h-5 gap-1 px-1.5 text-[11px] tabular-nums" data-testid="task-blocked-by-badge">
+                            <ProjectIcon name="link" className="size-3" />
+                            <span>{t('dependencies.cardBlockedByBadge', { count: task.openBlockerCount ?? 0 })}</span>
+                          </Badge>
+                        )}
+                        {(task.blockingCount ?? 0) > 0 && (
+                          <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] tabular-nums" data-testid="task-blocking-badge">
+                            <ProjectIcon name="arrowUp" className="size-3" />
+                            <span>{t('dependencies.cardBlockingBadge', { count: task.blockingCount ?? 0 })}</span>
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
@@ -778,7 +839,7 @@ export function ProjectBoardView({
                           aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
                           disabled={task.checkedOut}
                           value={task.status}
-                          onChange={(e) => onMoveStatus(task.id, e.target.value as TaskStatus)}
+                          onChange={(e) => requestMoveStatus(task.id, e.target.value as TaskStatus)}
                           className="h-10 min-w-32 text-xs sm:h-8"
                         >
                           {TASK_STATUSES.map((st) => (
