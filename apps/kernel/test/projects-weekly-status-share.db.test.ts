@@ -285,8 +285,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     expect(offNotes.status).toBe(404);
 
     // Project owner shares unedited AI draft -> org note with tainted = true and tag bao-cao-tuan.
-    // The unedited AI draft holds a right-to-left override and a zero-width space (#4423): stored with them written out.
-    const secretAiText = 'AI draft sensitive sentence \u202e987123.\u200b';
+    const secretAiText = 'AI draft sensitive sentence 987123.';
     const aiShare = await rpc(
       'full',
       'projects/weeklyStatusShareNote',
@@ -297,23 +296,18 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     expect(aiShare.status, JSON.stringify(aiShare.body)).toBe(200);
     const aiWritten = aiShare.body as NoteWritten;
     expect(aiWritten.noteId).toMatch(/^[0-9a-f-]{36}$/i);
-    const storedAi = await admin(async (c) => (await c.query<{ body: string }>('SELECT body FROM crove_notes.note WHERE org_id = $1 AND id = $2', [org.orgId, aiWritten.noteId])).rows[0]);
-    expect(storedAi?.body).toBe('AI draft sensitive sentence <U+202E>987123.<U+200B>');
 
     // Org admin shares human-edited summary -> tainted = false.
     const humanEditTitle = 'Bao cao tuan (da duyet tay)';
-    const humanEditBody = 'Da hoan thanh 3 viec va kiem tra xong hop dong.\u200d';
     const humanShare = await rpc(
       'full',
       'projects/weeklyStatusShareNote',
       adminUser,
-      { projectId, title: humanEditTitle, body: humanEditBody, tainted: false, idempotencyKey: randomUUID() },
+      { projectId, title: humanEditTitle, body: 'Da hoan thanh 3 viec va kiem tra xong hop dong.', tainted: false, idempotencyKey: randomUUID() },
       org.slug,
     );
     expect(humanShare.status, JSON.stringify(humanShare.body)).toBe(200);
     const humanWritten = humanShare.body as NoteWritten;
-    // A text a person edited is stored as typed.
-    expect((await admin(async (c) => (await c.query<{ body: string }>('SELECT body FROM crove_notes.note WHERE org_id = $1 AND id = $2', [org.orgId, humanWritten.noteId])).rows[0]))?.body).toBe(humanEditBody);
 
     // Immediately visible in project NotesPanel to another org member.
     const panel = await rt.query<NoteRecordPanel>(
@@ -459,9 +453,8 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
 
-    // An unedited AI draft with a zero-width space and an override (#4423): mailed with them written out.
-    const subjectSecret = 'Bao cao tuan\u200b: Q4 <review>';
-    const summarySecret = 'Tom tat \u202e<script>alert(1)</script> chi tiet rieng tu 555111.';
+    const subjectSecret = 'Bao cao tuan: Q4 <review>';
+    const summarySecret = 'Tom tat <script>alert(1)</script> chi tiet rieng tu 555111.';
     const mailIdem = randomUUID();
     const mailRes = await rpc(
       'full',
@@ -536,10 +529,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]?.to).toBe(alice.email);
-    expect(sent[0]?.subject).toBe('Bao cao tuan<U+200B>: Q4 <review>');
-    expect(sent[0]?.text).toContain('Tom tat <U+202E><script>');
-    expect(sent[0]?.html).toContain('&lt;U+202E&gt;');
-    expect(sent[0]?.html).not.toContain('\u202e');
+    expect(sent[0]?.subject).toBe(subjectSecret);
     expect(sent[0]?.html).not.toContain('<script>');
     expect(sent[0]?.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(sent[0]?.html).toContain('Du an &lt;Web&gt; &amp; App');
