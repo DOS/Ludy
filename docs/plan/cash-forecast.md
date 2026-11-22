@@ -1,6 +1,6 @@
 # Cash-flow forecast, 30/60/90 days (#4391)
 
-Owner decision 2026-11-22 (popup to the Accounting PO): a 30/60/90-day cash-flow view per legal entity, computed by code, with the Accounting coworker (Ly) explaining the low point. Plan line for the issue; the design and the PO's four decisions are on [#4391](https://github.com/DOS/Ludy/issues/4391).
+Owner decision 2026-11-22 (popup to the Accounting PO): a 30/60/90-day cash-flow view per legal entity, computed by code, with the Accounting coworker (Ly) explaining the low point. Listed in [accounting-coworker.md](accounting-coworker.md). Plan line for the issue; the design and the PO's four decisions are on [#4391](https://github.com/DOS/Ludy/issues/4391).
 
 ## What it is
 
