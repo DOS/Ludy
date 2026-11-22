@@ -15,7 +15,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -88,6 +88,7 @@ import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAss
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
@@ -490,6 +491,8 @@ export function createRpcHandler(
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's note on the month-close checklist: the same reader and model, a budget of its own; told which items are open and no count or date.
+  const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
@@ -3319,6 +3322,17 @@ export function createRpcHandler(
           const { lang, ...ask } = input;
           const overview = await runtime.query<FinanceOverview>('finance.overview', ask, { actor, orgId });
           return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
+        }),
+      ),
+    },
+    financeMonthClose: {
+      get: os.financeMonthClose.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<MonthClose>('finance.month_close', input, { actor, orgId }))),
+      // The note is asked of the model outside any transaction, from which items the checklist found open in the member's own one (their legal entities only).
+      explain: os.financeMonthClose.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const checklist = await runtime.query<MonthClose>('finance.month_close', ask, { actor, orgId });
+          return explainMonthClose(financeMonthCloseAi, orgId, actor.userId, checklist, lang ?? 'vi');
         }),
       ),
     },

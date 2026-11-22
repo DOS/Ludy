@@ -43,6 +43,7 @@ import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, ty
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
+import { checkMonthCloseNote, monthCloseInstructions, monthClosePrompt, monthCloseQuiet, type MonthCloseFacts, type MonthCloseNoteResult } from './month-close.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
 import { checkMeetingBrief, meetingBriefInstructions, meetingBriefPrompt, type MeetingBriefFacts, type MeetingBriefResult } from './meeting-brief.ts';
@@ -153,6 +154,10 @@ export type ReminderGenerator = (args: { system: string; prompt: string }) => Pr
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
 });
+const zMonthCloseOut = z.object({
+  note: z.string().describe('One or two plain sentences on what to do first and why, with no number, date, link or promise'),
+  order: z.array(z.string()).describe('The keys of the open items, each exactly once, in the order to do them'),
+});
 const zVatLateOut = z.object({
   sentence: z.string().describe('One to three plain sentences naming each late sales invoice and the period of its sale, each written exactly as given, with no other number'),
 });
@@ -202,6 +207,7 @@ export type EInvoiceReasonGenerator = (args: { system: string; prompt: string })
 export type EInvoiceRateGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceRateOut> | null; usage?: AiUsage }>;
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
+export type MonthCloseGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMonthCloseOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
 // The finance coworker on stock (#2514): the item a line is about, and the wording of a reorder message.
@@ -302,6 +308,7 @@ export class InboxReader {
   private readonly generateCrmFollowup: CrmFollowupGenerator;
   private readonly generateMeetingBrief: MeetingBriefGenerator;
   private readonly generateOverview: OverviewGenerator;
+  private readonly generateMonthClose: MonthCloseGenerator;
   private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
@@ -325,7 +332,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -392,6 +399,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.overview_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMonthClose =
+      generators.monthClose ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.month_close_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMonthCloseOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -647,6 +662,16 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The finance coworker's note on the month-close checklist: the open items in the order to do them and why, from which items are open (never a count or a date), or why there is none: with
+   * nothing open the model is not asked, and its note is refused when it states a number, a date, a link, a promise or a done step, or when its order is not exactly the open items (month-close.ts).
+   * onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async monthCloseNote(facts: MonthCloseFacts, onUsage?: (usage: AiUsage) => void): Promise<MonthCloseNoteResult> {
+    if (monthCloseQuiet(facts)) return { kind: 'none', code: 'QUIET' };
+    const { output, usage } = await this.generateMonthClose({ system: monthCloseInstructions(facts.language), prompt: monthClosePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMonthCloseNote(facts, output);
   }
 
   /** The finance coworker's sentence naming each late sales invoice of a VAT working and its original period (#3540), from the working's own lists, or why there is none: with nothing to name

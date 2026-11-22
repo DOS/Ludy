@@ -460,6 +460,57 @@ export const vi = {
         '811': 'Chi phí khác (811)',
       },
     },
+    // Danh sách việc chốt sổ tháng: mỗi mục và số lượng do code đọc từ sổ, văn bản cố định; ghi chú của đồng nghiệp AI chỉ sắp thứ tự.
+    monthClose: {
+      title: 'Chốt sổ tháng',
+      subtitle: 'Những việc còn mở trước khi khóa sổ tháng của pháp nhân đang chọn. Mỗi con số đọc thẳng từ sổ.',
+      retry: 'Thử lại',
+      month: { label: 'Tháng', option: 'Tháng {month}/{year}' },
+      note: {
+        title: 'Đồng nghiệp AI {finance} gợi ý thứ tự làm',
+        hint: 'AI chỉ sắp thứ tự các mục còn mở và giải thích lý do, không biết số lượng. Bạn kiểm tra lại danh sách; mỗi bước do bạn làm.',
+      },
+      allDone: 'Mọi mục của tháng này đã xong.',
+      summary: '{open} trên {total} mục còn mở.',
+      status: { open: 'Còn mở', done: 'Xong' },
+      items: {
+        proposals: {
+          open: '{count, plural, other {# đề xuất ghi sổ có ngày trong tháng này đang chờ duyệt}}',
+          done: 'Không có đề xuất nào của tháng này đang chờ duyệt',
+          link: 'Mở Chờ duyệt',
+        },
+        invoices: {
+          open: '{count, plural, other {# hóa đơn trên bảng kê cổng thuế chưa khớp chứng từ nào}}',
+          done: 'Mọi hóa đơn trên bảng kê cổng thuế đã khớp chứng từ',
+          link: 'Mở Đối chiếu cổng thuế',
+        },
+        bank: {
+          open: '{count, plural, other {# dòng sao kê ngân hàng chưa hạch toán}}',
+          done: 'Mọi dòng sao kê của tháng này đã hạch toán',
+          link: 'Mở sao kê ngân hàng',
+        },
+        marketplace: {
+          open: '{count, plural, other {# đối soát hoặc khoản sàn trả chưa ghi sổ}}',
+          done: 'Mọi đối soát và khoản sàn trả của tháng này đã ghi sổ',
+          link: 'Mở Sàn',
+        },
+        stock: {
+          open: 'Chưa chốt sổ kho của tháng này',
+          done: 'Đã chốt sổ kho của tháng này',
+          link: 'Mở Hàng hóa',
+        },
+        vat: {
+          open: 'Tờ khai thuế GTGT của kỳ này chưa được đánh dấu là đã nộp',
+          done: 'Tờ khai thuế GTGT của kỳ này đã được đánh dấu là đã nộp',
+          link: 'Mở Tờ khai GTGT',
+        },
+        lock: {
+          open: 'Khóa sổ chưa bao phủ tháng này',
+          done: 'Khóa sổ đã bao phủ tháng này',
+          link: 'Mở Sổ sách',
+        },
+      },
+    },
     empty: {
       title: 'Chưa có số liệu để hiển thị',
       hint: 'Các con số hiện ra khi sổ có bút toán. Chuyển tiếp hóa đơn vào hộp chứng từ: đồng nghiệp AI {finance} đề xuất hạch toán, bạn duyệt. Hoặc nhập sao kê ngân hàng để bắt đầu.',
@@ -10069,6 +10120,7 @@ export const vi = {
       today_weekly: 'Mục "Tuần này" của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
+      finance_month_close_explain: 'Viết ghi chú ngắn sắp thứ tự các việc còn mở khi chốt sổ tháng',
       finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
       finance_bank_match_explain: 'Giải thích một giao dịch ngân hàng (khớp khoản trả lương, các lựa chọn khớp)',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',

@@ -462,6 +462,57 @@ export const en = {
         '811': 'Other expenses (811)',
       },
     },
+    // The month-close checklist: each item and its count come from the books as fixed text; the coworker's note only puts them in order.
+    monthClose: {
+      title: 'Month close',
+      subtitle: 'What is still open before the books of the month can be locked, for the chosen legal entity. Every figure is read from the books.',
+      retry: 'Try again',
+      month: { label: 'Month', option: 'Month {month}, {year}' },
+      note: {
+        title: '{finance}, your AI coworker, suggests an order',
+        hint: 'The AI only puts the open items in order and says why. It is not told any count. Check the list yourself; a person does each step.',
+      },
+      allDone: 'Every item for this month is done.',
+      summary: '{open} of {total} items are still open.',
+      status: { open: 'Open', done: 'Done' },
+      items: {
+        proposals: {
+          open: '{count, plural, one {# proposal dated in this month is waiting for approval} other {# proposals dated in this month are waiting for approval}}',
+          done: 'No proposal of this month is waiting for approval',
+          link: 'Open Pending approval',
+        },
+        invoices: {
+          open: '{count, plural, one {# invoice on the tax portal list matches no voucher} other {# invoices on the tax portal list match no voucher}}',
+          done: 'Every invoice on the tax portal list matches a voucher',
+          link: 'Open Tax portal check',
+        },
+        bank: {
+          open: '{count, plural, one {# bank statement line is not booked yet} other {# bank statement lines are not booked yet}}',
+          done: 'Every bank statement line of this month is booked',
+          link: 'Open bank statements',
+        },
+        marketplace: {
+          open: '{count, plural, one {# marketplace settlement or payout is not recorded yet} other {# marketplace settlements or payouts are not recorded yet}}',
+          done: 'Every marketplace settlement and payout of this month is recorded',
+          link: 'Open Marketplaces',
+        },
+        stock: {
+          open: 'The stock close of this month has not been run',
+          done: 'The stock close of this month has been run',
+          link: 'Open Stock',
+        },
+        vat: {
+          open: 'The VAT return of this period is not marked as filed',
+          done: 'The VAT return of this period is marked as filed',
+          link: 'Open VAT return',
+        },
+        lock: {
+          open: 'The period lock does not cover this month',
+          done: 'The period lock covers this month',
+          link: 'Open Ledgers',
+        },
+      },
+    },
     empty: {
       title: 'Nothing to show yet',
       hint: 'The figures appear once the books have entries. Forward invoices to the document inbox: {finance}, your AI coworker, proposes the entries and you approve. Or import a bank statement to start.',
@@ -10069,6 +10120,7 @@ export const en = {
       today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
+      finance_month_close_explain: 'A short note ordering the open items of the month close',
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining a bank transaction (payroll match, candidates to choose from)',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
