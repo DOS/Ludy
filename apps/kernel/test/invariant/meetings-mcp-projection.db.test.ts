@@ -365,7 +365,7 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
 
   it('asks only the three tables of the read, and no audit table or other table of the module', () => {
     const text = readFileSync(fileURLToPath(new URL('../../../../modules/meetings/src/mcp.ts', import.meta.url)), 'utf8');
-    const tables = [...new Set([...text.matchAll(/crove_\w+\.\w+/g)].map((m) => m[0]))].sort();
+    const tables = [...new Set([...text.matchAll(/(?:crove|ludy)_\w+\.\w+/g)].map((m) => m[0].replace(/^ludy_/, 'crove_')))].sort();
     expect(tables).toEqual(['crove_meetings.action_item', 'crove_meetings.meeting', 'crove_meetings.meeting_result']);
   });
 
