@@ -16,8 +16,7 @@ export const INVISIBLE_PATTERN =
   '(?:[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180b-\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\u2800\\u3164\\uffa0\\ufeff\\ufff9-\\ufffb\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e007f}]|\\u034f)';
 
 // The same class as the one place that WRITES hidden characters out where a reader sees them (#4423): an AI coworker's text shown or sent where nobody reads a card is shown with `<U+202E>` and the like in place of
-// each character of the class, so it cannot reorder the line around it or hide part of itself (the Inbox card of an Engage ask, a tainted task's title in the screens and notices, an AI-written weekly status note and
-// mail). A newline and a tab stay (a long text keeps its lines); `keepJoiners` also keeps the zero-width joiner and non-joiner (U+200D and U+200C), which emoji and some scripts need, as a one-line title does.
+// each character of the class, so it cannot reorder the line around it or hide part of itself (the Inbox card of an Engage ask, a tainted task's title in the screens and notices). A newline and a tab stay (a long text keeps its lines); `keepJoiners` also keeps the zero-width joiner and non-joiner (U+200D and U+200C), which emoji and some scripts need, as a one-line title does.
 const HIDDEN_RE = new RegExp(`^${INVISIBLE_PATTERN}$`, 'u');
 export function hiddenTextCode(code: number, keepJoiners = false): boolean {
   if (code === 0x09 || code === 0x0a) return false;
