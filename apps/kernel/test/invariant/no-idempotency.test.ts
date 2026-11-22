@@ -87,7 +87,7 @@ interface PendingNoIdempotency {
   expires: string;
 }
 const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {
-  // None now: #4348 moved finance.marketplace_connection.push_hook_set to the pinned list.
+  'hr.attendance.qr.rotate': { reason: 'returns one-time office QR check-in secret (#4447)', expires: '2026-12-06' },
 };
 
 // What is wrong between the commands that declare noIdempotency and the two lists, one line each.
