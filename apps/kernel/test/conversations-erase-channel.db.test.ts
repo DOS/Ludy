@@ -239,7 +239,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
         await holder.query('ROLLBACK').catch(() => {});
         await holder.end();
       }
-      // Released and still without a thread: the next erase of the channel (a retry, or the purge's own sweep) takes it.
+      // Released and still without a thread: a later erase (a retry) takes it.
       expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 0, messages: 0, identities: 1 });
     });
 
