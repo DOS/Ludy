@@ -28,6 +28,8 @@ The two checks that need Tingee to reach Ludy (the portal's validation of the we
 1. **A tunnel.** `PUBLIC_URL` stays a local address; a tunnel the tester controls (with a name under a domain they own, so the DNS record can be added) forwards to it, and the tester opens the app through the tunnel so the card shows the tunnel's address. Nothing in the code changes.
 2. **A separate, labelled change** to let the UAT switch run behind a public address on a machine that holds only test data. That weakens a guard, so it is a decision for the owner with a security review, never part of this run.
 
+Decided by the Accounting PO when the UAT is scheduled. The preferred route is a separate, labelled guard change with its own security review, because a tunnel on the test VM is not how a deployment runs.
+
 Checks 1 to 3 do not need either: they only need the test machine to reach Tingee.
 
 ## The checks, in order
