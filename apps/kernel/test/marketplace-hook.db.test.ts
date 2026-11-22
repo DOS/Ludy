@@ -262,11 +262,11 @@ suite('Marketplace push hook (#4316)', () => {
       expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [offline])).toHaveLength(0);
       expect(await pushStatus(owner, offline)).toMatchObject({ status: 200, body: { exists: false } });
       // The command itself, below the HTTP layer, refuses a member (access is owner and admin), and makes no hook.
-      await expect(runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: member.userId, aal: 'aal1' }, orgId })).rejects.toMatchObject({ status: 403 });
+      await expect(runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: member.userId, aal: 'aal1', sessionId: member.session }, orgId })).rejects.toMatchObject({ status: 403 });
       // The runtime refuses an idempotency key on this command (its answer holds the key), and makes no hook for it either.
       const before = await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
       await expect(
-        runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: owner.userId, aal: 'aal1' }, orgId, idempotencyKey: randomUUID() }),
+        runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: owner.userId, aal: 'aal1', sessionId: owner.session }, orgId, idempotencyKey: randomUUID() }),
       ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
       expect(await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toEqual(before);
     });
