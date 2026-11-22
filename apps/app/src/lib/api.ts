@@ -5,11 +5,23 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@ludy/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type HrCvExtractDraft, type HrCvExtractResponse, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
-import { ClientError, apiErrorFromResponse, describeError, isMfaRequired, isOrgAccessRevoked, isUnauthenticated, retryWhileBusy } from './errors.ts';
+import {
+  ClientError,
+  apiErrorFromResponse,
+  describeError,
+  isMfaRequired,
+  isModuleOff,
+  isOrgAccessRevoked,
+  isServerRefusal,
+  isStepUpRequired,
+  isUnauthenticated,
+  retryWhileBusy,
+} from './errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from './org-access.ts';
 
 let currentOrg: string | null = null;
@@ -453,4 +465,85 @@ export async function uploadFiles(
   const results: Uploaded[] = [];
   for (const file of files) results.push(...(await send([file])).files);
   return { files: results };
+}
+
+const CV_EXTRACT_POLL_INTERVAL_MS = 800;
+const CV_EXTRACT_POLL_TIMEOUT_MS = 20_000;
+
+function isRetryableCvPollError(error: unknown): boolean {
+  if (
+    isUnauthenticated(error) ||
+    isMfaRequired(error) ||
+    isOrgAccessRevoked(error) ||
+    isStepUpRequired(error) ||
+    isModuleOff(error) ||
+    isServerRefusal(error)
+  ) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  const status = (error as { status?: unknown } | null)?.status;
+  return code === 'UPLOAD_BUSY' || (typeof status === 'number' && status >= 500) || isNetworkFailure(error);
+}
+
+export async function extractRecruitingCv(
+  file: File,
+  options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null } = {},
+): Promise<HrCvExtractDraft> {
+  if (file.size === 0) {
+    throw new ClientError('hrRecruiting.cvExtract.emptyFile', (t) => t('hrRecruiting.cvExtract.emptyFile'));
+  }
+  if (file.size > HR_CV_MAX_BYTES) {
+    throw new ClientError('hrRecruiting.cvExtract.fileTooLarge', (t) => t('hrRecruiting.cvExtract.fileTooLarge'));
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'cv');
+  if (options.openingId) form.append('openingId', options.openingId);
+  if (options.legalEntityId) form.append('legalEntityId', options.legalEntityId);
+  if (options.lang) form.append('lang', options.lang);
+  if (options.useAi === false) form.append('useAi', 'false');
+
+  const orgOpt = { orgSlug: options.orgSlug === undefined ? currentOrg : options.orgSlug };
+  const initialRes = await retryWhileBusy(() =>
+    apiFetch('/api/hr/recruiting/cv-extract', {
+      method: 'POST',
+      body: form,
+      ...orgOpt,
+    }),
+  );
+  let payload = (await initialRes.json()) as HrCvExtractResponse;
+  if (payload.status === 'ready') return payload.draft;
+
+  const params = new URLSearchParams();
+  if (options.openingId) params.set('openingId', options.openingId);
+  if (options.legalEntityId) params.set('legalEntityId', options.legalEntityId);
+  if (options.lang) params.set('lang', options.lang);
+  if (options.useAi === false) params.set('useAi', 'false');
+  const query = params.toString();
+  const pollPath = `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`;
+
+  const deadline = Date.now() + CV_EXTRACT_POLL_TIMEOUT_MS;
+  let lastTransientError: unknown = null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CV_EXTRACT_POLL_INTERVAL_MS, remaining)));
+    try {
+      const pollRes = await apiFetch(pollPath, orgOpt);
+      lastTransientError = null;
+      payload = (await pollRes.json()) as HrCvExtractResponse;
+      if (payload.status === 'ready') return payload.draft;
+    } catch (error) {
+      if (!isRetryableCvPollError(error)) {
+        throw error;
+      }
+      lastTransientError = error;
+    }
+  }
+
+  if (lastTransientError !== null) {
+    throw lastTransientError;
+  }
+
+  throw new ClientError('hrRecruiting.cvExtract.timedOut', (t) => t('hrRecruiting.cvExtract.timedOut'));
 }

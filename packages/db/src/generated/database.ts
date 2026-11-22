@@ -2032,6 +2032,8 @@ export interface HrCandidateTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  source: Generated<string>;
+  hired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_hr.department */

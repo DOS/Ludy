@@ -72,7 +72,8 @@ import {
   type AttendanceAnomaliesPorts,
 } from './attendance-coworker-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
-import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
+import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot, HrInviteDraftContext } from '@ludy/mod-hr';
+import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
 import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
@@ -1314,6 +1315,19 @@ export function createRpcHandler(
         interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
         brief: os.hr.recruiting.brief.handler(({ context, input }) =>
           inHr(context, (orgId, actor) => generateRecruitingBrief(recruitingBriefAi, recruitingBriefPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
+        analytics: os.hr.recruiting.analytics.handler(hrQuery('hr.recruiting.analytics')),
+        inviteDraft: os.hr.recruiting.inviteDraft.handler(({ context, input }) =>
+          inHr(context, async (orgId, actor) => {
+            const ctxData = await runtime.query<HrInviteDraftContext>('hr.recruiting.invite_draft.context', input, { actor, orgId });
+            const draft = buildEngageInviteDraftResult(ctxData);
+            await runtime.execute(
+              'hr.recruiting.invite_draft.audit',
+              { candidateId: draft.candidateId, channel: draft.channel, slotCount: draft.slots.length },
+              { actor, orgId },
+            );
+            return draft;
+          }),
         ),
       },
     },

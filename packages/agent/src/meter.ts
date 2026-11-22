@@ -147,6 +147,8 @@ export const AI_FEATURES = {
   'hr.recruiting_brief': 'hr',
   // Ly's pseudonymized monthly attendance anomaly narration (#4447 Stage 5C): reads E1..En aliases and deterministic anomaly counts/flags only; detection and payroll rollup stay 100% deterministic.
   'hr.attendance_anomaly': 'hr',
+  // Ly's structured CV field extraction into a tainted editable proposal draft (#4446 Stage 5D): reads sandboxed PDF/DOCX text via crove-extract only; never auto-creates or auto-rejects candidates.
+  'hr.cv_extract': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.

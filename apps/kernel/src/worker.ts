@@ -61,6 +61,7 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
+import { HR_CV_RETRY_LIMIT, runHrCvExtractJob, type HrCvExtractJob } from './hr-cv-worker.ts';
 import {
   SIGN_CLEANUP_CRON,
   SIGN_EXPIRE_SWEEP_CRON,
@@ -907,6 +908,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const notes = deps.runtime.installed('notes');
   const sign = deps.runtime.installed('sign');
   const ads = deps.runtime.installed('ads');
+  const hr = deps.runtime.installed('hr');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -1430,6 +1432,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
     await dropCron(QUEUES.notesRemind);
+  }
+
+  // HR (#4446 Stage 5D): sandboxed CV PDF/DOCX extraction through crove-extract in the worker process (T12).
+  if (hr) {
+    const hrCvConcurrency = extractWorkers(deps.extract);
+    await boss.work<HrCvExtractJob>(
+      QUEUES.hrCvExtract,
+      { batchSize: 1, localConcurrency: hrCvConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS, includeMetadata: true },
+      async ([job]) => {
+        if (!job) return;
+        await runHrCvExtractJob({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, job.data, job.retryCount ?? 0);
+      },
+    );
   }
 
   // eSign (#3323, ADR-0053): PDF inspect and PDF seal are module work gated on org_app_on(orgId, 'sign'); expiry and
@@ -3100,6 +3115,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (notes) await queueNotesMemberPurge(boss, row);
               if (notes && row.type === 'notes.attachment.extract_queued') {
                 await queueNoteAttachmentExtract(boss, row);
+              }
+              if (hr && row.type === 'hr.recruiting.cv_extract_queued') {
+                const cvJob: HrCvExtractJob = {
+                  orgId: row.org_id,
+                  jobId: String(row.payload.jobId),
+                  storageKey: String(row.payload.storageKey),
+                  kind: row.payload.kind === 'docx_text' ? 'docx_text' : 'pdf_text',
+                  sha256: String(row.payload.sha256),
+                  sizeBytes: Number(row.payload.sizeBytes),
+                };
+                await boss.send(QUEUES.hrCvExtract, cvJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.hrCvExtract, cvJob.jobId),
+                  retryLimit: HR_CV_RETRY_LIMIT,
+                });
+              }
+              if (hr && row.type === 'kernel.org.apps_changed' && row.payload.module === 'hr' && row.payload.enabled === true) {
+                const pendingCv = await deps.runtime
+                  .query<Array<Omit<HrCvExtractJob, 'orgId'>>>(
+                    'hr.recruiting.cv_extract.pending',
+                    {},
+                    { actor: { type: 'system', component: 'hr.cv_extract' }, orgId: row.org_id },
+                  )
+                  .catch(() => []);
+                for (const item of pendingCv) {
+                  await boss.send(
+                    QUEUES.hrCvExtract,
+                    { orgId: row.org_id, ...item } satisfies HrCvExtractJob,
+                    {
+                      singletonKey: jobKey(row.org_id, QUEUES.hrCvExtract, item.jobId),
+                      retryLimit: HR_CV_RETRY_LIMIT,
+                    },
+                  );
+                }
               }
               if (sign && row.type === 'sign.envelope.inspect_queued') {
                 await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));

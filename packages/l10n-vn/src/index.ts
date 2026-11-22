@@ -16,4 +16,5 @@ export * from './banks.ts';
 export * from './bank-account.ts';
 export * from './labor-contracts.ts';
 export * from './recruiting.ts';
+export * from './recruiting-intake.ts';
 export * from './todo-quick-add.ts';

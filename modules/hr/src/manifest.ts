@@ -20,7 +20,7 @@ export const hrManifest = defineModule({
       attendance_qr_config: columns(['org_id', 'id', 'legal_entity_id', 'active', 'created_by', 'created_at', 'updated_at'], { qr_secret_hash: 'sensitive' }),
       // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
       candidate: columns(
-        ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'erased_at', 'created_by', 'created_at', 'updated_at'],
+        ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'source', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'hired_at', 'erased_at', 'created_by', 'created_at', 'updated_at'],
         { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
       ),
       // Departments per legal entity (#3412, #4300): optional team structure with default pay_function and optional L1 leave manager. Org master data: internal.

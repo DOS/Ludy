@@ -288,7 +288,8 @@ import { WEB_MANIFEST_PATH, brandedManifest } from './web-manifest.ts';
 import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
-import type { AiMeter } from '@ludy/agent';
+import { withAiScope, type AiMeter } from '@ludy/agent';
+import { handleHrCvExtractPoll, handleHrCvExtractUpload } from './hr-cv-http.ts';
 import type { ModelPort } from './member-vy-ports.ts';
 import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
@@ -533,6 +534,8 @@ export interface HttpDeps {
   portalSync?: PortalSync;
   // Realtime invalidation (issue #69). Unset: /api/stream answers 404 and the app keeps polling.
   stream?: StreamDeps;
+  // Optional wait timeout in ms for worker-side CV PDF/DOCX extraction before returning 202 pending (#4446).
+  hrCvWaitMs?: number;
 }
 
 export interface StreamDeps {
@@ -3362,6 +3365,80 @@ export function createHttpApp(deps: HttpDeps) {
       });
       c.header('cache-control', 'private, no-store');
       return c.json(result, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Sandboxed HR CV PDF/DOCX extraction (#4446 Stage 5D, gate T12):
+  // never parses raw bytes in the API process; stages to tmp/<orgId>/<sha256>, relays via outbox to crove-extract in worker,
+  // and optionally passes extracted plain text to metered Ly draft proposal inside withAiScope.
+  const hrCvAi = {
+    reader: deps.conversationReader?.cvExtract ? { cvExtract: deps.conversationReader.cvExtract.bind(deps.conversationReader) } : null,
+    budget: drafts,
+    aiEnabled: deps.aiEnabled,
+  };
+
+  app.post('/api/hr/recruiting/cv-extract', uploadSlot, async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
+      }
+      const actor = actorOf(user);
+      const res = await handleHrCvExtractUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+        cvAi: hrCvAi,
+        ...(deps.hrCvWaitMs !== undefined ? { waitMs: deps.hrCvWaitMs } : {}),
+        runInAiScope: (fn) => (deps.aiMeter ? withAiScope({ orgId, meter: deps.aiMeter(actor) }, fn) : fn()),
+      });
+      return c.json(res, res.status === 'ready' ? 200 : 202);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/hr/recruiting/cv-extract/:jobId', async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const user = c.get('user');
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
+      }
+      const actor = actorOf(user);
+      const openingId = c.req.query('openingId') || undefined;
+      const legalEntityId = c.req.query('legalEntityId') || undefined;
+      const lang = c.req.query('lang') === 'en' ? 'en' : 'vi';
+      const useAi = c.req.query('useAi') !== 'false';
+      const res = await handleHrCvExtractPoll({
+        runtime,
+        store,
+        user,
+        orgId,
+        jobId: c.req.param('jobId'),
+        ...(openingId ? { openingId } : {}),
+        ...(legalEntityId ? { legalEntityId } : {}),
+        lang,
+        useAi,
+        cvAi: hrCvAi,
+        runInAiScope: (fn) => (deps.aiMeter ? withAiScope({ orgId, meter: deps.aiMeter(actor) }, fn) : fn()),
+      });
+      return c.json(res, res.status === 'ready' ? 200 : 202);
     } catch (error) {
       return problem(c, error);
     }

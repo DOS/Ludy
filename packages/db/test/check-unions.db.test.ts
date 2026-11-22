@@ -165,6 +165,7 @@ import {
   AD_CAP_PERIODS,
   AD_DRAFT_ORIGINS,
   AD_DRAFT_STATUSES,
+  HR_CANDIDATE_SOURCES,
   HR_CANDIDATE_STAGES,
   HR_CONTRACT_FORMS,
   HR_CONTRACT_TYPES,
@@ -311,6 +312,7 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
+  'crove_hr.candidate.source': HR_CANDIDATE_SOURCES,
   'crove_hr.candidate.stage': HR_CANDIDATE_STAGES,
   'crove_hr.department.pay_function': HR_PAY_FUNCTIONS,
   'crove_hr.job_opening.contract_type': HR_CONTRACT_TYPES,

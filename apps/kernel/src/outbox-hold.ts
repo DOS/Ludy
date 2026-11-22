@@ -54,6 +54,7 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
   'social.': 'social',
   'crm.': 'crm',
   'ads.': 'ads',
+  'hr.': 'hr',
   // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
   'notes.attachment.': 'notes',
 };

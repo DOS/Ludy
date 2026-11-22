@@ -13,6 +13,8 @@ import { hrLeaveRequestCommands, hrLeaveRequestQueries } from './leave-requests.
 import { hrAttendanceCommands, hrAttendanceQueries } from './attendance.ts';
 import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 import { hrTodayQueries } from './today.ts';
+import { hrRecruitingAnalyticsQueries } from './recruiting-analytics.ts';
+import { hrRecruitingIntakeCommands, hrRecruitingIntakeQueries } from './recruiting-intake.ts';
 
 export * from './departments.ts';
 export * from './employees.ts';
@@ -21,6 +23,8 @@ export * from './leave.ts';
 export * from './leave-requests.ts';
 export * from './recruiting.ts';
 export * from './today.ts';
+export * from './recruiting-analytics.ts';
+export * from './recruiting-intake.ts';
 export * from './payroll-run.ts';
 export * from './payroll-preview.ts';
 export * from './payroll-posting.ts';
@@ -31,6 +35,6 @@ export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } f
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
-export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrRecruitingCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrRecruitingQueries, ...hrTodayQueries];
+export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrRecruitingCommands, ...hrRecruitingIntakeCommands];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrRecruitingQueries, ...hrTodayQueries, ...hrRecruitingAnalyticsQueries, ...hrRecruitingIntakeQueries];
 export { hrManifest } from './manifest.ts';

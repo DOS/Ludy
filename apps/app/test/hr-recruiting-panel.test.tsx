@@ -3,13 +3,17 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  HR_CANDIDATE_SOURCES,
   HR_CANDIDATE_STAGES,
   HR_JOB_OPENING_STATUSES,
   HR_RECRUITING_BRIEF_REASONS,
   type HrCandidateView,
+  type HrCvExtractDraft,
   type HrDepartmentView,
   type HrInterviewerOption,
+  type HrInviteDraftResult,
   type HrOpeningView,
+  type HrRecruitingAnalyticsResult,
   type LegalEntity,
 } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
@@ -50,9 +54,11 @@ vi.mock('../src/lib/api.ts', async () => {
           openings: { add: vi.fn(), edit: vi.fn(), close: vi.fn() },
           candidates: { add: vi.fn(), edit: vi.fn(), moveStage: vi.fn(), scheduleInterview: vi.fn(), cancelInterview: vi.fn(), hire: vi.fn(), erase: vi.fn() },
           brief: vi.fn(),
+          inviteDraft: vi.fn(),
         },
       },
     },
+    extractRecruitingCv: vi.fn(),
     queryClient: cache.current,
     errorMessage: (e: unknown) => String(e),
     isStepUpRequired: () => false,
@@ -63,6 +69,9 @@ const {
   CANDIDATE_PAGE_SIZE,
   CandidateDetailPanel,
   CandidateForm,
+  CvIntakePanel,
+  EngageInvitePanel,
+  FunnelAnalyticsSection,
   HireCandidatePanel,
   HrRecruitingPage,
   InterviewSchedulePanel,
@@ -79,6 +88,11 @@ const {
 } = await import('../src/routes/hr-recruiting.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
+const {
+  applyInviteInterviewerChange,
+  buildInviteSelectionKey,
+  shouldAcceptInviteDraftResponse,
+} = await import('../src/components/hr-recruiting-stage5d.tsx');
 
 const ENTITY_ID = '00000000-0000-7000-8000-000000000001';
 const DEPT_ID = '00000000-0000-7000-8000-000000000011';
@@ -127,6 +141,7 @@ const sampleCandidate: HrCandidateView = {
   email: 'thu@example.vn',
   phone: '0901234567',
   stage: 'offer',
+  source: 'direct',
   yearsExperience: 4,
   matchedSkills: ['MISA'],
   expectedWage: '18000000',
@@ -139,6 +154,7 @@ const sampleCandidate: HrCandidateView = {
   interviewerUserId: OWNER_USER_ID,
   interviewerName: 'Lê Hoàng Minh',
   hiredEmployeeId: null,
+  hiredAt: null,
   erasedAt: null,
   createdAt: NOW_ISO,
   updatedAt: NOW_ISO,
@@ -450,5 +466,140 @@ describe('HR recruiting UI (#3425)', () => {
     const pickerEn = wrap(<InterviewSchedulePanel candidate={sampleCandidate} initialOpen={true} />, 'en');
     expect(pickerEn).toContain('Lê Hoàng Minh (Owner)');
     expect(pickerEn).toContain('Trần Thu Trang (Member)');
+  });
+
+  it('renders Stage 5D CV intake proposal, funnel BI analytics, candidate source selector, and Engage invite draft in VI and EN (#4446)', () => {
+    expect(HR_CANDIDATE_SOURCES).toEqual(['direct', 'zalo_oa', 'facebook', 'referral', 'job_board', 'other']);
+    expect(viMessages.commands.hr.recruiting.analytics).toBeTruthy();
+    expect(en.commands.hr.recruiting.analytics).toBeTruthy();
+    expect(viMessages.commands.hr.recruiting.cv_extract.request).toBeTruthy();
+    expect(en.commands.hr.recruiting.cv_extract.request).toBeTruthy();
+    expect(viMessages.commands.hr.recruiting.invite_draft.context).toBeTruthy();
+    expect(en.commands.hr.recruiting.invite_draft.context).toBeTruthy();
+    for (const code of ['HR_CV_EXTRACT_FAILED', 'HR_CV_EMPTY_TEXT', 'HR_CV_JOB_NOT_FOUND', 'HR_CV_INTEGRITY'] as const) {
+      expect(viMessages.kernelErrors.codes[code]).toBeTruthy();
+      expect(en.kernelErrors.codes[code]).toBeTruthy();
+    }
+
+    const cvIntakeVi = wrap(<CvIntakePanel openings={[sampleOpening]} defaultOpeningId={OPENING_ID} onDraftReady={() => undefined} onClose={() => undefined} />, 'vi');
+    expect(cvIntakeVi).toContain('hr-cv-intake-panel');
+    expect(cvIntakeVi).toContain('hr-cv-file-input');
+    expect(cvIntakeVi).toContain('hr-cv-extract-submit');
+    expect(cvIntakeVi).toContain('max-md:[&amp;_select]:min-h-11');
+    expect(cvIntakeVi).toContain(viMessages.hrRecruiting.cvExtract.proposalBadge);
+
+    const sampleCvDraft: HrCvExtractDraft = {
+      openingId: OPENING_ID,
+      openingTitle: sampleOpening.title,
+      displayName: 'Trần Bảo Ngọc',
+      email: 'ngoc@example.vn',
+      phone: '0912345678',
+      yearsExperience: 5,
+      matchedSkills: ['MISA', 'Excel'],
+      suggestedSource: 'zalo_oa',
+      notes: 'Tóm tắt CV: 5 năm kinh nghiệm',
+      sourceKind: 'pdf_text',
+      extractedChars: 340,
+      textPreview: 'Trần Bảo Ngọc',
+      ai: { ok: false, reason: 'ai_off' },
+      tainted: true,
+      draftKind: 'proposal',
+      autoSaved: false,
+      autonomousDecision: 'none',
+    };
+    const prefilledVi = wrap(<CandidateForm cvDraft={sampleCvDraft} openings={[sampleOpening]} onClose={() => undefined} />, 'vi');
+    expect(prefilledVi).toContain('hr-cv-proposal-banner');
+    expect(prefilledVi).toContain('Trần Bảo Ngọc');
+    expect(prefilledVi).toContain('ngoc@example.vn');
+    expect(prefilledVi).toContain('0912345678');
+    expect(prefilledVi).toContain('hr-candidate-source');
+    expect(prefilledVi).toContain(viMessages.hrRecruiting.cvExtract.status.ai_off);
+
+    const noOpeningDraft: HrCvExtractDraft = { ...sampleCvDraft, openingId: null, openingTitle: null };
+    const noOpeningVi = wrap(<CandidateForm cvDraft={noOpeningDraft} defaultOpeningId={OPENING_ID} openings={[sampleOpening]} onClose={() => undefined} />, 'vi');
+    expect(noOpeningVi).toMatch(/<option\b[^>]*(?:\bvalue=""[^>]*\bselected\b|\bselected\b[^>]*\bvalue="")/);
+    expect(noOpeningVi).not.toMatch(new RegExp(`<option\\b[^>]*\\bvalue="${OPENING_ID}"[^>]*\\bselected\\b`));
+
+    const analyticsSample: HrRecruitingAnalyticsResult = {
+      legalEntityId: ENTITY_ID,
+      openingId: null,
+      from: null,
+      to: null,
+      llmCost: 0,
+      totalCandidates: 12,
+      activeCandidates: 7,
+      hiredCount: 3,
+      rejectedCount: 2,
+      erasedExcludedCount: 1,
+      timeToHire: { sampleSize: 3, avgDays: '6.5', medianDays: '5.0' },
+      stages: HR_CANDIDATE_STAGES.map((stage) => ({ stage, count: 2, sharePct: '16.7' })),
+      funnel: [
+        { fromStage: 'applied', toStage: 'screening', enteredFromCount: 12, reachedToCount: 8, conversionPct: '66.7', dropOffPct: '33.3' },
+      ],
+      sources: [
+        { source: 'zalo_oa', totalCount: 5, activeCount: 2, hiredCount: 2, rejectedCount: 1, hireRatePct: '40.0', avgTimeToHireDays: '5.0' },
+      ],
+    };
+    const analyticsVi = wrap(<FunnelAnalyticsSection analyticsOverride={analyticsSample} />, 'vi');
+    expect(analyticsVi).toContain('hr-recruiting-analytics');
+    expect(analyticsVi).toContain('hr-analytics-total');
+    expect(analyticsVi).toContain('6.5');
+    expect(analyticsVi).toContain('5.0');
+    expect(analyticsVi).toContain('hr-analytics-funnel-row');
+    expect(analyticsVi).toContain('hr-analytics-source-row');
+
+    const analyticsEn = wrap(<FunnelAnalyticsSection analyticsOverride={analyticsSample} />, 'en');
+    expect(analyticsEn).toContain(en.hrRecruiting.analytics.title);
+    expect(analyticsEn).toContain(en.hrRecruiting.sources.zalo_oa);
+
+    const inviteDraftSample: HrInviteDraftResult = {
+      candidateId: CANDIDATE_ID,
+      channel: 'zalo_oa',
+      candidateLabel: 'Nguyễn Minh Thư',
+      openingTitle: 'Kế toán tổng hợp',
+      interviewerUserId: OWNER_USER_ID,
+      interviewerName: 'Lê Hoàng Minh',
+      slots: [{ startIso: '2026-11-25T02:00:00.000Z', endIso: '2026-11-25T03:00:00.000Z' }],
+      message: 'Chào Nguyễn Minh Thư, mời bạn phỏng vấn vị trí Kế toán tổng hợp qua Zalo OA.',
+      autoSent: false,
+      humanSendRequired: true,
+      ai: { ok: false, reason: 'template' },
+    };
+    const engageVi = wrap(<EngageInvitePanel candidate={sampleCandidate} initialDraft={inviteDraftSample} />, 'vi');
+    expect(engageVi).toContain('hr-engage-invite-panel');
+    expect(engageVi).toContain('hr-engage-channel');
+    expect(engageVi).toContain('hr-engage-interviewer');
+    expect(engageVi).toContain('hr-engage-draft-message');
+    expect(engageVi).toContain('hr-engage-draft-copy');
+    expect(engageVi).toContain(viMessages.hrRecruiting.engageInvite.manualNotice);
+
+    // Changing interviewer clears stale draft/message/copied; keeping same interviewer preserves manual edits.
+    const unchanged = applyInviteInterviewerChange(
+      { interviewerUserId: OWNER_USER_ID, draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      OWNER_USER_ID,
+    );
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.draft).toBe(inviteDraftSample);
+    expect(unchanged.messageText).toBe('Manual edit kept');
+    expect(unchanged.copied).toBe(true);
+
+    const switched = applyInviteInterviewerChange(
+      { interviewerUserId: OWNER_USER_ID, draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      MEMBER_USER_ID,
+    );
+    expect(switched).toEqual({
+      changed: true,
+      interviewerUserId: MEMBER_USER_ID,
+      draft: null,
+      messageText: '',
+      copied: false,
+    });
+
+    const keyA = buildInviteSelectionKey('ctx-1', 'zalo_oa', OWNER_USER_ID, 'vi');
+    const keyB = buildInviteSelectionKey('ctx-1', 'zalo_oa', MEMBER_USER_ID, 'vi');
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyA, requestSeq: 1 }, { selectionKey: keyA, requestSeq: 1 })).toBe(true);
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyB, requestSeq: 2 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
+    expect(shouldAcceptInviteDraftResponse({ mounted: true, selectionKey: keyA, requestSeq: 3 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
+    expect(shouldAcceptInviteDraftResponse({ mounted: false, selectionKey: keyA, requestSeq: 1 }, { selectionKey: keyA, requestSeq: 1 })).toBe(false);
   });
 });

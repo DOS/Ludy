@@ -55,6 +55,7 @@ describe('which events wait', () => {
     expect(heldAppOf('crm.booking.requested')).toBe('crm');
     expect(heldAppOf('finance.archive_requested')).toBe('finance');
     expect(heldAppOf('ads.launch.queued')).toBe('ads');
+    expect(heldAppOf('hr.recruiting.cv_extract_queued')).toBe('hr');
     expect(heldAppOf('notes.attachment.extract_queued')).toBe('notes');
     expect(heldAppOf('notes.todo.handed_over')).toBeNull();
     expect(heldAppOf('kernel.file.ingested')).toBe('finance');
