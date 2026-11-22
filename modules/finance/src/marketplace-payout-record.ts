@@ -127,7 +127,12 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .execute();
   // A carrier compensation is for goods that were lost: an order whose goods came back to stock (a person's answer, or the old automatic return) cannot also have lost them, or the cost would be taken twice
   // (#4355). The order is checked, not the line: a settlement line carries the report's row key, which is not the order line's. Both the request and the approval build here, so both refuse.
-  const goodsBack = await goodsBackOnLines(ctx, adjustments.flatMap((a) => (a.kind === 'carrier_compensation' ? [a.lineId] : [])));
+  // A line that is not one of the settlement's is left to the adjustment check below (ADJUSTMENT_LINE), which comes first.
+  const ownLines = new Set(lines.map((l) => String(l.id).toLowerCase()));
+  const goodsBack = await goodsBackOnLines(
+    ctx,
+    adjustments.flatMap((a) => (a.kind === 'carrier_compensation' && ownLines.has(a.lineId.toLowerCase()) ? [a.lineId.toLowerCase()] : [])),
+  );
   if (goodsBack !== null) {
     throw new DomainError('MARKETPLACE_PAYOUT_GOODS_BACK', 409, 'Hàng của đơn này đã được nhập lại kho nên không thể phân loại là hãng vận chuyển bồi thường hàng mất', { lineId: goodsBack });
   }

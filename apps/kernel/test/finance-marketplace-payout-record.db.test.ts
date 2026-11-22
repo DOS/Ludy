@@ -808,6 +808,21 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(await rows("SELECT 1 FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, orderLine])).toHaveLength(0);
     });
 
+    it('offers the order again once the proposal that named compensation is rejected, and lets compensation follow a "not back" answer (#4355)', async () => {
+      const { o, settlement, line, ids } = await company([{ sales: '100000', other: '3000' }], '103000');
+      const compensation = [{ kind: 'carrier_compensation', lineId: ids[0], amount: '3000', costAmount: '0' }];
+      const { proposalId } = await askWith(o, settlement, line, compensation);
+      const orderLine = await cameBack(o, ids[0] as string);
+      expect(await offered(o)).toEqual([]);
+      // A rejected proposal no longer counts: the order is offered, and "not back" moves nothing and leaves compensation open for a new request.
+      await rt.execute('kernel.proposal.reject', { id: proposalId, reason: 'no' }, { actor: asUser(o.owner), orgId: o.orgId });
+      expect(await offered(o)).toEqual([orderLine]);
+      await decide(o, orderLine, 'not_back');
+      expect(await offered(o)).toEqual([]);
+      const again = await askWith(o, settlement, line, compensation);
+      expect(accounts(await payloadOf(o, again.proposalId))?.map((l) => l[0])).toContain('711');
+    });
+
     it('offers the order of a payout that classified nothing as compensation, and refuses carrier compensation for an order whose goods are back, at the request and at the approval (#4355)', async () => {
       // An incentive names no compensation: the order is offered, the answer is taken.
       const first = await company([{ sales: '100000', other: '3000' }], '103000');

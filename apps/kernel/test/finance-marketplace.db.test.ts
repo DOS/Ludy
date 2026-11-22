@@ -232,13 +232,14 @@ suite('marketplace order reports (#2515)', () => {
     const o = await org();
     const other = await org();
     const item = await makeItem(o, 'QC-1');
-    await confirm(o, (await read(o, report(row('N1', 'Đang giao', 'QC-1', 2), row('N2', 'Đang giao', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4)))).fileId);
-    await confirm(o, (await read(o, report(row('N1', 'Đã hoàn trả', 'QC-1', 2), row('N2', 'Đã hoàn trả', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4)))).fileId);
+    await confirm(o, (await read(o, report(row('N1', 'Đang giao', 'QC-1', 2), row('N2', 'Đang giao', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4), row('N4', 'Đang giao', 'QC-1', 1)))).fileId);
+    await confirm(o, (await read(o, report(row('N1', 'Đã hoàn trả', 'QC-1', 2), row('N2', 'Đã hoàn trả', 'QC-1', 1), row('N3', 'Đang giao', 'QC-1', 4), row('N4', 'Đã hoàn trả', 'QC-1', 1)))).fileId);
     const waiting = async () => (await query<{ returns: Array<{ orderNo: string; quantity: string; itemCode: string; stage: string }> }>(o, 'finance.marketplace.worklist', {}, o.viewer)).returns;
-    // N1 and N2 came back; N3 is still on its way and is not asked. The quantity is the shipment's, as a plain number.
+    // N1, N2 and N4 came back; N3 is still on its way and is not asked. The quantity is the shipment's, as a plain number.
     expect((await waiting()).map((r) => [r.orderNo, r.quantity, r.itemCode, r.stage]).sort()).toEqual([
       ['N1', '2', 'QC-1', 'returned'],
       ['N2', '1', 'QC-1', 'returned'],
+      ['N4', '1', 'QC-1', 'returned'],
     ]);
     const n1 = await lineOf(o, 'N1');
     const n2 = await lineOf(o, 'N2');
@@ -247,14 +248,21 @@ suite('marketplace order reports (#2515)', () => {
     await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(execute(other, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' })).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_FOUND' });
     await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n3, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_OFFERED' });
-    expect(await onHand(o, item)).toBe('-7');
+    expect(await onHand(o, item)).toBe('-8');
     // "Not back": nothing moves, the line leaves the list, and the answer cannot be given again or changed to "back".
     const no = await execute<{ decision: string; moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'not_back' }, o.member);
     expect(no).toMatchObject({ decision: 'not_back', moveId: null });
-    expect(await onHand(o, item)).toBe('-7');
-    expect((await waiting()).map((r) => r.orderNo)).toEqual(['N2']);
+    expect(await onHand(o, item)).toBe('-8');
+    expect((await waiting()).map((r) => r.orderNo)).toEqual(['N2', 'N4']);
     await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: n1, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
-    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship', 'ship', 'ship']);
+    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship', 'ship', 'ship', 'ship']);
+    // An agent is not a person: refused, with nothing written.
+    await expect(rt.execute('finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // A line with an automatic return move from before this change is not offered and its answer is refused as decided (a move written straight into the table stands for it).
+    const legacy = await lineOf(o, 'N4');
+    await rows("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) SELECT org_id, legal_entity_id, item_id, move_date, -quantity, 'order_line', order_line_id, 'return', order_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'ship'", [o.orgId, legacy]);
+    expect((await waiting()).map((r) => r.orderNo)).toEqual(['N2']);
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: legacy, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_DECIDED' });
     // "Back": one return move, of the shipment's quantity, dated today; a second answer is refused and writes nothing.
     const yes = await execute<{ moveId: string | null }>(o, 'finance.marketplace_return.decide', { orderLineId: n2, decision: 'back' }, o.member);
     expect(yes.moveId).not.toBeNull();

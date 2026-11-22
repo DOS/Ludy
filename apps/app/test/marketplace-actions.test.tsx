@@ -137,6 +137,7 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
   });
 
   it('lists the lines that came back with the two answers, not held by the account map, and asks the server for nothing (#4355)', () => {
+    cache.current.setQueryData(['org', 'get'], { role: 'member' });
     // Nothing else waits and the account map is closed: the answers are still open, and no gate line is shown for them.
     const only = render({ ...EMPTY, postingConfirmed: false, salesPostingConfirmed: false, returns: [RETURNED, { ...RETURNED, orderLineId: lineB, orderNo: '2611A2', stage: 'cancelled' }] });
     expect(only).toContain('data-testid="marketplace-actions-returns"');
@@ -151,6 +152,14 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(disabled(withSettlement, 'marketplace-record')).toBe(true);
     const vi = render({ ...EMPTY, returns: [RETURNED] }, 'vi');
     for (const text of ['Dòng bị trả lại: hàng đã về chưa?', 'Hàng đã về', 'Hàng không về', 'Đã trả lại']) expect(vi).toContain(text);
+    // Each button names its order for a screen reader; the answer itself asks once more before it is sent (client state, not in the static render).
+    expect(only).toContain('aria-label="Goods are back: 2611A1 QC-1"');
+    // A viewer is not offered the buttons, and is told why.
+    cache.current.setQueryData(['org', 'get'], { role: 'viewer' });
+    const viewer = render({ ...EMPTY, returns: [RETURNED] });
+    expect(viewer).not.toContain('data-testid="marketplace-return-back"');
+    expect(viewer).toContain('marketplace-return-no-right');
+    cache.current.removeQueries({ queryKey: ['org', 'get'] });
     expect(cache.calls).toEqual([]);
   });
 

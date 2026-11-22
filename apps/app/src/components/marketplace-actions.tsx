@@ -290,6 +290,11 @@ function ReturnRow({ r }: { r: MarketplaceReturnToConfirm }) {
     mutationFn: (decision: 'back' | 'not_back') => client.marketplace.returns.decide({ orderLineId: r.orderLineId, decision, idempotencyKey: keys[decision] }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.marketplace.worklist.key() }),
   });
+  // Each answer is final, so a click only asks; the second click sends it. A viewer is not offered the buttons (the command would refuse them).
+  const [asked, setAsked] = useState<'back' | 'not_back' | null>(null);
+  const org = useQuery(orpc.org.get.queryOptions());
+  const canAnswer = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
+  const label = `${r.orderNo} ${r.itemCode}`;
   return (
     <TableRow data-testid="marketplace-action-return">
       <TableCell className="px-4 py-3">{r.platformName}</TableCell>
@@ -298,21 +303,49 @@ function ReturnRow({ r }: { r: MarketplaceReturnToConfirm }) {
       <TableCell className={NUM}>{f.number(r.quantity)} {r.unit}</TableCell>
       <TableCell className="px-4 py-3">{t(`returnStage_${r.stage}`)}</TableCell>
       <TableCell className="px-4 py-3 text-right">
-        <div className="flex flex-col items-end gap-1">
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button size="sm" className="min-h-11" loading={answer.isPending && answer.variables === 'back'} disabled={answer.isPending} onClick={() => answer.mutate('back')} data-testid="marketplace-return-back">
-              {t('goodsBack')}
-            </Button>
-            <Button size="sm" variant="outline" className="min-h-11" loading={answer.isPending && answer.variables === 'not_back'} disabled={answer.isPending} onClick={() => answer.mutate('not_back')} data-testid="marketplace-return-not-back">
-              {t('goodsNotBack')}
-            </Button>
+        {!canAnswer ? (
+          org.data ? <span className="text-xs text-subtle-foreground" data-testid="marketplace-return-no-right">{t('returnNoRight')}</span> : null
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            {asked === null ? (
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button size="sm" className="min-h-11" aria-label={`${t('goodsBack')}: ${label}`} onClick={() => setAsked('back')} data-testid="marketplace-return-back">
+                  {t('goodsBack')}
+                </Button>
+                <Button size="sm" variant="outline" className="min-h-11" aria-label={`${t('goodsNotBack')}: ${label}`} onClick={() => setAsked('not_back')} data-testid="marketplace-return-not-back">
+                  {t('goodsNotBack')}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex max-w-72 flex-col items-end gap-2">
+                <span className="text-right text-xs" id={`return-ask-${r.orderLineId}`} data-testid="marketplace-return-ask">
+                  {t(asked === 'back' ? 'returnAskBack' : 'returnAskNotBack', { order: r.orderNo })}
+                </span>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    className="min-h-11"
+                    aria-label={`${t('returnConfirm')}: ${label}`}
+                    loading={answer.isPending}
+                    disabled={answer.isPending}
+                    onClick={() => answer.mutate(asked)}
+                    data-testid="marketplace-return-confirm"
+                  >
+                    {t('returnConfirm')}
+                  </Button>
+                  <Button size="sm" variant="outline" className="min-h-11" disabled={answer.isPending} onClick={() => setAsked(null)} data-testid="marketplace-return-cancel">
+                    {t('returnCancel')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {answer.error && (
+              <span role="alert" className="max-w-72 text-right text-xs text-destructive" data-testid="marketplace-return-error">
+                {errorMessage(answer.error)}
+              </span>
+            )}
           </div>
-          {answer.error && (
-            <span className="max-w-72 text-right text-xs text-destructive" data-testid="marketplace-return-error">
-              {errorMessage(answer.error)}
-            </span>
-          )}
-        </div>
+        )}
       </TableCell>
     </TableRow>
   );
