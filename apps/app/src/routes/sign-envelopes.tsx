@@ -13,6 +13,7 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
+import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -118,7 +119,9 @@ export function SignEnvelopesPage() {
       ? orpc.me.get.queryOptions()
       : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
   );
-  const defaultPartyAName = meQuery.data?.orgs.find((o) => o.slug === slug)?.name ?? '';
+  const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
+  const defaultPartyAName = currentOrgInfo?.name ?? '';
+  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
   const isRenewalsTab = tab === 'renewals';
 
   const envelopesQuery = useQuery({
@@ -313,6 +316,8 @@ export function SignEnvelopesPage() {
           </div>
         }
       />
+
+      <ContractVaultBar key={slug} slug={slug} canAskVy={canAskVy} />
 
       <Tabs value={tab} onValueChange={(next) => setTab(next as EnvelopeFilterTab)}>
         <TabsList className="flex max-w-full flex-wrap group-data-horizontal/tabs:h-auto">

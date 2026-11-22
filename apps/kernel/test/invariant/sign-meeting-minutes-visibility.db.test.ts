@@ -1015,6 +1015,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         { actor: asUser(readerId), orgId },
       );
       expect(todayItems.some((item) => item.href === `/sign/envelopes/${recEnv.envelopeId}`)).toBe(true);
+
+      const vaultMatches = await runtime.query<{ items: Array<{ envelopeId: string }> }>(
+        'sign.vault.search',
+        { question: 'Doi tac bien ban mat', limit: 20 },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(vaultMatches.items.map((x) => x.envelopeId)).toContain(recEnv.envelopeId);
     }
 
     for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
@@ -1035,6 +1042,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         { actor: asUser(nonReaderId), orgId },
       );
       expect(todayItems.some((item) => item.href === `/sign/envelopes/${recEnv.envelopeId}`)).toBe(false);
+
+      const vaultMatches = await runtime.query<{ items: Array<{ envelopeId: string }> }>(
+        'sign.vault.search',
+        { question: 'Doi tac bien ban mat', limit: 20 },
+        { actor: asUser(nonReaderId), orgId },
+      );
+      expect(vaultMatches.items.map((x) => x.envelopeId)).not.toContain(recEnv.envelopeId);
     }
 
     for (const nonReaderWriterId of [ownerId, adminId, outsiderMemberId]) {

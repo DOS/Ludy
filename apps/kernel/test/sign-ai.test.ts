@@ -13,7 +13,7 @@ import {
 import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import type { SignAiAnalysisRecord, SignAiSource } from '@ludy/mod-sign';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { getEnvelopeAiAnalysis, proposeEnvelopeAnalysis, signAi } from '../src/sign-ai.ts';
+import { askSignVault, getEnvelopeAiAnalysis, proposeEnvelopeAnalysis, signAi } from '../src/sign-ai.ts';
 
 const ORG_ID = '00000000-0000-7000-8000-000000000001';
 const USER_ID = '00000000-0000-7000-8000-000000000010';
@@ -888,5 +888,175 @@ describe('kernel sign-ai orchestration', () => {
     expect(conflictOut.analysis).toEqual(priorCompleted);
     expect(conflictOut.summaryText).toBe('Confidentiality term lasts 24 months.');
     expect(executedOnConflict).toEqual(['sign.envelope.propose_fields']);
+  });
+
+  it('askSignVault (#4439) preserves 100% AI-off parity, skips LLM on no_matches, meters sign.vault_qa, handles budget/busy/kill-switch, and propagates 403 viewer refusal', async () => {
+    const sampleItems = [
+      {
+        envelopeId: ENVELOPE_ID,
+        title: 'Hợp đồng dịch vụ phần mềm Minh Anh',
+        status: 'completed' as const,
+        sourceKind: 'standalone' as const,
+        pageCount: 2,
+        completedAt: '2026-11-20T09:00:00.000Z',
+        updatedAt: '2026-11-20T09:00:00.000Z',
+        counterpartyName: 'Công ty TNHH Minh Anh',
+        effectiveDate: '2026-12-01',
+        expiryDate: '2027-11-30',
+        renewalNoticeDays: 30,
+        autoRenew: true,
+        contractValue: '24000000',
+        currency: 'VND',
+        score: 28,
+        snippets: [
+          {
+            kind: 'clause' as const,
+            pageNumber: 2,
+            excerpt: 'Bên B chịu phạt chậm thanh toán 0,05%/ngày trên số tiền quá hạn.',
+          },
+        ],
+      },
+    ];
+
+    let aiStopped = false;
+    let vaultItems = sampleItems;
+    let forbidAiSource = false;
+
+    const vaultRuntime = {
+      query: vi.fn(async (name: string) => {
+        if (name === 'sign.drafter.ai_source') {
+          if (forbidAiSource) throw new DomainError('FORBIDDEN', 403, 'Viewer cannot spend AI budget');
+          return { aiStopped };
+        }
+        if (name === 'sign.vault.search') {
+          return { items: vaultItems };
+        }
+        throw new Error(`Unexpected query: ${name}`);
+      }),
+      execute: vi.fn(async () => ({})),
+    } as unknown as Runtime;
+
+    const noopMeter: AiMeter = { admit: async () => {}, record: async () => {} };
+
+    // 1. AI off (null reader) returns exact deterministic items with ai: 'off'.
+    const offOut = await askSignVault({
+      ai: signAi(null, new DraftBudget()),
+      runtime: vaultRuntime,
+      orgId: ORG_ID,
+      actor: USER,
+      input: { question: 'phạt chậm thanh toán Minh Anh', limit: 12 },
+      meter: noopMeter,
+    });
+    expect(offOut).toEqual({ ai: 'off', items: sampleItems, summary: null });
+
+    // 2. Zero matches skips model call completely and returns ai: 'no_matches'.
+    const vaultCalls: string[] = [];
+    const vaultReader = new SignAiReader(
+      { baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test' },
+      {
+        vaultQa: async ({ prompt }) => {
+          vaultCalls.push(prompt);
+          return {
+            output: {
+              answer: 'Hợp đồng dịch vụ phần mềm Minh Anh quy định phạt chậm thanh toán 0,05%/ngày.',
+              citations: [
+                {
+                  envelopeId: ENVELOPE_ID,
+                  pageNumber: 2,
+                  quoteExcerpt: 'phạt chậm thanh toán 0,05%/ngày trên số tiền quá hạn.',
+                },
+              ],
+            },
+          };
+        },
+      },
+    );
+
+    vaultItems = [];
+    const noMatchOut = await askSignVault({
+      ai: signAi(vaultReader, new DraftBudget()),
+      runtime: vaultRuntime,
+      orgId: ORG_ID,
+      actor: USER,
+      input: { question: 'không tồn tại', limit: 12 },
+      meter: noopMeter,
+    });
+    expect(noMatchOut).toEqual({ ai: 'no_matches', items: [], summary: null });
+    expect(vaultCalls).toHaveLength(0);
+
+    // 3. AI on returns verified citations + proposedByAi: true.
+    vaultItems = sampleItems;
+    const usedOut = await askSignVault({
+      ai: signAi(vaultReader, new DraftBudget()),
+      runtime: vaultRuntime,
+      orgId: ORG_ID,
+      actor: USER,
+      input: { question: 'phạt chậm thanh toán Minh Anh', limit: 12 },
+      meter: noopMeter,
+    });
+    expect(usedOut.ai).toBe('used');
+    expect(usedOut.items).toEqual(sampleItems);
+    expect(usedOut.summary).toEqual({
+      answer: 'Hợp đồng dịch vụ phần mềm Minh Anh quy định phạt chậm thanh toán 0,05%/ngày.',
+      proposedByAi: true,
+      citations: [
+        {
+          envelopeId: ENVELOPE_ID,
+          envelopeTitle: 'Hợp đồng dịch vụ phần mềm Minh Anh',
+          pageNumber: 2,
+          quoteExcerpt: 'phạt chậm thanh toán 0,05%/ngày trên số tiền quá hạn.',
+        },
+      ],
+    });
+    expect(vaultCalls).toHaveLength(1);
+
+    // 4. Budget exhausted returns ai: 'budget' while still returning deterministic items!
+    const exhaustedMeter: AiMeter = {
+      admit: async (_call: AiCall) => {
+        throw new AiBudgetExhaustedError('org', null);
+      },
+      record: async () => {},
+    };
+    const readerWithAdmit = new SignAiReader(
+      { baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test' },
+      {
+        vaultQa: async () => {
+          throw new AiBudgetExhaustedError('org', null);
+        },
+      },
+    );
+    const budgetOut = await askSignVault({
+      ai: signAi(readerWithAdmit, new DraftBudget()),
+      runtime: vaultRuntime,
+      orgId: ORG_ID,
+      actor: USER,
+      input: { question: 'phạt chậm thanh toán Minh Anh', limit: 12 },
+      meter: exhaustedMeter,
+    });
+    expect(budgetOut).toEqual({ ai: 'budget', items: sampleItems, summary: null });
+
+    // 5. Viewer forbidden on sign.drafter.ai_source propagates 403 DomainError cleanly.
+    forbidAiSource = true;
+    await expect(
+      askSignVault({
+        ai: signAi(vaultReader, new DraftBudget()),
+        runtime: vaultRuntime,
+        orgId: ORG_ID,
+        actor: USER,
+        input: { question: 'Minh Anh', limit: 12 },
+        meter: noopMeter,
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    forbidAiSource = false;
+    aiStopped = true;
+    const killedOut = await askSignVault({
+      ai: signAi(vaultReader, new DraftBudget()),
+      runtime: vaultRuntime,
+      orgId: ORG_ID,
+      actor: USER,
+      input: { question: 'Minh Anh', limit: 12 },
+      meter: noopMeter,
+    });
+    expect(killedOut).toEqual({ ai: 'off', items: sampleItems, summary: null });
   });
 });

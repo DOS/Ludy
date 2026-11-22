@@ -12,6 +12,8 @@ import type {
   SignObligationRenewalListItem,
   SignSharedKeyTerm,
   SignSharedSummary,
+  SignVaultAskResult,
+  SignVaultMatchItem,
 } from '@ludy/kernel-contract';
 import { client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
@@ -639,12 +641,18 @@ export const signApi = {
   }) => client.sign.stamp.create({ ...input, idempotencyKey: crypto.randomUUID() }),
   archiveStamp: (stampId: string) =>
     client.sign.stamp.archive({ stampId, idempotencyKey: crypto.randomUUID() }),
+  searchVault: (input: { question: string; status?: SignEnvelopeStatus; limit?: number }) =>
+    client.sign.vault.search(input),
+  askVault: (input: { question: string; status?: SignEnvelopeStatus; limit?: number }) =>
+    client.sign.vault.ask(input),
 };
 
 export type {
   SignEnvelopeObligationRecordContract,
   SignObligationProposalContract,
   SignObligationRenewalListItem,
+  SignVaultAskResult,
+  SignVaultMatchItem,
 };
 
 export type SignCaProvider = 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign';

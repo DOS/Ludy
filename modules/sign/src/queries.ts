@@ -35,6 +35,7 @@ import {
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
 import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parseSharedSummary } from './shared.ts';
+import { signVaultQueries } from './vault.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -996,4 +997,5 @@ export const signQueries = [
   ...signCaQueries,
   ...signObligationQueries,
   ...signProfileQueries,
+  ...signVaultQueries,
 ];

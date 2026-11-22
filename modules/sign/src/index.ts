@@ -88,6 +88,15 @@ export {
   signProfileQueries,
 } from './profiles.ts';
 export {
+  foldVaultSearchText,
+  parseSignVaultQuery,
+  scoreSignVaultCandidates,
+  signVaultQueries,
+  vaultSearch,
+  type ParsedVaultQuery,
+  type SignVaultCandidateInput,
+} from './vault.ts';
+export {
   signTemplateCommands,
   signTemplateQueries,
   type SignTemplateInspectJobData,

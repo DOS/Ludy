@@ -151,6 +151,8 @@ export const AI_FEATURES = {
   'sign.contract_draft': 'sign',
   // Vy (the general manager) extracting post-signature renewal dates, contract value, auto-renewal notice window and milestone obligations from a completed eSign PDF (#3821): one call over bounded page text per ask, every term pinned to a verbatim quote and tainted until human confirmation.
   'sign.obligation_extract': 'sign',
+  // Vy (the general manager) answering a question across the caller's already-permitted eSign contracts (#4439): one call over at most 20 bounded contract snippets, zero tools, every citation verified verbatim against the caller's candidate set. Nothing is stored.
+  'sign.vault_qa': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

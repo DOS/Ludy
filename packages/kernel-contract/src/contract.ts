@@ -816,6 +816,10 @@ import {
   zSignObligationRenewalsListInput,
   zSignObligationRenewalsListResult,
   zSignObligationUpsertInput,
+  zSignVaultAskInput,
+  zSignVaultAskResult,
+  zSignVaultSearchInput,
+  zSignVaultSearchResult,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -3673,6 +3677,10 @@ export const contract = {
       list: oc.input(zSignOrgStampListInput).output(zSignOrgStampListResult),
       create: oc.input(zSignOrgStampCreateInput).output(zSignOrgStampCreateResult),
       archive: oc.input(zSignOrgStampArchiveInput).output(zSignOrgStampArchiveResult),
+    },
+    vault: {
+      search: oc.input(zSignVaultSearchInput).output(zSignVaultSearchResult),
+      ask: oc.input(zSignVaultAskInput).output(zSignVaultAskResult),
     },
   },
 };

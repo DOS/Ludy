@@ -8,6 +8,7 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { z } from 'zod';
 import type { HrCandidateView, HrEmploymentView, SignEnvelopeBySourceItem } from '@ludy/kernel-contract';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { resolveUnfinishedEnvelopeId, signEnvelopePollMs, useSignAppEnabled } from './quote-sign-handoff.tsx';
@@ -493,12 +494,33 @@ function HrContractSignHandoffView({
           {t('sign.send')}
         </Button>
       )}
+      {(showSendButton || envelope !== null) && (
+        <p
+          className="w-full max-w-xs whitespace-normal text-xs text-muted-foreground"
+          data-testid="hr-contract-nd337-hint"
+        >
+          {t('sign.nd337InlineHint')}
+        </p>
+      )}
       {activeError && (
         <div className="w-full" data-testid="hr-contract-sign-error">
           <ErrorText>{errorMessage(activeError)}</ErrorText>
         </div>
       )}
     </>
+  );
+}
+
+export function HrContractNd337Notice({ signEnabled }: { signEnabled?: boolean }) {
+  const orgSignEnabled = useSignAppEnabled(signEnabled === undefined);
+  const enabled = signEnabled ?? orgSignEnabled;
+  const t = useTranslations('hrEmployees');
+  if (!enabled) return null;
+  return (
+    <Alert className="mt-2 mb-3" data-testid="hr-contract-nd337-banner">
+      <AlertTitle>{t('sign.nd337Title')}</AlertTitle>
+      <AlertDescription>{t('sign.nd337Body')}</AlertDescription>
+    </Alert>
   );
 }
 
