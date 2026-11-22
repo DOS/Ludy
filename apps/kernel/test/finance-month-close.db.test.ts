@@ -319,31 +319,99 @@ suite('the month-close checklist', () => {
     expect(count(await close('2026-08'), 'bank')).toBe(2);
   });
 
-  it('counts the tax-portal invoices that match no voucher once a list was read for the month, and not before', async () => {
-    const fileId = randomUUID();
-    const sha = 'b'.repeat(64);
-    const list = (period: string, state: 'done' | 'pending') =>
-      admin(async (a) => {
-        await a.query(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'ds.xlsx', 'application/octet-stream', 10, 'upload') ON CONFLICT DO NOTHING`, [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`]);
-        const id = String((await a.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, direction, legal_entity_id) VALUES ($1, $2, $3, 'ds.xlsx', 'purchase', $4) RETURNING id`, [o.orgId, period, fileId, defaultEntity])).rows[0]?.id);
-        if (state === 'done') {
-          for (const [no, number] of [[1, '101'], [2, '102']] as const) {
-            await a.query(
-              `INSERT INTO crove_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, seller_name, template, series, number, issue_date, subtotal, vat_amount, total, status)
-               VALUES ($1, $2, $3, '0101234564', 'Bên bán', '1', 'C26TAA', $4, '2026-05-10', 1000000, 100000, 1100000, 'original')`,
-              [o.orgId, id, no, number],
-            );
-          }
-          await a.query(`UPDATE crove_finance.portal_invoice_list SET status = 'done', row_count = 2 WHERE id = $1`, [id]);
+  // A tax-portal list of the entity for a VAT period and direction, still being read (pending) or read (done, with one row per number: none of them is in the books).
+  const portalList = (period: string, direction: 'purchase' | 'sale', numbers: string[], state: 'done' | 'pending' = 'done') =>
+    admin(async (a) => {
+      const fileId = randomUUID();
+      const sha = randomUUID().replaceAll('-', '').repeat(2);
+      await a.query(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'ds.xlsx', 'application/octet-stream', 10, 'upload')`, [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`]);
+      const id = String(
+        (await a.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, direction, legal_entity_id) VALUES ($1, $2, $3, 'ds.xlsx', $4, $5) RETURNING id`, [o.orgId, period, fileId, direction, defaultEntity])).rows[0]?.id,
+      );
+      // The invoices are dated on the 10th of the period's first month.
+      const quarter = /^(\d{4})-Q(\d)$/.exec(period);
+      const issued = quarter ? `${quarter[1]}-${String((Number(quarter[2]) - 1) * 3 + 1).padStart(2, '0')}-10` : `${period}-10`;
+      if (state === 'done') {
+        for (const [i, number] of numbers.entries()) {
+          await a.query(
+            `INSERT INTO crove_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, seller_name, buyer_tax_code, template, series, number, issue_date, subtotal, vat_amount, total, status)
+             VALUES ($1, $2, $3, '0101234564', 'Bên bán', $4, '1', 'C26TAA', $5, $6, 1000000, 100000, 1100000, 'original')`,
+            [o.orgId, id, i + 1, direction === 'sale' ? '0301234567' : null, number, issued],
+          );
         }
-      });
+        await a.query(`UPDATE crove_finance.portal_invoice_list SET status = 'done', row_count = $2 WHERE id = $1`, [id, numbers.length]);
+      }
+    });
+
+  it('counts the tax-portal invoices that match no voucher once a list was read for the month, and not before', async () => {
     // A list that is still being read says nothing yet: the item does not apply.
-    await list('2026-04', 'pending');
+    await portalList('2026-04', 'purchase', [], 'pending');
     expect(item(await close('2026-04'), 'invoices')).toBeUndefined();
     expect(item(await close('2026-05'), 'invoices')).toBeUndefined();
-    await list('2026-05', 'done');
+    await portalList('2026-05', 'purchase', ['101', '102']);
     // Two invoices of the portal's list that no voucher of the books matches.
     expect(item(await close('2026-05'), 'invoices')).toEqual({ key: 'invoices', count: 2, period: '2026-05' });
     expect(item(await close('2026-05', o.owner, o.orgId, branch), 'invoices')).toBeUndefined();
+  });
+
+  it('reads each direction from its own list: a quarterly filer\'s quarter list for purchases and the month\'s own list for sales, and opens the sales tab when only sales are unmatched', async () => {
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = 'quarter' WHERE org_id = $1`, [o.orgId]));
+    // March ends the first quarter: a Q1 purchase list of two missing invoices, and a March sales list of one. Neither list is dropped for the other.
+    await portalList('2026-Q1', 'purchase', ['201', '202']);
+    await portalList('2026-03', 'sale', ['301']);
+    // A March purchase list too: the quarter's list wins for purchases, so its invoices are not counted twice.
+    await portalList('2026-03', 'purchase', ['401', '402', '403']);
+    expect(item(await close('2026-03'), 'invoices')).toEqual({ key: 'invoices', count: 3, period: '2026-Q1' });
+    // June: a read purchase list with nothing missing and a sales list of one: the count is the sales one, and the link says sales.
+    await portalList('2026-Q2', 'purchase', []);
+    await portalList('2026-06', 'sale', ['501']);
+    expect(item(await close('2026-06'), 'invoices')).toEqual({ key: 'invoices', count: 1, period: '2026-06', direction: 'sale' });
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [o.orgId]));
+  });
+
+  // A settlement of one line with a delivery day, so its entry is known: sales, refund and net as given; a reversal of another settlement when `reversalOf` names it.
+  async function deliveredSettlement(platform: string, start: string, end: string, line: { sales: number; refund: number; net: number }, reversalOf: string | null = null): Promise<string> {
+    return admin(async (a) => {
+      await a.query('BEGIN');
+      const id = randomUUID();
+      let order: string = randomUUID();
+      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
+      else {
+        await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
+        await a.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, order, start]);
+      }
+      // A reversal mirrors its original line for line, marked as an adjustment; only its report net is the negative.
+      const sign = reversalOf ? -1 : 1;
+      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * line.net, reversalOf]);
+      await a.query(
+        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+        [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, line.refund, line.net, reversalOf !== null],
+      );
+      await a.query('COMMIT');
+      return id;
+    });
+  }
+
+  it('does not count a settlement that posts nothing, a payout the payout command would refuse, or a settlement that was reversed', async () => {
+    await admin((c) => c.query(`INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none') ON CONFLICT DO NOTHING`, [o.orgId, defaultEntity]));
+    // A settlement whose sales equal its refund nets to nothing: there is no entry to post, so there is nothing to ask for.
+    await deliveredSettlement('shopee', '2026-09-01', '2026-09-10', { sales: 10000, refund: 10000, net: 0 });
+    expect(count(await close('2026-09'), 'marketplace')).toBe(0);
+    // One with money in it is still to post.
+    const real = await deliveredSettlement('shopee', '2026-09-11', '2026-09-20', { sales: 10000, refund: 0, net: 9000 });
+    expect(count(await close('2026-09'), 'marketplace')).toBe(1);
+    // Posted, its payout is still to record; posted with nothing received (net 0) or nothing to clear (sales equal to the refund) it is not, as the payout command refuses both.
+    await voucherOf(real);
+    expect(count(await close('2026-09'), 'marketplace')).toBe(1);
+    const noCash = await deliveredSettlement('lazada', '2026-09-21', '2026-09-25', { sales: 10000, refund: 0, net: 0 });
+    await voucherOf(noCash);
+    const noReceivable = await deliveredSettlement('lazada', '2026-09-26', '2026-09-30', { sales: 5000, refund: 5000, net: 4000 });
+    await voucherOf(noReceivable);
+    expect(count(await close('2026-09'), 'marketplace')).toBe(1);
+    // A settlement and its reversal both drop out of the count.
+    const wrong = await deliveredSettlement('tiktok', '2026-09-05', '2026-09-06', { sales: 10000, refund: 0, net: 9000 });
+    expect(count(await close('2026-09'), 'marketplace')).toBe(2);
+    await deliveredSettlement('tiktok', '2026-09-05', '2026-09-06', { sales: 10000, refund: 0, net: 9000 }, wrong);
+    expect(count(await close('2026-09'), 'marketplace')).toBe(1);
   });
 });

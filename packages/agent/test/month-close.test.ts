@@ -55,11 +55,11 @@ describe('checkMonthCloseNote: the note', () => {
     }
   });
 
-  it('refuses "one", the ordinals from the fourth up and "once" or "twice", but keeps "no one", "this one", first and second', () => {
-    for (const text of ['Do one thing first.', 'Start with the twentieth item.', 'This is the fourth step.', 'Check it once before you start.', 'Check it twice.', 'The eleventh item waits.']) {
+  it('refuses "one", the ordinals from the fourth up and "twice", but keeps "no one", "this one", "the last one", first, second and "once"', () => {
+    for (const text of ['Do one thing first.', 'Start with the twentieth item.', 'This is the fourth step.', 'Check it twice.', 'The eleventh item waits.']) {
       expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
     }
-    for (const text of ['Start with this one, then the bank lines.', 'No one step depends on the others.', 'Start with the first, then the second.']) {
+    for (const text of ['Start with this one, then the bank lines.', 'Do the last one after the others.', 'Lock the period once the lines are booked.', 'No one step depends on the others.', 'Start with the first, then the second.']) {
       expect(check(text).kind, text).toBe('note');
     }
   });
@@ -80,6 +80,34 @@ describe('checkMonthCloseNote: the note', () => {
     expect(check('Xử lý các đề xuất rồi mới khóa sổ.').kind).toBe('note');
     expect(check('The VAT return is not yet filed.').kind).toBe('note');
     expect(check('The bank lines still to be booked come next.').kind).toBe('note');
+  });
+
+  it('refuses the number words for a group: hundreds, dozens, a couple, a pair, a score, a handful, chục, đôi', () => {
+    for (const text of ['Hundreds of lines wait.', 'Dozens of lines wait.', 'A couple of lines wait.', 'A pair of lines waits.', 'A handful of lines wait.', 'A score of lines wait.', 'Còn cả chục dòng chờ.', 'Còn đôi dòng chờ.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+    expect(check('Một số dòng còn chờ.').kind).toBe('note');
+  });
+
+  it('refuses a combining mark, a variation selector and a Latin small capital, which draw nothing or look like a letter', () => {
+    for (const text of ['Start with the b\u034Fank lines.', 'Start with the bank lines\uFE0F.', 'Start with the \u0299ank lines.', 'Start with the bank l\u1D00ines.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FORMAT' });
+    }
+    // Vietnamese stays, written in either normal form.
+    expect(check('Duyệt các đề xuất trước.').kind).toBe('note');
+    expect(check('Duyệt các đề xuất trước.'.normalize('NFD')).kind).toBe('note');
+  });
+
+  it('keeps "make sure ... then ...", "sau khi ... xong" and "khi ... đã được ghi", which say what comes first', () => {
+    expect(check('Make sure the bank lines are booked, then lock the period.').kind).toBe('note');
+    expect(check('Hãy đảm bảo các dòng sao kê đã được hạch toán rồi mới khóa sổ.').kind).toBe('note');
+    expect(check('Sau khi các dòng sao kê hạch toán xong, hãy chuẩn bị tờ khai.').kind).toBe('note');
+    expect(check('Khi các dòng đã được ghi, hãy khóa sổ.').kind).toBe('note');
+    expect(check('Lock the period once everything is done.').kind).toBe('note');
+    // A promise and a plain done claim are still refused.
+    expect(check('Tôi đảm bảo mọi thứ đúng.')).toEqual({ kind: 'none', code: 'PROMISE' });
+    expect(check('Các dòng đã được ghi.')).toEqual({ kind: 'none', code: 'PROMISE' });
+    expect(check('Everything is done.')).toEqual({ kind: 'none', code: 'PROMISE' });
   });
 
   it('refuses a look-alike letter of another script and an invisible filler, which could hide a word', () => {
@@ -118,9 +146,12 @@ describe('checkMonthCloseNote: the note', () => {
     }
   });
 
-  it('keeps "this month" and "last month", which name no date', () => {
-    expect(check('Close the items of this month in this order.').kind).toBe('note');
-    expect(check('Xử lý các việc của tháng này theo thứ tự này.').kind).toBe('note');
+  it('refuses a stretch of time counted from now: this, next and last week or month, mid-month, the end of the month, rằm, Tết', () => {
+    for (const text of ['Do it next week.', 'Close the items of this month.', 'Wait until next month.', 'Finish mid-month.', 'Do it before the end of the month.', 'Xử lý các việc của tháng này.', 'Làm trong tuần này.', 'Làm vào đầu tháng sau.', 'Làm trước rằm.', 'Làm trước Tết.', 'Làm vào cuối tháng.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'DATE' });
+    }
+    expect(check('Close the items in this order.').kind).toBe('note');
+    expect(check('Xử lý các việc theo thứ tự này.').kind).toBe('note');
   });
 
   it('refuses a link, an address and a domain', () => {

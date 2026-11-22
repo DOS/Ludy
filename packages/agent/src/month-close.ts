@@ -77,48 +77,55 @@ export function monthClosePrompt(facts: MonthCloseFacts): string {
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 
 // A Vietnamese number said in words, anywhere in the note: this note is given no figure at all, so every exact number is refused (the shared check only catches one next to a unit). A
-// vague quantity ("một số", "nhiều", "vài") is no figure and stays allowed.
-const VI_NUMBER = /(?<![\p{L}])(?:hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|trăm|nghìn|ngàn|triệu|tỷ|một(?!\s+(?:số|chút|cách|khi|lần\s+nữa)))(?![\p{L}])/iu;
+// vague quantity ("một số", "nhiều", "vài") is no figure and stays allowed; a ten or a pair ("chục", "đôi") is a number.
+const VI_NUMBER = /(?<![\p{L}])(?:hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|trăm|nghìn|ngàn|triệu|tỷ|chục|đôi|một(?!\s+(?:số|chút|cách|khi|lần\s+nữa)))(?![\p{L}])/iu;
 // English number words the shared check stops short of (it ends at twelve and twenty): every exact number is refused here, as the note is given no figure at all.
 const EN_NUMBER = [
-  /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?![\p{L}])/iu,
-  // "one" is a number too, except where it stands for a thing ("no one", "this one", "one of them", "one by one"), as "một" is allowed before "số" and "chút" above.
-  /(?<!\b(?:no|any|every|the|this|that|each|another)\s)(?<![\p{L}])one(?!\s+(?:of|another|by)\b)(?![\p{L}])/iu,
-  // The ordinals from the fourth up (first, second and third only put things in order), and the counts of times.
+  /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds|thousands|millions|billions|dozens|couple|pair|pairs|score|scores|handful)(?![\p{L}])/iu,
+  // "one" is a number too, except where it stands for a thing ("no one", "this one", "the last one", "one of them", "one by one"), as "một" is allowed before "số" and "chút" above.
+  /(?<!\b(?:no|any|every|the|this|that|each|another|last|first|other|next|same|only|which)\s)(?<![\p{L}])one(?!\s+(?:of|another|by)\b)(?![\p{L}])/iu,
+  // The ordinals from the fourth up (first, second and third only put things in order), and the counts of times ("once" alone is also "when", so it stays allowed).
   /(?<![\p{L}])(?:fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|(?:thir|four|fif|six|seven|eigh|nine)teenth|(?:twen|thir|for|fif|six|seven|eigh|nine)tieth|hundredth|thousandth|twice|thrice)(?![\p{L}])/iu,
-  // "once" as a count ("check it once"), not as "once they are booked" (a pronoun or a determiner follows).
-  /(?<![\p{L}])once(?!\s+(?:they|it|the|all|each|every|that|you|we|this|these|those|a|an|there|he|she|their|your|its|our|any|no)(?![\p{L}]))(?![\p{L}])/iu,
 ];
 // Only Latin letters (Vietnamese included), digits, punctuation and spaces: a look-alike letter of another script or an invisible filler could hide a word the checks look for.
 const FOREIGN_SCRIPT = /[^\p{Script=Latin}\p{Script=Common}\p{M}]/u;
-// A date or a day: a month name, a weekday, or a word that names a day. A number in digits is already refused by the figures check; these are the dates said in words.
+// After NFKC every Vietnamese letter is one precomposed character, so a combining mark left over, a variation selector or any other character that draws nothing could only hide something;
+// the small capitals and phonetic letters of Latin script look like letters of a word and are not one.
+const HIDDEN = /\p{Mn}|\p{Default_Ignorable_Code_Point}|[ɐ-ʯᴀ-ᶿ]/u;
+// A date or a day: a month name, a weekday, a word that names a day, or a stretch of time counted from now. A number in digits is already refused by the figures check; these are the dates
+// said in words.
 const DATE_WORDS = [
-  /(?<![\p{L}])(?:tháng\s+(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|giêng|chạp)|thứ\s+(?:hai|ba|tư|năm|sáu|bảy)|chủ\s+nhật|hôm\s+nay|hôm\s+qua|ngày\s+mai|ngày\s+kia|tối\s+nay|sáng\s+mai|cuối\s+tuần|tuần\s+(?:sau|tới|trước)|năm\s+(?:ngoái|nay|sau))(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tonight|tomorrow|yesterday|weekend)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:by|before)\s+(?:the\s+)?end\s+of(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:tháng\s+(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|giêng|chạp|này|sau|trước)|thứ\s+(?:hai|ba|tư|năm|sáu|bảy)|chủ\s+nhật|hôm\s+nay|hôm\s+qua|ngày\s+mai|ngày\s+kia|tối\s+nay|sáng\s+mai|cuối\s+tuần|tuần\s+(?:sau|tới|trước|này)|năm\s+(?:ngoái|nay|sau)|đầu\s+tháng|giữa\s+tháng|cuối\s+tháng|rằm|tết)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tonight|tomorrow|yesterday|weekend|mid-?month)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:(?:this|next|last)\s+(?:week|month)|next\s+quarter)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:(?:by|before)\s+(?:the\s+)?end\s+of|end\s+of\s+(?:the\s+)?(?:day|week|month|quarter|year))(?![\p{L}])/iu,
   /(?<![\p{L}])(?:cuối\s+(?:ngày|quý|năm)|trước\s+cuối)(?![\p{L}])/iu,
 ];
-// A promise, or a claim that a step was done: what the note must never say, in either language ("chưa xong" is refused with "xong": say what to do, not how far it is).
+// A promise, or a claim that a step was done: what the note must never say, in either language. The promise words are refused wherever they stand.
 const PROMISE_WORDS = [
-  /(?<![\p{L}])(?:sẽ|đã|cam kết|đảm bảo|bảo đảm|hứa|xong|hoàn tất|hoàn thành|đang được)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:will|shall|promise|promised|guarantee|guaranteed|ensure|ensured|done|completed|finished|already|going\s+to)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:sẽ|cam kết|hứa|đang được)(?![\p{L}])|(?<![\p{L}])(?<!hãy\s)(?:đảm bảo|bảo đảm)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:will|shall|promise|promised|guarantee|guaranteed|ensured|already|going\s+to)(?![\p{L}])/iu,
   /\p{L}['’]ll(?![\p{L}])/iu,
 ];
+// Words that say a step is done: refused too, except in a clause that opens with a condition or a time ("sau khi ... xong", "khi ... đã được ghi", "once all are done"), which says what
+// must come first and not that a step was done.
+const DONE_WORDS = [/(?<![\p{L}])(?:đã|xong|hoàn tất|hoàn thành)(?![\p{L}])/iu, /(?<![\p{L}])(?:done|completed|finished)(?![\p{L}])/iu];
 // A step said to be in a done state ("is filed", "has been posted"); "not yet filed" and "to be booked" say what is left, so they stay allowed.
 const DONE_STATE = /(?<![\p{L}])(?:has|have|had|was|were|is|are|been|just|now)\s+(?:been\s+)?(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected)(?![\p{L}])/iu;
 // A clause that ends in a bare participle ("Posted.", "All the lines are posted") or in "rồi" (Vietnamese for "already, done": "Duyệt rồi.", "được duyệt rồi") says a step is done. "not yet
 // filed", "still booked" and "to be booked" end the same way but say what is left, so a word before it that negates or marks the future spares it.
 const DONE_FINAL = /(?<!(?:^|[^\p{L}])(?:not|yet|still|never|be|being|to)\s)(?<![\p{L}])(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected|rồi)\s*$/iu;
-// A done-state word after a condition or a time word ("once they are booked", "before the return is filed") says what must come first, not that a step was done, so the done-state
-// check skips it; the promise words (will, sẽ, đã, done, ...) are refused in every clause.
-const CONDITIONAL = /(?<![\p{L}])(?:once|before|after|until|when|if|unless|while|as soon as|sau khi|trước khi|khi|nếu|cho đến khi)(?![\p{L}])/iu;
+// A condition or a time word, or "make sure" (a check to make before the next step): a done word after it in its own clause says what must come first, not that a step was done.
+const CONDITIONAL = /(?<![\p{L}])(?:once|before|after|until|when|if|unless|while|as soon as|make sure|be sure|ensure|check that|verify that|sau khi|trước khi|khi|nếu|cho đến khi|hãy đảm bảo|hãy chắc chắn)(?![\p{L}])/iu;
 function promised(read: string): boolean {
   if (PROMISE_WORDS.some((word) => word.test(read))) return true;
-  // The done-state words count only where no condition or time word comes before them in their own clause.
-  return read.split(/[,;:.!?]\s*/u).some((clause) => {
-    const done = DONE_STATE.exec(clause) ?? DONE_FINAL.exec(clause);
-    return done !== null && !CONDITIONAL.test(clause.slice(0, done.index));
-  });
+  // The done words count only where no condition or time word comes before them in their own clause.
+  return read.split(/[,;:.!?]\s*/u).some((clause) =>
+    [...DONE_WORDS, DONE_STATE, DONE_FINAL].some((word) => {
+      const done = word.exec(clause);
+      return done !== null && !CONDITIONAL.test(clause.slice(0, done.index));
+    }),
+  );
 }
 // Markdown, a list marker, a heading, a table bar, a quote, a code mark, or an emoji.
 const FORMATTED = /[*_#`>|[\]{}<]|(?:^|\s)[-\u2022\u00b7\u2013\u2014]\s|\p{Extended_Pictographic}/u;
@@ -138,7 +145,7 @@ export function checkMonthCloseNote(facts: MonthCloseFacts, output: { note?: str
   if (DATE_WORDS.some((word) => word.test(read))) return { kind: 'none', code: 'DATE' };
   if (VI_NUMBER.test(read) || EN_NUMBER.some((word) => word.test(read))) return { kind: 'none', code: 'FIGURES' };
   if (promised(read)) return { kind: 'none', code: 'PROMISE' };
-  if (FORMATTED.test(text) || FOREIGN_SCRIPT.test(read)) return { kind: 'none', code: 'FORMAT' };
+  if (FORMATTED.test(text) || FOREIGN_SCRIPT.test(read) || HIDDEN.test(read)) return { kind: 'none', code: 'FORMAT' };
   // The order is exactly the open keys, each once: the model neither adds an item nor drops one nor repeats one.
   const order = output?.order ?? [];
   const wanted = new Set<string>(facts.open);

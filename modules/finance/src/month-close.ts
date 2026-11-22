@@ -14,6 +14,9 @@ import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { declaringPeriods, vatPeriod } from './domain/vat-return.ts';
 import { buildMonthClose, lockCovers, monthBounds, monthOver, portalPeriods, vatMarkPeriod, type MonthBounds } from './domain/month-close.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { settlementMonthsFor } from './marketplace-settlement-months.ts';
+import type { SettlementVatRate } from './marketplace-settlement-posting.ts';
+import { offeredMonths, separateReturnOn } from './marketplace-settlement-vat.ts';
 import { databaseToday, periodLockedThrough } from './period-lock.ts';
 import { reconcilePeriod } from './portal-list.ts';
 import { latestRevision, reversedSource } from './source-entry.ts';
@@ -29,7 +32,7 @@ async function filingPeriod(ctx: QueryContext): Promise<VatFilingPeriod | null> 
 
 // Finance proposals still pending whose own date is in the month: the voucher's date (a cash or journal voucher), the invoice's issue date (a purchase or sale), else the day the
 // proposal was made (Vietnam time). A proposal that needs no voucher date, such as a marketplace settlement, is dated by the day it was made. The date is compared as the text it is
-// stored as (an ISO date sorts as text), so one impossible date in a payload ("2026-02-31") cannot raise an error and break the checklist: it is just a day that is in no month.
+// stored as (an ISO date sorts as text), so one impossible date in a payload ("2026-02-31") cannot raise an error and break the checklist: it sorts into the month it names, as a day that cannot exist but harms nothing.
 async function pendingProposals(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const { rows } = await sql<{ n: string }>`
     SELECT pg_catalog.count(*)::text AS n
@@ -46,33 +49,36 @@ async function pendingProposals(ctx: QueryContext, entity: string, b: MonthBound
   return Number(rows[0]?.n ?? 0);
 }
 
-// Invoices of the tax portal's lists of the month's VAT period that match no voucher the books hold (the portal reconciliation's missing and different-amount outcomes, purchases and
-// sales together), from the same reconciliation the Tax portal check screen shows. An invoice that is only a proposal in the Inbox is left out: that proposal is counted in the first item.
-// For a quarterly filer in the last month of the quarter the quarter's lists are read when there are any, and the month's own only when there are none, so one invoice is never
-// counted from two lists. Null when no list was imported and read for the period: there is then nothing to compare.
+// Invoices of the tax portal's lists of the month's VAT period that match no voucher the books hold (the portal reconciliation's missing and different-amount outcomes), from the same
+// reconciliation the Tax portal check screen shows. An invoice that is only a proposal in the Inbox is left out: that proposal is counted in the first item. Each direction (purchases,
+// sales) is read from one period's list: for a quarterly filer in the last month of the quarter the quarter's when there is one, else the month's own, so one invoice is never counted from
+// two lists and a month's sales list is not dropped because the quarter has a purchase list. Null when no list was read for either direction: there is then nothing to compare.
 async function unmatchedInvoices(ctx: QueryContext, entity: string, month: string, kind: VatFilingPeriod | null): Promise<{ count: number; period: string; direction?: 'sale' } | null> {
+  const preference = portalPeriods(month, kind);
   const lists = await ctx.trx
     .selectFrom('crove_finance.portal_invoice_list')
     .select(['period', 'direction'])
     .distinct()
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
-    .where('period', 'in', portalPeriods(month, kind))
+    .where('period', 'in', preference)
     .where('status', '=', 'done')
     .where('removed_at', 'is', null)
     .execute();
-  const period = portalPeriods(month, kind).find((p) => lists.some((l) => l.period === p));
-  if (period === undefined) return null;
-  let purchases = 0;
-  let sales = 0;
-  for (const list of lists.filter((l) => l.period === period)) {
-    const { reconciliation } = await reconcilePeriod(ctx, period, entity, list.direction);
-    const unmatched = reconciliation.summary.missing + reconciliation.summary.amountMismatch;
-    if (list.direction === 'sale') sales += unmatched;
-    else purchases += unmatched;
+  const read: Array<{ direction: 'purchase' | 'sale'; period: string; unmatched: number }> = [];
+  for (const direction of ['purchase', 'sale'] as const) {
+    const period = preference.find((p) => lists.some((l) => l.period === p && l.direction === direction));
+    if (period === undefined) continue;
+    const { reconciliation } = await reconcilePeriod(ctx, period, entity, direction);
+    read.push({ direction, period, unmatched: reconciliation.summary.missing + reconciliation.summary.amountMismatch });
   }
+  if (read.length === 0) return null;
+  const purchases = read.find((r) => r.direction === 'purchase');
+  const sales = read.find((r) => r.direction === 'sale');
+  const count = read.reduce((n, r) => n + r.unmatched, 0);
   // The link opens the purchase tab; when only the sales side has invoices without a voucher it opens the sales tab instead.
-  return { count: purchases + sales, period, ...(purchases === 0 && sales > 0 ? { direction: 'sale' as const } : {}) };
+  if ((purchases?.unmatched ?? 0) === 0 && (sales?.unmatched ?? 0) > 0 && sales) return { count, period: sales.period, direction: 'sale' };
+  return { count, period: (purchases ?? sales)?.period ?? month };
 }
 
 // Bank statement lines dated in the month that no posted, unreversed bank voucher settles, no platform payout voucher names and no pending voucher proposal holds: the lines the bank
@@ -118,32 +124,49 @@ async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBoun
   return Number(row?.n ?? 0);
 }
 
-// Marketplace settlements still to post and payouts still to record, whose settlement period ends in the month, in two month-filtered counts with the standing and posted rules of the Sàn
-// screen's worklist and facts (finance.marketplace.worklist and .facts), with no cap: a settlement stands when it is not reversed and not itself a reversal; it is still to post when it
-// has no posting voucher and has something to post (a line with sales, a refund or a net amount: a settlement of nothing posts nothing and is not one); its payout is still to record when
-// its posting stands (it has vouchers and none is reversed) and no payout voucher names it. One that already has a pending proposal is left out, because that proposal is counted in the first item.
+// Marketplace settlements still to post and payouts still to record, whose settlement period ends in the month, with the standing and posted rules of the Sàn screen's worklist and facts
+// (finance.marketplace.worklist and .facts) and no cap: the month filter keeps the candidates few. A settlement stands when it is not reversed and not itself a reversal. One already
+// waiting on a pending proposal is left out, because that proposal is counted in the first item. Still to post: no posting voucher, and, as facts reads it, something the record command
+// would post (a delivery month with an entry that is not empty and has its VAT rate) or sales that wait for their delivery day: a settlement of zero net posts nothing and is not one.
+// Still to record: its posting stands (it has vouchers and none is reversed), no payout voucher names it, and the payout command would take it (a receivable above zero, money received above
+// zero, and nothing unexplained that a person cannot classify), because it refuses the others and no one can clear them.
 async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const standing = sql`s.org_id = ${ctx.orgId}::uuid AND s.legal_entity_id = ${entity}::uuid AND s.period_end >= ${b.from}::date AND s.period_end <= ${b.last}::date
     AND s.reversal_of IS NULL
     AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
   const pending = (command: string) =>
     sql`NOT EXISTS (SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND p.payload->>'settlementId' = s.id::text)`;
-  const { rows } = await sql<{ to_post: string; to_record: string }>`
-    SELECT
-      pg_catalog.count(*) FILTER (
-        WHERE NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-          AND EXISTS (SELECT 1 FROM crove_finance.channel_settlement_line l WHERE l.org_id = s.org_id AND l.settlement_id = s.id AND (l.sales <> 0 OR l.refund <> 0 OR l.net <> 0))
-          AND ${pending(MARKETPLACE_SETTLEMENT_COMMAND)}
-      )::text AS to_post,
-      pg_catalog.count(*) FILTER (
-        WHERE EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher j WHERE j.org_id = s.org_id AND j.settlement_id = s.id AND ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)})
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
-          AND ${pending(MARKETPLACE_PAYOUT_COMMAND)}
-      )::text AS to_record
-    FROM crove_finance.channel_settlement s
-    WHERE ${standing}`.execute(ctx.trx);
-  return Number(rows[0]?.to_post ?? 0) + Number(rows[0]?.to_record ?? 0);
+  const candidates = (
+    await sql<{ id: string; period_end: string }>`
+      SELECT s.id, s.period_end::text AS period_end FROM crove_finance.channel_settlement s
+      WHERE ${standing}
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+        AND ${pending(MARKETPLACE_SETTLEMENT_COMMAND)}`.execute(ctx.trx)
+  ).rows;
+  let toPost = 0;
+  if (candidates.length > 0) {
+    const months = await settlementMonthsFor(ctx, candidates.map((c) => ({ id: c.id, periodEnd: c.period_end })));
+    const separate = await separateReturnOn(ctx, entity, b.last);
+    const vatMemo = new Map<string, SettlementVatRate | null>();
+    for (const c of candidates) {
+      const m = months.get(c.id) ?? { months: [], waiting: 0 };
+      const offered = m.waiting === 0 ? await offeredMonths(ctx, entity, m.months, separate, vatMemo) : { months: m.months };
+      if (offered.months.length > 0 || m.waiting > 0) toPost += 1;
+    }
+  }
+  const { rows } = await sql<{ n: string }>`
+    SELECT pg_catalog.count(*)::text AS n FROM (
+      SELECT s.id FROM crove_finance.channel_settlement s
+      JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
+      WHERE ${standing}
+        AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher j WHERE j.org_id = s.org_id AND j.settlement_id = s.id AND ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)})
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
+        AND ${pending(MARKETPLACE_PAYOUT_COMMAND)}
+      GROUP BY s.id
+      HAVING pg_catalog.sum(l.sales - l.seller_discount - l.refund) > 0 AND pg_catalog.sum(l.net) > 0 AND (pg_catalog.sum(l.other) = 0 OR pg_catalog.min(l.other) >= 0)
+    ) payable`.execute(ctx.trx);
+  return toPost + Number(rows[0]?.n ?? 0);
 }
 
 // Whether the stock close of the month still has to be run: the month is over, no stock close covers it (a close of this month or a later one: months close in order, so a later close
