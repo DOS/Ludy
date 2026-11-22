@@ -27,6 +27,7 @@ import {
 } from '../lib/projects.ts';
 import { seatOptionLabel } from './project-task-dialog.tsx';
 import { formatRecurrenceBadgeLabel } from './task-recurrence-control.tsx';
+import { taskTitleText } from '../lib/task-title.ts';
 
 export type BoardColumnStatus = 'todo' | 'in_progress' | 'waiting' | 'in_review' | 'done';
 
@@ -381,7 +382,7 @@ function TaskBoardCard({
           draggable={false}
           className="min-w-0 flex-1 break-words rounded text-sm leading-snug font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          {task.title}
+          {taskTitleText(task)}
         </Link>
         {canEdit && (
           <div className="flex shrink-0 items-center gap-0.5">
@@ -394,7 +395,7 @@ function TaskBoardCard({
                     if (isSecondInColumn) focusSiblingAfterBoundaryMove(e.currentTarget, 'up');
                     onMoveUp();
                   }}
-                  aria-label={t('task.moveUpOf', { title: task.title })}
+                  aria-label={t('task.moveUpOf', { title: taskTitleText(task) })}
                   title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveUp')}
                   data-testid="move-task-up"
                   className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
@@ -408,7 +409,7 @@ function TaskBoardCard({
                     if (isSecondToLastInColumn) focusSiblingAfterBoundaryMove(e.currentTarget, 'down');
                     onMoveDown();
                   }}
-                  aria-label={t('task.moveDownOf', { title: task.title })}
+                  aria-label={t('task.moveDownOf', { title: taskTitleText(task) })}
                   title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveDown')}
                   data-testid="move-task-down"
                   className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
@@ -420,7 +421,7 @@ function TaskBoardCard({
             <button
               type="button"
               onClick={() => onEdit(task)}
-              aria-label={t('task.editTaskOf', { title: task.title })}
+              aria-label={t('task.editTaskOf', { title: taskTitleText(task) })}
               className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <ProjectIcon name="edit" className="size-3.5" />
@@ -428,7 +429,7 @@ function TaskBoardCard({
             <button
               type="button"
               onClick={() => onRemove(task)}
-              aria-label={t('task.removeFromProjectOf', { title: task.title })}
+              aria-label={t('task.removeFromProjectOf', { title: taskTitleText(task) })}
               className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <ProjectIcon name="unlink" className="size-3.5" />
@@ -444,7 +445,7 @@ function TaskBoardCard({
       {canEdit && (
         <div className="mt-2.5 border-t border-border/60 pt-2">
           <NativeSelect
-            aria-label={t('task.changeStatusOf', { title: task.title })}
+            aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
             disabled={task.checkedOut}
             value={task.status}
             onChange={(e) => onMoveStatus(task.id, e.target.value as TaskStatus)}
@@ -581,7 +582,7 @@ export function ProjectBoardView({
           }}
           destructive
           title={t('task.removeConfirmTitle')}
-          description={t('task.removeConfirmDesc', { title: confirmRemove.title })}
+          description={t('task.removeConfirmDesc', { title: taskTitleText(confirmRemove) })}
           confirm={t('task.removeConfirmBtn')}
           onConfirm={() => {
             onRemoveTask(confirmRemove.id);
@@ -730,7 +731,7 @@ export function ProjectBoardView({
                           params={{ slug, id: task.id }}
                           className="min-w-0 break-words rounded text-sm font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                         >
-                          {task.title}
+                          {taskTitleText(task)}
                         </Link>
                         {task.tainted && (
                           <Badge variant="warning" className="h-5 px-1.5 text-[11px]" title={t('task.taintedHint')}>
@@ -774,7 +775,7 @@ export function ProjectBoardView({
                     <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                       {canEdit ? (
                         <NativeSelect
-                          aria-label={t('task.changeStatusOf', { title: task.title })}
+                          aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
                           disabled={task.checkedOut}
                           value={task.status}
                           onChange={(e) => onMoveStatus(task.id, e.target.value as TaskStatus)}
@@ -798,7 +799,7 @@ export function ProjectBoardView({
                                 size="sm"
                                 variant="ghost"
                                 disabled={customSortActive || prev === undefined}
-                                aria-label={t('task.moveUpOf', { title: task.title })}
+                                aria-label={t('task.moveUpOf', { title: taskTitleText(task) })}
                                 title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveUp')}
                                 data-testid="move-task-up"
                                 onClick={(e) => {
@@ -815,7 +816,7 @@ export function ProjectBoardView({
                                 size="sm"
                                 variant="ghost"
                                 disabled={customSortActive || next === undefined}
-                                aria-label={t('task.moveDownOf', { title: task.title })}
+                                aria-label={t('task.moveDownOf', { title: taskTitleText(task) })}
                                 title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveDown')}
                                 data-testid="move-task-down"
                                 onClick={(e) => {
@@ -833,7 +834,7 @@ export function ProjectBoardView({
                             type="button"
                             size="sm"
                             variant="ghost"
-                            aria-label={t('task.editTaskOf', { title: task.title })}
+                            aria-label={t('task.editTaskOf', { title: taskTitleText(task) })}
                             onClick={() => onEditTask(task)}
                           >
                             <ProjectIcon name="edit" />
@@ -843,7 +844,7 @@ export function ProjectBoardView({
                             type="button"
                             size="sm"
                             variant="ghost"
-                            aria-label={t('task.removeFromProjectOf', { title: task.title })}
+                            aria-label={t('task.removeFromProjectOf', { title: taskTitleText(task) })}
                             onClick={() => setConfirmRemove(task)}
                           >
                             <ProjectIcon name="unlink" />

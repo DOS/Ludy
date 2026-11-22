@@ -9,6 +9,10 @@ describe('the title of a task as it is shown', () => {
     expect(taskTitleText({ title: 'a​b⁦c⁩d﻿e\u{e0041}', tainted: true })).toBe('a⟨U+200B⟩b⟨U+2066⟩c⟨U+2069⟩d⟨U+FEFF⟩e⟨U+E0041⟩');
   });
 
+  it('marks what the Inbox card marks: controls, the invisible operators, the deprecated format characters and the annotation marks', () => {
+    expect(taskTitleText({ title: 'Pay\u2062ment\u2063\u180e\u0085\u206a\ufff9', tainted: true })).toBe('Pay\u27e8U+2062\u27e9ment\u27e8U+2063\u27e9\u27e8U+180E\u27e9\u27e8U+0085\u27e9\u27e8U+206A\u27e9\u27e8U+FFF9\u27e9');
+  });
+
   it('keeps the zero-width joiner of an emoji, and shows a person\'s own title as typed', () => {
     expect(taskTitleText({ title: 'Nhóm 👨‍👩‍👧', tainted: true })).toBe('Nhóm 👨‍👩‍👧');
     expect(taskTitleText({ title: 'Của người‮', tainted: false })).toBe('Của người‮');

@@ -87,6 +87,7 @@ import {
 } from '../lib/my-work.ts';
 import { parseTags, tagCounts } from '../lib/notes.ts';
 import { projectsInstalled } from '../lib/projects.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 const LIST_COLOR_DOT: Record<TodoListColor, string> = {
   slate: 'bg-muted-foreground',
@@ -588,7 +589,7 @@ function TaskRow({ task, slug, chart, projectsActive }: { task: MyWorkTask; slug
     <li data-testid="my-work-task" className="flex flex-wrap items-center gap-3 px-4 py-2">
       <Badge variant="secondary">{t('teamTask')}</Badge>
       <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="min-w-0 flex-1 truncate text-sm text-link hover:underline">
-        {task.title}
+        {taskTitleText(task)}
       </Link>
       {projectsActive && task.project && (
         <Link
