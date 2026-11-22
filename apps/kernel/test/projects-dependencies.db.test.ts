@@ -30,6 +30,7 @@ import {
   type ProjectWeeklyStatus,
 } from '@ludy/kernel-contract';
 import { Runtime, type AgentActor, type BlobStore, sha256Hex } from '@ludy/kernel-runtime';
+import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { memberMeter } from '../src/ai-meter.ts';
 import { createAuthenticator } from '../src/auth.ts';
@@ -170,11 +171,11 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
       WEB_DIST: '/nonexistent',
     });
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
-      commands: [...kernelCommands, ...projectsCommands],
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
     });
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...projectsCommands, orgPurgeCommand({ store })],
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands, orgPurgeCommand({ store })],
       queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
     });
     const reader = new InboxReader({ baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test', maxRetries: 0 });
@@ -448,6 +449,9 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
         { projectId, blockerTaskId: branchTarget, blockedTaskId: defaultHidden },
         { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() },
       ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      rt.query('projects.dependency.list', { projectId }, { actor: agentActor, orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     // le_scope: edge touching headquarters task is hidden from branchMember, and branchMember cannot add or delete it.

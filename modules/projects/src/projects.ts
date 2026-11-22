@@ -412,7 +412,11 @@ export const projectTaskRemove = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
+    // Removing a task from a project cascades ON DELETE CASCADE to crove_projects.task_dependency.
+    tableWrite(TABLES, 'crove_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; removed: boolean }> => {
     userOf(ctx.actor);
