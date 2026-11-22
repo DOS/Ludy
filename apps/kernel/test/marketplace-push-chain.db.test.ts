@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The whole push chain of a marketplace on a real PostgreSQL 17 (#4364, #4315): a platform's signed push POSTed to the public route (S2, #4347), stored in the hook's table (S1, #4324), claimed by the worker's relay,
 // verified against the connection's sealed secret and turned into ONE coalesced poll job per connection (S3a, #4344). Each slice has tests of its own; this one runs them TOGETHER, through the real app, the real definers,
-// a real credential vault and the very function the worker calls (relayMarketplacePushBatch), so an incompatible change at any seam (a header the worker cannot read, a stored address that is not the one the platform
+// a real credential vault and the worker's own relay steps (claim, verify, send, count; mirrored from the loop in startWorker, see below), so an incompatible change at any seam (a header the worker cannot read, a stored address that is not the one the platform
 // signed, a claim that does not reach verification, a poll job per push) fails here. The job queue is a recording fake: the poll job's shape is checked, not pg-boss.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -21,7 +21,9 @@ import { jobKey } from '../src/job-keys.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 import { marketplacePushSignature } from '../src/marketplace-push.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
-import { relayMarketplacePushBatch, type JobSender } from '../src/worker.ts';
+import { MARKETPLACE_PUSH_SLOT_SECONDS, claimMarketplaceHookNotices, rejectMarketplaceHook, verifyMarketplaceHookNotices } from '../src/marketplace-push-relay.ts';
+import type { MarketplacePollJob } from '../src/marketplace-poll-job.ts';
+import { relayBatch, type JobSender } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -99,7 +101,35 @@ suite('Marketplace push chain (#4364)', () => {
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
   const stored = () => rows<{ hook_id: string; request_url: string | null }>('SELECT hook_id, request_url FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
   const rejected = async (hookId: string) => Number((await rows<{ n: number }>('SELECT rejected_count AS n FROM crove_finance.marketplace_hook WHERE id = $1', [hookId]))[0]?.n ?? 0);
-  const relay = () => relayMarketplacePushBatch({ workerDb, sender, runtime: worker, broker: vault, adapters: new Set(['tiktok_shop', 'shopee']) });
+  // One round of the relay, the same steps as the loop body in startWorker (apps/kernel/src/worker.ts, "A signed push of a marketplace"): claim, verify, ONE poll per connection with a good push, refusals counted after
+  // the commit. It mirrors that body and does not call it (the send must stay inline in startWorker, where the job-egress invariant has reviewed it), so a change to the loop must be made here too.
+  const relay = async () => {
+    const tally = { ok: 0, refused: 0, dropped: 0 };
+    const refusedHooks: string[] = [];
+    const adapters = new Set(['tiktok_shop', 'shopee']);
+    const claimed = await relayBatch(workerDb, sender, async (trx) => {
+      const rows = await claimMarketplaceHookNotices(trx);
+      const verdicts = await verifyMarketplaceHookNotices({ runtime: worker, broker: vault, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+      const seen = new Set<string>();
+      return rows.map((row, i) => {
+        const verdict = verdicts[i] ?? 'dropped';
+        tally[verdict]++;
+        if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
+        seen.add(row.marketplaceConnectionId);
+        const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
+        return (boss: JobSender) =>
+          boss.send(QUEUES.marketplacePoll, target, {
+            singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
+            singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
+            retryLimit: 3,
+            retryDelay: 30,
+            retryBackoff: true,
+          });
+      });
+    });
+    for (const hookId of refusedHooks) await rejectMarketplaceHook(workerDb, hookId);
+    return { claimed, tally };
+  };
   const post = (adapter: string, key: string, body: string, authorization: string, origin = PUBLIC_URL) =>
     app.request(`${origin}/api/marketplace/${adapter}/webhook/${key}`, { method: 'POST', headers: { authorization }, body });
   const asOwner = () => ({ type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });

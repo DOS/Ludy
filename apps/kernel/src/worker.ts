@@ -414,42 +414,6 @@ export async function relayBatch(
   });
 }
 
-// One round of the marketplace push relay (#4327, S3a of #4315): claim the waiting pushes, open each connection's sealed secret, verify, and queue ONE coalesced poll for each connection with a good push (ids only; the
-// body is never in a job). The claim and the sends share one transaction, so a failure leaves the pushes waiting. A refused push is counted on its hook AFTER the commit, as the bank feed relay does (no lock cycle with the
-// claim; a crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is only a hint). Exported so a test drives the very code the worker runs; nothing is logged here.
-export async function relayMarketplacePushBatch(deps: {
-  workerDb: Db;
-  sender: JobSender;
-  runtime: Runtime;
-  broker: CredentialBroker;
-  adapters: ReadonlySet<string>;
-}): Promise<{ claimed: number; tally: { ok: number; refused: number; dropped: number } }> {
-  const tally = { ok: 0, refused: 0, dropped: 0 };
-  const refusedHooks: string[] = [];
-  const claimed = await relayBatch(deps.workerDb, deps.sender, async (trx) => {
-    const rows = await claimMarketplaceHookNotices(trx);
-    const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker: deps.broker, adapters: deps.adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
-    const seen = new Set<string>();
-    return rows.map((row, i) => {
-      const verdict = verdicts[i] ?? 'dropped';
-      tally[verdict]++;
-      if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
-      seen.add(row.marketplaceConnectionId);
-      const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
-      return (boss: JobSender) =>
-        boss.send(QUEUES.marketplacePoll, target, {
-          singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
-          singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
-          retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
-          retryDelay: 30,
-          retryBackoff: true,
-        });
-    });
-  });
-  for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
-  return { claimed, tally };
-}
-
 // The extraction job of an ingested file, or of a requested re-extraction (version), in its org's group with its fair
 // priority. null for a re-extraction event without a valid version.
 export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number): Promise<string | null> | null {
@@ -3574,6 +3538,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch
       // commits (ten in an hour stop it). The claim deletes the pushes as it takes them, and the claim and the sends share one transaction, so a failure leaves them waiting (the sweep deletes any older than ten minutes).
       // Nothing of a push is logged: the line below carries counts.
+      // The steps below are mirrored by apps/kernel/test/marketplace-push-chain.db.test.ts (its relay()): a change to this loop must be made there too, or the chain test no longer tests what runs.
       const pushProviders = deps.channels?.marketplaceProviders;
       // A failure of the relay (the database, a broker) must not skip the other relays and sweeps that follow: it is logged by its class only, and the pushes stay waiting (or are swept) for the next round.
       try {
@@ -3581,7 +3546,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           const broker = deps.channels.broker;
           const adapters = new Set(Object.keys(pushProviders));
           for (;;) {
-            const { claimed, tally } = await relayMarketplacePushBatch({ workerDb: deps.workerDb, sender: boss, runtime: deps.runtime, broker, adapters });
+            const tally = { ok: 0, refused: 0, dropped: 0 };
+            const refusedHooks: string[] = [];
+            const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+              const rows = await claimMarketplaceHookNotices(trx);
+              const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+              const seen = new Set<string>();
+              return rows.map((row, i) => {
+                const verdict = verdicts[i] ?? 'dropped';
+                tally[verdict]++;
+                if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
+                seen.add(row.marketplaceConnectionId);
+                const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
+                return (boss: JobSender) =>
+                  boss.send(QUEUES.marketplacePoll, target, {
+                    singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
+                    singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
+                    retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+                    retryDelay: 30,
+                    retryBackoff: true,
+                  });
+              });
+            });
+            // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
+            for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
             if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
             if (claimed < MARKETPLACE_HOOK_CLAIM) break;
           }
