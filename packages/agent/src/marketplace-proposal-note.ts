@@ -144,8 +144,8 @@ export function checkMarketplaceProposalNote(_facts: MarketplaceProposalNoteFact
   if (text === '') return { kind: 'none', code: 'EMPTY' };
   if (Array.from(text).length > MARKETPLACE_PROPOSAL_NOTE_MAX || sentencesIn(text) > MARKETPLACE_PROPOSAL_NOTE_SENTENCES) return { kind: 'none', code: 'REFUSED' };
   const read = text.normalize('NFKC');
-  // No digit at all (the screen holds every figure and account), and with no figures given a scaled number, a number in words, an invisible format character or a link is refused by the shared check.
-  if (/\d/u.test(read) || statedFiguresProblem(text, []) || COUNT_WORDS.test(fold(read)) || NUMERIC_SYMBOL.test(text) || PICTOGRAPH.test(text)) return { kind: 'none', code: 'REFUSED' };
+  // No digit of any script (the screen holds every figure and account), and with no figures given a scaled number, a number in words, an invisible format character or a link is refused by the shared check.
+  if (/\p{N}/u.test(read) || statedFiguresProblem(text, []) || COUNT_WORDS.test(fold(read)) || NUMERIC_SYMBOL.test(text) || PICTOGRAPH.test(text)) return { kind: 'none', code: 'REFUSED' };
   // Only the Latin script (Vietnamese is Latin): a Cyrillic or Greek look-alike inside a word could hide one of the words checked here.
   if (/[^\p{Script=Latin}\p{N}\p{P}\p{Z}\p{S}\p{M}]/u.test(text)) return { kind: 'none', code: 'REFUSED' };
   const folded = fold(text);

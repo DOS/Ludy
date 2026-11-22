@@ -83,6 +83,9 @@ describe('the checks on the text the model gives', () => {
       'Fees of 28,000 dong, booked as tax (3331).',
       'Phí được ghi vào tài khoản 331.', // an account code alone
       'Bút toán ghi 1 khoản phí.', // a bare digit
+      'Phí sàn giữ lại ٢٨ nghìn.', // an Arabic-Indic digit
+      'Phí sàn giữ lại २८ nghìn.', // a Devanagari digit
+      'Phí sàn giữ lại ２８ nghìn.', // full-width digits
     ];
     for (const text of refused) expect(note(PAYOUT, text), text).toEqual(REFUSED);
   });
