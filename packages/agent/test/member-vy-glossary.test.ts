@@ -69,6 +69,15 @@ describe('spellGlossary', () => {
     expect(spellGlossary(decomposed, [])).toBe(decomposed.normalize('NFC'));
     expect(spellGlossary('không có gì', ['Crove', '', '   '])).toBe('không có gì');
   });
+
+  it('handles large repetitive model output without quadratic overlap stalls', () => {
+    const t0 = performance.now();
+    const outLower = spellGlossary('a '.repeat(48_000), ['A ', 'a']);
+    const outAcronym = spellGlossary('AI '.repeat(12_000), ['AI']);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(outLower).toBe('a '.repeat(48_000));
+    expect(outAcronym).toBe('AI '.repeat(12_000));
+  });
 });
 
 describe('termsInSource and writesTerm', () => {
@@ -80,6 +89,7 @@ describe('termsInSource and writesTerm', () => {
     expect(termsInSource('Có AI gửi báo cáo không?', ['AI'])).toEqual(['AI']);
     expect(termsInSource('ai làm việc này? AI đang chạy', ['AI'])).toEqual(['AI']);
     expect(termsInSource('bất kỳ', [])).toEqual([]);
+    expect(termsInSource('bất kỳ', ['', '   ', '\u200b'])).toEqual([]);
   });
 
   it('says whether a text writes a term exactly', () => {

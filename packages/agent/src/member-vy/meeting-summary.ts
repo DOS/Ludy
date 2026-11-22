@@ -259,7 +259,10 @@ export function checkSummary(
   const known = new Set(segments.flatMap((s) => numbersIn(s.text)));
   const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
   const bad = (text: string): boolean => foreign(text) || hasContact(text);
-  const spell = (text: string): string => (glossary.length === 0 ? text : spellGlossary(text, glossary));
+  const clean = (rawText: string, max: number): string => {
+    const clipped = oneLine(rawText, max);
+    return glossary.length === 0 ? clipped : oneLine(spellGlossary(clipped, glossary), max);
+  };
   let dropped = 0;
 
   const useSections = template.sections.length > 0;
@@ -280,10 +283,10 @@ export function checkSummary(
       for (const rawLine of entry.text.split('\n')) {
         const pieces: string[] = [];
         for (const piece of rawLine.split(/(?<=[.!?])\s+/)) {
-          const sentence = oneLine(piece, SUMMARY_LIMITS.sectionChars);
+          const sentence = clean(piece, SUMMARY_LIMITS.sectionChars);
           if (sentence === '') continue;
           if (bad(sentence)) dropped += 1;
-          else pieces.push(glossary.length === 0 ? sentence : oneLine(spell(sentence), SUMMARY_LIMITS.sectionChars));
+          else pieces.push(sentence);
         }
         const line = pieces.join(' ');
         if (line === '') continue;
@@ -305,10 +308,10 @@ export function checkSummary(
   const sentences: string[] = [];
   if (!useSections && typeof parsed.summary === 'string') {
     for (const piece of parsed.summary.split(/(?<=[.!?])\s+|\n+/)) {
-      const line = oneLine(piece, SUMMARY_LIMITS.summaryChars);
+      const line = clean(piece, SUMMARY_LIMITS.summaryChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
-      else sentences.push(spell(line));
+      else sentences.push(line);
     }
   }
   const summary = sentences.join(' ').slice(0, SUMMARY_LIMITS.summaryChars);
@@ -317,10 +320,10 @@ export function checkSummary(
   if (Array.isArray(parsed.decisions)) {
     for (const entry of parsed.decisions) {
       if (typeof entry !== 'string') continue;
-      const line = oneLine(entry, SUMMARY_LIMITS.decisionChars);
+      const line = clean(entry, SUMMARY_LIMITS.decisionChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
-      else if (decisions.length < SUMMARY_LIMITS.decisions) decisions.push(glossary.length === 0 ? line : oneLine(spell(line), SUMMARY_LIMITS.decisionChars));
+      else if (decisions.length < SUMMARY_LIMITS.decisions) decisions.push(line);
     }
   }
 
@@ -328,13 +331,12 @@ export function checkSummary(
   if (Array.isArray(parsed.items)) {
     for (const entry of parsed.items) {
       if (!isRecord(entry) || typeof entry.title !== 'string') continue;
-      const rawTitle = oneLine(entry.title, SUMMARY_LIMITS.titleChars);
+      const title = clean(entry.title, SUMMARY_LIMITS.titleChars);
       // A foreign figure in the title refuses the item; a contact detail does not (it stays, flagged by the module's own check, for a person to read).
-      if (rawTitle === '' || foreign(rawTitle)) {
+      if (title === '' || foreign(title)) {
         dropped += 1;
         continue;
       }
-      const title = glossary.length === 0 ? rawTitle : oneLine(spell(rawTitle), SUMMARY_LIMITS.titleChars);
       const field = (value: unknown): string => {
         const text = typeof value === 'string' ? oneLine(value, SUMMARY_LIMITS.textChars) : '';
         // A name or a time that carries a figure the transcript lacks, or a way to reach someone, is blanked: readers see these words beside the item.

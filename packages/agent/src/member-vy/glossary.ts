@@ -88,9 +88,18 @@ export function spellGlossary(text: string, terms: readonly string[]): string {
   if (candidates.length === 0) return normalized;
   // Longest match in the original text wins over shorter sub-terms inside it, keeping glossary order on ties.
   candidates.sort((a, b) => b.end - b.start - (a.end - a.start) || a.order - b.order || a.start - b.start);
+  const occupied = new Uint8Array(normalized.length);
   const chosen: typeof candidates = [];
   for (const candidate of candidates) {
-    if (chosen.some((taken) => candidate.start < taken.end && candidate.end > taken.start)) continue;
+    let overlaps = false;
+    for (let i = candidate.start; i < candidate.end; i += 1) {
+      if (occupied[i] !== 0) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (overlaps) continue;
+    occupied.fill(1, candidate.start, candidate.end);
     chosen.push(candidate);
   }
   chosen.sort((a, b) => a.start - b.start);
@@ -137,7 +146,7 @@ export function termsInSource(source: string, terms: readonly string[]): string[
   const { normSource, folded, origStart, origEnd } = foldSourceWithSpans(source);
   return terms.filter((term) => {
     const key = foldForGlossary(term);
-    if (key === '') return false;
+    if (key.trim() === '') return false;
     if (!isShortCapitalized(term)) return termPattern(key, 'u').test(folded);
     for (const match of folded.matchAll(termPattern(key, 'gu'))) {
       if (match.index === undefined || match[0].length === 0) continue;
