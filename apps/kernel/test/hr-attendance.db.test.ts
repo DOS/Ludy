@@ -234,7 +234,10 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const today = vietnamToday(new Date());
     const month = vietnamMonth(new Date());
 
-    // 1. Rotate office QR in o1; verify invalid secret fails and valid secret (also via full URL) succeeds
+    // 1. Rotate office QR in o1; reject idempotencyKey replay persistence, invalid secret, and verify valid secret (also via full URL)
+    await expect(
+      rt.execute('hr.attendance.qr.rotate', {}, { actor: asUser(o1.owner), orgId: o1.orgId, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
     const qr1 = await o1.exec<HrAttendanceQrRotateResult>(o1.owner, 'hr.attendance.qr.rotate', {});
     expect(qr1.secret.length).toBeGreaterThan(16);
 

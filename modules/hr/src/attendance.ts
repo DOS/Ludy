@@ -956,6 +956,7 @@ export const attendanceQrRotate = defineCommand({
   input: zHrAttendanceQrRotate,
   risk: 'R2',
   sideEffect: 'internal',
+  noIdempotency: true,
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: (input) => (input.legalEntityId ? { type: 'hr.attendance_qr_config', id: input.legalEntityId } : null),

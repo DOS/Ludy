@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes HR attendance logs and office QR config ahead of payroll_employee (#4447).
--- This replaces ludy_kernel.org_purge with the post-rebrand definition (20270315090000_ludy_kernel_rebrand_core_schemas_roles_gucs)
+-- This replaces ludy_kernel.org_purge with the prior definition (20270315100100_ludy_kernel_org_purge_projects_announcements)
 -- plus crove_hr.attendance_log and crove_hr.attendance_qr_config in v_kernel_first; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
@@ -46,7 +46,7 @@ DECLARE
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note_version', 'crove_notes.note', 'crove_notes.notebook', 'crove_notes.note_template',
-    'crove_projects.roadmap_vote', 'crove_projects.roadmap_subscriber', 'crove_projects.roadmap_otp', 'crove_projects.roadmap_item', 'crove_projects.roadmap_board',
+    'crove_projects.roadmap_announcement', 'crove_projects.roadmap_vote', 'crove_projects.roadmap_subscriber', 'crove_projects.roadmap_otp', 'crove_projects.roadmap_item', 'crove_projects.roadmap_board',
     'crove_projects.time_entry', 'crove_projects.task_dependency', 'crove_projects.project_task', 'crove_projects.project_column', 'crove_projects.project_cycle', 'crove_projects.project_member', 'crove_projects.project',
     'ludy_kernel.activity', 'ludy_kernel.agent_wakeup', 'ludy_kernel.extraction',
     'ludy_kernel.inbound_message', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
