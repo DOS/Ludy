@@ -27,7 +27,7 @@ function ItemLink({ item, month, slug, children }: { item: MonthCloseItem; month
     case 'proposals':
       return <Link to="/o/$slug/inbox" params={params} search={{ status: 'pending' }} className={LINK_CLASS}>{children}</Link>;
     case 'invoices':
-      return <Link to="/o/$slug/portal-invoices" params={params} search={item.period ? { period: item.period } : {}} className={LINK_CLASS}>{children}</Link>;
+      return <Link to="/o/$slug/portal-invoices" params={params} search={item.period ? { period: item.period, ...(item.direction === 'sale' ? { direction: 'sale' as const } : {}) } : {}} className={LINK_CLASS}>{children}</Link>;
     case 'bank':
       return <Link to="/o/$slug/bank" params={params} search={{ month }} className={LINK_CLASS}>{children}</Link>;
     case 'marketplace':

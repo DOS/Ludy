@@ -48,7 +48,7 @@ export const monthOver = (bounds: MonthBounds, today: string): boolean => bounds
 // ends no VAT period for the VAT mark.
 export interface MonthCloseCounts {
   proposals: number;
-  invoices: { count: number; period: string } | null;
+  invoices: { count: number; period: string; direction?: 'sale' } | null;
   bank: number;
   marketplace: number;
   // The stock close is open: the month is over, the entity has stock moves up to it and no close covers the month.
@@ -64,7 +64,7 @@ export const lockCovers = (lockedThrough: string | null, bounds: MonthBounds): b
 export function buildMonthClose(legalEntityId: string, bounds: MonthBounds, counts: MonthCloseCounts): MonthClose {
   const rows: Record<MonthCloseKey, MonthCloseItem | null> = {
     proposals: { key: 'proposals', count: counts.proposals, period: null },
-    invoices: counts.invoices === null ? null : { key: 'invoices', count: counts.invoices.count, period: counts.invoices.period },
+    invoices: counts.invoices === null ? null : { key: 'invoices', count: counts.invoices.count, period: counts.invoices.period, ...(counts.invoices.direction ? { direction: counts.invoices.direction } : {}) },
     bank: { key: 'bank', count: counts.bank, period: null },
     marketplace: { key: 'marketplace', count: counts.marketplace, period: null },
     stock: counts.stock === null ? null : { key: 'stock', count: counts.stock ? 1 : 0, period: null },

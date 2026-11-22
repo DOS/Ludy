@@ -102,6 +102,9 @@ describe('the month-close checklist card', () => {
       '/o/demo/ledger',
     ]);
     expect(await render({ ...CHECKLIST, items: [item('vat', 1, '2026-Q4')] }, NONE('off'), 'en')).toContain('href="/o/demo/vat?period=2026-Q4"');
+    // Only the sales list has invoices without a voucher: the link opens the sales tab.
+    const sale = await render({ ...CHECKLIST, items: [{ key: 'invoices', count: 2, period: '2026-10', direction: 'sale' }] }, NONE('off'), 'en');
+    expect(hrefs(sale)).toEqual(['/o/demo/portal-invoices?period=2026-10&direction=sale']);
   });
 
   it('makes every link, the status cell, the month picker and the retry 44 px high', async () => {

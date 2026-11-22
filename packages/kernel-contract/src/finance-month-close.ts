@@ -24,6 +24,8 @@ export const zMonthCloseItem = z.object({
   key: zMonthCloseKey,
   count: z.number().int().nonnegative(),
   period: zVatPeriod.nullable(),
+  // 'sale' on the portal-invoices item when only the sales list has invoices that match no voucher, so the link opens the sales tab; absent otherwise (the purchase tab is the default).
+  direction: z.literal('sale').optional(),
 });
 export type MonthCloseItem = z.infer<typeof zMonthCloseItem>;
 

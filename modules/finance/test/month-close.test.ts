@@ -91,6 +91,12 @@ describe('buildMonthClose', () => {
     expect(buildMonthClose(ENTITY, b, { ...COUNTS, vat: null }).items.some((i) => i.key === 'vat')).toBe(false);
   });
 
+  it('carries the sales direction on the invoices item only when it is set, so the link can open the sales tab', () => {
+    const sale = buildMonthClose(ENTITY, b, { ...COUNTS, invoices: { count: 3, period: '2026-10', direction: 'sale' } });
+    expect(sale.items.find((i) => i.key === 'invoices')).toEqual({ key: 'invoices', count: 3, period: '2026-10', direction: 'sale' });
+    expect(buildMonthClose(ENTITY, b, COUNTS).items.find((i) => i.key === 'invoices')).not.toHaveProperty('direction');
+  });
+
   it('names the open items, in the fixed order, for the coworker', () => {
     expect(openKeys(buildMonthClose(ENTITY, b, COUNTS))).toEqual(['proposals', 'invoices', 'bank', 'stock', 'vat', 'lock']);
     expect(openKeys(buildMonthClose(ENTITY, b, { proposals: 0, invoices: null, bank: 0, marketplace: 0, stock: false, vat: { period: '2026-10', open: false }, lock: false }))).toEqual([]);

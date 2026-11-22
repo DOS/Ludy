@@ -50,7 +50,7 @@ async function pendingProposals(ctx: QueryContext, entity: string, b: MonthBound
 // sales together), from the same reconciliation the Tax portal check screen shows. An invoice that is only a proposal in the Inbox is left out: that proposal is counted in the first item.
 // For a quarterly filer in the last month of the quarter the quarter's lists are read when there are any, and the month's own only when there are none, so one invoice is never
 // counted from two lists. Null when no list was imported and read for the period: there is then nothing to compare.
-async function unmatchedInvoices(ctx: QueryContext, entity: string, month: string, kind: VatFilingPeriod | null): Promise<{ count: number; period: string } | null> {
+async function unmatchedInvoices(ctx: QueryContext, entity: string, month: string, kind: VatFilingPeriod | null): Promise<{ count: number; period: string; direction?: 'sale' } | null> {
   const lists = await ctx.trx
     .selectFrom('crove_finance.portal_invoice_list')
     .select(['period', 'direction'])
@@ -63,12 +63,16 @@ async function unmatchedInvoices(ctx: QueryContext, entity: string, month: strin
     .execute();
   const period = portalPeriods(month, kind).find((p) => lists.some((l) => l.period === p));
   if (period === undefined) return null;
-  let count = 0;
+  let purchases = 0;
+  let sales = 0;
   for (const list of lists.filter((l) => l.period === period)) {
     const { reconciliation } = await reconcilePeriod(ctx, period, entity, list.direction);
-    count += reconciliation.summary.missing + reconciliation.summary.amountMismatch;
+    const unmatched = reconciliation.summary.missing + reconciliation.summary.amountMismatch;
+    if (list.direction === 'sale') sales += unmatched;
+    else purchases += unmatched;
   }
-  return { count, period };
+  // The link opens the purchase tab; when only the sales side has invoices without a voucher it opens the sales tab instead.
+  return { count: purchases + sales, period, ...(purchases === 0 && sales > 0 ? { direction: 'sale' as const } : {}) };
 }
 
 // Bank statement lines dated in the month that no posted, unreversed bank voucher settles, no platform payout voucher names and no pending voucher proposal holds: the lines the bank
