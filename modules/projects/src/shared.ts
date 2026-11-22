@@ -405,7 +405,7 @@ export async function stopRunningProjectTimers(
       )
       AND NOT EXISTS (
         SELECT 1
-        FROM crove_kernel.tenant_member tm
+        FROM ludy_kernel.tenant_member tm
         WHERE tm.org_id = te.org_id
           AND tm.user_id = te.user_id
           AND tm.role IN ('owner', 'admin')

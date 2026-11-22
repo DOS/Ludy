@@ -453,7 +453,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     const o = await setupOrg();
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by)
          VALUES ($1, $2, 'finance.chief_accountant', $3)`,
         [o.orgId, o.member, o.owner],
       );

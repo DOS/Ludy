@@ -348,12 +348,12 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
     const created = await createOrg(rt, asUser(owner), `${namePrefix} ${tag}`);
     const orgId = created.orgId;
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
       [orgId, admin, member, viewer],
     );
     await adminPool.query(
-      `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by)
+      `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by)
        VALUES ($1, $2, 'finance.chief_accountant', $3)`,
       [orgId, member, owner],
     );
@@ -390,11 +390,11 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appPool = createPool({ connectionString: appUrl.toString(), max: 4 });
 
@@ -608,7 +608,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
       // 6. Strict HR-only RBAC (Finance-only chief_accountant `member` & `viewer` blocked 403), MODULE_OFF (404), cross-org (404), zero audit leaks.
       const countPreviewAudits = async () => {
         const res = await adminPool.query<{ c: string }>(
-          `SELECT COUNT(*)::text AS c FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.preview_diff'`,
+          `SELECT COUNT(*)::text AS c FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.preview_diff'`,
           [orgA.orgId],
         );
         return Number(res.rows[0]?.c ?? 0);
@@ -642,7 +642,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
 
       // Allowed sensitive reads wrote safe before_read audit events with ZERO wages or employee names.
       const audits = await adminPool.query<{ detail: Record<string, unknown>; row_text: string }>(
-        `SELECT detail, audit_event::text AS row_text FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.preview_diff'`,
+        `SELECT detail, audit_event::text AS row_text FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.preview_diff'`,
         [orgA.orgId],
       );
       expect(audits.rows.length).toBeGreaterThanOrEqual(5);
