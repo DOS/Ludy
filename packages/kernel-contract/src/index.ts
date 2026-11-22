@@ -138,6 +138,7 @@ export * from './hr-declarations.ts';
 export * from './hr-recruiting.ts';
 export * from './hr-bank-template.ts';
 export * from './notes.ts';
+export * from './notes-import.ts';
 export * from './extension.ts';
 export * from './mcp.ts';
 export * from './meeting-agenda.ts';

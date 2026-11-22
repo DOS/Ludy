@@ -14,6 +14,7 @@ import type { Deal, PipelineStage, Quote } from '@ludy/kernel-contract';
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -281,5 +282,37 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const timeline = async (id: string) => runtime.query<{ items: Array<{ kind: string; actorOrigin: string; actorName: string | null }> }>('kernel.party.timeline', { partyId: id }, asBrowser('owner'));
     expect((await timeline(made.partyId)).items).toEqual([expect.objectContaining({ kind: 'party.created', actorOrigin: 'mcp' })]);
     expect((await timeline(mine.partyId)).items).toEqual([expect.objectContaining({ kind: 'party.created', actorOrigin: 'ui' })]);
+  });
+
+  // Plain SQL as the tenant role with row-level security on (the login enters the user's context with a token, then `SET LOCAL ROLE crove_tenant`): the role the app's reads run as, so a column the role may not read,
+  // or a policy that hides the row, shows here and not in a superuser read.
+  const asTenant = async <R extends pg.QueryResultRow>(who: string, org: string, text: string, params: unknown[]): Promise<R[]> => {
+    const c = await (pools[0] as pg.Pool).connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
+      await c.query('SET LOCAL ROLE crove_tenant');
+      return (await c.query<R>(text, params)).rows;
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      c.release();
+    }
+  };
+
+  it('reads the marks of a thread\'s notes and of a contact\'s timeline as a plain tenant login with row-level security on, and shows nothing of another org', async () => {
+    const mine = await run<{ noteId: string }>('kernel.conversation.note', { conversationId: thread, body: 'ghi chú người, đọc bằng vai tenant' }, asBrowser('owner'));
+    const theirs = await run<{ noteId: string }>('kernel.mcp.conversation_note', { conversationId: thread, body: 'ghi chú Dy, đọc bằng vai tenant' });
+    const notes = await asTenant<{ id: string; actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT id, actor_origin, tainted FROM crove_kernel.conversation_note WHERE conversation_id = $1', [thread]);
+    expect(notes.find((n) => n.id === mine.noteId)).toMatchObject({ actor_origin: 'ui', tainted: false });
+    expect(notes.find((n) => n.id === theirs.noteId)).toMatchObject({ actor_origin: 'mcp', tainted: true });
+    const made = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách đọc bằng vai tenant' });
+    const party = await asTenant<{ actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT actor_origin, tainted FROM crove_kernel.party WHERE id = $1', [made.partyId]);
+    expect(party).toEqual([expect.objectContaining({ actor_origin: 'mcp', tainted: true })]);
+    // The timeline of a contact (the activity rows of record type kernel.party).
+    const timeline = await asTenant<{ kind: string; actor_origin: string }>('member', orgA, "SELECT kind, actor_origin FROM crove_kernel.activity WHERE record_type = 'kernel.party' AND record_id = $1", [made.partyId]);
+    expect(timeline).toEqual([expect.objectContaining({ kind: 'party.created', actor_origin: 'mcp' })]);
+    // Row-level security still holds: the other org's login sees none of these rows.
+    expect(await asTenant('foreign', orgB, 'SELECT id FROM crove_kernel.conversation_note WHERE conversation_id = $1', [thread])).toEqual([]);
+    expect(await asTenant('foreign', orgB, 'SELECT id FROM crove_kernel.activity WHERE record_id = $1', [made.partyId])).toEqual([]);
   });
 });

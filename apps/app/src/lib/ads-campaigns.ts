@@ -192,9 +192,10 @@ export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
     startOn: form.startOn === '' ? null : form.startOn,
     endOn: form.endOn === '' ? null : form.endOn,
     targeting,
-    // A link belongs to a Traffic or an Engagement ad and a Page to a Messenger one: the other is not part of the plan, whatever the form still holds.
+    // A link belongs to a Traffic or an Engagement ad, not to a Messenger one (whatever the form still holds). Every ad runs as a Page, so the Page is kept
+    // for every objective (the launch stops a plan without one as page_required).
     linkUrl: form.objective === 'messenger' || form.linkUrl.trim() === '' ? null : form.linkUrl.trim(),
-    pageConnectionId: form.objective !== 'messenger' || form.pageConnectionId === '' ? null : form.pageConnectionId,
+    pageConnectionId: form.pageConnectionId === '' ? null : form.pageConnectionId,
     sourcePostId: form.sourcePostId === '' ? null : form.sourcePostId,
     mediaFileId: form.mediaFileId === '' ? null : form.mediaFileId,
     variants,

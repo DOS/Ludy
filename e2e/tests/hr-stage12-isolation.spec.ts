@@ -413,9 +413,14 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
     const journalCheck = await postRpc(memberPage.request, 'journal/list', memberToken, slug, {});
     expect(journalCheck.status).toBe(200);
 
-    // HR navigation is hidden for non-admin/non-owner roles.
+    // Admin HR navigation links stay hidden for non-admin/non-owner roles; members only see self-service /hr/my.
     await memberPage.goto(`/o/${slug}/overview`);
-    await expect(memberPage.getByRole('navigation').getByText('Nhân sự', { exact: true })).toHaveCount(0);
+    const nav = memberPage.getByRole('navigation');
+    const hrNavLink = nav.getByRole('link', { name: 'Nhân sự', exact: true });
+    await expect(hrNavLink).toHaveAttribute('href', `/o/${slug}/hr/my`);
+    for (const adminPath of ['/hr/employees', '/hr/recruiting', '/hr/payroll', '/hr/declarations']) {
+      await expect(nav.locator(`a[href*="${adminPath}"]`)).toHaveCount(0);
+    }
 
     await test.step('Vector 1: HR pages and RPCs refuse member + Kế toán trưởng with 403 and zero salary leakage', async () => {
       for (const path of [`/o/${slug}/hr/employees`, `/o/${slug}/hr/payroll`, `/o/${slug}/hr/declarations`]) {

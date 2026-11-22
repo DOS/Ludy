@@ -101,6 +101,7 @@ import { AccountingOverviewPage } from './routes/accounting-overview.tsx';
 import { SalesInvoicesPage } from './routes/sales-invoices.tsx';
 import { HrBankTemplatesPage } from './routes/hr-bank-templates.tsx';
 import { HrEmployeesPage } from './routes/hr-employees.tsx';
+import { HrSelfServicePage } from './routes/hr-my.tsx';
 import { HrRecruitingPage } from './routes/hr-recruiting.tsx';
 import { HrDeclarationsPage } from './routes/hr-declarations.tsx';
 import { HrPayrollPage } from './routes/hr-payroll.tsx';
@@ -542,6 +543,7 @@ const hrPayrollRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/p
 // The HR app's declaration lists (#2533): the D02-LT, the quarterly and annual PIT data and the certificate data, to print, save as a PDF or download as xlsx.
 const hrDeclarationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/declarations', component: HrDeclarationsPage });
 const hrBankTemplatesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/bank-templates', component: HrBankTemplatesPage });
+const hrMyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/my', component: HrSelfServicePage });
 const journalRoute = createRoute({ getParentRoute: () => orgRoute, path: 'journal', validateSearch: parseJournalSearch, component: JournalPage });
 // Cash and bank vouchers (issue #327); ?type=&from=&to= keep the list's filters (#1513).
 const vouchersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'vouchers', validateSearch: parseVouchersSearch, component: VouchersPage });
@@ -788,7 +790,7 @@ const routeTree = rootRoute.addChildren([
   calendarOAuthCallbackRoute,
   meetingPlatformOAuthCallbackRoute,
   marketplaceOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, signSettingsRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsQuotesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsNotificationsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, signSettingsRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, hrMyRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsQuotesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsNotificationsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
