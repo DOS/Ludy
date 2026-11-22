@@ -2215,9 +2215,9 @@ export const conversationNoteAdd = defineCommand({
 });
 
 // "Create task" (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): follow-up work is an ordinary kernel task that links back to the thread, so the
-// conversation stays New, Pending or Resolved on its own and the task lives in the org's task list. A person only: the thread is read and locked under
+// conversation stays New, Pending or Resolved on its own and the task lives in the org's task list. A person's click, or the approval of an AI coworker's ask (kernel.conversation.follow_up_approved, #4148): the thread is read and locked under
 // row-level security first (a private message the caller may not read is "not found"), then kernel.task.create_from_conversation makes the task with a
-// source_ref only kernel code sets. The task holds the title the person typed and nothing of the thread; the audit row holds ids, never a title.
+// source_ref only kernel code sets. The task holds the title as typed or as approved (tainted in the second case) and nothing of the thread; the audit row holds ids, never a title.
 export const conversationFollowUp = defineCommand({
   name: 'kernel.conversation.follow_up',
   input: zConversationFollowUp,
@@ -2233,6 +2233,8 @@ export const conversationFollowUp = defineCommand({
       title: input.title,
       positionId: input.assigneePositionId,
       due: input.due ?? null,
+      // Under an approved proposal the title is what an AI coworker wrote (kernel.conversation.follow_up_approved, #4148), so the task is tainted; a person's own click has no proposal.
+      tainted: ctx.proposalId !== null,
     });
     ctx.audit({ conversation_id: conversation.id, task_id: created.taskId });
     return { taskId: created.taskId };
@@ -2240,7 +2242,8 @@ export const conversationFollowUp = defineCommand({
 });
 
 // The open tasks of one thread, for the contact panel: the tasks whose source_ref names it, any status but done and cancelled. Read by the thread's own rule
-// (a thread the caller may not read is "not found") and the tasks' own (every member reads tasks). Ids, status and dates; the title is the person's own text.
+// (a thread the caller may not read is "not found") and the tasks' own (every member reads tasks). Ids, status, dates and the `tainted` mark; the title is the person's own text, or an AI coworker's
+// when the task was made from its approved ask (`tainted`, #4148).
 export const conversationTasks = defineQuery({
   name: 'kernel.conversation.tasks',
   input: zConversationId,
@@ -2255,7 +2258,7 @@ export const conversationTasks = defineQuery({
     if (!conversation) throw notFound();
     const rows = await ctx.trx
       .selectFrom('crove_kernel.task')
-      .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at'])
+      .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`source_ref @> ${JSON.stringify({ type: 'kernel.conversation', id: conversation.id })}::jsonb`)
       .where('status', 'not in', ['done', 'cancelled'])
@@ -2264,7 +2267,7 @@ export const conversationTasks = defineQuery({
       .limit(CONVERSATION_TASKS_MAX)
       .execute();
     return {
-      tasks: rows.map((t) => ({ id: t.id, title: t.title, status: t.status, assigneePositionId: t.assignee_position_id, due: t.due?.toISOString() ?? null, createdAt: t.created_at.toISOString() })),
+      tasks: rows.map((t) => ({ id: t.id, title: t.title, status: t.status, assigneePositionId: t.assignee_position_id, due: t.due?.toISOString() ?? null, createdAt: t.created_at.toISOString(), tainted: t.tainted })),
     };
   },
 });
