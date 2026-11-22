@@ -239,7 +239,7 @@ suite('eSign Slice 5a Contract Vault search & metered Vy Q&A (#4439)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -247,8 +247,8 @@ suite('eSign Slice 5a Contract Vault search & metered Vy Q&A (#4439)', () => {
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });

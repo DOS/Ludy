@@ -638,7 +638,7 @@ export const vaultSearch = defineQuery({
     assertUser(ctx);
 
     const { rows: appRows } = await sql<{ enabled: boolean }>`
-      SELECT crove_kernel.org_app_on(${ctx.orgId}::uuid, 'sign') AS enabled
+      SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'sign') AS enabled
     `.execute(ctx.trx);
     if (!appRows[0]?.enabled) {
       throw new DomainError('MODULE_OFF', 404, 'Ứng dụng sign chưa được bật cho công ty này', {
