@@ -1672,7 +1672,7 @@ export const vi = {
     },
     cvExtract: {
       title: 'Tách thông tin ứng viên từ CV (PDF/DOCX)',
-      subtitle: 'Tệp được đọc trong hộp cát tách biệt (crove-extract). Kết quả chỉ tạo bản nháp Đề xuất để bạn kiểm tra trước khi lưu.',
+      subtitle: 'Tệp được đọc trong hộp cát tách biệt. Kết quả chỉ tạo bản nháp Đề xuất để bạn kiểm tra trước khi lưu.',
       fileLabel: 'Chọn tệp CV (.pdf hoặc .docx, tối đa 10 MB)',
       openingLabel: 'Khớp kỹ năng với vị trí (tùy chọn)',
       extractButton: 'Tách thông tin CV',
@@ -15283,6 +15283,7 @@ export const vi = {
       HR_CV_EMPTY_TEXT: 'Tệp CV không có văn bản đọc được (có thể là ảnh scan chưa OCR)',
       HR_CV_JOB_NOT_FOUND: 'Không tìm thấy lượt trích xuất CV này',
       HR_CV_INTEGRITY: 'Tệp CV không khớp chữ ký lưu trữ; hãy tải lên lại',
+      UNSUPPORTED_FILE_TYPE: 'Chỉ hỗ trợ tệp định dạng PDF hoặc DOCX',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Không tính được số dư phép năm với thông số đã chọn',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Số ngày nghỉ không lương đồng bộ sang bảng lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 99,9 ngày)',
       HR_LEAVE_AFTER_END: 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc',
@@ -17281,9 +17282,10 @@ export const vi = {
         },
         cv_extract: {
           audit: 'Ghi nhận một lượt trích xuất nháp hồ sơ từ CV (không chứa dữ liệu cá nhân)',
+          authorize: 'Kiểm tra quyền tải CV tuyển dụng',
           complete: 'Ghi nhận kết quả tách văn bản CV từ hộp cát worker',
           context: 'Đọc ngữ cảnh vị trí tuyển dụng cho lượt trích xuất CV',
-          request: 'Tạo yêu cầu tách văn bản CV qua hộp cát crove-extract',
+          request: 'Tạo yêu cầu tách văn bản CV qua hộp cát tách biệt',
         },
         invite_draft: {
           audit: 'Ghi nhận lượt tạo nháp lời mời phỏng vấn Engage (chỉ mã ứng viên và kênh)',

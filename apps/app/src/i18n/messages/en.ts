@@ -1674,7 +1674,7 @@ export const en = {
     },
     cvExtract: {
       title: 'Extract draft candidate fields from CV (PDF/DOCX)',
-      subtitle: 'Parsed strictly inside the crove-extract sandbox. Output creates an editable proposal draft for human review before saving.',
+      subtitle: 'Parsed strictly inside the isolated document sandbox. Output creates an editable proposal draft for human review before saving.',
       fileLabel: 'Choose CV file (.pdf or .docx, max 10 MB)',
       openingLabel: 'Match skills against opening (optional)',
       extractButton: 'Extract CV draft',
@@ -15283,6 +15283,7 @@ export const en = {
       HR_CV_EMPTY_TEXT: 'The CV file contains no extractable text (it may be an un-OCRed scanned image)',
       HR_CV_JOB_NOT_FOUND: 'This CV extraction job was not found',
       HR_CV_INTEGRITY: 'The CV file did not match its stored checksum; please upload it again',
+      UNSUPPORTED_FILE_TYPE: 'Only PDF or DOCX files are supported',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Unable to calculate the annual leave balance for the selected options',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Unpaid leave days synced to payroll support at most 1 decimal place and range from 0 to 99.9 days',
       HR_LEAVE_AFTER_END: 'The leave month cannot be after the employee termination month',
@@ -17281,9 +17282,10 @@ export const en = {
         },
         cv_extract: {
           audit: 'Record a candidate CV extraction draft run (non-PII metadata only)',
-          complete: 'Record worker crove-extract CV text extraction completion hash',
+          authorize: 'Check permission to upload a recruiting CV',
+          complete: 'Record worker isolated CV text extraction completion hash',
           context: 'Read job opening context for CV extraction draft',
-          request: 'Queue sandboxed crove-extract parsing for an uploaded CV file',
+          request: 'Queue isolated sandbox parsing for an uploaded CV file',
         },
         invite_draft: {
           audit: 'Record an Engage interview invite draft generation (candidate ID and channel only)',

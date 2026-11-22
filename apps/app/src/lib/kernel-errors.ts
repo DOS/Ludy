@@ -308,6 +308,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_CV_EMPTY_TEXT',
   'HR_CV_JOB_NOT_FOUND',
   'HR_CV_INTEGRITY',
+  'UNSUPPORTED_FILE_TYPE',
   // The posting of an approved run (#2532).
   'HR_RUN_NOT_APPROVED',
   'HR_POSTING_OPEN',
