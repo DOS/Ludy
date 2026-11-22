@@ -846,6 +846,100 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(await payoutsOf(second.o, second.settlement)).toHaveLength(0);
       expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [second.o.orgId, asked.proposalId]))[0]?.status).toBe('pending');
     });
+
+  describe('the facts behind the coworker note on a pending proposal (#4389)', () => {
+    const factsOf = (o: Org, proposalId: string, actor: string = o.owner) =>
+      rt.query<{ kind: string; figures: Record<string, string>; lineKinds: string[]; accounts: string[]; uncertain: Array<{ key: string }> } | null>('finance.marketplace.proposal_facts', { proposalId }, { actor: asUser(actor), orgId: o.orgId });
+
+    it('reads a pending settlement and a pending payout from the stored proposals, in whole dong, with only the Uncertain points of the rows they use', async () => {
+      // A settlement not yet posted: the proposal waits.
+      const o = await org('tt133', false);
+      const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', discount: '5000' }]);
+      const asked = await askSettlement(o, settlement);
+      const sFacts = await factsOf(o, asked.proposalId);
+      expect(sFacts).toMatchObject({ kind: 'settlement', figures: { sales: '100000', sellerDiscount: '5000' }, lineKinds: [] });
+      expect(sFacts?.figures.refund).toBeUndefined();
+      expect(sFacts?.accounts).toEqual(expect.arrayContaining(['131']));
+      // A seller discount brings the voucher point; no refund and no withheld tax bring none of those.
+      expect(sFacts?.uncertain.map((p) => p.key)).toEqual(expect.arrayContaining(['receivable', 'revenue_voucher']));
+      expect(sFacts?.uncertain.map((p) => p.key)).not.toContain('sales_return');
+      expect(sFacts?.uncertain.map((p) => p.key)).not.toContain('household_tax');
+      // A payout with an incentive line: the incentive point is there, and none for compensation, withheld tax or fees.
+      const c = await company([{ sales: '100000', other: '6000' }], '106000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [{ kind: 'incentive', lineId: c.ids[0], amount: '6000' }]);
+      const pFacts = await factsOf(c.o, proposalId);
+      expect(pFacts).toMatchObject({ kind: 'payout', figures: { received: '106000', incentive: '6000' }, lineKinds: ['incentive'] });
+      expect(pFacts?.accounts).toEqual(expect.arrayContaining(['1121', '131', '711']));
+      expect(pFacts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income']);
+    });
+
+    it('shows the household-tax point for a household settlement with tax withheld, and for a company payout with tax withheld by mistake tells it apart (#4389)', async () => {
+      // A household seller (the default of org()): the platform withheld 2,000 and the entry credits 3331 and 3335.
+      const house = await org('tt133');
+      const settlement = await seed(house, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', tax: '2000' }]);
+      const asked = await askSettlement(house, settlement);
+      const hFacts = await factsOf(house, asked.proposalId);
+      expect(hFacts).toMatchObject({ kind: 'settlement', figures: { sales: '100000', taxWithheld: '2000' } });
+      expect(hFacts?.uncertain.map((p) => p.key)).toContain('household_tax');
+      // A company: the same 2,000 is withheld by mistake and classified; it is told as that, and is not household tax.
+      const c = await company([{ sales: '100000', tax: '2000' }], '98000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [{ kind: 'withheld_in_error', lineId: c.ids[0], amount: '2000' }]);
+      const pFacts = await factsOf(c.o, proposalId);
+      expect(pFacts).toMatchObject({ kind: 'payout', figures: { received: '98000', taxInError: '2000' }, lineKinds: ['withheld_in_error'] });
+      expect(pFacts?.figures.taxWithheld).toBeUndefined();
+      expect(pFacts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'tax_in_error']);
+    });
+
+    it('sums two compensation lines the way the voucher posts them: 632 up to each stated cost and 711 for the rest (#4389)', async () => {
+      const c = await company([{ sales: '100000', other: '3000' }, { sales: '50000', other: '5000' }], '158000');
+      const { proposalId } = await askWith(c.o, c.settlement, c.line, [
+        { kind: 'carrier_compensation', lineId: c.ids[0], amount: '3000', costAmount: '9000' },
+        { kind: 'carrier_compensation', lineId: c.ids[1], amount: '5000', costAmount: '1000' },
+      ]);
+      const facts = await factsOf(c.o, proposalId);
+      expect(facts?.figures).toMatchObject({ compensation: '8000', compensationCost: '4000', compensationExcess: '4000' });
+      expect(facts?.uncertain.map((p) => p.key)).toEqual(['receivable', 'other_income', 'compensation_cost']);
+      // What the entry posts, from the same stored proposal: 632 takes 4,000 and 711 the other 4,000.
+      const stored = await payloadOf(c.o, proposalId);
+      const credit = (account: string) => stored?.lines.filter((l) => l.account === account).reduce((n, l) => n + Number(l.credit), 0);
+      expect([credit('632'), credit('711')]).toEqual([4000, 4000]);
+    });
+
+    it('explains only a pending proposal: once approved or rejected the read answers null, so no model call is made for it (#4389)', async () => {
+      const approved = await company([{ sales: '100000', other: '6000' }], '106000');
+      const a = await askWith(approved.o, approved.settlement, approved.line, [{ kind: 'incentive', lineId: approved.ids[0], amount: '6000' }]);
+      expect(await factsOf(approved.o, a.proposalId)).toMatchObject({ kind: 'payout' });
+      await approve(approved.o, a.proposalId);
+      expect(await factsOf(approved.o, a.proposalId)).toBeNull();
+      const rejected = await company([{ sales: '100000', other: '6000' }], '106000');
+      const r = await askWith(rejected.o, rejected.settlement, rejected.line, [{ kind: 'incentive', lineId: rejected.ids[0], amount: '6000' }]);
+      await rt.execute('kernel.proposal.reject', { id: r.proposalId, reason: 'no' }, { actor: asUser(rejected.o.owner), orgId: rejected.o.orgId });
+      expect(await factsOf(rejected.o, r.proposalId)).toBeNull();
+    });
+
+    it('reads nothing of another organization\'s proposal, and nothing of an entity outside a scoped member\'s scope', async () => {
+      const mine = await company([{ sales: '100000', other: '6000' }], '106000');
+      const { proposalId } = await askWith(mine.o, mine.settlement, mine.line, [{ kind: 'incentive', lineId: mine.ids[0], amount: '6000' }]);
+      // Another organization sees no such proposal.
+      const other = await org('tt133', false);
+      await expect(factsOf(other, proposalId)).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      await expect(factsOf(other, randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      // A member limited to another entity of the same organization is refused the same way; one limited to the proposal's own entity reads it.
+      const branch = (
+        await withAdmin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [mine.o.orgId, `Chi nhánh ${randomUUID().slice(0, 6)}`, mine.o.owner]))
+      ).rows[0]?.id as string;
+      const scopedTo = async (entityId: string) => {
+        const userId = await upsertIdentity(createDb(pool), { issuer: 'mktnote', subject: randomUUID(), email: `scoped-${randomUUID().slice(0, 8)}@mkt.test`, name: null });
+        await withAdmin(async (c) => {
+          await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [mine.o.orgId, userId]);
+          await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [mine.o.orgId, userId, entityId, mine.o.owner]);
+        });
+        return userId;
+      };
+      await expect(factsOf(mine.o, proposalId, await scopedTo(branch))).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      expect(await factsOf(mine.o, proposalId, await scopedTo(mine.o.entity))).toMatchObject({ kind: 'payout' });
+    });
+  });
   });
 
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {
