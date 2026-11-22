@@ -105,6 +105,8 @@ describe('which commands an MCP grant may reach as a proposal (#3858 slice d)', 
       'ads.schedule.shorten_approved': 'ludy.ads.draft',
       // Step 1 of 2 for #4181: the twin that cancels a queued change of a running ad (it runs only from an approved proposal and only for a change that would raise spend); the change that adds it is the next PR.
       'ads.manage.cancel_approved': 'ludy.ads.draft',
+      // Step 1 of 2 for #4148: the twin that creates a team task linked to a thread (it runs only from an approved proposal, as the approver, so the task, its event and the assignee agent's wake-up happen outside the sealed write context); the change that adds it is the next PR.
+      'kernel.conversation.follow_up_approved': 'ludy.engage.write',
     };
     const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
     const declared = all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
