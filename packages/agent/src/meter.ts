@@ -165,6 +165,8 @@ export const AI_FEATURES = {
   'sign.obligation_extract': 'sign',
   // Vy (the general manager) answering a question across the caller's already-permitted eSign contracts (#4439): one call over at most 20 bounded contract snippets, zero tools, every citation verified verbatim against the caller's candidate set. Nothing is stored.
   'sign.vault_qa': 'sign',
+  // Vy (the general manager) checking extracted eSign PDF contract pages against the org's SME playbook rules and proposing grounded redline suggestions (#4442): one call over bounded page text and active rules per ask, every cited finding verified deterministically against the PDF and marked tainted for human review.
+  'sign.playbook_check': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

@@ -193,3 +193,17 @@ export {
   signWebhookCommands,
   signWebhookQueries,
 } from './webhooks.ts';
+export {
+  DEFAULT_VIETNAM_SME_PLAYBOOK_RULES,
+  SIGN_MAX_PLAYBOOK_RULES,
+  defaultSlotForRuleId,
+  deterministicPlaybookRuleId,
+  evaluatePlaybookDeterministically,
+  signPlaybookCommands,
+  signPlaybookQueries,
+  type DefaultPlaybookRuleSlot,
+  type DefaultVietnamSmePlaybookRuleSpec,
+  type SignPlaybookExtractedPage,
+  type SignPlaybookRuleEffective,
+  type SignPlaybookSource,
+} from './playbook.ts';

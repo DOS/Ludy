@@ -94,6 +94,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
   compareSignPdfVersions,
+  evaluateEnvelopePlaybook,
   proposeEnvelopeAnalysis,
   proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
@@ -646,6 +647,7 @@ export function createRpcHandler(
   const signDiffCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
   const signDrafterCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
   const signVaultCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 40 }));
+  const signPlaybookCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -5258,6 +5260,30 @@ export function createRpcHandler(
             );
           }),
         ),
+      },
+      playbook: {
+        rules_list: os.sign.playbook.rules_list.handler(signQuery('sign.playbook.rules_list')),
+        rule_upsert: os.sign.playbook.rule_upsert.handler(signCommand('sign.playbook.rule_upsert')),
+        rule_delete: os.sign.playbook.rule_delete.handler(signCommand('sign.playbook.rule_delete')),
+        seed_defaults: os.sign.playbook.seed_defaults.handler(signCommand('sign.playbook.seed_defaults')),
+        get: os.sign.playbook.get.handler(signQuery('sign.playbook.get')),
+        evaluate: os.sign.playbook.evaluate.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            evaluateEnvelopePlaybook({
+              ai: signPlaybookCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              useAi: input.useAi,
+              ...(input.pages ? { pages: input.pages } : {}),
+              ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        override_finding: os.sign.playbook.override_finding.handler(signCommand('sign.playbook.override_finding')),
       },
     },
   });

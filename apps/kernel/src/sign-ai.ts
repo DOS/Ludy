@@ -12,6 +12,7 @@ import {
   AiBudgetExhaustedError,
   AiMeterMissingError,
   SIGN_AI_PROMPT_VERSION,
+  SIGN_PLAYBOOK_CHECK_PROMPT_VERSION,
   withAiScope,
   type AiMeter,
   type SignAiPageInput,
@@ -25,10 +26,13 @@ import type {
   SignDrafterProposeInput,
   SignDrafterProposeResult,
   SignEnvelopeObligationRecordContract,
+  SignEnvelopePlaybookCheckRecord,
   SignObligationAiOutcome,
   SignVaultAskInput,
   SignVaultAskResult,
   SignVaultSearchResult,
+  SignPlaybookAiOutcome,
+  SignPlaybookEvaluateResult,
 } from '@ludy/kernel-contract';
 import {
   DomainError,
@@ -47,6 +51,7 @@ import {
   type SignAiSource,
   type SignDiffSourceResult,
   type SignObligationSource,
+  type SignPlaybookSource,
 } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
@@ -55,7 +60,11 @@ export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRi
   Partial<
     Pick<
       SignAiReader,
-      'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations' | 'answerVaultQuestion'
+      'summarizeVersionDiff'
+      | 'proposeContractClauses'
+      | 'extractObligations'
+      | 'answerVaultQuestion'
+      | 'checkPlaybook'
     >
   >;
 
@@ -897,6 +906,209 @@ export async function askSignVault(params: AskSignVaultParams): Promise<SignVaul
     }
     console.error('[sign-ai] contract vault Q&A failed', error instanceof Error ? error.name : typeof error);
     return { ai: 'failed', items, summary: null };
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface EvaluateEnvelopePlaybookParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'execute' | 'query'>;
+  orgId: string;
+  actor: UserActor | SystemActor;
+  envelopeId: string;
+  useAi?: boolean;
+  pages?: readonly SignAiPageInput[];
+  inspectPages?: (source: SignPlaybookSource) => Promise<readonly SignAiPageInput[]>;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+  promptVersion?: string;
+  idempotencyKey?: string;
+}
+
+export async function evaluateEnvelopePlaybook(
+  params: EvaluateEnvelopePlaybookParams,
+): Promise<SignPlaybookEvaluateResult> {
+  const { ai, runtime, orgId, actor, envelopeId } = params;
+  if (actor.type !== 'user' && actor.type !== 'system') {
+    throw new DomainError('FORBIDDEN', 403, 'Only workspace members or system workers can run contract playbook checks');
+  }
+
+  const source = await runtime.query<SignPlaybookSource>(
+    'sign.playbook.source',
+    { envelopeId },
+    { actor, orgId },
+  );
+
+  const safeExisting = async (): Promise<SignEnvelopePlaybookCheckRecord | null> => {
+    try {
+      const res = await runtime.query<{ check: SignEnvelopePlaybookCheckRecord | null }>(
+        'sign.playbook.get',
+        { envelopeId },
+        { actor, orgId },
+      );
+      return res.check;
+    } catch {
+      return null;
+    }
+  };
+
+  if (source.inspectStatus !== 'passed' || !source.pageCount || source.pageCount < 1) {
+    return { ai: 'not_ready', check: await safeExisting() };
+  }
+  if (source.activeRules.length === 0) {
+    return { ai: 'no_rules', check: await safeExisting() };
+  }
+  if (!params.pages && !params.inspectPages) {
+    return { ai: 'no_text', check: await safeExisting() };
+  }
+
+  const pageCount = source.pageCount;
+  const rawPages = params.pages ?? (params.inspectPages ? await params.inspectPages(source) : []);
+  const extractedPages: SignAiExtractedPage[] = rawPages
+    .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= pageCount)
+    .map((p) => ({ page: p.page, text: p.text }));
+
+  if (extractedPages.every((p) => p.text.trim().length === 0)) {
+    return { ai: 'no_text', check: await safeExisting() };
+  }
+
+  const execOptions = {
+    actor,
+    orgId,
+    ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+  };
+
+  const recordDeterministicFallback = async (
+    aiOutcome: Exclude<SignPlaybookAiOutcome, 'used'>,
+    forceOverwrite: boolean,
+  ): Promise<SignPlaybookEvaluateResult> => {
+    const existing = await safeExisting();
+    if (
+      !forceOverwrite &&
+      existing &&
+      !existing.isStale &&
+      (existing.mode === 'ai' || existing.mode === 'manual')
+    ) {
+      return { ai: aiOutcome, check: existing };
+    }
+    const saved = await runtime.execute<SignEnvelopePlaybookCheckRecord>(
+      'sign.playbook.record_check',
+      {
+        envelopeId,
+        sourceSha256: source.sourceSha256,
+        mode: 'deterministic',
+        promptVersion: null,
+        extractedPages,
+      },
+      execOptions,
+    );
+    return { ai: aiOutcome, check: saved };
+  };
+
+  const wantAi = params.useAi ?? true;
+  if (!wantAi) {
+    return recordDeterministicFallback('off', true);
+  }
+  if (!ai.reader?.checkPlaybook || source.aiStopped) {
+    return recordDeterministicFallback('off', false);
+  }
+
+  const ticket = ai.budget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return recordDeterministicFallback('busy', false);
+  }
+
+  const promptVersion = params.promptVersion ?? SIGN_PLAYBOOK_CHECK_PROMPT_VERSION;
+  const checkPlaybook = ai.reader.checkPlaybook.bind(ai.reader);
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<SignPlaybookSource>(
+      'sign.playbook.source',
+      { envelopeId },
+      { actor, orgId },
+    );
+    return latest.aiStopped;
+  };
+
+  const runScoped = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const baseMeter =
+      params.meter === 'runtime'
+        ? actor.type === 'user'
+          ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+          : systemMeter(runtime as Runtime, params.meterOptions ?? {})
+        : params.meter;
+    const guardedMeter: AiMeter = {
+      admit: async (call) => {
+        if (await isAiStopped()) {
+          throw new SignAiStoppedError();
+        }
+        return baseMeter.admit(call);
+      },
+      record: (call, usage) => baseMeter.record(call, usage),
+    };
+    return withAiScope({ orgId, meter: guardedMeter }, fn);
+  };
+
+  try {
+    const aiResult = await runScoped(() =>
+      checkPlaybook({
+        envelopeTitle: source.title,
+        pageCount,
+        pages: extractedPages,
+        rules: source.activeRules.map((r) => ({
+          id: r.id,
+          title: r.title,
+          guidance: r.guidance,
+          severity: r.severity,
+          matchKeywords: r.matchKeywords,
+        })),
+      }),
+    );
+
+    if (await isAiStopped()) {
+      throw new SignAiStoppedError();
+    }
+
+    if (aiResult.kind === 'none' || aiResult.findings.length === 0) {
+      return recordDeterministicFallback(
+        aiResult.code === 'REFUSED' ? 'failed' : 'empty',
+        false,
+      );
+    }
+
+    const saved = await runtime.execute<SignEnvelopePlaybookCheckRecord>(
+      'sign.playbook.record_check',
+      {
+        envelopeId,
+        sourceSha256: source.sourceSha256,
+        mode: 'ai',
+        promptVersion,
+        aiFindings: aiResult.findings,
+        extractedPages,
+      },
+      execOptions,
+    );
+
+    return {
+      ai: saved.mode === 'ai' ? 'used' : 'failed',
+      check: saved,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError) {
+      return recordDeterministicFallback('off', false);
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return recordDeterministicFallback('budget', false);
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404 || error.status === 409)) {
+      throw error;
+    }
+    console.error('[sign-ai] playbook check failed', error instanceof Error ? error.name : typeof error);
+    return recordDeterministicFallback('failed', false);
   } finally {
     ticket.release();
   }

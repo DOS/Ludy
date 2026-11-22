@@ -11,6 +11,13 @@ import {
   type SignEnvelopeObligationRecordContract,
   type SignObligationProposalContract,
   type SignObligationRenewalListItem,
+  type SignPlaybookAiOutcome,
+  type SignPlaybookFindingContract,
+  type SignPlaybookGetResult,
+  type SignPlaybookRuleRecord,
+  type SignPlaybookRulesListResult,
+  type SignPlaybookSeverityContract,
+  type SignPlaybookVerdictContract,
   type SignSharedKeyTerm,
   type SignSharedSummary,
   type SignVaultAskResult,
@@ -674,6 +681,39 @@ export const signApi = {
     client.sign.webhook.delete({ webhookId, idempotencyKey: crypto.randomUUID() }),
   pingWebhook: (webhookId: string) =>
     client.sign.webhook.ping({ webhookId, idempotencyKey: crypto.randomUUID() }),
+  listPlaybookRules: (input: { activeOnly?: boolean } = {}) =>
+    client.sign.playbook.rules_list(input),
+  upsertPlaybookRule: (input: {
+    ruleId?: string;
+    title: string;
+    guidance: string;
+    severity: SignPlaybookSeverityContract;
+    matchKeywords: string[];
+    active: boolean;
+  }) => client.sign.playbook.rule_upsert({ ...input, idempotencyKey: crypto.randomUUID() }),
+  deletePlaybookRule: (ruleId: string) =>
+    client.sign.playbook.rule_delete({ ruleId, idempotencyKey: crypto.randomUUID() }),
+  seedPlaybookDefaults: () =>
+    client.sign.playbook.seed_defaults({ idempotencyKey: crypto.randomUUID() }),
+  getPlaybookCheck: (envelopeId: string) =>
+    client.sign.playbook.get({ envelopeId }),
+  evaluatePlaybook: (input: {
+    envelopeId: string;
+    useAi: boolean;
+    pages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.playbook.evaluate({
+      envelopeId: input.envelopeId,
+      useAi: input.useAi,
+      ...(input.pages && input.pages.length > 0 ? { pages: [...input.pages] } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+  overridePlaybookFinding: (input: {
+    envelopeId: string;
+    ruleId: string;
+    verdict: SignPlaybookVerdictContract;
+    manualNote?: string | null;
+  }) => client.sign.playbook.override_finding({ ...input, idempotencyKey: crypto.randomUUID() }),
 };
 
 export type {
@@ -682,6 +722,13 @@ export type {
   SignObligationRenewalListItem,
   SignVaultAskResult,
   SignVaultMatchItem,
+  SignPlaybookAiOutcome,
+  SignPlaybookFindingContract,
+  SignPlaybookGetResult,
+  SignPlaybookRuleRecord,
+  SignPlaybookRulesListResult,
+  SignPlaybookSeverityContract,
+  SignPlaybookVerdictContract,
 };
 
 export type SignCaProvider = 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign';

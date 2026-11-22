@@ -191,6 +191,8 @@ export interface CroveSignSchema {
   'crove_sign.field': SignFieldTable;
   'crove_sign.member_signature': SignMemberSignatureTable;
   'crove_sign.org_stamp': SignOrgStampTable;
+  'crove_sign.playbook_check': SignPlaybookCheckTable;
+  'crove_sign.playbook_rule': SignPlaybookRuleTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;
@@ -4244,6 +4246,34 @@ export interface SignOrgStampTable {
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   archived_by: string | null;
   created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.playbook_check */
+export interface SignPlaybookCheckTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  source_sha256: string;
+  mode: Generated<string>;
+  findings_json: ColumnType<unknown, string | undefined, string>;
+  prompt_version: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.playbook_rule */
+export interface SignPlaybookRuleTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  guidance: string;
+  severity: Generated<string>;
+  match_keywords: Generated<string[]>;
+  active: Generated<boolean>;
+  created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
