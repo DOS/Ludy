@@ -302,6 +302,7 @@ describe('projects custom board columns helpers & UI (#2605)', () => {
         ownerUserId: null,
         ownerName: null,
         status: 'active',
+        visibility: 'org',
         canManage: true,
         canWrite: true,
         createdAt: '2026-11-01T00:00:00.000Z',

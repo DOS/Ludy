@@ -169,6 +169,7 @@ export const projectTimeline = defineQuery({
       ownerUserId: row.owner_user_id,
       ownerName: ownerDisplayName(ownerProfiles, row.owner_user_id),
       status: row.status,
+      visibility: row.visibility,
       canManage: canManageProject(ctx.role, userId, row.owner_user_id),
       canWrite: canWriteProject(ctx.role, row.status),
       createdAt: toIso(row.created_at),
