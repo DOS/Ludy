@@ -17,6 +17,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { jobKey } from '../src/job-keys.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 import { marketplacePushSignature } from '../src/marketplace-push.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
@@ -73,6 +74,7 @@ suite('Marketplace push chain (#4364)', () => {
   let app: ReturnType<typeof createHttpApp>;
   let vault: CredentialVault;
   let worker: Runtime;
+  let api: Runtime;
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-chain.test', session: randomUUID(), userId: '' };
   let orgId = '';
   const tiktok = { channelId: '', connectionId: '', hookId: '', key: randomBytes(16).toString('base64url') };
@@ -129,17 +131,15 @@ suite('Marketplace push chain (#4364)', () => {
     const provider = `marketplace_${adapter}`;
     const externalAccountId = `acct-${randomUUID().slice(0, 8)}`;
     const sealed = vault.seal(JSON.stringify(secret), { orgId, provider, externalAccountId });
-    const api = await new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const })
-      .register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] })
-      .execute<{ connectionId: string }>(
-        'kernel.channel.connect',
-        { provider, externalAccountId, displayName: `Sàn ${adapter}`, scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
-        { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
-      );
+    const channel = await api.execute<{ connectionId: string }>(
+      'kernel.channel.connect',
+      { provider, externalAccountId, displayName: `Sàn ${adapter}`, scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
     const connectionId = randomUUID();
-    await rows('INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [orgId, connectionId, api.connectionId, provider, adapter]);
+    await rows('INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [orgId, connectionId, channel.connectionId, provider, adapter]);
     const hookId = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(hookKey)]))[0]?.id ?? '';
-    return { channelId: api.connectionId, connectionId, hookId };
+    return { channelId: channel.connectionId, connectionId, hookId };
   }
 
   beforeAll(async () => {
@@ -164,6 +164,7 @@ suite('Marketplace push chain (#4364)', () => {
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register(registered);
+    api = runtime;
     // The worker's runtime is on the worker login, as in production: it reads the sealed credential as the system.
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registered);
     const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
@@ -203,6 +204,8 @@ suite('Marketplace push chain (#4364)', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.name).toBe(QUEUES.marketplacePoll);
     expect(sent[0]?.data).toEqual({ orgId, connectionId: tiktok.connectionId });
+    // The poll job coalesces: one singleton key for the connection and a slot, so pushes of the next rounds share it too.
+    expect(sent[0]?.options).toMatchObject({ singletonKey: jobKey(orgId, QUEUES.marketplacePoll, tiktok.connectionId), singletonSeconds: 30 });
     expect(JSON.stringify(sent)).not.toContain(CANARY);
     // The claim consumed them: nothing waits, and a second round finds nothing.
     expect(await stored()).toEqual([]);
@@ -264,7 +267,7 @@ suite('Marketplace push chain (#4364)', () => {
     expect((await relay()).tally).toEqual({ ok: 1, refused: 0, dropped: 0 });
   });
 
-  it('answers 404 and stores nothing once the connection behind a hook is closed, and polls for a push that waited for it', async () => {
+  it('answers 404 and stores nothing once the connection behind a hook is closed, and drops a push that waited for it without polling', async () => {
     sent.length = 0;
     const waiting = shopeeBody(4);
     expect((await post('shopee', shopee.key, waiting, shopeeSign(waiting, `${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopee.key}`))).status).toBe(200);
@@ -276,13 +279,19 @@ suite('Marketplace push chain (#4364)', () => {
     expect(await stored()).toEqual([]);
   });
 
-  it('keeps the body of every push in no table but its own row: no outbox, audit or job row holds the canary, as text or as hex', async () => {
-    const tables = await rows<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'crove_jobs') AND table_type = 'BASE TABLE'");
-    expect(tables.length).toBeGreaterThan(0);
-    for (const { table_schema, table_name } of tables) {
-      const found = await rows<{ hit: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table_schema}.${table_name} t WHERE t::text LIKE $1 OR t::text LIKE $2) AS hit`, [`%${CANARY}%`, `%${Buffer.from(CANARY).toString('hex')}%`]);
-      expect({ table: `${table_schema}.${table_name}`, hit: found[0]?.hit }).toEqual({ table: `${table_schema}.${table_name}`, hit: false });
-    }
+  // The tests above leave state for the next (rejected counts, the stopped hook, the revoked channel connection), so they run in this order.
+  it('keeps the body of every push in no row of the kernel, jobs or finance schemas once the notices are gone: not as text, not as hex, and not in a job the relay sent', async () => {
+    expect(await stored()).toEqual([]);
+    await admin(async (client) => {
+      const tables = (await client.query<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'crove_jobs', 'crove_finance') AND table_type = 'BASE TABLE'")).rows;
+      expect(tables.length).toBeGreaterThan(0);
+      for (const { table_schema, table_name } of tables) {
+        // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.
+        const found = (await client.query<{ hit: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table_schema}.${table_name} t WHERE t::text LIKE $1 OR t::text LIKE $2) AS hit`, [`%${CANARY}%`, `%${Buffer.from(CANARY).toString('hex')}%`])).rows;
+        expect({ table: `${table_schema}.${table_name}`, hit: found[0]?.hit }).toEqual({ table: `${table_schema}.${table_name}`, hit: false });
+      }
+    });
+    // The queue is a recording fake, so crove_jobs holds nothing here: what a poll job carries is what the relay sent.
     expect(JSON.stringify(sent)).not.toContain(CANARY);
   });
 });
