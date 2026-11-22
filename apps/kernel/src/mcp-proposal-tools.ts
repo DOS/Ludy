@@ -62,7 +62,7 @@ const SPECS: readonly ToolSpec[] = [
     tool: 'ludy_conversation_follow_up',
     title: 'Propose a task for the team about a conversation',
     description:
-      'Proposes a task for the team that links back to an inbox thread (conversationId from ludy_conversations_list; title: the exact text of the task, written as a short instruction to a colleague, at most 300 characters; assigneePositionId: the id of the seat that gets it when a person gave you one, otherwise null, which sends it to the owner at the root of the chart; due: an optional ISO time with an offset). The task is created, and the seat\'s holder (a person or an AI coworker) is told, only when a person approves; the task is then marked as written by an AI.' +
+      'Proposes a task for the team that links back to an inbox thread (conversationId from ludy_conversations_list; title: the exact text of the task, written as a short instruction to a colleague, at most 300 characters; assigneePositionId: the id of the seat that gets it, an id from ludy_seats_list, when a person asked for that seat or its title plainly names the right one, otherwise null, which sends it to the owner at the root of the chart; due: an optional ISO time with an offset). The task is created, and the seat\'s holder (a person or an AI coworker) is told, only when a person approves; the task is then marked as written by an AI.' +
       HOW,
   },
   {
