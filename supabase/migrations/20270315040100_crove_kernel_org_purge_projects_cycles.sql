@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- The org purge deletes crove_projects.project_task before crove_projects.project_cycle, then project_member and project (#4361).
--- This replaces crove_kernel.org_purge with the previous version (20270209160000_crove_kernel_org_purge_hr_leave_request, which added crove_hr.leave_request)
+-- The org purge deletes crove_projects.task_dependency, project_task, project_column before project_cycle, then project_member and project (#4361).
+-- This replaces crove_kernel.org_purge with the previous version (20270315030100_crove_kernel_org_purge_projects_columns)
 -- plus crove_projects.project_cycle in v_kernel_first; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
@@ -46,7 +46,7 @@ DECLARE
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note_version', 'crove_notes.note', 'crove_notes.notebook', 'crove_notes.note_template',
-    'crove_projects.project_task', 'crove_projects.project_cycle', 'crove_projects.project_member', 'crove_projects.project',
+    'crove_projects.task_dependency', 'crove_projects.project_task', 'crove_projects.project_column', 'crove_projects.project_cycle', 'crove_projects.project_member', 'crove_projects.project',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',

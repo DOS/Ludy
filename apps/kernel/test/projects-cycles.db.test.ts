@@ -32,11 +32,14 @@ import type {
   ProjectDetail,
 } from '@ludy/kernel-contract';
 import { CredentialVault, LocalDiskStore, Runtime, type AgentActor, parseVaultKey } from '@ludy/kernel-runtime';
+import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { memberMeter } from '../src/ai-meter.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
+import { ExportSealer } from '../src/export-seal.ts';
 import { createHttpApp } from '../src/http.ts';
+import { runOrgExport } from '../src/org-export.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -80,6 +83,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
   let rt: Runtime;
   let workerRt: Runtime;
   let dir = '';
+  let store: LocalDiskStore;
   let appOn: ReturnType<typeof createHttpApp>;
   let appOff: ReturnType<typeof createHttpApp>;
   let lastPromptSeen = '';
@@ -163,13 +167,13 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     db = createDb(pool);
     dir = await mkdtemp(join(tmpdir(), 'crove-proj-cycles-'));
-    const store = new LocalDiskStore(dir);
+    store = new LocalDiskStore(dir);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
-      commands: [...kernelCommands, ...projectsCommands],
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
     });
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...projectsCommands, orgPurgeCommand({ store })],
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands, orgPurgeCommand({ store })],
       queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
     });
 
@@ -538,7 +542,13 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id });
     await exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 });
 
-    // Offboard and backdate audit events so crove_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
+    // Export, offboard, and backdate audit events so crove_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
+    const sealer = new ExportSealer(randomBytes(32));
+    const generatedAt = new Date(Date.now() - 35 * DAY);
+    const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, orgId, {
+      now: () => generatedAt,
+    });
+    expect(exported.parts.some((p) => p.table === 'projects.project_cycle')).toBe(true);
     await rt.execute('kernel.org.offboard', { confirmSlug: orgSlug }, { actor: asMfa(owner.userId), orgId });
     const purgeAdmin = new pg.Client({ connectionString: adminUrl });
     await purgeAdmin.connect();

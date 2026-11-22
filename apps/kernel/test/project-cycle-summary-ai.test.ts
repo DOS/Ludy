@@ -43,6 +43,7 @@ const baseSource = (over: Partial<ProjectCycleSummarySource> = {}): ProjectCycle
       {
         id: '00000000-0000-4000-8000-000000000020',
         title: 'Chốt số liệu',
+        tainted: false,
         status: 'in_progress',
         due: null,
         commentCount: 0,

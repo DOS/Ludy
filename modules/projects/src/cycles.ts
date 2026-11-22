@@ -1013,7 +1013,7 @@ export const projectCycleSummarySource = defineQuery({
       const taskRows = await ctx.trx
         .selectFrom('crove_projects.project_task as pt')
         .innerJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-        .select(['t.id', 't.title', 't.status', 't.due'])
+        .select(['t.id', 't.title', 't.tainted', 't.status', 't.due'])
         .where('pt.org_id', '=', ctx.orgId)
         .where('pt.project_id', '=', project.id)
         .where('pt.cycle_id', '=', selected.id)
@@ -1056,6 +1056,7 @@ export const projectCycleSummarySource = defineQuery({
       tasks = sample.map((row) => ({
         id: row.id,
         title: row.title,
+        tainted: Boolean(row.tainted),
         status: row.status as ProjectWeeklyStatusTask['status'],
         due: row.due === null ? null : new Date(row.due).toISOString(),
         commentCount: commentCounts.get(row.id) ?? 0,
