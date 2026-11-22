@@ -25,6 +25,7 @@ import { archiveSource, expandArchive, recordArchiveFailure, type ArchiveSource 
 import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.ts';
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
+import { sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -1210,6 +1211,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         await pruneMarketplaceColumnChecks({ workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion of column checks failed; the error is in the worker log', error);
         });
+      }
+      if (deps.runtime.installed('projects')) {
+        await sweepRoadmapOtpCleanup({ runtime: deps.runtime, workerDb: deps.workerDb })
+          .then((res) => {
+            if (res.deleted > 0) console.log(`[projects-roadmap-cleanup] orgs=${res.orgs} otps=${res.deleted}`);
+          })
+          .catch((error: unknown) => {
+            opsAlert('[projects-roadmap-cleanup] ALERT the nightly roadmap OTP cleanup failed; the error is in the worker log', error);
+          });
       }
       await sweepStaging(deps.store);
       await sweepInboundBlobs(deps.store, deps.workerDb);

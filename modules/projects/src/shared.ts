@@ -61,7 +61,7 @@ export function assertCanManage(ctx: CommandContext, row: ProjectRow, userId: st
   }
 }
 
-export function assertNotArchived(row: ProjectRow): void {
+export function assertNotArchived(row: Pick<ProjectRow, 'status'>): void {
   if (row.status === 'archived') {
     throw new DomainError('PROJECT_ARCHIVED', 409, 'Dự án đã lưu trữ nên không thể chỉnh sửa');
   }

@@ -58,6 +58,14 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_sign.public_hub_start(text,uuid,text,text,text,text,text,text)', 'sign'],
   ['crove_sign.public_attachment_preflight(text,uuid)', 'sign'],
   ['crove_sign.public_record_attachment(text,uuid,text,text,integer,text,text,text,text,text)', 'sign'],
+  ['crove_projects.public_roadmap_view(text,text,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_resolve_board(text,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_otp_request(text,text,text,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_otp_verify(text,text,text,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_claim_resolve(text,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_submit_idea(text,text,text,text,text,text,text,text,uuid)', 'projects'],
+  ['crove_projects.public_roadmap_vote(text,text,uuid,text,text,text,boolean,text,text)', 'projects'],
+  ['crove_projects.public_roadmap_unsubscribe(text,text,text)', 'projects'],
 ];
 
 suite('the public definers carry the app check (ADR-0053, C2)', () => {

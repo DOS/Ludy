@@ -71,6 +71,10 @@ const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
   'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/kernel/src/agents.ts': {
+    modules: ['projects'],
+    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on, so email addresses left behind before projects was turned off still expire nightly',
+  },
   'packages/kernel/src/engage-view.ts': {
     modules: ['ads', 'crm', 'social'],
     why: "the Inbox card of an Engage proposal (E4 #3863) says what the proposal is about, read as the approver: a booking and its event type (crm), a quote and its customer (crm), a post and its variants (social) and a live ad launch with its draft and account (ads). The kernel cannot import a module and the card shows the thing to be changed, so it reads those rows by plain SQL, only for the commands of the twin list, in the approver's own context (RLS applies) and only for an owner or an admin",
@@ -126,7 +130,9 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/misa-amis-callback-relay.ts': { modules: ['finance'], why: 'the worker relay takes the callback results with crove_finance.misa_amis_callback_claim (worker login only) and records them through finance.misa_amis.push_record' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
+  'apps/kernel/src/projects-public-roadmap.ts': { modules: ['projects'], why: 'the orgless public roadmap board view, OTP request/verify, idea submission, vote toggle, and unsubscribe routes (crove_projects.public_roadmap_* definers, #4399), registered only when projects is installed (http.ts)' },
   'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
+  'apps/kernel/src/projects-roadmap-worker.ts': { modules: ['projects'], why: 'the nightly public roadmap OTP retention sweep (crove_projects.cleanup_roadmap_otp_due_orgs, #4399), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },

@@ -14,11 +14,26 @@ describe('@ludy/mod-projects (#2591)', () => {
       'project_cycle',
       'project_member',
       'project_task',
+      'roadmap_board',
+      'roadmap_item',
+      'roadmap_otp',
+      'roadmap_subscriber',
+      'roadmap_vote',
       'task_dependency',
     ]);
     expect(projectsManifest.tables.crove_projects.project_column.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project_column.task_status).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.column_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.roadmap_board.title).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.roadmap_board.description).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.roadmap_item.public_title).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.roadmap_item.public_summary).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.roadmap_item.submitter_display_name).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.roadmap_otp.email).toBe('contact');
+    expect(projectsManifest.tables.crove_projects.roadmap_otp.otp_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.crove_projects.roadmap_otp.claim_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.crove_projects.roadmap_subscriber.email_sealed).toBe('contact');
+    expect(projectsManifest.tables.crove_projects.roadmap_subscriber.unsubscribe_token_sha256).toBe('sensitive');
     expect(projectsManifest.tables.crove_projects.project.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
@@ -40,12 +55,14 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
+      { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
+      { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
     ]);
     expect(projectsManifest.routes).toEqual(MODULE_SCREENS.projects.routes);
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 39 commands and 18 queries with consistent module prefix', () => {
+  it('exports all 47 commands and 20 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -68,6 +85,14 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.project.set_status',
       'projects.project.update',
       'projects.recurring.advance',
+      'projects.roadmap.board.create',
+      'projects.roadmap.board.update',
+      'projects.roadmap.item.convert_to_task',
+      'projects.roadmap.item.create',
+      'projects.roadmap.item.merge',
+      'projects.roadmap.item.moderate',
+      'projects.roadmap.item.sync_stage',
+      'projects.roadmap.otp_mail_data',
       'projects.task.add',
       'projects.task.create',
       'projects.task.move_column',
@@ -95,6 +120,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.dependency.list',
       'projects.project.get',
       'projects.project.list',
+      'projects.roadmap.board.get',
+      'projects.roadmap.boards',
       'projects.task.recurrence.get',
       'projects.task_projects',
       'projects.tasks_from_note.seats',
@@ -111,6 +138,9 @@ describe('@ludy/mod-projects (#2591)', () => {
       if (command.name === 'projects.weekly_status.send_mail') {
         expect(command.risk).toBe('R2');
         expect(command.sideEffect).toBe('external');
+      } else if (command.name === 'projects.roadmap.board.create' || command.name === 'projects.roadmap.board.update') {
+        expect(command.risk).toBe('R2');
+        expect(command.sideEffect).toBe('internal');
       } else {
         expect(command.risk).toBe('R1');
         expect(command.sideEffect).toBe('internal');
@@ -121,6 +151,7 @@ describe('@ludy/mod-projects (#2591)', () => {
         command.name === 'projects.column.delete' ||
         command.name === 'projects.project.create_from_template' ||
         command.name === 'projects.recurring.advance' ||
+        command.name === 'projects.roadmap.item.convert_to_task' ||
         command.name.startsWith('projects.tasks_from_note.') ||
         command.name.startsWith('projects.tasks_from_source.') ||
         command.name.startsWith('projects.weekly_status.')

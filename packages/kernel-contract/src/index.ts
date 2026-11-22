@@ -56,6 +56,7 @@ export * from './signals.ts';
 export * from './today.ts';
 export * from './coworkers.ts';
 export * from './sign.ts';
+export * from './projects-roadmap.ts';
 
 export const ORG_HEADER = 'x-ludy-org';
 export const LEGACY_ORG_HEADER = 'x-crove-org';

@@ -80,12 +80,12 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/direct/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_verify_otp gates org_app_on + entitlement -> 404' },
   '/api/sign/direct/start': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_start gates org_app_on + entitlement -> 404' },
   '/api/sign/public-hub/:orgSlug': { app: 'sign', gate: 'sql', why: 'crove_sign.public_hub_* definers gate org_app_on + entitlement -> 404' },
-  // #4398 / #4399 (Projects Public Roadmap, ADR-0057): Step 0 pre-registration; Slice 1 (#4399) moves each route from 'pending' to 'sql' (crove_projects.public_roadmap_* definers gate org_app_on + entitlement + board.enabled -> opaque 404).
-  '/api/projects/public-roadmap/:orgSlug/:boardSlug': { app: 'projects', gate: 'pending', why: '#4398 / #4399 (ADR-0057 public roadmap view pre-registration; gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
-  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request': { app: 'projects', gate: 'pending', why: '#4398 / #4399 (ADR-0057 public roadmap OTP request pre-registration; gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
-  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': { app: 'projects', gate: 'pending', why: '#4398 / #4399 (ADR-0057 public roadmap OTP verify pre-registration; gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
-  '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': { app: 'projects', gate: 'pending', why: '#4398 / #4399 (ADR-0057 public roadmap idea submission pre-registration; gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
-  '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': { app: 'projects', gate: 'pending', why: '#4398 / #4399 (ADR-0057 public roadmap vote/unsubscribe pre-registration; gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
+  // #4398 / #4399 (Projects Public Roadmap, ADR-0057): Slice 1 (#4399) moves each route from 'pending' to 'sql' (crove_projects.public_roadmap_* definers gate org_app_on + entitlement + board.enabled -> opaque 404).
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap view gated in SQL via crove_projects.public_roadmap_view + org_app_on + entitlement -> 404)' },
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap OTP request gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap OTP verify gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap idea submission gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': { app: 'projects', gate: 'sql', why: '#4399 (ADR-0057 public roadmap vote/unsubscribe gated in SQL via crove_projects.public_roadmap_* + org_app_on + entitlement -> 404)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

@@ -1404,6 +1404,15 @@ export type ProjectColumnStatus = (typeof PROJECT_COLUMN_STATUSES)[number];
 export const PROJECT_COLUMN_COLORS = ['neutral', 'primary', 'warning', 'proposal', 'success', 'destructive'] as const;
 export type ProjectColumnColor = (typeof PROJECT_COLUMN_COLORS)[number];
 
+export const ROADMAP_ITEM_SOURCES = ['internal', 'public_submission'] as const;
+export type RoadmapItemSource = (typeof ROADMAP_ITEM_SOURCES)[number];
+
+export const ROADMAP_ITEM_MODERATION_STATUSES = ['pending', 'published', 'merged', 'archived'] as const;
+export type RoadmapItemModerationStatus = (typeof ROADMAP_ITEM_MODERATION_STATUSES)[number];
+
+export const ROADMAP_ITEM_STAGES = ['under_review', 'planned', 'in_progress', 'shipped'] as const;
+export type RoadmapItemStage = (typeof ROADMAP_ITEM_STAGES)[number];
+
 export type ProjectsProjectTable = Refine<
   G.ProjectsProjectTable,
   {
@@ -1426,6 +1435,15 @@ export type ProjectsProjectCycleTable = Refine<
   G.ProjectsProjectCycleTable,
   {
     status: Generated<ProjectCycleStatus>;
+  }
+>;
+
+export type ProjectsRoadmapItemTable = Refine<
+  G.ProjectsRoadmapItemTable,
+  {
+    source: RoadmapItemSource;
+    moderation_status: Generated<RoadmapItemModerationStatus>;
+    stage: Generated<RoadmapItemStage>;
   }
 >;
 
@@ -1662,6 +1680,7 @@ type Refined = Tables<{
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_column': ProjectsProjectColumnTable;
   'crove_projects.project_cycle': ProjectsProjectCycleTable;
+  'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;

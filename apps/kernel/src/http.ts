@@ -24,6 +24,7 @@ import {
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
   LEGACY_ORG_HEADER,
+  ROADMAP_VOTER_HEADER,
   SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
@@ -220,6 +221,23 @@ import {
   runSignPublicHubAction,
   runSignPublicHubList,
 } from './sign-public-hub.ts';
+import {
+  ROADMAP_PUBLIC_IDEAS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_REQUESTS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_VERIFIES_PER_MINUTE,
+  ROADMAP_PUBLIC_VIEWS_PER_MINUTE,
+  ROADMAP_PUBLIC_VOTES_PER_MINUTE,
+  deriveRoadmapClaimKey,
+  matchPublicRoadmapPagePath,
+  resolveRoadmapEmbedFrameAncestors,
+  runPublicRoadmapOtpRequest,
+  runPublicRoadmapOtpVerify,
+  runPublicRoadmapSubmitIdea,
+  runPublicRoadmapView,
+  runPublicRoadmapVote,
+  verifyRoadmapVoterClaim,
+} from './projects-public-roadmap.ts';
 import {
   SIGN_ATTACHMENT_MAX_BYTES,
   SIGN_ATTACHMENT_UPLOADS_MAX,
@@ -449,6 +467,15 @@ export interface HttpDeps {
     actions: RateLimiter;
     templateActions: RateLimiter;
     emailOtpRequest: RateLimiter;
+  }>;
+  // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
+  roadmapLimits?: Partial<{
+    views: RateLimiter;
+    otpRequest: RateLimiter;
+    emailOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    ideas: RateLimiter;
+    votes: RateLimiter;
   }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
@@ -714,7 +741,14 @@ export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 // apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
 // ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
 // connectOrigin: one more origin the app calls (the hosted login's token endpoint, #2704), or null.
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null, connectOrigin: string | null = null): string {
+export function contentSecurityPolicy(
+  authUrl: string,
+  storageOrigin: string | null,
+  turnstile = false,
+  apiOrigin: string | null = null,
+  connectOrigin: string | null = null,
+  frameAncestors: readonly string[] | null = null,
+): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -740,7 +774,7 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    frameAncestors && frameAncestors.length > 0 ? `frame-ancestors ${frameAncestors.join(' ')}` : "frame-ancestors 'none'",
     "require-trusted-types-for 'script'",
     turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
   ].join('; ');
@@ -2043,6 +2077,180 @@ export function createHttpApp(deps: HttpDeps) {
           return c.json(res.result, 401);
         }
         return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Orgless public Projects Roadmap routes (#4399, ADR-0057, ADR-0053, #203):
+  // free browsing with no login, 6-digit email OTP verification without CAPTCHA (#203), HMAC voter claim,
+  // opaque 404 across missing/disabled/unentitled orgs and boards, and no-store/no-referrer headers.
+  const roadmapBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+  if (runtime.installed('projects')) {
+    const roadmapBroker = deps.broker ?? createCredentialBroker(config);
+    const roadmapClaimKey = deriveRoadmapClaimKey(roadmapBroker, config.AUTH_JWT_SECRET);
+    const roadmapViewLimit = deps.roadmapLimits?.views ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_VIEWS_PER_MINUTE });
+    const roadmapOtpReqLimit = deps.roadmapLimits?.otpRequest ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_REQUESTS_PER_MINUTE });
+    const roadmapOtpEmailLimit = deps.roadmapLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE });
+    const roadmapOtpVerifyLimit = deps.roadmapLimits?.otpVerify ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_VERIFIES_PER_MINUTE });
+    const roadmapIdeaLimit = deps.roadmapLimits?.ideas ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_IDEAS_PER_MINUTE });
+    const roadmapVoteLimit = deps.roadmapLimits?.votes ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_VOTES_PER_MINUTE });
+
+    const setRoadmapSecurityHeaders = (c: Context) => {
+      c.header('referrer-policy', 'no-referrer');
+      c.header('cache-control', 'no-store');
+      c.header('x-content-type-options', 'nosniff');
+    };
+
+    const roadmapBodyLimit = (maxSize: number) =>
+      bodyLimit({
+        maxSize,
+        onError: (c) => {
+          setRoadmapSecurityHeaders(c);
+          return c.text('Payload Too Large', 413);
+        },
+      });
+
+    const roadmapEdgeGuard = (ipLimit: RateLimiter): MiddlewareHandler => async (c, next) => {
+      setRoadmapSecurityHeaders(c);
+      if (c.req.query('token') !== undefined || c.req.query('voterToken') !== undefined || c.req.query('unsubscribe') !== undefined) {
+        return c.json({ code: 'ROADMAP_QUERY_TOKEN_FORBIDDEN', message: 'Credentials must not be passed in URL query parameters' }, 400);
+      }
+      const decision = ipLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const roadmapOpaqueNotFound = (c: Context) => c.json({ code: 'NOT_FOUND', message: 'Not found' }, 404);
+    const roadmapRateLimited = (c: Context, retryAfterSeconds: number) => {
+      c.header('retry-after', String(retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+    };
+
+    const resolveRoadmapCaller = async (
+      c: Context,
+      orgSlug: string,
+      boardSlug: string,
+    ): Promise<{ claimSha256: string | null; voterEmail: string | null; actorUserId: string | null }> => {
+      const voterToken = c.req.header(ROADMAP_VOTER_HEADER);
+      const claim = verifyRoadmapVoterClaim(voterToken, roadmapClaimKey, orgSlug, boardSlug);
+      if (claim) {
+        return { claimSha256: claim.claimSha256, voterEmail: null, actorUserId: null };
+      }
+      const authHeader = c.req.header('authorization');
+      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+        try {
+          const user = await authenticate(authHeader);
+          if (!user.extension && user.email) {
+            return { claimSha256: null, voterEmail: user.email, actorUserId: user.userId };
+          }
+        } catch {
+          // Invalid/expired bearer stays anonymous on public roadmap routes.
+        }
+      }
+      return { claimSha256: null, voterEmail: null, actorUserId: null };
+    };
+
+    app.get('/api/projects/public-roadmap/:orgSlug/:boardSlug', roadmapEdgeGuard(roadmapViewLimit), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapView(runtime, roadmapBilling, orgSlug, boardSlug, caller);
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request', roadmapEdgeGuard(roadmapOtpReqLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const res = await runPublicRoadmapOtpRequest(
+          runtime,
+          roadmapBilling,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          clientIp(c, config.TRUSTED_PROXY_HOPS),
+          (bucket) => roadmapOtpEmailLimit.take(bucket),
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return roadmapRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify', roadmapEdgeGuard(roadmapOtpVerifyLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const res = await runPublicRoadmapOtpVerify(
+          runtime,
+          roadmapBilling,
+          roadmapClaimKey,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas', roadmapEdgeGuard(roadmapIdeaLimit), roadmapBodyLimit(16_384), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapSubmitIdea(
+          runtime,
+          roadmapBilling,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          caller,
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result, 201);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/votes', roadmapEdgeGuard(roadmapVoteLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapVote(
+          runtime,
+          roadmapBilling,
+          roadmapBroker,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          caller,
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
       } catch (error) {
         return problem(c, error);
       }
@@ -5089,8 +5297,11 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/assets/*', serveStatic({ root }));
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
-    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY), null, hostedLoginTokenOrigin(config));
-    const signCsp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, false, null, hostedLoginTokenOrigin(config));
+    const authOriginUrl = publicAuthUrl(config);
+    const directOrigin = store.direct ? directTransferOrigin(config) : null;
+    const hostedOrigin = hostedLoginTokenOrigin(config);
+    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin);
+    const signCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin);
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
       const isSignPage =
@@ -5099,8 +5310,17 @@ export function createHttpApp(deps: HttpDeps) {
         c.req.path === SIGN_DIRECT_PAGE_PATH ||
         c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`) ||
         c.req.path.startsWith(`${SIGN_PUBLIC_HUB_PAGE_PREFIX}/`);
-      c.header('content-security-policy', isSignPage ? signCsp : csp);
-      if (isSignPage) {
+      const roadmapRoute = matchPublicRoadmapPagePath(c.req.path);
+      let pageCsp = isSignPage ? signCsp : csp;
+      if (roadmapRoute) {
+        const frameAncestors =
+          c.req.query('embed') === '1'
+            ? await resolveRoadmapEmbedFrameAncestors(runtime, roadmapBilling, roadmapRoute.orgSlug, roadmapRoute.boardSlug)
+            : null;
+        pageCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin, frameAncestors);
+      }
+      c.header('content-security-policy', pageCsp);
+      if (isSignPage || roadmapRoute) {
         c.header('referrer-policy', 'no-referrer');
         c.header('cache-control', 'no-store');
         c.header('x-content-type-options', 'nosniff');

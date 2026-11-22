@@ -167,7 +167,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of crove_projects for erasure', () => {
-    expect(personal.length).toBe(6);
+    expect(personal.length).toBe(13);
     expect(personal).toEqual(
       expect.arrayContaining([
         'crove_projects.project.name',
@@ -176,11 +176,23 @@ describe('personal-data registry: projects (#2591)', () => {
         'crove_projects.project_column.name',
         'crove_projects.project_cycle.name',
         'crove_projects.project_cycle.goal',
+        'crove_projects.roadmap_board.title',
+        'crove_projects.roadmap_board.description',
+        'crove_projects.roadmap_item.public_title',
+        'crove_projects.roadmap_item.public_summary',
+        'crove_projects.roadmap_item.submitter_display_name',
+        'crove_projects.roadmap_otp.email',
+        'crove_projects.roadmap_subscriber.email_sealed',
       ]),
     );
     for (const key of personal) {
-      expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
+      if (key === 'crove_projects.roadmap_otp.email' || key === 'crove_projects.roadmap_subscriber.email_sealed') {
+        expect(entries[key]).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
+      } else {
+        expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
+      }
     }
+    expect(entries['crove_projects.roadmap_vote.voter_email_hash']).toMatchObject({ kind: 'other', handling: 'hashed' });
   });
 });
 

@@ -128,11 +128,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.link',
   'crove_notes.note',
   'crove_projects.roadmap_announcement',
-  'crove_projects.roadmap_board',
-  'crove_projects.roadmap_item',
-  'crove_projects.roadmap_otp',
-  'crove_projects.roadmap_subscriber',
-  'crove_projects.roadmap_vote',
   'crove_projects.time_entry',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,

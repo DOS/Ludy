@@ -688,6 +688,20 @@ import {
   zProjectWeeklyStatusSendMailResult,
   zProjectWeeklyStatusShareNoteInput,
 } from './projects.ts';
+import {
+  zRoadmapAdminItem,
+  zRoadmapBoardCreateInput,
+  zRoadmapBoardDetailInput,
+  zRoadmapBoardDetailResult,
+  zRoadmapBoardListResult,
+  zRoadmapBoardSummary,
+  zRoadmapBoardUpdateInput,
+  zRoadmapItemConvertToTaskInput,
+  zRoadmapItemCreateInput,
+  zRoadmapItemMergeInput,
+  zRoadmapItemModerateInput,
+  zRoadmapItemSyncStageInput,
+} from './projects-roadmap.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -3554,6 +3568,31 @@ export const contract = {
     completeCycle: oc.input(zProjectCycleCompleteInput.extend({ idempotencyKey: zId })).output(zProjectCycleCompleteResult),
     setTaskCycle: oc.input(zProjectTaskSetCycleInput.extend({ idempotencyKey: zId })).output(zProjectTaskSetCycleResult),
     setTaskPoints: oc.input(zProjectTaskSetPointsInput.extend({ idempotencyKey: zId })).output(zProjectTaskSetPointsResult),
+    roadmap: {
+      boards: oc.input(z.strictObject({})).output(zRoadmapBoardListResult),
+      boardDetail: oc.input(zRoadmapBoardDetailInput).output(zRoadmapBoardDetailResult),
+      boardCreate: oc
+        .input(zRoadmapBoardCreateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ board: zRoadmapBoardSummary })),
+      boardUpdate: oc
+        .input(zRoadmapBoardUpdateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ board: zRoadmapBoardSummary })),
+      itemCreate: oc
+        .input(zRoadmapItemCreateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ item: zRoadmapAdminItem })),
+      itemModerate: oc
+        .input(zRoadmapItemModerateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ item: zRoadmapAdminItem })),
+      itemMerge: oc
+        .input(zRoadmapItemMergeInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ sourceItem: zRoadmapAdminItem, targetItem: zRoadmapAdminItem })),
+      itemConvertToTask: oc
+        .input(zRoadmapItemConvertToTaskInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ item: zRoadmapAdminItem, projectId: zId, taskId: zId })),
+      itemSyncStage: oc
+        .input(zRoadmapItemSyncStageInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ item: zRoadmapAdminItem })),
+    },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

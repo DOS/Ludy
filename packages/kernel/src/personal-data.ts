@@ -31,6 +31,10 @@ import {
   PROJECT_TASK_TITLE_MAX,
   PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  ROADMAP_DESCRIPTION_MAX,
+  ROADMAP_ITEM_SUMMARY_MAX,
+  ROADMAP_ITEM_TITLE_MAX,
+  ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
   type PersonalDataErasure,
   type PersonalDataNotice,
@@ -566,6 +570,60 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A project cycle's goal, which may mention a person: mentions are replaced with a redaction marker",
+  },
+  'crove_projects.roadmap_board.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap board title, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.roadmap_board.description': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap board description, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.roadmap_item.public_title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap item title, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.roadmap_item.public_summary': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap item summary, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.roadmap_item.submitter_display_name': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Optional public submitter display name on a roadmap item; erased on personal-data match',
+  },
+  'crove_projects.roadmap_vote.voter_email_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    reason: 'Org-scoped keyed HMAC-SHA256 hash of voter email preserving anonymous vote deduplication without storing an address',
+  },
+  'crove_projects.roadmap_otp.email': {
+    kind: 'email',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Ephemeral public roadmap email OTP challenge address; erased by crove_projects.personal_erase_roadmap_machinery and swept nightly',
+  },
+  'crove_projects.roadmap_otp.email_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    machinery: true,
+    reason: 'Org-scoped keyed hash on ephemeral OTP row; row is deleted together with roadmap_otp.email on erasure',
+  },
+  'crove_projects.roadmap_subscriber.voter_email_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    machinery: true,
+    reason: 'Org-scoped keyed hash of subscriber email; row is deleted together with roadmap_subscriber.email_sealed on erasure',
+  },
+  'crove_projects.roadmap_subscriber.email_sealed': {
+    kind: 'email',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Sealed subscriber email for opt-in shipped notifications; erased by crove_projects.personal_erase_roadmap_machinery',
   },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
@@ -1441,6 +1499,11 @@ export const personalDataErase = defineCommand({
       const { rows: signOtp } = await sql<{ count: number }>`
         SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
       add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
+
+      const { rows: roadmapMachinery } = await sql<{ counts: { otps: number; subscribers: number } }>`
+        SELECT crove_projects.personal_erase_roadmap_machinery(${probe.email}) AS counts`.execute(ctx.trx);
+      add('crove_projects.roadmap_otp.email', Number(roadmapMachinery[0]?.counts?.otps ?? 0));
+      add('crove_projects.roadmap_subscriber.email_sealed', Number(roadmapMachinery[0]?.counts?.subscribers ?? 0));
     }
 
     // The raw body of a bank feed notice that waits for the worker (#4203): a notice whose text mentions the value is deleted (it is only a hint to pull and is deleted, not redacted, so the short-number guard below does not apply to it: a short number can only delete a hint that is rebuilt by the next notice). Through the owner-only definer: the table has no login role grant.
@@ -1850,6 +1913,54 @@ export const personalDataErase = defineCommand({
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.goal'))}, false) AS goal`.execute(ctx.trx);
       add('crove_projects.project_cycle.name', cycles.filter((c) => c.name).length);
       add('crove_projects.project_cycle.goal', cycles.filter((c) => c.goal).length);
+
+      // Public roadmap boards and items (#4399, ADR-0057): redact mentions in titles/summaries and clear matching submitter display names.
+      const boardTitleMatch = freeTextMatch(probe, sql.ref('b.title'));
+      const boardDescMatch = freeTextMatch(probe, sql.ref('b.description'));
+      const { rows: roadmapBoards } = await sql<{ title: boolean; description: boolean }>`
+        UPDATE crove_projects.roadmap_board b
+           SET title = CASE
+                         WHEN ${boardTitleMatch}
+                           THEN COALESCE(
+                             NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('b.title'), REDACTED_MARK)}, ${ROADMAP_TITLE_MAX}::int)), ''),
+                             ${REDACTED_MARK}
+                           )
+                         ELSE b.title
+                       END,
+               description = CASE WHEN ${boardDescMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('b.description'), REDACTED_MARK)}, ${ROADMAP_DESCRIPTION_MAX}::int)
+                                  ELSE b.description END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.roadmap_board o
+         WHERE o.org_id = b.org_id AND o.id = b.id AND b.org_id = ${ctx.orgId}::uuid
+           AND (${boardTitleMatch} OR coalesce(${boardDescMatch}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+      add('crove_projects.roadmap_board.title', roadmapBoards.filter((r) => r.title).length);
+      add('crove_projects.roadmap_board.description', roadmapBoards.filter((r) => r.description).length);
+
+      const itemTitleMatch = freeTextMatch(probe, sql.ref('i.public_title'));
+      const itemSummaryMatch = freeTextMatch(probe, sql.ref('i.public_summary'));
+      const itemSubmitterMatch = freeTextMatch(probe, sql.ref('i.submitter_display_name'));
+      const { rows: roadmapItems } = await sql<{ public_title: boolean; public_summary: boolean; submitter_display_name: boolean }>`
+        UPDATE crove_projects.roadmap_item i
+           SET public_title = CASE
+                                WHEN ${itemTitleMatch}
+                                  THEN COALESCE(
+                                    NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_title'), REDACTED_MARK)}, ${ROADMAP_ITEM_TITLE_MAX}::int)), ''),
+                                    ${REDACTED_MARK}
+                                  )
+                                ELSE i.public_title
+                              END,
+               public_summary = CASE WHEN ${itemSummaryMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_summary'), REDACTED_MARK)}, ${ROADMAP_ITEM_SUMMARY_MAX}::int)
+                                     ELSE i.public_summary END,
+               submitter_display_name = CASE WHEN ${itemSubmitterMatch} THEN NULL ELSE i.submitter_display_name END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.roadmap_item o
+         WHERE o.org_id = i.org_id AND o.id = i.id AND i.org_id = ${ctx.orgId}::uuid
+           AND (${itemTitleMatch} OR coalesce(${itemSummaryMatch}, false) OR coalesce(${itemSubmitterMatch}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.public_title'))} AS public_title, coalesce(${freeTextMatch(probe, sql.ref('o.public_summary'))}, false) AS public_summary, coalesce(${freeTextMatch(probe, sql.ref('o.submitter_display_name'))}, false) AS submitter_display_name`.execute(ctx.trx);
+      add('crove_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
+      add('crove_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
+      add('crove_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

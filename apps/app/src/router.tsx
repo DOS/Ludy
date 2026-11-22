@@ -1,3 +1,4 @@
+import { ROADMAP_PAGE_PREFIX } from '@ludy/kernel-contract';
 import { Outlet, createRootRoute, createRoute, createRouter, notFound, redirect, type ErrorComponentProps } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -123,6 +124,7 @@ import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
 import { SignSettingsPage } from './routes/sign-settings.tsx';
 import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH, SIGN_PUBLIC_HUB_PAGE_PREFIX } from './lib/sign-hash.ts';
+import { PublicRoadmapPage } from './routes/public-roadmap.tsx';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -306,6 +308,17 @@ const signPublicHubRoute = createRoute({
   component: function SignPublicHubRouteView() {
     const { orgSlug } = signPublicHubRoute.useParams();
     return <SignPublicHubPage orgSlug={orgSlug} />;
+  },
+});
+
+// Public 2-tab Roadmap & Ideas portal (#4399, ADR-0057): /-/roadmap/$orgSlug/$boardSlug, no account.
+const publicRoadmapRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: `${ROADMAP_PAGE_PREFIX}/$orgSlug/$boardSlug`,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: function PublicRoadmapRouteView() {
+    const { orgSlug, boardSlug } = publicRoadmapRoute.useParams();
+    return <PublicRoadmapPage orgSlug={orgSlug} boardSlug={boardSlug} />;
   },
 });
 
@@ -776,6 +789,7 @@ const routeTree = rootRoute.addChildren([
   signCeremonyRoute,
   signDirectRoute,
   signPublicHubRoute,
+  publicRoadmapRoute,
   shareRoute,
   socialPlanPrintRoute,
   meetingMinutesRoute,
