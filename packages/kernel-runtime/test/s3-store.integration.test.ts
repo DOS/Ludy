@@ -40,7 +40,7 @@ import {
   type S3StoreOptions,
 } from '../src/index.ts';
 
-const URL_ENV = process.env.CROVE_TEST_S3_URL;
+const URL_ENV = process.env.LUDY_TEST_S3_URL ?? process.env.CROVE_TEST_S3_URL;
 
 function optionsFrom(url: string): S3StoreOptions {
   const parsed = new URL(url);

@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { adsCommands, adsQueries } from '@ludy/mod-ads';
@@ -28,6 +28,7 @@ import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -74,6 +75,10 @@ const REACHABLE = [
   // The Ads read of the ad launches that have started (#4147, E4b of epic #3857; step 3 of the three-step landing, #4175 and #4176 before it): the ids the proposal tools that stop or reduce spend need, for a company
   // grant's owner or admin only. Its projection pins (ids, names, state, budgets as decimal strings, the end day; no proposal, plan hash, creator, platform id or token) are in engage-mcp-launches.db.test.ts. A missing name now fails.
   'ads.mcp.launches:ludy.read',
+  // The Ads read of the org's active Facebook Pages (#4367, follow-up of #3864; step 3 of the three-step landing, #4384 and #4385 before it): the ids a campaign draft names as `pageConnectionId`, for a company
+  // grant's owner or admin only. Its projection pins (an id and a plain-line name per Page; no connection, token, platform id, status or other provider's channel; another org's Pages never) are in the DB test
+  // engage-mcp-results.db.test.ts.
+  'ads.mcp.pages:ludy.read',
   // The CRM records: deals and quotes for every role (the CRM tables carry the org policy only, so a member-bound grant reads the whole org's, as that member does in the app); the bookings, a guest's
   // contact details, for a company grant only. Pinned in engage-mcp-crm.db.test.ts.
   'crm.mcp.deals:ludy.read',
@@ -118,6 +123,12 @@ const SIGNALS = [
 // Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
 const FINANCE_READS: readonly string[] = [
 ];
+
+// The kernel read of the org chart's active seats (#4369, follow-up of #4148; step 1 of the three-step landing: this list lets the name in, it does not require it; step 3 moves it into REACHABLE). It is the read an
+// AI coworker needs for the `assigneePositionId` of `ludy_conversation_follow_up`, for a company grant's owner or admin only. Its projection pins (an id and a plain-line title per seat; no holder, member, agent,
+// reporting line, job description or legal entity) are in the DB test engage-mcp-seats.db.test.ts of the step 2 PR. It is named `kernel.mcp.*` like the conversation reads, so the check below that keeps the
+// screens' own `kernel.*` queries out of a grant's reach still holds.
+const ENGAGE_SEAT_READS: readonly string[] = ['kernel.mcp.seats:ludy.read'];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
@@ -207,7 +218,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_SEAT_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
@@ -240,6 +251,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
 suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', () => {
   const dbName = `crove_test_mcp_scope_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
@@ -251,7 +263,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   const mcp = (userId: string, grantId: string, scopes: readonly string[] = ['ludy.read']): UserActor => ({ type: 'user', userId, aal: 'aal1', mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -292,12 +304,13 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    const pool = createPool({ connectionString: appUrl, max: 6 });
+    const pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     // No session source: a grant's standing is checked whatever the deployment's session mode.
@@ -435,7 +448,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   });
 
   it('lets the API login reach the grant tables and the authorization storage only through the definers, and the worker not at all', async () => {
-    const app = new pg.Client({ connectionString: appUrl });
+    const app = createDbClient({ connectionString: appUrl }, dbIds);
     await app.connect();
     try {
       for (const table of ['crove_kernel.agent_grant', 'crove_kernel.oauth_record']) {

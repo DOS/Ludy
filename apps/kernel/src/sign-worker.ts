@@ -1048,11 +1048,13 @@ export interface SignPendingWorkDeps {
   olderThan?: Date;
   batchSize?: number;
   maxPages?: number;
+  log?: Pick<Console, 'error'>;
 }
 
 export async function sweepSignPendingWork(
   deps: SignPendingWorkDeps,
 ): Promise<{ inspect: number; seal: number; caReconcile: number }> {
+  const log = deps.log ?? console;
   const olderThan = deps.olderThan ?? new Date(Date.now() - 60_000);
   const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
   const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
@@ -1072,13 +1074,17 @@ export async function sweepSignPendingWork(
   for (let page = 0; page < maxPages; page += 1) {
     const rows = await fetchSignRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
     for (const row of rows) {
-      if (!(await isEnabled(row.org_id))) continue;
-      if (row.work_kind === 'inspect') {
-        await deps.enqueueInspect(row.org_id, row.envelope_id);
-        inspect += 1;
-      } else {
-        await deps.enqueueSeal(row.org_id, row.envelope_id);
-        seal += 1;
+      try {
+        if (!(await isEnabled(row.org_id))) continue;
+        if (row.work_kind === 'inspect') {
+          await deps.enqueueInspect(row.org_id, row.envelope_id);
+          inspect += 1;
+        } else {
+          await deps.enqueueSeal(row.org_id, row.envelope_id);
+          seal += 1;
+        }
+      } catch (error) {
+        log.error(`[sign-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
       }
     }
     const last = rows.at(-1);
@@ -1090,9 +1096,13 @@ export async function sweepSignPendingWork(
     for (let page = 0; page < maxPages; page += 1) {
       const tplRows = await fetchTemplateRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, tplAfter);
       for (const row of tplRows) {
-        if (!(await isEnabled(row.org_id))) continue;
-        await deps.enqueueTemplateInspect(row.org_id, row.template_id);
-        inspect += 1;
+        try {
+          if (!(await isEnabled(row.org_id))) continue;
+          await deps.enqueueTemplateInspect(row.org_id, row.template_id);
+          inspect += 1;
+        } catch (error) {
+          log.error(`[sign-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+        }
       }
       const last = tplRows.at(-1);
       if (!last || tplRows.length < batchSize) break;
@@ -1104,9 +1114,13 @@ export async function sweepSignPendingWork(
     for (let page = 0; page < maxPages; page += 1) {
       const caRows = await fetchCaRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, caAfter);
       for (const row of caRows) {
-        if (!(await isEnabled(row.org_id))) continue;
-        await deps.enqueueCaReconcile(row.org_id, row.request_id);
-        caReconcile += 1;
+        try {
+          if (!(await isEnabled(row.org_id))) continue;
+          await deps.enqueueCaReconcile(row.org_id, row.request_id);
+          caReconcile += 1;
+        } catch (error) {
+          log.error(`[sign-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+        }
       }
       const last = caRows.at(-1);
       if (!last || caRows.length < batchSize) break;

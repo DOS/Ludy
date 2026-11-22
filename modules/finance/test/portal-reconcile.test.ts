@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { PORTAL_LIST_SKIP_REASONS as EXTRACT_SKIP_REASONS, type ExtractedPortalList } from '@ludy/extract-contract';
 import { PORTAL_LIST_SKIP_REASONS } from '@ludy/kernel-contract';
-import { checkPortalList, firstPerOutcome, invoiceSymbol, portalStatus, reconcilePortalList, type CroveInvoice, type PortalRow } from '../src/index.ts';
+import { checkPortalList, firstPerOutcome, invoiceSymbol, portalStatus, reconcilePortalList, type LudyInvoice, type PortalRow } from '../src/index.ts';
 
 const LIST = '00000000-0000-7000-8000-000000000001';
 const SELLER = '0100109107';
@@ -33,8 +33,8 @@ const portal = (number: string, extra: Partial<PortalRow> = {}): PortalRow => ({
 
 let id = 0;
 // A document is posted on its invoice date unless the test says otherwise; a proposal has no posting date.
-const crove = (number: string, extra: Partial<CroveInvoice> = {}): CroveInvoice => {
-  const base: CroveInvoice = {
+const ludy = (number: string, extra: Partial<LudyInvoice> = {}): LudyInvoice => {
+  const base: LudyInvoice = {
     kind: 'document',
     id: `00000000-0000-7000-8000-${String(++id).padStart(12, '0')}`,
     sellerTaxCode: SELLER,
@@ -55,49 +55,49 @@ const crove = (number: string, extra: Partial<CroveInvoice> = {}): CroveInvoice 
   return 'postingDate' in extra ? base : { ...base, postingDate: base.kind === 'document' ? base.issueDate : null };
 };
 
-const outcomes = (rows: PortalRow[], invoices: CroveInvoice[]) =>
-  reconcilePortalList(rows, invoices, PERIOD).items.map((i) => [i.portal?.number ?? i.crove?.number, i.outcome, i.crove?.kind ?? null]);
+const outcomes = (rows: PortalRow[], invoices: LudyInvoice[]) =>
+  reconcilePortalList(rows, invoices, PERIOD).items.map((i) => [i.portal?.number ?? i.ludy?.number, i.outcome, i.ludy?.kind ?? null]);
 
 describe('reconcilePortalList', () => {
   it('matches on seller tax code, series and number, and sorts what needs work first', () => {
     const result = reconcilePortalList(
       [portal('1'), portal('2'), portal('3')],
-      [crove('1'), crove('3', { kind: 'proposal' }), crove('9')],
+      [ludy('1'), ludy('3', { kind: 'proposal' }), ludy('9')],
       PERIOD,
     );
-    expect(result.items.map((i) => [i.portal?.number ?? i.crove?.number, i.outcome])).toEqual([
+    expect(result.items.map((i) => [i.portal?.number ?? i.ludy?.number, i.outcome])).toEqual([
       ['2', 'missing'],
       ['9', 'not_on_portal'],
       ['3', 'in_inbox'],
       ['1', 'matched'],
     ]);
-    expect(result.summary).toEqual({ portalInvoices: 3, matched: 1, inInbox: 1, amountMismatch: 0, missing: 1, voidInCrove: 0, void: 0, notOnPortal: 1, declaredLate: 0, duplicateRows: 0 });
+    expect(result.summary).toEqual({ portalInvoices: 3, matched: 1, inInbox: 1, amountMismatch: 0, missing: 1, voidInLudy: 0, void: 0, notOnPortal: 1, declaredLate: 0, duplicateRows: 0 });
   });
 
   it('does not match another seller, series or template, and normalizes numbers and series', () => {
-    expect(outcomes([portal('1')], [crove('1', { sellerTaxCode: OTHER })])).toEqual([
+    expect(outcomes([portal('1')], [ludy('1', { sellerTaxCode: OTHER })])).toEqual([
       ['1', 'missing', null],
       ['1', 'not_on_portal', 'document'],
     ]);
-    expect(outcomes([portal('1')], [crove('1', { series: 'C26TBB' })]).map((o) => o[1])).toEqual(['missing', 'not_on_portal']);
-    expect(outcomes([portal('1', { template: '2' })], [crove('1')]).map((o) => o[1])).toEqual(['missing', 'not_on_portal']);
+    expect(outcomes([portal('1')], [ludy('1', { series: 'C26TBB' })]).map((o) => o[1])).toEqual(['missing', 'not_on_portal']);
+    expect(outcomes([portal('1', { template: '2' })], [ludy('1')]).map((o) => o[1])).toEqual(['missing', 'not_on_portal']);
     // Zero padding, case and spaces, a template written into the series, a missing template.
-    expect(outcomes([portal('0000123', { series: 'c26taa ' })], [crove('123')])).toEqual([['0000123', 'matched', 'document']]);
-    expect(outcomes([portal('5', { template: null, series: '1C26TAA' })], [crove('5')])).toEqual([['5', 'matched', 'document']]);
-    expect(outcomes([portal('6')], [crove('6', { template: null })])).toEqual([['6', 'matched', 'document']]);
+    expect(outcomes([portal('0000123', { series: 'c26taa ' })], [ludy('123')])).toEqual([['0000123', 'matched', 'document']]);
+    expect(outcomes([portal('5', { template: null, series: '1C26TAA' })], [ludy('5')])).toEqual([['5', 'matched', 'document']]);
+    expect(outcomes([portal('6')], [ludy('6', { template: null })])).toEqual([['6', 'matched', 'document']]);
   });
 
-  it('matches a Crove invoice without a seller tax code on series and number only when that is unambiguous', () => {
-    const single = reconcilePortalList([portal('7')], [crove('7', { sellerTaxCode: null })], PERIOD).items;
+  it('matches a Ludy invoice without a seller tax code on series and number only when that is unambiguous', () => {
+    const single = reconcilePortalList([portal('7')], [ludy('7', { sellerTaxCode: null })], PERIOD).items;
     expect(single).toEqual([expect.objectContaining({ outcome: 'matched', withoutTaxCode: true })]);
-    const twoSellers = outcomes([portal('8'), portal('8', { sellerTaxCode: OTHER })], [crove('8', { sellerTaxCode: null })]);
+    const twoSellers = outcomes([portal('8'), portal('8', { sellerTaxCode: OTHER })], [ludy('8', { sellerTaxCode: null })]);
     expect(twoSellers.map((o) => o[1])).toEqual(['missing', 'missing', 'not_on_portal']);
   });
 
   it('checks the total, the VAT and the currency, allowing one dong of rounding', () => {
     const items = reconcilePortalList(
       [portal('1', { total: '1100001' }), portal('2', { total: '1100002' }), portal('3', { vatAmount: '99000' }), portal('4', { currency: 'USD' }), portal('5', { total: null, vatAmount: null })],
-      [crove('1'), crove('2'), crove('3'), crove('4'), crove('5', { total: '1' })],
+      [ludy('1'), ludy('2'), ludy('3'), ludy('4'), ludy('5', { total: '1' })],
       PERIOD,
     ).items;
     const byNumber = Object.fromEntries(items.map((i) => [i.portal?.number, [i.outcome, i.differences]]));
@@ -121,12 +121,12 @@ describe('reconcilePortalList', () => {
         portal('5', { status: 'replacement' }),
         portal('6', { status: 'unknown' }),
       ],
-      [crove('1'), crove('2', { kind: 'proposal', total: '5' })],
+      [ludy('1'), ludy('2', { kind: 'proposal', total: '5' })],
       PERIOD,
     );
     expect(Object.fromEntries(result.items.map((i) => [i.portal?.number, [i.outcome, i.differences]]))).toEqual({
-      '1': ['void_in_crove', []],
-      '2': ['void_in_crove', []],
+      '1': ['void_in_ludy', []],
+      '2': ['void_in_ludy', []],
       '3': ['void', []],
       '4': ['missing', []],
       '5': ['missing', []],
@@ -136,32 +136,32 @@ describe('reconcilePortalList', () => {
 
   it('counts the same invoice on two lists once, keeping a later cancellation', () => {
     const second = '00000000-0000-7000-8000-000000000002';
-    const result = reconcilePortalList([portal('1'), portal('1', { listId: second, status: 'cancelled' }), portal('2'), portal('2', { listId: second })], [crove('1')], PERIOD);
+    const result = reconcilePortalList([portal('1'), portal('1', { listId: second, status: 'cancelled' }), portal('2'), portal('2', { listId: second })], [ludy('1')], PERIOD);
     expect(result.items.map((i) => [i.portal?.number, i.outcome, i.duplicateRows])).toEqual([
       ['2', 'missing', 1],
-      ['1', 'void_in_crove', 1],
+      ['1', 'void_in_ludy', 1],
     ]);
     expect(result.summary.duplicateRows).toBe(2);
   });
 
   it('matches the booked document before a pending duplicate of it, and reports the duplicate whatever its date', () => {
-    const result = reconcilePortalList([portal('1')], [crove('1', { kind: 'proposal', issueDate: '2026-08-30' }), crove('1')], PERIOD);
-    expect(result.items.map((i) => [i.portal?.number ?? i.crove?.number, i.outcome, i.crove?.kind, i.duplicateInCrove])).toEqual([
+    const result = reconcilePortalList([portal('1')], [ludy('1', { kind: 'proposal', issueDate: '2026-08-30' }), ludy('1')], PERIOD);
+    expect(result.items.map((i) => [i.portal?.number ?? i.ludy?.number, i.outcome, i.ludy?.kind, i.duplicateInLudy])).toEqual([
       ['1', 'not_on_portal', 'proposal', true],
       ['1', 'matched', 'document', false],
     ]);
     expect(result.items[0]?.outsidePeriod).toBe(true);
     // The same invoice booked twice: one matches, the other is a duplicate.
-    const twice = reconcilePortalList([portal('2')], [crove('2'), crove('2')], PERIOD).items;
-    expect(twice.map((i) => [i.outcome, i.duplicateInCrove])).toEqual([
+    const twice = reconcilePortalList([portal('2')], [ludy('2'), ludy('2')], PERIOD).items;
+    expect(twice.map((i) => [i.outcome, i.duplicateInLudy])).toEqual([
       ['not_on_portal', true],
       ['matched', false],
     ]);
-    expect(reconcilePortalList([portal('3')], [crove('3')], PERIOD).summary.notOnPortal).toBe(0);
+    expect(reconcilePortalList([portal('3')], [ludy('3')], PERIOD).summary.notOnPortal).toBe(0);
   });
 
-  it('flags portal rows outside the period, and reports only Crove invoices of the period as not on the portal', () => {
-    const result = reconcilePortalList([portal('1', { issueDate: '2026-10-01' })], [crove('1', { issueDate: '2026-10-01' }), crove('2', { issueDate: '2026-08-31' })], PERIOD);
+  it('flags portal rows outside the period, and reports only Ludy invoices of the period as not on the portal', () => {
+    const result = reconcilePortalList([portal('1', { issueDate: '2026-10-01' })], [ludy('1', { issueDate: '2026-10-01' }), ludy('2', { issueDate: '2026-08-31' })], PERIOD);
     expect(result.items).toEqual([expect.objectContaining({ outcome: 'matched', outsidePeriod: true })]);
   });
 });
@@ -172,29 +172,29 @@ describe('late invoices (#478, #560)', () => {
   const OCTOBER = { from: '2026-10-01', to: '2026-10-31' };
 
   it('matches a late invoice in its own period and says it is declared in the later period of its posting date', () => {
-    const result = reconcilePortalList([portal('1', { issueDate: '2026-09-20' })], [crove('1', late)], PERIOD);
-    expect(result.items).toEqual([expect.objectContaining({ outcome: 'matched', declaredInLaterPeriod: true, crove: expect.objectContaining({ postingDate: '2026-10-01' }) })]);
-    // Not on the list either: still Crove's invoice of the period, and still declared later.
-    expect(reconcilePortalList([], [crove('2', late)], PERIOD).items).toEqual([expect.objectContaining({ outcome: 'not_on_portal', declaredInLaterPeriod: true })]);
+    const result = reconcilePortalList([portal('1', { issueDate: '2026-09-20' })], [ludy('1', late)], PERIOD);
+    expect(result.items).toEqual([expect.objectContaining({ outcome: 'matched', declaredInLaterPeriod: true, ludy: expect.objectContaining({ postingDate: '2026-10-01' }) })]);
+    // Not on the list either: still Ludy's invoice of the period, and still declared later.
+    expect(reconcilePortalList([], [ludy('2', late)], PERIOD).items).toEqual([expect.objectContaining({ outcome: 'not_on_portal', declaredInLaterPeriod: true })]);
     // An invoice posted on its own date is declared in its own period.
-    expect(reconcilePortalList([portal('3')], [crove('3')], PERIOD).items).toEqual([expect.objectContaining({ outcome: 'matched', declaredInLaterPeriod: false })]);
+    expect(reconcilePortalList([portal('3')], [ludy('3')], PERIOD).items).toEqual([expect.objectContaining({ outcome: 'matched', declaredInLaterPeriod: false })]);
   });
 
   it('reports a late invoice in the period it was posted in as declared late there, not as missing from the portal', () => {
-    const result = reconcilePortalList([portal('5', { issueDate: '2026-10-05' })], [crove('4', late), crove('5', { issueDate: '2026-10-05' })], OCTOBER);
-    expect(result.items.map((i) => [i.crove?.number, i.outcome, i.outsidePeriod, i.declaredInLaterPeriod])).toEqual([
+    const result = reconcilePortalList([portal('5', { issueDate: '2026-10-05' })], [ludy('4', late), ludy('5', { issueDate: '2026-10-05' })], OCTOBER);
+    expect(result.items.map((i) => [i.ludy?.number, i.outcome, i.outsidePeriod, i.declaredInLaterPeriod])).toEqual([
       ['5', 'matched', false, false],
       ['4', 'declared_late', true, false],
     ]);
     expect(result.summary).toMatchObject({ matched: 1, notOnPortal: 0, declaredLate: 1 });
     // A proposal has no posting date and an invoice of an earlier period posted then is none of this period's.
-    expect(reconcilePortalList([], [crove('6', { issueDate: '2026-09-20', kind: 'proposal' }), crove('7', { issueDate: '2026-09-20' })], OCTOBER).items).toEqual([]);
+    expect(reconcilePortalList([], [ludy('6', { issueDate: '2026-09-20', kind: 'proposal' }), ludy('7', { issueDate: '2026-09-20' })], OCTOBER).items).toEqual([]);
     // Posted after this period too: declared in neither this period nor its own.
-    expect(reconcilePortalList([], [crove('8', { issueDate: '2026-09-20', postingDate: '2026-11-02' })], OCTOBER).items).toEqual([]);
+    expect(reconcilePortalList([], [ludy('8', { issueDate: '2026-09-20', postingDate: '2026-11-02' })], OCTOBER).items).toEqual([]);
   });
 
   it('matches a late invoice to a row of the period it was posted in when that list happens to hold it', () => {
-    const result = reconcilePortalList([portal('9', { issueDate: '2026-09-20' })], [crove('9', late)], OCTOBER);
+    const result = reconcilePortalList([portal('9', { issueDate: '2026-09-20' })], [ludy('9', late)], OCTOBER);
     expect(result.items).toEqual([expect.objectContaining({ outcome: 'matched', outsidePeriod: true, declaredInLaterPeriod: false })]);
   });
 });
@@ -202,11 +202,11 @@ describe('late invoices (#478, #560)', () => {
 describe('portal duplicates and templates', () => {
   it('counts a row without a template as the same invoice as one with it, so neither looks missing', () => {
     const second = '00000000-0000-7000-8000-000000000003';
-    const result = reconcilePortalList([portal('1', { template: '1' }), portal('1', { listId: second, template: null })], [crove('1')], PERIOD);
+    const result = reconcilePortalList([portal('1', { template: '1' }), portal('1', { listId: second, template: null })], [ludy('1')], PERIOD);
     expect(result.items.map((i) => [i.portal?.number, i.outcome, i.duplicateRows])).toEqual([['1', 'matched', 1]]);
     expect(result.summary).toMatchObject({ portalInvoices: 1, missing: 0, duplicateRows: 1 });
     // The template-less row first: the later row's template fills it, and a third with another template stays apart.
-    const apart = reconcilePortalList([portal('2', { template: null }), portal('2', { template: '1' }), portal('2', { template: '2' })], [crove('2', { template: '1' })], PERIOD);
+    const apart = reconcilePortalList([portal('2', { template: null }), portal('2', { template: '1' }), portal('2', { template: '2' })], [ludy('2', { template: '1' })], PERIOD);
     expect(apart.items.map((i) => [i.portal?.template, i.outcome])).toEqual([
       ['2', 'missing'],
       [null, 'matched'],
@@ -218,7 +218,7 @@ describe('reconciliation size', () => {
   it('groups many rows under one key with distinct templates in linear time', () => {
     const rows = Array.from({ length: 50_000 }, (_, i) => portal('1', { template: `T${i}` }));
     const started = performance.now();
-    const result = reconcilePortalList(rows, [crove('1', { template: 'T7' })], PERIOD);
+    const result = reconcilePortalList(rows, [ludy('1', { template: 'T7' })], PERIOD);
     expect(performance.now() - started).toBeLessThan(2000);
     expect(result.summary).toMatchObject({ portalInvoices: 50_000, matched: 1, missing: 49_999, duplicateRows: 0 });
   });
@@ -349,8 +349,8 @@ describe('checkPortalList', () => {
 // The sales list (#2141): the org (OTHER here) is the seller, the customer is on the row.
 describe('sales list', () => {
   const sale = (number: string, extra: Partial<PortalRow> = {}): PortalRow => portal(number, { sellerTaxCode: OTHER, sellerName: 'Công ty', buyerTaxCode: SELLER, ...extra });
-  const sold = (number: string, extra: Partial<CroveInvoice> = {}): CroveInvoice =>
-    crove(number, { sellerTaxCode: null, sellerName: '', buyerTaxCode: SELLER, buyerName: 'Khách hàng', ...extra });
+  const sold = (number: string, extra: Partial<LudyInvoice> = {}): LudyInvoice =>
+    ludy(number, { sellerTaxCode: null, sellerName: '', buyerTaxCode: SELLER, buyerName: 'Khách hàng', ...extra });
 
   it('flags a sale the books lack and a sale booked with another VAT or total', () => {
     const result = reconcilePortalList(
@@ -358,7 +358,7 @@ describe('sales list', () => {
       [sold('1'), sold('3'), sold('4'), sold('9')],
       PERIOD,
     );
-    const byNumber = Object.fromEntries(result.items.map((i) => [i.portal?.number ?? i.crove?.number, [i.outcome, i.differences]]));
+    const byNumber = Object.fromEntries(result.items.map((i) => [i.portal?.number ?? i.ludy?.number, [i.outcome, i.differences]]));
     expect(byNumber).toEqual({
       '1': ['matched', []],
       '2': ['missing', []],
@@ -389,7 +389,7 @@ describe('sales list', () => {
   it('keeps a cancelled sale that is still booked apart, and a cancelled one that is not booked', () => {
     const result = reconcilePortalList([sale('1', { status: 'cancelled' }), sale('2', { status: 'replaced' })], [sold('1')], PERIOD);
     expect(result.items.map((i) => [i.portal?.number, i.outcome])).toEqual([
-      ['1', 'void_in_crove'],
+      ['1', 'void_in_ludy'],
       ['2', 'void'],
     ]);
   });

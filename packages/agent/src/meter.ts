@@ -43,6 +43,9 @@ export const AI_FEATURES = {
   'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
+  // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
+  // when it holds a digit, a link, advice about money or a promise.
+  'finance.cash_forecast_explain': 'finance',
   // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
   'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
@@ -86,6 +89,8 @@ export const AI_FEATURES = {
   // The finance coworker's notes under the Sàn table (#3711 slice 7): code read, per platform, the fees waiting on its 331, how old the oldest is and whether that is past one settlement cycle; the model only
   // words what that means, told those figures per numbered row and no platform name; a note with a number that is not its row's, a name, a link, a claim that something was done or a promise is dropped. A read.
   'finance.marketplace_fee_note': 'finance',
+  // The finance coworker's note on a pending marketplace settlement or payout proposal (#4389): code read the stored proposal and computed every figure in whole dong; the model words them in at most three sentences, told no platform, party, order, buyer or date; a text with a number that is not given, a link, a claim that something was done, a promise or advice on an account is refused as a whole and the screen shows a fixed template. A read.
+  'finance.marketplace_proposal_note': 'finance',
   // The finance coworker's proposal for which standard field each column of a marketplace order report is, when no profile knows its header (#3850): told only the header texts and masked sample shapes of the
   // columns that are not buyer data; the proposal is read against the real file by code and confirmed by a person. A read.
   'finance.stock_columns': 'finance',

@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -64,6 +65,7 @@ interface ActorSession {
 suite('HR employee self-service and multi-level leave approval DB invariants (#4300)', () => {
   const dbName = `crove_test_hr_self_service_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool | undefined;
   let appClient: pg.Client | undefined;
   let workerClient: pg.Client | undefined;
@@ -133,7 +135,7 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
   };
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -293,24 +295,25 @@ suite('HR employee self-service and multi-level leave approval DB invariants (#4
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
 
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
     const appUrl = app.toString();
 
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     worker.password = 'test-worker-pw';
     const workerUrl = worker.toString();
 
-    appClient = new pg.Client({ connectionString: appUrl });
+    appClient = createDbClient({ connectionString: appUrl }, dbIds);
     await appClient.connect();
-    workerClient = new pg.Client({ connectionString: workerUrl });
+    workerClient = createDbClient({ connectionString: workerUrl }, dbIds);
     await workerClient.connect();
 
-    pool = createPool({ connectionString: appUrl, max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: kernelCommands,

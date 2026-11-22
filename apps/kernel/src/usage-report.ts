@@ -173,7 +173,7 @@ export function usageSummary(rows: readonly UsageRow[], timeZone: string, instan
   const hours = (r: UsageRow) => (medianHours(r) === '' ? 'none' : `${medianHours(r)} h`);
   const line = (label: string, now: string, was: string) => `- ${label}: ${now} [${was}]`;
   const text = [
-    `[Crove] Weekly usage on ${instance}: ${week.iso_week}, from ${week.week_start} (${timeZone}). In brackets: ${before.iso_week}.`,
+    `[Ludy] Weekly usage on ${instance}: ${week.iso_week}, from ${week.week_start} (${timeZone}). In brackets: ${before.iso_week}.`,
     line('active orgs', String(week.active_orgs), String(before.active_orgs)),
     line('active users', String(week.active_users), String(before.active_users)),
     line('documents uploaded', String(week.documents_uploaded), String(before.documents_uploaded)),
@@ -187,7 +187,7 @@ export function usageSummary(rows: readonly UsageRow[], timeZone: string, instan
   ].join('\n');
   return {
     text,
-    crove: { kind: 'usage', severity: 'info', instance, at: at.toISOString(), time_zone: timeZone, week: totals(week), previous: totals(before) },
+    ludy: { kind: 'usage', severity: 'info', instance, at: at.toISOString(), time_zone: timeZone, week: totals(week), previous: totals(before) },
   };
 }
 

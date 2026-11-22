@@ -20,13 +20,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { aiRunFeature } from './fixtures/ai-run-feature.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -85,6 +86,10 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #4398 / #4399 (Projects Public Roadmap, ADR-0057): short-lived hashed email OTP challenges (otp_sha256, rate counters) and sealed subscriber emails (preserving roadmap_vote anonymity):
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_projects.roadmap_otp',
+  'crove_projects.roadmap_subscriber',
   // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
   // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
   'crove_sign.ca_connection',
@@ -111,7 +116,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_hr.leave_request',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -123,6 +127,16 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_projects.project_column',
+  'crove_projects.project_cycle',
+  'crove_projects.roadmap_announcement',
+  'crove_projects.roadmap_board',
+  'crove_projects.roadmap_item',
+  'crove_projects.roadmap_otp',
+  'crove_projects.roadmap_subscriber',
+  'crove_projects.roadmap_vote',
+  'crove_projects.task_dependency',
+  'crove_projects.time_entry',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -737,12 +751,37 @@ const notesVersionRow = (o: { id: string; owner: string }, noteId: string) => ({
   body: '',
 });
 // Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
+let projectCycleSeq = 1;
 const projectsProjectRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
   name: `RLS matrix project ${tag()}`,
   owner_user_id: o.owner,
   status: 'active',
+});
+const projectsRoadmapBoardRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  slug: `rls-board-${tag()}`,
+  title: 'RLS matrix roadmap',
+  enabled: 'false',
+  allow_submissions: 'true',
+  allow_voting: 'true',
+  require_moderation: 'true',
+  embed_allowed_origins: '{}',
+  created_by: o.owner,
+});
+const projectsRoadmapItemRow = (o: { id: string; owner: string }, boardId: string) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  board_id: boardId,
+  source: 'internal',
+  moderation_status: 'pending',
+  stage: 'under_review',
+  public_title: 'RLS matrix roadmap item',
+  vote_count: 0,
+  tainted: 'false',
+  created_by: o.owner,
 });
 // eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): parent rows for crove_sign.* factories.
 const signEnvelopeRow = (o: { id: string; owner: string; file: string }) => {
@@ -3404,6 +3443,43 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_projects.project': {
     make: (o) => ({ row: projectsProjectRow(o) }),
   },
+  // Projects v2 (#2605, step 0 via #4360): per-project custom board columns mapped to canonical task statuses; lands in PENDING_TABLES before its migration.
+  'crove_projects.project_column': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          name: 'RLS matrix column',
+          task_status: 'in_progress',
+          color: 'neutral',
+          sort_key: 'a0',
+        },
+      };
+    },
+  },
+  // Projects v2 (#4361, step 0 via #4360): opt-in sprint/cycle; 'upcoming' avoids the single-active-cycle partial unique index and projectCycleSeq avoids per-project collisions.
+  'crove_projects.project_cycle': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          number: projectCycleSeq++,
+          name: 'Sprint 1',
+          status: 'upcoming',
+          starts_on: '2026-11-23',
+          ends_on: '2026-12-06',
+        },
+      };
+    },
+  },
   'crove_projects.project_member': {
     make: (o) => {
       const project = projectsProjectRow(o);
@@ -3423,6 +3499,148 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 2 (#4400, step 0 via #4398, ADR-0057): draft changelog announcement tied to a board.
+  'crove_projects.roadmap_announcement': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          title: 'RLS matrix announcement',
+          body_md: 'RLS matrix announcement body',
+          status: 'draft',
+          linked_item_ids: '{}',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): opt-in public roadmap board; project_id omitted (NULL) and unique slug per row.
+  'crove_projects.roadmap_board': {
+    make: (o) => ({ row: projectsRoadmapBoardRow(o) }),
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): curated or submitted roadmap item bound to a board.
+  'crove_projects.roadmap_item': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: projectsRoadmapItemRow(o, board.id),
+      };
+    },
+  },
+  // Definer-only machinery (Projects Public Roadmap Slice 1, #4399, step 0 via #4398, ADR-0057): short-lived hashed email OTP challenges.
+  'crove_projects.roadmap_otp': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          email: 'voter@rls.test',
+          email_hash: hex64(),
+          ip_hash: hex64(),
+          otp_sha256: hex64(),
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          attempts: 0,
+        },
+      };
+    },
+  },
+  // Definer-only machinery (Projects Public Roadmap Slice 1, #4399, step 0 via #4398, ADR-0057): sealed voter emails for opt-in shipped alerts.
+  'crove_projects.roadmap_subscriber': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      return {
+        setup: [{ table: 'crove_projects.roadmap_board', values: board }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          voter_email_hash: hex64(),
+          email_sealed: `crove:s1:${randomUUID()}:rlsMatrixSealed`,
+          notify_on_ship: 'true',
+          unsubscribe_token_sha256: hex64(),
+        },
+      };
+    },
+  },
+  // Projects Public Roadmap Slice 1 (#4399, step 0 via #4398, ADR-0057): anonymous hashed vote on a board item.
+  'crove_projects.roadmap_vote': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      const item = projectsRoadmapItemRow(o, board.id);
+      return {
+        setup: [
+          { table: 'crove_projects.roadmap_board', values: board },
+          { table: 'crove_projects.roadmap_item', values: item },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          item_id: item.id,
+          voter_email_hash: hex64(),
+          notify_on_ship: 'true',
+        },
+      };
+    },
+  },
+  // Projects v2 (#2601, step 0 via #4360): directed dependency edge between two distinct tasks in the same project (composite FKs and blocker_task_id <> blocked_task_id).
+  'crove_projects.task_dependency': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const blockerTask = { org_id: o.id, id: randomUUID(), title: 'RLS matrix blocker task', source: 'human', created_by_type: 'user' };
+      const blockedTask = { org_id: o.id, id: randomUUID(), title: 'RLS matrix blocked task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: blockerTask },
+          { table: 'crove_kernel.task', values: blockedTask },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: blockerTask.id } },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: blockedTask.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          blocker_task_id: blockerTask.id,
+          blocked_task_id: blockedTask.id,
+        },
+      };
+    },
+  },
+  // Projects v2 (#2600, step 0 via #4360): completed time entry; non-null ended_at avoids the single-running-timer partial unique index per (org_id, user_id).
+  'crove_projects.time_entry': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix timed task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          task_id: task.id,
+          user_id: o.owner,
+          started_at: '2026-11-22T01:00:00Z',
+          ended_at: '2026-11-22T02:00:00Z',
+          duration_minutes: 60,
+          billable: 'true',
+          hourly_rate: '250000.00',
+        },
       };
     },
   },
@@ -4132,10 +4350,12 @@ async function prepare() {
   const url = new URL(ADMIN as string);
   url.pathname = `/${dbName}`;
   const adminUrl = url.toString();
-  const admin = new pg.Client({ connectionString: adminUrl });
+  let admin: pg.Client | undefined;
   try {
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     AI_RUN_FEATURE = (await aiRunFeature(admin)).cols ? { feature: 'notes.summary' } : {};
     const { rows } = await admin.query<Relation>(
@@ -4161,7 +4381,7 @@ async function prepare() {
            WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND a.attnum > 0 AND NOT a.attisdropped)
        ORDER BY 1`,
     );
-    return { dbName, adminUrl, relations: rows };
+    return { dbName, adminUrl, relations: rows, dbIds };
   } catch (error) {
     const cleanup = new pg.Client({ connectionString: ADMIN });
     await cleanup.connect();
@@ -4169,7 +4389,7 @@ async function prepare() {
     await cleanup.end();
     throw error;
   } finally {
-    await admin.end().catch(() => {});
+    await admin?.end().catch(() => {});
   }
 }
 
@@ -4182,7 +4402,7 @@ type Outcome = { ok: true; rows: Array<{ org: string }>; rowCount: number } | { 
 type SweepOutcome = { ok: true; visible: number; changed: number } | { ok: false; code: string; message: string };
 
 suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
-  const { dbName, adminUrl } = setup ?? { dbName: '', adminUrl: '' };
+  const { dbName, adminUrl, dbIds } = setup ?? { dbName: '', adminUrl: '', dbIds: undefined as DbIdentifiers | undefined };
   const clients: pg.Client[] = [];
   let pool: pg.Pool | undefined;
   const orgs: Record<'A' | 'B', OrgFixture> = {} as Record<'A' | 'B', OrgFixture>;
@@ -4226,7 +4446,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   const privileges = new Map<string, Map<string, Set<Op>>>();
 
   async function connect(url: string) {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -4397,11 +4617,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     admin = await connect(adminUrl);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 });
+    pool = createDbPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -4708,15 +4928,16 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     // ctx_acting_user_id answers the member only to this context: the tables that read it are the catalog's.
     const acting = expectRows(await probe(memberVy, (c) => c.query('SELECT crove_kernel.ctx_acting_user_id()::text AS org')), memberVy.name);
     expect(acting.rows, 'the acting user of the member-mode actor').toEqual([{ org: memberVyUser }]);
-    const { rows: catalog } = await admin.query<{ table_name: string; mode: string }>('SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1');
+    const { rows: rawCatalog } = await admin.query<{ table_name: string; mode: string }>('SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1');
+    const catalog = rawCatalog.map((r) => ({ ...r, table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name }));
     expect(
-      catalog.filter((r) => r.mode === 'write').map((r) => r.table_name),
+      catalog.filter((r) => r.mode === 'write').map((r) => r.table_name).sort(),
       "member_vy_table write rows: the matrix expects AGENT_FORBIDDEN for the factories' rows of each (MEMBER_VY_WRITES)",
     ).toEqual([...MEMBER_VY_WRITES].sort());
     expect(
-      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name),
+      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name).sort(),
       'member_vy_table read rows: each read as its member (MEMBER_VY_READS)',
-    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note']);
+    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note'].sort());
     const names = relations.map((r) => r.name);
     const listed = [...MEMBER_VY_READS.keys()];
     expect(listed.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'MEMBER_VY_READS lists tables that no longer have org_id').toEqual([]);

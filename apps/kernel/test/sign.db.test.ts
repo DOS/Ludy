@@ -376,6 +376,19 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       runtime.execute('sign.envelope.create', { title: 'Bad source', sourceFileId: regularFileId }, { actor: asUser(member), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
 
+    // #3428 L2: envelope expiresAt cannot exceed 30 days (720 hours).
+    await expect(
+      runtime.execute(
+        'sign.envelope.create',
+        {
+          title: 'Too Far Expiry',
+          sourceFileId,
+          expiresAt: new Date(Date.now() + 31 * DAY_MS).toISOString(),
+        },
+        { actor: asUser(member), orgId: org.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_EXPIRY', status: 422 });
+
     const futureExpiry = new Date(Date.now() + 7 * DAY_MS).toISOString();
     const created = await runtime.execute<{ envelopeId: string; status: string; inspectStatus: string; version: number }>(
       'sign.envelope.create',
@@ -384,6 +397,17 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(created).toMatchObject({ status: 'draft', inspectStatus: 'pending', version: 1 });
     const envelopeId = created.envelopeId;
+
+    await expect(
+      runtime.execute(
+        'sign.envelope.update',
+        {
+          envelopeId,
+          expiresAt: new Date(Date.now() + 31 * DAY_MS).toISOString(),
+        },
+        { actor: asUser(member), orgId: org.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_EXPIRY', status: 422 });
 
     const inspectOutbox = await admin(async (c) =>
       (await c.query("SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.envelope.inspect_queued'", [org.orgId])).rows,
@@ -660,6 +684,14 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       runtime.execute('sign.signer.create_link', { envelopeId, signerId: sCc.signerId }, { actor: asUser(member), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_INVALID_SIGNER', status: 422 });
 
+    // #3428 L3: create_link is restricted to creator, owner, or admin (another member and viewer get 403).
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId, signerId: s1.signerId }, { actor: asUser(otherMember), orgId: org.orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId, signerId: s1.signerId }, { actor: asUser(viewer), orgId: org.orgId }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
     const rotated = await runtime.execute<{ tokenId: string; token: string }>(
       'sign.signer.create_link',
       { envelopeId, signerId: s1.signerId },
@@ -673,6 +705,13 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(rotatedRows[0].revoked_at).not.toBeNull();
     expect(rotatedRows[1].revoked_at).toBeNull();
 
+    const ownerRotated = await runtime.execute<{ tokenId: string; token: string }>(
+      'sign.signer.create_link',
+      { envelopeId, signerId: s1.signerId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(ownerRotated.token).not.toBe(rotated.token);
+
     // Token-issuing create_link also refuses idempotencyKey without revoking existing token or storing idempotency rows.
     await expect(
       runtime.execute('sign.signer.create_link', { envelopeId, signerId: s1.signerId }, { actor: asUser(member), orgId: org.orgId, idempotencyKey: 'link-key-1' }),
@@ -684,8 +723,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const rotatedAfterRefusal = await admin(async (c) =>
       (await c.query('SELECT id, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
     );
-    expect(rotatedAfterRefusal).toHaveLength(2);
-    expect(rotatedAfterRefusal[1].revoked_at).toBeNull();
+    expect(rotatedAfterRefusal).toHaveLength(3);
+    expect(rotatedAfterRefusal[2].revoked_at).toBeNull();
 
     // remind succeeds then hits 5m cooldown 429.
     const reminded = await runtime.execute<{ remindedSignerIds: string[] }>(
@@ -1640,6 +1679,38 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(orgStatuses.env2).toBe('expired');
     expect(orgStatuses.otp1).toBe(1);
     expect(orgStatuses.otp2).toBe(0);
+
+    // Also verify sweepSignPendingWork isolates per-org enqueue/appOn errors (#3428 L4).
+    const pendingIds: Array<{ orgId: string; envelopeId: string }> = [];
+    for (const orgId of [org1Id, org2Id]) {
+      const up = await uploadFile(app, owner, pdfFixture(`pend-${orgId}`), 'pend.pdf', 'sign_document', 'application/pdf', slugOf(orgId));
+      const fid = ((up.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+      const env = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title: 'Pending Recovery Isolation', sourceFileId: fid },
+        { actor: asUser(owner), orgId },
+      );
+      await admin(async (c) => {
+        await c.query("UPDATE crove_sign.envelope SET updated_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [orgId, env.envelopeId]);
+      });
+      pendingIds.push({ orgId, envelopeId: env.envelopeId });
+    }
+    const enqueuedInspects: string[] = [];
+    const pendingErrors: string[] = [];
+    const pendingRes = await sweepSignPendingWork({
+      workerDb,
+      olderThan: new Date(Date.now() - 60_000),
+      enqueueInspect: async (orgId, envId) => {
+        if (orgId === org1Id) throw new Error('simulated queue outage');
+        enqueuedInspects.push(envId);
+      },
+      enqueueSeal: async () => {},
+      log: { error: (...args) => pendingErrors.push(args.map(String).join(' ')) },
+    });
+    expect(pendingRes.inspect).toBeGreaterThanOrEqual(1);
+    expect(enqueuedInspects).toContain(pendingIds[1]!.envelopeId);
+    expect(pendingErrors.some((e) => e.includes('[sign-pending-work]') && e.includes(org1Id.slice(0, 8)))).toBe(true);
+    expect(pendingErrors.every((e) => !e.includes('simulated queue outage'))).toBe(true);
   });
 
   it('completes end-to-end Approver HTTP ceremony, sequential approver invite copy, and sealed completion mail attachments (#3528)', async () => {

@@ -86,11 +86,24 @@ describe('what may start spend at the platform (#2296, W2-4b)', () => {
     expect(commands).toMatch(/name: 'ads\.launch\.retry',[\s\S]*?risk: 'R2',\s*sideEffect: 'external',\s*access: MANAGERS/);
     // Begin re-checks, before the ledger row of a call is made, the stop conditions, the plan, the flight and the caps, and only the launch's own recorded objects are named.
     const begin = commands.slice(commands.indexOf("name: 'ads.activate.begin'"), commands.indexOf("name: 'ads.activate.record'"));
-    const order = ['stopConditionOf(', 'planHash(', 'todayIn(', 'launchCapsProblems(', ".from('crove_ads.ad_object')".replace('.from', '.selectFrom'), "insertInto('crove_kernel.external_call')"];
+    const order: Array<string | RegExp> = [
+      'stopConditionOf(',
+      'planHash(',
+      'todayIn(',
+      'launchCapsProblems(',
+      /\.selectFrom\('(?:crove|ludy)_ads\.ad_object'\)/,
+      /insertInto\('(?:crove|ludy)_kernel\.external_call'\)/,
+    ];
     let at = -1;
     for (const part of order) {
-      const next = begin.indexOf(part);
-      expect(next, part).toBeGreaterThan(at);
+      let next = -1;
+      if (typeof part === 'string') {
+        next = begin.indexOf(part);
+      } else {
+        const match = part.exec(begin);
+        next = match?.index ?? -1;
+      }
+      expect(next, String(part)).toBeGreaterThan(at);
       at = next;
     }
     expect(begin).toContain('lockedSetting(ctx)');

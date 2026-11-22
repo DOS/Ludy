@@ -8,11 +8,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { contextTokenKeyBytes as runnerKeyBytes, installContextTokenKey, migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { contextTokenKeyBytes as runnerKeyBytes, installContextTokenKey, migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { contextTokenKeyBytes, mintContextToken, Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -25,6 +26,7 @@ const suite = ADMIN && KEY ? describe : describe.skip;
 suite('context tokens: enter_user_context on PostgreSQL (#1822, ADR-0028 section 9)', () => {
   const dbName = `crove_test_ctxtok_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -38,14 +40,14 @@ suite('context tokens: enter_user_context on PostgreSQL (#1822, ADR-0028 section
     mintContextToken(extra.key ?? KEY, { userId, orgId, sessionId: extra.sessionId ?? null, aal: 'aal1', mfaAt: null }, extra.nowMs);
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -78,16 +80,17 @@ suite('context tokens: enter_user_context on PostgreSQL (#1822, ADR-0028 section
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS, contextTokenKey: KEY });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
-    const pool = createPool({ connectionString: appUrl, max: 1 });
+    const pool = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
@@ -268,9 +271,9 @@ suite('context tokens: enter_user_context on PostgreSQL (#1822, ADR-0028 section
   });
 
   it('runs the runtime through tokens once it has a key, and through enter_context, while crove_app may call it, without one', async () => {
-    const keyed = createPool({ connectionString: appUrl, max: 1 });
-    const keyless = createPool({ connectionString: appUrl, max: 1 });
-    const wrong = createPool({ connectionString: appUrl, max: 1 });
+    const keyed = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
+    const keyless = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
+    const wrong = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     pools.push(keyed, keyless, wrong);
     const make = (pool: pg.Pool, contextTokenKey: string | null) =>
       new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });

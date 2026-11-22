@@ -14,11 +14,13 @@ export * from './eval.ts';
 export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './followup.ts';
+export * from './cash-forecast.ts';
 export * from './overview.ts';
 export * from './vat-late.ts';
 export * from './marketplace-line.ts';
 export * from './marketplace-columns.ts';
 export * from './marketplace-fee-note.ts';
+export * from './marketplace-proposal-note.ts';
 export * from './misa-check-line.ts';
 export * from './misa-amis-blocker-notes.ts';
 export * from './supplier-payable-line.ts';
@@ -121,7 +123,7 @@ export class AiNotConfiguredError extends Error {}
 // checks the exact client configuration production runs.
 export function chatModel(config: AiConfig) {
   const provider = createOpenAICompatible({
-    name: 'crove-ai',
+    name: 'ludy-ai',
     baseURL: config.baseURL,
     ...(config.apiKey ? { apiKey: config.apiKey } : {}),
     supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,

@@ -204,7 +204,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     const ics = (await res.text()).replace(/\r\n /g, '');
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(2);
-    expect(ics).toContain(`UID:feed-booking-${own}@crove\r\nSEQUENCE:1\r\n`);
+    expect(ics).toContain(`UID:feed-booking-${own}@ludy\r\nSEQUENCE:1\r\n`);
     expect(ics).toContain('SUMMARY:Tư vấn thuế: Chị Lan\r\n');
     expect(ics).toContain(`URL:http://localhost:8080/o/${o.slug}/bookings\r\n`);
     expect((await http().request(`/cal/${token}`)).status).toBe(404);

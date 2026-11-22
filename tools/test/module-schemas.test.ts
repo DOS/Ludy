@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MODULES = join(ROOT, 'modules');
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage']);
-// A Crove schema named as a qualifier: crove_<name> followed by a dot.
-const SCHEMA = /\bcrove_([a-z][a-z0-9_]*)\./g;
+// A Crove or Ludy schema named as a qualifier: (crove|ludy)_<name> followed by a dot.
+const SCHEMA = /\b(?:crove|ludy)_([a-z][a-z0-9_]*)\./g;
 
 function sources(dir: string): string[] {
   const out: string[] = [];
@@ -142,8 +142,8 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
 };
 
-// A Crove schema named whole, in quotes: withSchema('crove_finance'), a list of schemas, "crove_finance"."x".
-const QUOTED_SCHEMA = /['"`]crove_([a-z][a-z0-9_]*)['"`]/g;
+// A Crove or Ludy schema named whole, in quotes: withSchema('ludy_finance'), a list of schemas, "crove_finance"."x".
+const QUOTED_SCHEMA = /['"`](?:crove|ludy)_([a-z][a-z0-9_]*)['"`]/g;
 
 // The modules a text names by schema (crove_<module>. or a quoted 'crove_<module>'), among `modules`.
 function moduleSchemas(modules: ReadonlySet<string>, text: string): string[] {

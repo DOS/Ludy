@@ -134,21 +134,21 @@ describe('probes notify on news only', () => {
     expect(await h.probe(minutes(5), workerDown)).toBe(EXIT.unhealthy);
     expect(await h.probe(minutes(10), workerDown)).toBe(EXIT.unhealthy);
     expect(await h.probe(minutes(15), workerDown)).toBe(EXIT.unhealthy);
-    expect(h.texts).toEqual(['[Crove] ALERT on office: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down']);
+    expect(h.texts).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down']);
     // Every probe still logs what fails, and says why it sent nothing.
     expect(h.err.filter((l) => l.startsWith('[prober] FAIL heartbeat'))).toHaveLength(3);
     expect(h.out).toContain('[prober] notification skipped: already notified at 2026-10-16T12:05:00.000Z, repeats from 2026-10-16T13:05:00.000Z');
 
     expect(await h.probe(minutes(65), workerDown)).toBe(EXIT.unhealthy);
-    expect(h.texts[1]).toBe('[Crove] STILL FAILING on office for 1 h: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down');
+    expect(h.texts[1]).toBe('[Ludy] STILL FAILING on office for 1 h: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down');
     expect(h.bodies[1]?.crove).toMatchObject({ kind: 'alert', state: 'repeat', severity: 'critical', since: '2026-10-16T12:05:00.000Z' });
 
     expect(await h.probe(minutes(70), workerAndRelayDown)).toBe(EXIT.unhealthy);
-    expect(h.texts[2]).toMatch(/^\[Crove\] ALERT on office: 2 health check\(s\) failed \(was: heartbeat\)\.\n- oldest unpublished outbox event/);
+    expect(h.texts[2]).toMatch(/^\[Ludy\] ALERT on office: 2 health check\(s\) failed \(was: heartbeat\)\.\n- oldest unpublished outbox event/);
     expect(h.bodies[2]?.crove).toMatchObject({ state: 'changed', previous: ['heartbeat'] });
 
     expect(await h.probe(minutes(80), healthy)).toBe(EXIT.ok);
-    expect(h.texts[3]).toBe('[Crove] RESOLVED on office: the failing health checks pass again after 1 h 15 min (heartbeat, outbox).');
+    expect(h.texts[3]).toBe('[Ludy] RESOLVED on office: the failing health checks pass again after 1 h 15 min (heartbeat, outbox).');
     expect(h.bodies[3]?.crove).toMatchObject({ kind: 'resolved', severity: 'info', findings: [], previous: ['heartbeat', 'outbox'] });
     expect(h.out).toContain('[prober] resolved notice sent to webhook at hooks.example.test');
 
@@ -160,7 +160,7 @@ describe('probes notify on news only', () => {
     const h = harness({ repeatSeconds: 0 });
     for (let m = 0; m <= 600; m += 5) await h.probe(minutes(m), workerDown);
     await h.probe(minutes(605), healthy);
-    expect(h.texts.map((t) => t.split(':')[0])).toEqual(['[Crove] ALERT on office', '[Crove] RESOLVED on office']);
+    expect(h.texts.map((t) => t.split(':')[0])).toEqual(['[Ludy] ALERT on office', '[Ludy] RESOLVED on office']);
   });
 
   it('keeps an undelivered alert due: the next probe sends it, and exit 3 says it failed', async () => {
@@ -171,7 +171,7 @@ describe('probes notify on news only', () => {
     status = 200;
     expect(await h.probe(minutes(5), workerDown)).toBe(EXIT.unhealthy);
     expect(h.texts).toHaveLength(1);
-    expect(h.texts[0]).toMatch(/^\[Crove\] ALERT on office: 1 health check/);
+    expect(h.texts[0]).toMatch(/^\[Ludy\] ALERT on office: 1 health check/);
   });
 
   it('de-duplicates an unreachable database in process and says when it answers again', async () => {
@@ -180,9 +180,9 @@ describe('probes notify on news only', () => {
     expect(await h.probe(minutes(0), down)).toBe(EXIT.probeFailed);
     expect(await h.probe(minutes(5), down)).toBe(EXIT.probeFailed);
     expect(await h.probe(minutes(30), down)).toBe(EXIT.probeFailed);
-    expect(h.texts).toEqual(['[Crove] ALERT on office: 1 health check(s) failed.\n- the prober could not read crove_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432']);
+    expect(h.texts).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.\n- the prober could not read crove_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432']);
     expect(await h.probe(minutes(40), healthy)).toBe(EXIT.ok);
-    expect(h.texts[1]).toBe('[Crove] RESOLVED on office: the prober reads crove_kernel.health() again after 40 min.');
+    expect(h.texts[1]).toBe('[Ludy] RESOLVED on office: the prober reads crove_kernel.health() again after 40 min.');
     expect(h.texts).toHaveLength(2);
   });
 
@@ -251,7 +251,7 @@ describe('probes notify on news only', () => {
       return new Response('ok');
     }) as unknown as typeof globalThis.fetch;
     await probeOnce(config(), { fetch, log: () => {}, error: () => {}, readHealth: async () => Promise.reject(new Error('FATAL: no\n# heading\n> quote')) });
-    expect(texts[0]?.split('\n')).toEqual(['[Crove] ALERT on office: 1 health check(s) failed.', '- the prober could not read crove_kernel.health(): FATAL: no # heading > quote']);
+    expect(texts[0]?.split('\n')).toEqual(['[Ludy] ALERT on office: 1 health check(s) failed.', '- the prober could not read crove_kernel.health(): FATAL: no # heading > quote']);
   });
 
   it('reads ALERT_REPEAT_MINUTES (default 60, 0 for never) and refuses other values', async () => {

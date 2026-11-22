@@ -27,7 +27,7 @@ describe('the pace of the month', () => {
   it('projects linearly: what was spent over the days over, times the days of the month, today not counted', () => {
     // 9 days over on the 10th, 90 000 spent: 10 000 a day, 300 000 in a 30-day month.
     const pace = monthPace({ today: '2026-11-10', spentBeforeToday: '90000', minDays: thresholds.paceMinDays });
-    expect(pace).toMatchObject({ elapsedDays: 9, daysInMonth: 30 });
+    expect(pace).toMatchObject({ elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' });
     expect(pace?.projected.toFixed()).toBe('300000');
     expect(flagAmount(pace?.projected ?? 0, 'VND')).toBe('300000');
   });
@@ -197,8 +197,8 @@ describe('the flags of an org at an instant', () => {
       now,
     );
     expect(flags).toEqual([
-      { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
-      { kind: 'pace', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
+      { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' },
+      { kind: 'pace', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' },
     ]);
     // Exactly at the cap, or under it, raises none.
     expect(evaluateFlags(input({ caps: [{ scope: 'org', adAccountId: null, period: 'monthly', amount: '300000', currency: 'VND' }] }), now)).toEqual([]);
@@ -227,6 +227,17 @@ describe('the flags of an org at an instant', () => {
     expect(flags).toEqual([{ kind: 'day', scope: 'account', adAccountId: 'a-la', accountName: 'Store', currency: 'USD', skippedAccounts: 0, period: 'daily', cap: '100.00', share: '100.00', day: '2026-11-08', spend: '160.00', ratio: '1.60' }]);
   });
 
+  it('names the month of the account\'s own calendar: on 1 December in Ho Chi Minh City, Los Angeles is still on 30 November', () => {
+    // 2026-12-01 10:00 in Ho Chi Minh City (03:00 UTC), 2026-11-30 19:00 in Los Angeles.
+    const edge = new Date('2026-12-01T03:00:00Z');
+    const la = { id: 'a-la', name: 'Store', currency: 'USD', timeZone: 'America/Los_Angeles', resultKind: null, syncedThrough: '2026-11-29' };
+    const flags = evaluateFlags(
+      { accounts: [la], caps: [{ scope: 'account', adAccountId: 'a-la', period: 'monthly', amount: '1000.00', currency: 'USD' }], accountDays: month('a-la', 1, 29, '50.00'), campaignDays: [] },
+      edge,
+    );
+    expect(flags.find((f) => f.kind === 'pace')).toMatchObject({ month: '2026-11-01', elapsedDays: 29, daysInMonth: 30 });
+  });
+
   it('never compares or adds amounts of different currencies, and skips an account that has not read yesterday', () => {
     const usd = { id: 'a-us', name: 'USD account', currency: 'USD', timeZone: 'Asia/Ho_Chi_Minh', resultKind: null, syncedThrough: '2026-11-09' };
     const behind = { id: 'a-late', name: 'Behind', currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh', resultKind: null, syncedThrough: '2026-11-08' };
@@ -241,7 +252,7 @@ describe('the flags of an org at an instant', () => {
     );
     // Only the VND account that has read yesterday counts: 300 000 projected, not more.
     // One account of the cap's currency was not judged (it has not read yesterday): the flag says so.
-    expect(flags).toEqual([{ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 1, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 }]);
+    expect(flags).toEqual([{ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 1, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' }]);
     // A cap in another currency than the account's is not compared.
     expect(evaluateFlags(input({ caps: [{ scope: 'account', adAccountId: 'a-vn', period: 'monthly', amount: '10', currency: 'USD' }] }), now)).toEqual([]);
   });

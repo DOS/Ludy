@@ -98,7 +98,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
   });
 
   await test.step('the route refuses a request with no sign-in', async () => {
-    const response = await page.context().request.get(`/api/payroll-export/kk.xlsx?period=2026-Q3`, { headers: { 'x-crove-org': slug } });
+    const response = await page.context().request.get(`/api/payroll-export/kk.xlsx?period=2026-Q3`, { headers: { 'x-ludy-org': slug } });
     expect(response.status()).toBe(401);
   });
 });

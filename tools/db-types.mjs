@@ -240,8 +240,8 @@ async function tenantPrivileges(dbUrl) {
 }
 
 async function main() {
-  const adminUrl = process.env.CROVE_TEST_ADMIN_URL;
-  if (!adminUrl) throw new Error('db-types: set CROVE_TEST_ADMIN_URL to a superuser URL on PostgreSQL 17');
+  const adminUrl = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
+  if (!adminUrl) throw new Error('db-types: set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL on PostgreSQL 17');
   const dbName = `crove_types_${Date.now()}_${randomBytes(4).toString('hex')}`;
   const url = new URL(adminUrl);
   url.pathname = `/${dbName}`;

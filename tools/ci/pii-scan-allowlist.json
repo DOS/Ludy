@@ -16,6 +16,7 @@
   {
     "kind": "email",
     "domains": [
+      "ludy.local",
       "crove.local"
     ],
     "reason": "the dev stack's sender domain (docker-compose SMTP_FROM default, Mailpit tests); .local is special-use (RFC 6762) and reaches no mailbox"

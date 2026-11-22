@@ -259,8 +259,8 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     // Home, with no agent connected for the member (there is a grant in the org, but Home never needs one): the three inbox rules.
     const home = await o.query<TodayList>(o.owner, 'kernel.today');
     const byId = new Map(home.items.map((i) => [i.id, i]));
-    expect(byId.get('wake:unanswered')).toMatchObject({ kind: 'message', app: 'conversations', count: 1, title: { key: 'wake.unanswered', params: { count: 1, hours: 4 } } });
-    expect(byId.get('wake:reply-window')).toMatchObject({ kind: 'deadline', count: 1, title: { key: 'wake.replyWindow', params: { count: 1, hours: 3 } } });
+    expect(byId.get('wake:unanswered')).toMatchObject({ kind: 'message', app: 'conversations', count: 1, title: { key: 'wake.unanswered', params: { count: 1, plus: '', hours: 4 } } });
+    expect(byId.get('wake:reply-window')).toMatchObject({ kind: 'deadline', count: 1, title: { key: 'wake.replyWindow', params: { count: 1, plus: '', hours: 3 } } });
     expect(byId.get('wake:comments')).toMatchObject({ app: 'social', count: 1, title: { key: 'wake.postComments' } });
     // N is the org's: eight hours and the six-hour wait no longer counts.
     await o.exec(o.owner, 'kernel.conversation.wake_rules_set', { unansweredHours: 8, replyWindowHours: 3, quoteDays: 5 });
@@ -281,12 +281,11 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       read: async (grant) =>
         adsItems(
           [
-            { kind: 'pace', scope: 'account', adAccountId: adAccount, accountName: CANARY, currency: 'USD', cap: '5000', spent: '3000', projected: '6200.456789', elapsedDays: 12, daysInMonth: 30, skippedAccounts: 0 },
+            { kind: 'pace', scope: 'account', adAccountId: adAccount, accountName: CANARY, currency: 'USD', cap: '5000', spent: '3000', projected: '6200.456789', elapsedDays: 12, daysInMonth: 30, month: '2026-11-01', skippedAccounts: 0 },
             { kind: 'day', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', period: 'monthly', cap: '30000000', share: '1000000', day: '2026-11-18', spend: '2400000', ratio: '2.4', skippedAccounts: 0 },
             { kind: 'cpr', adAccountId: adAccount, accountName: CANARY, campaignId: 'c1', campaignName: CANARY, currency: 'VND', day: '2026-11-18', recentCost: '1', medianCost: '1', ratio: '3', recentResults: '1', historyDays: 7 },
           ],
           grant.orgId,
-          new Date(),
         ),
     };
     const grantId = await o.wakeUp();

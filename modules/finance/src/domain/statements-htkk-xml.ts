@@ -25,7 +25,7 @@ export const HTKK_BCTC = {
   formBasis: '(Ban hành theo Thông tư số 133/2016/TT-BTC ngày 26/8/2016 của Bộ Tài chính)',
   xmlVersion: '2.3.2',
   // The software that made the file; Crove names itself rather than pose as HTKK (as for 01/GTGT).
-  service: { code: 'CROVE', name: 'Crove', version: '1.0' },
+  service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
 } as const;
 
 // The indicators of B01a-DNN and B02-DNN in the template's order: the line codes of tt133-reports.ts.

@@ -16,14 +16,15 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { applyAuthGrants, migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { applyAuthGrants, migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -37,6 +38,7 @@ type Created = { inviteId: string; acceptPath: string };
 suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', () => {
   const dbName = `crove_test_preclaim_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let runtime: Runtime;
@@ -58,7 +60,7 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
   });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -154,7 +156,8 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     // Supabase Auth's tables, with the columns the kernel reads plus the password this fake keeps (in clear: a test).
     await admin(async (c) => {
       await c.query('CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin');
@@ -173,9 +176,9 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
     });
     await applyAuthGrants({ adminUrl, timeoutMs: 5000 });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 4 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
 
@@ -289,16 +292,19 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
   it('the check is a definer with the pinned search_path that only crove_app may execute', async () => {
     const rows = await admin(async (c) => {
       const def = await c.query<{ prosecdef: boolean; proconfig: string[] }>('SELECT prosecdef, proconfig FROM pg_proc WHERE oid = $1::regprocedure', [FN]);
-      const roles = await c.query<{ role: string; can: boolean }>(
-        `SELECT r.rolname AS role, has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS can
-         FROM pg_roles r WHERE r.rolname LIKE 'crove\\_%' ORDER BY 1`,
-        [FN],
-      );
+      const roles = await auditRoleFunctionExecute(c, dbIds, FN, ['crove_app'], 'brand');
       const acl = await c.query<{ acl: string[] | null }>('SELECT proacl::text[] AS acl FROM pg_proc WHERE oid = $1::regprocedure', [FN]);
-      return { def: def.rows[0], roles: roles.rows, acl: acl.rows[0]?.acl ?? [] };
+      return { def: def.rows[0], roles, acl: acl.rows[0]?.acl ?? [] };
     });
     expect(rows.def).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'] });
-    expect(rows.roles.filter((r) => r.can).map((r) => r.role)).toEqual(['crove_app']);
+    expect(rows.roles.rows.length).toBeGreaterThan(0);
+    expect(
+      rows.roles.rows.some((r) => r.rolname === rows.roles.activeAllowed[0] && r.ok),
+      `active role ${rows.roles.activeAllowed[0]} execute ${FN}`,
+    ).toBe(true);
+    for (const { rolname, ok, expected } of rows.roles.rows) {
+      expect(ok, `${rolname} execute ${FN}`).toBe(expected);
+    }
     expect(rows.acl.some((entry) => entry.startsWith('='))).toBe(false);
   });
 

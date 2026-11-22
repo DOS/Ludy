@@ -371,11 +371,14 @@ describe('prober configuration', () => {
   });
 
   // #1894: the modules the deployment runs, which health() counts in the job age whatever the workers record.
-  it('reads the modules the deployment runs from CROVE_MODULES, as the API does, and hands them to readHealth', async () => {
+  it('reads the modules the deployment runs from LUDY_MODULES / CROVE_MODULES, as the API does, and hands them to readHealth', async () => {
     expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadProberConfig({ CROVE_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
-    expect(() => loadProberConfig({ CROVE_MODULES: 'finanse' })).toThrow(/CROVE_MODULES/);
+    expect(loadProberConfig({ LUDY_MODULES: 'crm' }).modules).toEqual(['kernel', 'crm']);
+    expect(loadProberConfig({ LUDY_MODULES: 'finance', CROVE_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
+    expect(() => loadProberConfig({ CROVE_MODULES: 'finanse' })).toThrow(/LUDY_MODULES/);
+    expect(() => loadProberConfig({ LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toThrow(/LUDY_MODULES and CROVE_MODULES are both set with conflicting values/);
     const readHealth = vi.fn(async () => healthy);
     const config = { ...loadProberConfig({ CROVE_MODULES: 'finance' }), databaseUrl: 'postgres://prober@db.test/crove' };
     await probeOnce(config, { log: () => {}, error: () => {}, readHealth });
@@ -419,8 +422,10 @@ describe('backup failure alert', () => {
     expect(code).toBe(EXIT.ok);
     expect(hook.calls).toHaveLength(1);
     const body = hook.body();
-    expect(body.text).toBe('[Crove] ALERT on books.example.test: the backup failed.\n- backup failed: pg_dump failed: connection refused');
-    expect(body.crove).toMatchObject({ kind: 'alert', state: 'new', severity: 'critical', findings: [{ check: 'backup', value: null, threshold: null }] });
+    expect(body.text).toBe('[Ludy] ALERT on books.example.test: the backup failed.\n- backup failed: pg_dump failed: connection refused');
+    const expected = { kind: 'alert', state: 'new', severity: 'critical', findings: [{ check: 'backup', value: null, threshold: null }] };
+    expect(body.ludy).toMatchObject(expected);
+    expect(body.crove).toMatchObject(expected);
     expect(io.err).toContain('[prober] FAIL backup: backup failed: pg_dump failed: connection refused');
     expect(io.out.join('\n')).not.toContain('secret-token-123');
   });
@@ -495,9 +500,11 @@ describe('prober exit codes', () => {
     expect(hook.calls[0]?.url).toBe(SECRET_HOOK);
     expect(hook.calls[0]?.init).toMatchObject({ method: 'POST', headers: { 'content-type': 'application/json' }, redirect: 'error' });
     const body = hook.body();
-    expect(body.text).toBe('[Crove] ALERT on crove.example.test: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down');
+    expect(body.text).toBe('[Ludy] ALERT on crove.example.test: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down');
     expect(body.content).toBe(body.text);
-    expect(body.crove).toMatchObject({ kind: 'alert', severity: 'critical', instance: 'crove.example.test', at: '2026-10-15T12:00:00.000Z' });
+    const expected = { kind: 'alert', severity: 'critical', instance: 'crove.example.test', at: '2026-10-15T12:00:00.000Z' };
+    expect(body.ludy).toMatchObject(expected);
+    expect(body.crove).toMatchObject(expected);
     expect(body.crove.findings).toEqual([{ check: 'heartbeat', value: 900, threshold: 120, message: expect.any(String) }]);
     expect(body.crove.health).toEqual(sick);
     expect(io.out).toEqual(['[prober] alert sent to webhook at hooks.example.test']);
@@ -532,7 +539,7 @@ describe('prober exit codes', () => {
     const hook = webhook(500);
     const code = await probeOnce(config(), { ...io, fetch: hook.fetch, readHealth: async () => ({ ...healthy, dead_letter_count: 1 }) });
     expect(code).toBe(EXIT.deliveryFailed);
-    expect(io.out[0]).toMatch(/^\[Crove\] ALERT on crove\.example\.test/);
+    expect(io.out[0]).toMatch(/^\[Ludy\] ALERT on crove\.example\.test/);
     expect(io.err).toContain('[prober] alert delivery: webhook at hooks.example.test failed: HTTP 500');
     expect([...io.out, ...io.err].join('\n')).not.toContain('secret-token-123');
   });
@@ -542,7 +549,7 @@ describe('prober exit codes', () => {
     const code = await probeOnce(config({ webhookUrl: undefined }), { ...io, readHealth: async () => ({ ...healthy, worker_heartbeat_age_seconds: null }) });
     expect(code).toBe(EXIT.unhealthy);
     expect(io.out).toEqual([
-      '[Crove] ALERT on crove.example.test: 1 health check(s) failed.\n- no worker heartbeat recorded: the worker has never started',
+      '[Ludy] ALERT on crove.example.test: 1 health check(s) failed.\n- no worker heartbeat recorded: the worker has never started',
       '[prober] alert sent to stdout (ALERT_WEBHOOK_URL is not set)',
     ]);
   });
@@ -762,10 +769,12 @@ describe('test alert', () => {
     const code = await runProber(['--test-alert'], { ALERT_WEBHOOK_URL: SECRET_HOOK, ALERT_INSTANCE: 'office' }, { ...io, fetch: hook.fetch, readHealth, now: () => new Date('2026-10-15T12:00:00Z') });
     expect(code).toBe(EXIT.ok);
     expect(readHealth).not.toHaveBeenCalled();
+    const testAlert = { kind: 'test', severity: 'info', instance: 'office', at: '2026-10-15T12:00:00.000Z', findings: [] };
     expect(hook.body()).toEqual({
-      text: '[Crove] Test alert from office: alert delivery works.',
-      content: '[Crove] Test alert from office: alert delivery works.',
-      crove: { kind: 'test', severity: 'info', instance: 'office', at: '2026-10-15T12:00:00.000Z', findings: [] },
+      text: '[Ludy] Test alert from office: alert delivery works.',
+      content: '[Ludy] Test alert from office: alert delivery works.',
+      ludy: testAlert,
+      crove: testAlert,
     });
     expect(io.out).toEqual(['[prober] test alert sent to webhook at hooks.example.test']);
   });
@@ -780,7 +789,7 @@ describe('test alert', () => {
 
     const local = capture();
     expect(await runProber(['--test-alert'], { ALERT_INSTANCE: 'office' }, local)).toBe(EXIT.ok);
-    expect(local.out).toEqual(['[Crove] Test alert from office: alert delivery works.', '[prober] test alert sent to stdout (ALERT_WEBHOOK_URL is not set)']);
+    expect(local.out).toEqual(['[Ludy] Test alert from office: alert delivery works.', '[prober] test alert sent to stdout (ALERT_WEBHOOK_URL is not set)']);
   });
 
   it('keeps the text within the Discord limit', async () => {

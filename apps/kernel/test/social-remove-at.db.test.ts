@@ -13,7 +13,7 @@ import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
-import { removeWindowMs, runPublishJob, runRemoveJob, runRemoveWatch, socialCommands, socialQueries, sweepRemovals, type PostView, type Provider } from '@ludy/mod-social';
+import { removeWindowMs, runPublishJob, runRemoveJob, runRemoveWatch, socialCommands, socialQueries, sweepRemovals, type NotificationItem, type PostView, type Provider } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -182,8 +182,21 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     expect(await runRemoveJob({ runtime: worker, broker: vault, publishers: { sandbox }, callTimeoutMs: 2_000 }, o.orgId, gone.id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });
     await admin((c) => c.query("UPDATE crove_social.post_variant SET remove_requested_at = now() - interval '11 minutes' WHERE id = $1", [lost.id]));
     expect(await runRemoveWatch({ runtime: worker }, o.orgId, lost.id, null)).toEqual({ told: true, code: 'REMOVE_NOT_RUN' });
+    // The notice of the failure reaches the owners and admins while the app is off (#3456): the ordinary dispatch is refused, the narrow one tells them, once, and only for this event.
+    const system = { type: 'system' as const, component: 'social-remove-at-test' };
+    const failure = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_failed' AND payload->>'variant_id' = $2", [o.orgId, lost.id])).rows[0]);
+    expect(failure).toBeDefined();
+    const eventId = (failure as { id: string }).id;
+    await expect(worker.execute('social.notification.dispatch', { eventId }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'MODULE_OFF' });
+    const told = await worker.execute<{ sent: number; mailed: number }>('social.notification.dispatch_removal', { eventId }, { actor: system, orgId: o.orgId });
+    expect(told.sent).toBe(1);
+    expect(await worker.execute('social.notification.dispatch_removal', { eventId }, { actor: system, orgId: o.orgId })).toEqual({ sent: 0, mailed: 0 });
+    const asked = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.remove_requested' LIMIT 1", [o.orgId])).rows[0]);
+    expect(await worker.execute('social.notification.dispatch_removal', { eventId: (asked as { id: string }).id }, { actor: system, orgId: o.orgId })).toEqual({ sent: 0, mailed: 0 });
     // Back on, the post screen shows both outcomes (a person's read is refused while the app is off).
     await api.execute('kernel.org.set_app', { module: 'social', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const listed = await api.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(listed.items.filter((n) => n.kind === 'failed').map((n) => [n.postId, n.detail.removal])).toEqual([[lost.postId, 'scheduled']]);
     expect(await variant(o, gone.postId)).toMatchObject({ status: 'removed' });
     expect(await variant(o, lost.postId)).toMatchObject({ status: 'published', removal: { state: 'failed', code: 'REMOVE_NOT_RUN' } });
   });

@@ -18,7 +18,7 @@ const COMMENT = { ts: '//', tsx: '//', mts: '//', cts: '//', js: '//', jsx: '//'
 
 // Files under another license, which keep their own: the pg-boss schema (MIT), written by `pnpm db:vendor:pgboss` from
 // pg-boss, and the vendored pgTAP (PostgreSQL License).
-const THIRD_PARTY = [/^supabase\/migrations\/\d{14}_crove_jobs_pgboss_v\d+\.sql$/, /^packages\/db\/test\/invariant\/pgtap\/pgtap\.sql$/];
+const THIRD_PARTY = [/^supabase\/migrations\/\d{14}_(?:crove|ludy)_jobs_pgboss_v\d+\.sql$/, /^packages\/db\/test\/invariant\/pgtap\/pgtap\.sql$/];
 
 // How many lines from the top the SPDX line may sit on (a shebang may come first).
 const HEADER_LINES = 5;

@@ -23,6 +23,7 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  LEGACY_ORG_HEADER,
   SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
@@ -138,6 +139,7 @@ import {
   emailChangeGate,
   emailChangeRefused,
   INVITE_TOKEN_HEADER,
+  LEGACY_INVITE_TOKEN_HEADER,
   limitInviteChecks,
   methodRefused,
   signupAllowed,
@@ -645,7 +647,43 @@ const SPOOFABLE = new Set([
 ]);
 // Dropped from every request the auth proxy forwards: the forwarding headers above, and the invite token a sign-up
 // carries for the sign-up policy (#563), which is the proxy's to read and none of Supabase Auth's business.
-const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER]);
+const RECIPIENT_HEADER = 'x-ludy-recipient';
+const LEGACY_RECIPIENT_HEADER = 'x-crove-recipient';
+
+function normalizeHeaderValue(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+function readOrgHeader(c: Context): string | null {
+  const primary = normalizeHeaderValue(c.req.header(ORG_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_ORG_HEADER));
+  if (primary !== null && legacy !== null && primary !== legacy) {
+    throw new DomainError('ORG_HEADER_CONFLICT', 400, 'Conflicting x-ludy-org and x-crove-org headers');
+  }
+  return primary ?? legacy;
+}
+
+function readInviteHeader(c: Context): { ok: true; value: string | undefined } | { ok: false } {
+  const primary = normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_INVITE_TOKEN_HEADER));
+  if (primary !== null && legacy !== null && primary !== legacy) {
+    return { ok: false };
+  }
+  return { ok: true, value: (primary ?? legacy) ?? undefined };
+}
+
+function readRecipientHeader(c: Context): string | null {
+  const primary = normalizeHeaderValue(c.req.header(RECIPIENT_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_RECIPIENT_HEADER));
+  if (primary !== null && legacy !== null && primary.toLowerCase() !== legacy.toLowerCase()) {
+    throw new DomainError('RECIPIENT_HEADER_CONFLICT', 400, 'Conflicting x-ludy-recipient and x-crove-recipient headers');
+  }
+  return primary ?? legacy;
+}
+
+const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER]);
 // Public Supabase Auth endpoints the web app needs. Everything else (notably /admin) is not reachable.
 const AUTH_PUBLIC_PATHS =
   /^\/(?:token|signup|verify|recover|user|logout|otp|resend|settings|health|authorize|callback|reauthenticate|factors(?:\/[\w-]+(?:\/(?:challenge|verify))?)?|\.well-known\/jwks\.json)$/;
@@ -787,8 +825,8 @@ export function createHttpApp(deps: HttpDeps) {
       // build time (a release before #1952). Builds are ordered by CROVE_BUILD_TIME, the commit's date; without one
       // (a local build) nothing is compared. No live worker is not a reason: the prober alerts on a missing heartbeat,
       // and readiness must not flap on a worker's restart.
-      if (deps.workerBuildCheck && config.CROVE_BUILD_TIME) {
-        const { rows } = await client.query<{ older: number }>('SELECT older FROM crove_kernel.worker_build_lag($1::timestamptz)', [config.CROVE_BUILD_TIME]);
+      if (deps.workerBuildCheck && config.LUDY_BUILD_TIME) {
+        const { rows } = await client.query<{ older: number }>('SELECT older FROM crove_kernel.worker_build_lag($1::timestamptz)', [config.LUDY_BUILD_TIME]);
         if ((rows[0]?.older ?? 0) > 0) return c.json({ ready: false, reason: 'worker_build' }, 503);
       }
       return c.json({ ready: true });
@@ -802,7 +840,7 @@ export function createHttpApp(deps: HttpDeps) {
   // The build and the committed migrations missing from the ledger (#892, plan §4.11), for the deploy's smoke test.
   // Public like /readyz: migration names are in the source; nothing about an org.
   app.get('/version', async (c) => {
-    const build = config.CROVE_BUILD ?? 'dev';
+    const build = config.LUDY_BUILD ?? 'dev';
     const client = await deps.pool.connect().catch(() => null);
     if (!client) return c.json({ build, migrationsMissing: null }, 503);
     try {
@@ -823,7 +861,7 @@ export function createHttpApp(deps: HttpDeps) {
       oauth: deps.oauth,
       authenticate,
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
-      serverVersion: config.CROVE_BUILD ?? 'dev',
+      serverVersion: config.LUDY_BUILD ?? 'dev',
       draftBudget: drafts,
     });
   }
@@ -950,7 +988,9 @@ export function createHttpApp(deps: HttpDeps) {
       }
       if (gate.kind === 'check') {
         // The invite token the web app sends with a sign-up from an accept link (#563); the header is never forwarded.
-        const token = signupInviteToken(c.req.header(INVITE_TOKEN_HEADER));
+        const inviteHeader = readInviteHeader(c);
+        if (!inviteHeader.ok) return signupRefused();
+        const token = signupInviteToken(inviteHeader.value);
         // Each lookup of whether the address holds an invite takes a refusal slot of the client's IPv4 address or IPv6
         // /48 and of the deployment, given back when the sign-up is admitted (#564 item 1).
         // The refusal cap counts per client address too, so warn about a reverse proxy without TRUSTED_PROXY_HOPS
@@ -1415,7 +1455,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const raw = new Uint8Array(await c.req.arrayBuffer());
         // Stored and queued only; the worker parses it and files the attachments (External-tenant gate T5).
-        const result = await acceptInboundEmail({ runtime, store, domain }, raw, c.req.header('x-crove-recipient') ?? null);
+        const result = await acceptInboundEmail({ runtime, store, domain }, raw, readRecipientHeader(c));
         return c.json(result, 202);
       } catch (error) {
         return problem(c, error);
@@ -2523,7 +2563,7 @@ export function createHttpApp(deps: HttpDeps) {
         // Fail closed: without the token's exp a stream could outlive the token (jwt mode trusts it until then).
         const tokenExp = user.tokenExp;
         if (tokenExp === undefined) throw new DomainError('STREAM_UNAVAILABLE', 503, 'Kênh cập nhật tạm thời không hoạt động');
-        const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+        const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
         await runtime.query(STREAM_CHECK_QUERY, {}, { actor: actorOf(user), orgId });
         const { ticket, hash } = newTicket();
         const issued = await stream.tickets.issue(hash, {
@@ -2563,7 +2603,7 @@ export function createHttpApp(deps: HttpDeps) {
       const tokenExp = user.tokenExp;
       if (tokenExp === undefined) throw new DomainError('VIDEO_TICKET_UNAVAILABLE', 503, 'Không thể cấp vé xem video lúc này');
       if (tokenExp <= nowSeconds) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id');
       const media = await runtime.query<{ fileId: string; keyId: string }>('meetings.meeting.media_meta', { meetingId, kind: 'video' }, { actor: actorOf(user), orgId });
       const key = videoTicketKey(media.keyId);
@@ -2605,7 +2645,7 @@ export function createHttpApp(deps: HttpDeps) {
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
       if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
@@ -2644,11 +2684,15 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   app.all('/api/rpc/*', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
-    const { matched, response } = await rpc.handle(c.req.raw, {
-      prefix: '/api/rpc',
-      context: { user: c.get('user'), orgSlug: c.req.header(ORG_HEADER) ?? null },
-    });
-    return matched ? response : c.json({ code: 'NOT_FOUND' }, 404);
+    try {
+      const { matched, response } = await rpc.handle(c.req.raw, {
+        prefix: '/api/rpc',
+        context: { user: c.get('user'), orgSlug: readOrgHeader(c) },
+      });
+      return matched ? response : c.json({ code: 'NOT_FOUND' }, 404);
+    } catch (error) {
+      return problem(c, error);
+    }
   });
 
   // Files are written and recorded the same way on every path: the server computes the sha256 of the bytes it
@@ -2781,7 +2825,7 @@ export function createHttpApp(deps: HttpDeps) {
     // An extension token's one org is its own; its member's role is checked by the command that records the file, and by
     // the token's standing, which the database reads on every request (a viewer's token is void).
     if (user.extension) return { user, orgId: await resolveOrg(runtime, user, null) };
-    const membership = await resolveMembership(runtime, user, c.req.header(ORG_HEADER) ?? null);
+    const membership = await resolveMembership(runtime, user, readOrgHeader(c));
     if (membership.role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Vai trò chỉ xem không tải được chứng từ');
     return { user, orgId: membership.orgId };
   }
@@ -2936,7 +2980,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/files/:id', async (c) => {
     try {
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string; source: string }>(
         'kernel.file.get',
         { id: c.req.param('id') },
@@ -3046,7 +3090,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (user.extension) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
         throw new DomainError('NOTE_ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy tệp đính kèm này');
       }
@@ -3424,7 +3468,7 @@ export function createHttpApp(deps: HttpDeps) {
     const user = c.get('user');
     let orgId: string;
     try {
-      orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      orgId = await resolveOrg(runtime, user, readOrgHeader(c));
     } catch (error) {
       return problem(c, error);
     }
@@ -3455,7 +3499,7 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meeting = await meetingFacts(user, orgId, c.req.param('id') ?? '');
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
       const json = (c.req.header('content-type') ?? '').includes('application/json');
@@ -3524,7 +3568,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       }
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id');
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
@@ -3849,7 +3893,7 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id') ?? '';
       const body = (await c.req.json().catch(() => null)) as { importId?: unknown } | null;
       if (!UUID_TEXT.test(meetingId) || !body || typeof body.importId !== 'string' || !UUID_TEXT.test(body.importId)) {
@@ -3921,7 +3965,7 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id') ?? '';
       const meeting = await meetingFacts(user, orgId, meetingId);
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may send live notes audio');
@@ -4015,7 +4059,7 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id') ?? '';
       const meeting = await meetingFacts(user, orgId, meetingId);
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can join its live pieces');
@@ -4041,7 +4085,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/conversations/attachments/:id', async (c) => {
     try {
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const file = await runtime.query<{ contentType: string; sizeBytes: number; sha256: string; generation: string; storageKey: string }>(
         'kernel.conversation.attachment_get',
         { attachmentId: c.req.param('id') },
@@ -4086,7 +4130,7 @@ export function createHttpApp(deps: HttpDeps) {
           c.header('retry-after', String(decision.retryAfterSeconds));
           throw new DomainError('RATE_LIMITED', 429, 'Bạn tải quá nhiều bản PDF; hãy thử lại sau ít phút');
         }
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const { logoFile, ...document } = await runtime.query<QuoteDocumentData>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
         // The letterhead's logo (#2814): read from the store and checked, then by the writer's own reader; a logo that cannot be read leaves it out and never fails the document.
@@ -4141,7 +4185,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/journal.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const entries = await runtime.query<JournalEntryView[]>('finance.journal.list', range, {
@@ -4172,7 +4216,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/purchases.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<PurchaseVoucher[]>('finance.vouchers.purchases', range, { actor: actorOf(user), orgId });
@@ -4204,7 +4248,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/goods-purchases.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<PurchaseVoucher[]>('finance.vouchers.purchases', range, { actor: actorOf(user), orgId });
@@ -4238,7 +4282,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/sales.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<SalesVoucher[]>('finance.vouchers.sales', range, { actor: actorOf(user), orgId });
@@ -4276,7 +4320,7 @@ export function createHttpApp(deps: HttpDeps) {
       app.get(cash.path, async (c) => {
         try {
           const user = c.get('user');
-          const orgSlug = c.req.header(ORG_HEADER) ?? null;
+          const orgSlug = readOrgHeader(c);
           const orgId = await resolveOrg(runtime, user, orgSlug);
           const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
           const vouchers = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { ...range, type: cash.type }, { actor: actorOf(user), orgId });
@@ -4307,7 +4351,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/vat.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const report = await runtime.query<VatReport>('finance.vat.period', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -4333,7 +4377,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/vat-01gtgt.xml', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         // ?deductInput=1 puts [24] in [25] (#692); ?deduct=suggested puts the working's suggestion, [24] minus the VAT
@@ -4381,7 +4425,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/ledger.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const book = await runtime.query<LedgerBook>('finance.ledger.book', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -4405,7 +4449,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/statements.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const statements = await runtime.query<FinancialStatements>('finance.statements.period', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -4428,7 +4472,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/fixed-assets.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const assets = await runtime.query<FixedAsset[]>('finance.fixed_assets.list', entityQuery(c), { actor: actorOf(user), orgId });
         const bytes = await buildFixedAssetsWorkbook(assets, orgSlug ?? '', config.BRAND_NAME);
@@ -4453,7 +4497,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/stock.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const month = c.req.query('month') ?? '';
@@ -4486,7 +4530,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s1a.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
@@ -4513,7 +4557,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s2a.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
@@ -4541,7 +4585,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s2b.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
@@ -4569,7 +4613,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s2c.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
@@ -4594,7 +4638,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s2d.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const month = c.req.query('month') ?? '';
@@ -4619,7 +4663,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-s2e.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
@@ -4645,7 +4689,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/household-cnkd.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const legalEntityId = c.req.query('legalEntityId') ?? '';
@@ -4688,7 +4732,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/statements-htkk.xml', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const yearText = c.req.query('year') ?? '';
         const year = /^\d{4}$/.test(yearText) ? Number(yearText) : Number.NaN;
@@ -4718,7 +4762,7 @@ export function createHttpApp(deps: HttpDeps) {
     // served only when the manifest lists it under the package's own prefix, so the request names nothing but a year.
     const recordedArchive = async (c: Context<{ Variables: { user: AuthUser } }>) => {
       const user = c.get('user');
-      const orgSlug = c.req.header(ORG_HEADER) ?? null;
+      const orgSlug = readOrgHeader(c);
       const orgId = await resolveOrg(runtime, user, orgSlug);
       const year = Number(c.req.param('year'));
       if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new DomainError('NOT_FOUND', 404, 'Không có gói lưu trữ của năm này');
@@ -4778,7 +4822,7 @@ export function createHttpApp(deps: HttpDeps) {
         const kind = file.endsWith('.xlsx') ? file.slice(0, -'.xlsx'.length) : asView ? file.slice(0, -'.json'.length) : '';
         if (!(HR_DECLARATION_KINDS as readonly string[]).includes(kind)) throw new DomainError('NOT_FOUND', 404, 'Không có bảng kê này');
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
@@ -4833,7 +4877,7 @@ export function createHttpApp(deps: HttpDeps) {
         const file = c.req.param('file');
         if (!file.endsWith('.xlsx')) throw new DomainError('NOT_FOUND', 404, 'Không có file này');
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
@@ -4886,7 +4930,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         if (c.req.param('file') !== 'payments.xlsx') throw new DomainError('NOT_FOUND', 404, 'Không có file này');
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
         const reexport = c.req.query('reexport') === '1';
@@ -4936,7 +4980,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/org-export/:part', async (c) => {
     try {
       const user = c.get('user');
-      const orgSlug = c.req.header(ORG_HEADER) ?? null;
+      const orgSlug = readOrgHeader(c);
       const orgId = await resolveOrg(runtime, user, orgSlug);
       const part = c.req.param('part');
       // The tables of the owner-run path (#2676, payroll people and pay runs) are read live by the owner's own session, never by the export job: a

@@ -44,6 +44,7 @@ const settings = {
   WAL_S3_VERIFY_TLS: 'n',
   WAL_ARCHIVE_TIMEOUT: '10',
   BACKUP_ALERT: 'off',
+  LUDY_DIR: DIR,
   CROVE_DIR: DIR,
   WAL_BUILD_CONTEXT: `${ROOT}tools/wal`,
   // The drill's own image tag: it never builds over, or removes, the crove-db:local of a stack on the same machine.
@@ -125,7 +126,7 @@ function teardown() {
 
 async function main() {
   copyFileSync(`${ROOT}tools/backup/wal-drill.compose.yml`, `${DIR}/docker-compose.yml`);
-  writeFileSync(`${DIR}/.env`, Object.entries(settings).filter(([k]) => k !== 'CROVE_DIR').map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
+  writeFileSync(`${DIR}/.env`, Object.entries(settings).filter(([k]) => k !== 'LUDY_DIR' && k !== 'CROVE_DIR').map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
 
   log('starting the database and the bucket');
   compose(['up', '-d', '--build', '--wait', 'db', 'minio']);

@@ -14,12 +14,13 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, defineCommand, defineQuery, mintContextToken, type AgentActor, type Lookup } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -57,6 +58,7 @@ type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: s
 suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   const dbName = `crove_test_orggate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let rt: Runtime;
   let definitionsOf: { commands: any[]; queries: any[] };
@@ -70,7 +72,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   const asMfa = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal2', sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) });
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -139,11 +141,12 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    pool = createPool({ connectionString: url.toString(), max: 6 });
+    pool = createDbPool({ connectionString: url.toString(), max: 6 }, dbIds);
     const definitions = {
       commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands, touch, sysTouch, agentTouch, nested],
       queries: [
@@ -160,9 +163,9 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     };
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(definitions);
     const wurl = new URL(adminUrl);
-    wurl.username = 'crove_worker';
+    wurl.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     wurl.password = 'test-worker-pw';
-    workerPool = createPool({ connectionString: wurl.toString(), max: 2 });
+    workerPool = createDbPool({ connectionString: wurl.toString(), max: 2 }, dbIds);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(definitions);
     definitionsOf = definitions;
   }, 120_000);
@@ -227,10 +230,10 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     const o = await org();
     // A posted entry (as the API login in the owner's context), and a proposal of the member to reverse it.
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
     const entryId = await (async () => {
-      const c = new pg.Client({ connectionString: appUrl.toString() });
+      const c = createDbClient({ connectionString: appUrl.toString() }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { checkEnvPair } from '@ludy/db';
 import { EXTRACT_TIMING } from '@ludy/extract-contract';
 import { misaBlockers } from '@ludy/einvoice';
 import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
@@ -89,7 +90,7 @@ const schema = z.object({
   }),
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
-  CROVE_MODULES: modulesSetting,
+  LUDY_MODULES: modulesSetting,
   // Legal gate for live external Vietnam public CA providers (VNPT SmartCA, Viettel MySign, MISA WeSign; issue #62 and
   // #3554). false (the default) allows only the offline sandbox PAdES adapter until lawyer sign-off completes.
   SIGN_LIVE_CA_ENABLED: optional.pipe(z.enum(['true', 'false']).default('false')),
@@ -113,10 +114,10 @@ const schema = z.object({
   // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
   // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
   // false (the default, and every self-host) keeps every database-wide guard.
-  CROVE_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
+  LUDY_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
   // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
   // this is true, for the one run a person decides to switch it in.
-  CROVE_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
+  LUDY_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.
@@ -215,7 +216,7 @@ const schema = z.object({
   // The context token key (#1822, ADR-0028 section 9): base64 of 32 to 64 random bytes (`node dist/main.js
   // context-token-key` prints one). The same value goes to the migrate step, which installs it in the database, and to
   // the kernel, which signs a token with it for every user context it enters. Unset: today's enter_context.
-  CROVE_CONTEXT_TOKEN_KEY: optional,
+  LUDY_CONTEXT_TOKEN_KEY: optional,
   AUTH_JWKS_URL: optional,
   // Required (ADR-0028): the `iss` every access token must carry. Bundled Supabase Auth: GOTRUE_JWT_ISSUER.
   AUTH_ISSUER: optional,
@@ -690,15 +691,15 @@ const schema = z.object({
   MAIL_PROVIDER: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['smtp', 'resend']).default('smtp')),
   RESEND_API_KEY: optional,
   RESEND_WEBHOOK_SECRET: optional.pipe(z.string().regex(/^whsec_[A-Za-z0-9+/=]{24,}$/, 'RESEND_WEBHOOK_SECRET is the whsec_... signing secret of the webhook').optional()),
-  // The build this image was made from (#892): the git SHA the release workflow passes as the image's CROVE_BUILD build
+  // The build this image was made from (#892): the git SHA the release workflow passes as the image's LUDY_BUILD build
   // argument. GET /version reports it, so the deploy's smoke test can tell the new image from the old one. Unset (a
   // local build): "dev".
-  CROVE_BUILD: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, 'CROVE_BUILD is a build id: letters, digits, dot, dash, underscore').optional()),
-  // When that commit was made (#1952): its committer date, ISO 8601, the image's CROVE_BUILD_TIME build argument. A
+  LUDY_BUILD: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, 'LUDY_BUILD is a build id: letters, digits, dot, dash, underscore').optional()),
+  // When that commit was made (#1952): its committer date, ISO 8601, the image's LUDY_BUILD_TIME build argument. A
   // SHA has no order, so builds are compared by this date: the API's /readyz waits while a live worker runs an older
   // build (plan §3.5, worker build >= API build), and each worker records its own in its heartbeat. Unset (a local
   // build): no comparison.
-  CROVE_BUILD_TIME: optional.pipe(z.iso.datetime({ offset: true, error: 'CROVE_BUILD_TIME is an ISO 8601 date and time with its offset' }).optional()),
+  LUDY_BUILD_TIME: optional.pipe(z.iso.datetime({ offset: true, error: 'LUDY_BUILD_TIME is an ISO 8601 date and time with its offset' }).optional()),
   // Where the app's "Góp ý / Hỗ trợ" (feedback and support) link goes: an https: page (a chat group, a help desk) or
   // a mailto: address. Unset hides the link. Browsers see it through /api/config, so it must hold nothing secret.
   SUPPORT_URL: optional.pipe(
@@ -748,7 +749,7 @@ const schema = z.object({
   // ends every subscription; members turn push on again.
   // The all-in-one role puts the HTTP edge on the worker's all-org database login and every secret, so on a public
   // PUBLIC_URL the kernel starts it only with this opt-in (assertSplitRoles); the pilot runs api and worker apart.
-  CROVE_ALLOW_ALL_IN_ONE: optional.pipe(z.enum(['true', 'false']).optional()),
+  LUDY_ALLOW_ALL_IN_ONE: optional.pipe(z.enum(['true', 'false']).optional()),
   VAPID_PUBLIC_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{87}$/, 'VAPID_PUBLIC_KEY is the base64url public key the vapid-keys role prints').optional()),
   VAPID_PRIVATE_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'VAPID_PRIVATE_KEY is the base64url private key the vapid-keys role prints').optional()),
   VAPID_SUBJECT: optional.pipe(z.string().max(200).optional()),
@@ -790,26 +791,71 @@ const schema = z.object({
   TURNSTILE_SITE_KEY: optional.pipe(z.string().regex(/^[0-9A-Za-z_-]{1,100}$/, 'TURNSTILE_SITE_KEY is a Turnstile site key').optional()),
   TURNSTILE_SECRET: optional,
   // Role passwords applied by `migrate` (self-host).
-  CROVE_APP_DB_PASSWORD: optional,
-  CROVE_WORKER_DB_PASSWORD: optional,
+  LUDY_APP_DB_PASSWORD: optional,
+  LUDY_WORKER_DB_PASSWORD: optional,
   // The prober's login (crove_prober); it may only execute crove_kernel.health().
-  CROVE_PROBER_DB_PASSWORD: optional,
+  LUDY_PROBER_DB_PASSWORD: optional,
   // The usage report's login (crove_reporter); it may only execute crove_kernel.usage_weekly().
-  CROVE_REPORTER_DB_PASSWORD: optional,
+  LUDY_REPORTER_DB_PASSWORD: optional,
   AUTH_DB_PASSWORD: optional,
 });
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
-  AUTH_ISSUER: string;
-  AUTH_SESSION_CHECK: SessionCheckMode;
-  EINVOICE_SANDBOX: 'true' | 'false';
-  ADS_SANDBOX: 'true' | 'false';
+const BRANDED_ENV_PAIRS = [
+  ['LUDY_MODULES', 'CROVE_MODULES'],
+  ['LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'],
+  ['LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH'],
+  ['LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY'],
+  ['LUDY_BUILD', 'CROVE_BUILD'],
+  ['LUDY_BUILD_TIME', 'CROVE_BUILD_TIME'],
+  ['LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE'],
+  ['LUDY_APP_DB_PASSWORD', 'CROVE_APP_DB_PASSWORD'],
+  ['LUDY_WORKER_DB_PASSWORD', 'CROVE_WORKER_DB_PASSWORD'],
+  ['LUDY_PROBER_DB_PASSWORD', 'CROVE_PROBER_DB_PASSWORD'],
+  ['LUDY_REPORTER_DB_PASSWORD', 'CROVE_REPORTER_DB_PASSWORD'],
+] as const;
+
+function normalizeBrandedEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const normalized: Record<string, string | undefined> = { ...env };
+  for (const [primary, legacy] of BRANDED_ENV_PAIRS) {
+    const resolved = checkEnvPair(env, primary, legacy);
+    if (!resolved.ok) {
+      throw new Error(`invalid configuration: ${resolved.error}`);
+    }
+    if (resolved.value !== undefined) {
+      normalized[primary] = resolved.value;
+    } else {
+      delete normalized[primary];
+    }
+  }
+  return normalized;
+}
+
+type LegacyBrandedConfig = {
+  readonly CROVE_MODULES: z.infer<typeof schema>['LUDY_MODULES'];
+  readonly CROVE_SHARED_DATABASE: 'true' | 'false';
+  readonly CROVE_SHARED_DATABASE_SWITCH: 'true' | 'false';
+  readonly CROVE_CONTEXT_TOKEN_KEY: string | undefined;
+  readonly CROVE_BUILD: string | undefined;
+  readonly CROVE_BUILD_TIME: string | undefined;
+  readonly CROVE_ALLOW_ALL_IN_ONE: 'true' | 'false' | undefined;
+  readonly CROVE_APP_DB_PASSWORD: string | undefined;
+  readonly CROVE_WORKER_DB_PASSWORD: string | undefined;
+  readonly CROVE_PROBER_DB_PASSWORD: string | undefined;
+  readonly CROVE_REPORTER_DB_PASSWORD: string | undefined;
 };
 
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> &
+  LegacyBrandedConfig & {
+    AUTH_ISSUER: string;
+    AUTH_SESSION_CHECK: SessionCheckMode;
+    EINVOICE_SANDBOX: 'true' | 'false';
+    ADS_SANDBOX: 'true' | 'false';
+  };
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(env);
+  const parsed = schema.safeParse(normalizeBrandedEnv(env));
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => (i.code === 'custom' ? `${i.path.join('.')} (${i.message})` : i.path.join('.'))).join(', ');
     throw new Error(`invalid configuration: ${fields}`);
@@ -820,6 +866,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const config: Config = {
     ...raw,
+    CROVE_MODULES: raw.LUDY_MODULES,
+    CROVE_SHARED_DATABASE: raw.LUDY_SHARED_DATABASE,
+    CROVE_SHARED_DATABASE_SWITCH: raw.LUDY_SHARED_DATABASE_SWITCH,
+    CROVE_CONTEXT_TOKEN_KEY: raw.LUDY_CONTEXT_TOKEN_KEY,
+    CROVE_BUILD: raw.LUDY_BUILD,
+    CROVE_BUILD_TIME: raw.LUDY_BUILD_TIME,
+    CROVE_ALLOW_ALL_IN_ONE: raw.LUDY_ALLOW_ALL_IN_ONE,
+    CROVE_APP_DB_PASSWORD: raw.LUDY_APP_DB_PASSWORD,
+    CROVE_WORKER_DB_PASSWORD: raw.LUDY_WORKER_DB_PASSWORD,
+    CROVE_PROBER_DB_PASSWORD: raw.LUDY_PROBER_DB_PASSWORD,
+    CROVE_REPORTER_DB_PASSWORD: raw.LUDY_REPORTER_DB_PASSWORD,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
@@ -1041,9 +1098,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error('CHANNEL_ZALO_MEDIA_HOSTS is up to 20 domain names (for example zdn.vn) separated by commas, each matching the domain and its subdomains');
     }
   }
-  if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
-    const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
-    if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  if (config.LUDY_CONTEXT_TOKEN_KEY !== undefined) {
+    const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.LUDY_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.LUDY_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
+    if (bytes.length < 32 || bytes.length > 64) throw new Error('LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   }
   // A web app on another origin than the API calls it cross-origin, which the browser allows only for a listed origin.
   if (config.APP_URL !== undefined && URL.canParse(config.PUBLIC_URL)) {
@@ -1054,20 +1111,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
   // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
-  if (config.CROVE_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
-    throw new Error('CROVE_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
+  if (config.LUDY_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
+    throw new Error('LUDY_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
   }
   // Supabase's transaction-mode pooler listens on port 6543 (its session mode and the direct connection on 5432): the one
   // URL-level sign of the pooler the reset cannot work behind. Another pooler is the operator's to keep out (runbook).
-  if (config.CROVE_SHARED_DATABASE === 'true') {
+  if (config.LUDY_SHARED_DATABASE === 'true') {
     for (const [name, url] of [['DATABASE_URL', config.DATABASE_URL], ['WORKER_DATABASE_URL', config.WORKER_DATABASE_URL]] as const) {
       if (url !== undefined && URL.canParse(url) && new URL(url).port === '6543') {
-        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: CROVE_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
+        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: LUDY_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
       }
     }
   }
-  if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
-    throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
+  if (config.LUDY_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
+    throw new Error('LUDY_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
   if (config.OAUTH_SERVER === 'on') {
     if (config.OAUTH_JWKS === undefined) throw new Error('OAUTH_SERVER=on needs OAUTH_JWKS, the private JSON Web Key Set (ES256) the access tokens are signed with');
@@ -1098,15 +1155,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
       if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
     }
-    if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
+    if (config.LUDY_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
-      const bytes = Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64');
+      const bytes = Buffer.from(config.LUDY_CONTEXT_TOKEN_KEY.trim(), 'base64');
       if (SAMPLE_CONTEXT_TOKEN_KEYS.some((sample) => sample.equals(bytes))) {
-        throw new Error('CROVE_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Crove');
       }
       // A key that decodes to printable text is a passphrase, not random bytes (one in about 10^14 random keys is).
       if (bytes.every((byte) => byte >= 0x20 && byte <= 0x7e)) {
-        throw new Error('CROVE_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Crove');
       }
     }
     if (config.AUTH_JWT_SECRET && SAMPLE_SECRETS.has(config.AUTH_JWT_SECRET)) {
@@ -1135,17 +1192,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // ADR-0040: the sandbox ad platform reports made-up spend, which the Ads screen sets beside the real ledger. docker
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
-    if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
+    if (config.ADS_SANDBOX === 'true' && (config.LUDY_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
     }
     // ADR-0045 point 7 (#2519): the offline marketplace provider serves made-up orders, which a member could confirm into the stock book; it stays on development deployments. docker
     // compose falls back to MARKETPLACE_PROVIDERS=sandbox, so a public deployment that runs the finance module must set it to an empty list.
-    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.LUDY_MODULES as readonly string[]).includes('finance')) {
       throw new Error('MARKETPLACE_PROVIDERS=sandbox offers made-up marketplace orders to the stock book; it is for local development only: set MARKETPLACE_PROVIDERS to an empty list');
     }
     // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
     // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
-    if (config.EINVOICE_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+    if (config.EINVOICE_SANDBOX === 'true' && (config.LUDY_MODULES as readonly string[]).includes('finance')) {
       throw new Error('EINVOICE_SANDBOX=true issues made-up sales invoices into the books; it is for local development only: set EINVOICE_SANDBOX=false');
     }
     // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
@@ -1313,13 +1370,13 @@ export function assertExportKey(config: Pick<Config, 'PUBLIC_URL' | 'EXPORT_ENCR
 // hold, and a DATABASE_LISTEN_URL on the worker's login. A LISTEN url on the app login is the API's own (its SSE stream reads it), so only the
 // worker login in it is refused; the login is read from the URL's user name, and no message carries a value.
 export function assertSplitRoles(
-  config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL' | 'ADMIN_DATABASE_URL' | 'DATABASE_LISTEN_URL'>,
+  config: Pick<Config, 'PUBLIC_URL' | 'LUDY_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL' | 'ADMIN_DATABASE_URL' | 'DATABASE_LISTEN_URL'>,
   role: 'api' | 'worker' | 'all',
 ): void {
-  if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.CROVE_ALLOW_ALL_IN_ONE !== 'true') {
+  if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.LUDY_ALLOW_ALL_IN_ONE !== 'true') {
     throw new Error(
       'the all role runs the API on the worker database login and every secret; on a public PUBLIC_URL run api and worker as separate processes ' +
-        '(docs/runbooks/deploy.md, "The pilot layout"), or set CROVE_ALLOW_ALL_IN_ONE=true to accept that',
+        '(docs/runbooks/deploy.md, "The pilot layout"), or set LUDY_ALLOW_ALL_IN_ONE=true to accept that',
     );
   }
   if (role === 'api' && !isLocalUrl(config.PUBLIC_URL) && config.WORKER_DATABASE_URL !== undefined) {

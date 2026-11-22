@@ -239,4 +239,15 @@ describe('migration lint: hot-table-retry', () => {
   it('skips the files on main before the rule', () => {
     expect(lint('ALTER TABLE crove_kernel.audit_event ADD COLUMN x text;', false)).toEqual([]);
   });
+
+  it('recognizes ludy_jobs and ludy_kernel hot tables alongside crove_* (#3969)', () => {
+    const hot = ['ludy_jobs.job', 'ludy_jobs.queue', 'ludy_kernel.outbox_event', 'ludy_kernel.audit_event', 'ludy_kernel.record', 'ludy_kernel.idempotency_key', 'ludy_kernel.processed_message'];
+    const cold = ['ludy_kernel.party', 'ludy_social.audit_event', 'ludy_kernel.outbox'];
+    const table = (name: string) => ({ schema: name.split('.')[0], name: name.split('.')[1] });
+    expect(hot.filter((name) => !isHotTable(table(name)))).toEqual([]);
+    expect(cold.filter((name) => isHotTable(table(name)))).toEqual([]);
+    expect(
+      lintMigration('supabase/migrations/20270210000000_ludy_kernel_hot.sql', 'ALTER TABLE ludy_kernel.audit_event ADD COLUMN IF NOT EXISTS x text;', { breakingRules: true }).map((f: Finding) => f.rule),
+    ).toEqual(['hot-table-retry']);
+  });
 });

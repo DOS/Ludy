@@ -36,9 +36,9 @@ function run(args: string[], env: Record<string, string> = {}, input?: string) {
     env: {
       ...process.env,
       PATH: `${stubs}${delimiter}${process.env['PATH'] ?? ''}`,
-      CROVE_DEPLOY_DIR: dir,
-      CROVE_READY_TIMEOUT: '1',
-      CROVE_WORKER_SETTLE: '0',
+      LUDY_DEPLOY_DIR: dir,
+      LUDY_READY_TIMEOUT: '1',
+      LUDY_WORKER_SETTLE: '0',
       STUB_LOG: log,
       STUB_DEPLOY_DIR: dir,
       STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
@@ -675,7 +675,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   // #3282: the production steps of #1822 (the context token key) and #1750 (the plain idempotency rows) run in the deploy, on the
   // host, after the database is up and before `migrate`.
   describe('context token key and plain idempotency rows (#3282)', () => {
-    const KEY_LINE = /^CROVE_CONTEXT_TOKEN_KEY=([A-Za-z0-9+/]{43}=)$/m;
+    const KEY_LINE = /^LUDY_CONTEXT_TOKEN_KEY=([A-Za-z0-9+/]{43}=)$/m;
     const envFile = () => readFileSync(`${dir}/.env`, 'utf8');
     const keyOf = () => KEY_LINE.exec(envFile())?.[1] ?? '';
     const stubKey = () => readFileSync(`${root}/openssl-key`, 'utf8').trim();
@@ -686,7 +686,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(`${d}/${e.name}`) : [`${d}/${e.name}`]));
 
     it('writes a 44-character key into an empty line before migrate, keeps the file, and a second deploy leaves it alone', () => {
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\nOTHER=1\n');
       chmodSync(`${dir}/.env`, 0o600);
       const before = statSync(`${dir}/.env`);
       const first = deploy('v1.0.0', 'a');
@@ -695,13 +695,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(key).toHaveLength(44);
       expect(key).toBe(stubKey());
       // Only that line changed; the file keeps its inode (so its owner) and its mode.
-      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${key}\nOTHER=1\n`);
+      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=${key}\nOTHER=1\n`);
       const after = statSync(`${dir}/.env`);
       expect(after.ino).toBe(before.ino);
       expect(after.mode & 0o777).toBe(0o600);
       // The log says it, names the person step, and `migrate` (which saw the key) installs it afterwards.
       expect(first.out).toContain('context token key generated');
-      expect(first.out).toContain('person step: copy CROVE_CONTEXT_TOKEN_KEY');
+      expect(first.out).toContain('person step: copy LUDY_CONTEXT_TOKEN_KEY');
       expect(first.out).not.toContain('context token key present');
       const at = (text: string) => first.out.indexOf(text);
       expect(at('context token key generated')).toBeLessThan(at('running migrations'));
@@ -726,20 +726,20 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x');
       const res = deploy('v1.0.0', 'a');
       expect(res.status, res.out).toBe(0);
-      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
       expect(res.out).toContain('context token key installed');
     });
 
     it.each([
-      ['export and spaces', 'export  CROVE_CONTEXT_TOKEN_KEY =', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['empty double quotes', 'CROVE_CONTEXT_TOKEN_KEY=""', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['empty single quotes and a comment', "CROVE_CONTEXT_TOKEN_KEY='' # later", 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['a comment as the value', 'CROVE_CONTEXT_TOKEN_KEY= # to fill in', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['empty quotes and a comment with a hash in it', 'CROVE_CONTEXT_TOKEN_KEY="" # required by #1822', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['empty quotes and a comment right after them', 'CROVE_CONTEXT_TOKEN_KEY=""#later', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['only spaces', 'CROVE_CONTEXT_TOKEN_KEY=   ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
-      ['a CRLF line break', 'CROVE_CONTEXT_TOKEN_KEY=\r', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@\r'],
-      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['export and spaces', 'export  LUDY_CONTEXT_TOKEN_KEY =', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty double quotes', 'LUDY_CONTEXT_TOKEN_KEY=""', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty single quotes and a comment', "LUDY_CONTEXT_TOKEN_KEY='' # later", 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['a comment as the value', 'LUDY_CONTEXT_TOKEN_KEY= # to fill in', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment with a hash in it', 'LUDY_CONTEXT_TOKEN_KEY="" # required by #1822', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment right after them', 'LUDY_CONTEXT_TOKEN_KEY=""#later', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['only spaces', 'LUDY_CONTEXT_TOKEN_KEY=   ', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['a CRLF line break', 'LUDY_CONTEXT_TOKEN_KEY=\r', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@\r'],
+      ['the colon form of a dotenv file', 'LUDY_CONTEXT_TOKEN_KEY: ', 'LUDY_CONTEXT_TOKEN_KEY=@KEY@'],
     ])('takes %s for a missing key and replaces that line only', (_name, line, replaced) => {
       writeFileSync(`${dir}/.env`, `A=1\n${line}\nB=2\n`);
       const res = deploy('v1.0.0', 'a');
@@ -749,13 +749,14 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it.each([
-      ['a value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
-      ['export and a quoted value', 'export CROVE_CONTEXT_TOKEN_KEY="abc"'],
-      ['a value and a comment', 'CROVE_CONTEXT_TOKEN_KEY = abc # mine'],
-      ['a quoted value with a space and a hash', 'CROVE_CONTEXT_TOKEN_KEY="a # b"'],
-      ['a value that starts with a hash (in doubt: kept)', 'CROVE_CONTEXT_TOKEN_KEY=#abc'],
-      ['a key that is not 44 characters (never judged, never replaced)', 'CROVE_CONTEXT_TOKEN_KEY=short'],
-      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: abc'],
+      ['a value', 'LUDY_CONTEXT_TOKEN_KEY=abc'],
+      ['legacy CROVE_CONTEXT_TOKEN_KEY value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
+      ['export and a quoted value', 'export LUDY_CONTEXT_TOKEN_KEY="abc"'],
+      ['a value and a comment', 'LUDY_CONTEXT_TOKEN_KEY = abc # mine'],
+      ['a quoted value with a space and a hash', 'LUDY_CONTEXT_TOKEN_KEY="a # b"'],
+      ['a value that starts with a hash (in doubt: kept)', 'LUDY_CONTEXT_TOKEN_KEY=#abc'],
+      ['a key that is not 44 characters (never judged, never replaced)', 'LUDY_CONTEXT_TOKEN_KEY=short'],
+      ['the colon form of a dotenv file', 'LUDY_CONTEXT_TOKEN_KEY: abc'],
     ])('never replaces an existing key: %s', (_name, line) => {
       const content = `A=1\n${line}\nB=2\n`;
       writeFileSync(`${dir}/.env`, content);
@@ -767,21 +768,21 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(opensslCalls()).toBe('');
     });
 
-    it('reads the last assignment, ignores comments and CROVE_CONTEXT_TOKEN_KEY_FILE, and replaces only the last line', () => {
+    it('reads the last assignment, ignores comments and LUDY_CONTEXT_TOKEN_KEY_FILE, and replaces only the last line', () => {
       // The last assignment wins, as in a dotenv file: set, then empty again, is missing; the earlier line stays as it is.
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=old\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=old\nLUDY_CONTEXT_TOKEN_KEY=\n');
       expect(deploy('v1.0.0', 'a').status).toBe(0);
-      expect(envFile()).toBe(`CROVE_CONTEXT_TOKEN_KEY=old\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+      expect(envFile()).toBe(`LUDY_CONTEXT_TOKEN_KEY=old\nLUDY_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
       // Empty, then set: present.
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\nCROVE_CONTEXT_TOKEN_KEY=real\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\nLUDY_CONTEXT_TOKEN_KEY=real\n');
       const present = deploy('v1.1.0', 'b');
       expect(present.out).toContain('context token key present');
-      expect(envFile()).toBe('CROVE_CONTEXT_TOKEN_KEY=\nCROVE_CONTEXT_TOKEN_KEY=real\n');
+      expect(envFile()).toBe('LUDY_CONTEXT_TOKEN_KEY=\nLUDY_CONTEXT_TOKEN_KEY=real\n');
       // A commented-out line and another setting that starts with the same name are no assignment: the line is added.
-      writeFileSync(`${dir}/.env`, '# CROVE_CONTEXT_TOKEN_KEY=abc\nCROVE_CONTEXT_TOKEN_KEY_FILE=/data/key\n');
+      writeFileSync(`${dir}/.env`, '# LUDY_CONTEXT_TOKEN_KEY=abc\nLUDY_CONTEXT_TOKEN_KEY_FILE=/data/key\n');
       const added = deploy('v1.2.0', 'c');
       expect(added.out).toContain('context token key generated');
-      expect(envFile()).toBe(`# CROVE_CONTEXT_TOKEN_KEY=abc\nCROVE_CONTEXT_TOKEN_KEY_FILE=/data/key\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+      expect(envFile()).toBe(`# LUDY_CONTEXT_TOKEN_KEY=abc\nLUDY_CONTEXT_TOKEN_KEY_FILE=/data/key\nLUDY_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
     });
 
     it('never puts the key in a log, an argument, another process\'s environment or the release directory', () => {
@@ -915,14 +916,14 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(readFileSync(`${dir}/.deploy/${old}`, 'utf8')).toBe(ORIGINAL);
         expect(statSync(`${dir}/.deploy/${old}`).mode & 0o777).toBe(0o600);
         expect(statSync(`${dir}/.deploy/${fresh}`).mode & 0o777).toBe(0o600);
-        expect(readFileSync(`${dir}/.deploy/${fresh}`, 'utf8')).toContain(`CROVE_CONTEXT_TOKEN_KEY=${stubKey()}`);
+        expect(readFileSync(`${dir}/.deploy/${fresh}`, 'utf8')).toContain(`LUDY_CONTEXT_TOKEN_KEY=${stubKey()}`);
         expect(res.out).not.toContain(stubKey());
       });
     });
 
     it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
-      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
+      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session', LUDY_CONTEXT_TOKEN_KEY: 'from-the-session' });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain('context token key generated');
       expect(existsSync(`${log}.envvar`)).toBe(false);
@@ -1809,7 +1810,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     };
     const MOD_BEFORE = [
       'POSTGRES_PASSWORD=x',
-      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
       '# CROVE_MODULES=commented-old',
       'CROVE_MODULES_EXTRA=keep',
       'CROVE_MODULES=finance,crm,social',
@@ -1818,13 +1819,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     ].join('\n');
     const COMBINED_BEFORE = [
       'POSTGRES_PASSWORD=x',
-      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
       'AUTH_JWT_SECRET=keep-this-secret',
-      'AUTH_ISSUER=crove-auth',
+      'AUTH_ISSUER=ludy-auth',
       'AUTH_SESSION_CHECK=db',
       'AUTH_UPSTREAM_URL=http://auth:9999',
       'AUTH_SIGNUP_POLICY=invite_only',
-      'CROVE_MODULES=finance,crm,social',
+      'LUDY_MODULES=finance,crm,social',
       'PUBLIC_URL=https://api.example.com',
       '',
     ].join('\n');
@@ -1848,7 +1849,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       for (const valid of ['finance', 'kernel', 'finance,crm,social,sign', 'kernel,finance,social,ads,crm,notes,hr,meetings,projects,sign']) {
         const res = run(['check-modules', valid]);
         expect(res.status, `${valid}: ${res.out}`).toBe(0);
-        expect(res.out).toContain(`CROVE_MODULES=${valid}`);
+        expect(res.out).toContain(`LUDY_MODULES=${valid}`);
       }
       expect(run(['check-modules']).status).toBe(2);
       expect(run(['check-modules', 'finance', 'crm']).status).toBe(2);
@@ -1892,7 +1893,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(copies()).toEqual([]);
     });
 
-    it('writes CROVE_MODULES, preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
+    it('writes LUDY_MODULES (replacing legacy CROVE_MODULES without conflicts), preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
       writeFileSync(`${dir}/.env`, MOD_BEFORE);
       chmodSync(`${dir}/.env`, 0o600);
       const beforeStat = statSync(`${dir}/.env`);
@@ -1900,10 +1901,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(res.status, res.out).toBe(0);
       expect(lines(envFile())).toEqual([
         'POSTGRES_PASSWORD=x',
-        'CROVE_CONTEXT_TOKEN_KEY=already-here',
+        'LUDY_CONTEXT_TOKEN_KEY=already-here',
         '# CROVE_MODULES=commented-old',
         'CROVE_MODULES_EXTRA=keep',
-        'CROVE_MODULES=finance,crm,social,sign',
+        'LUDY_MODULES=finance,crm,social,sign',
         'OTHER=1',
       ]);
       const afterStat = statSync(`${dir}/.env`);
@@ -1918,7 +1919,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(res.out).toContain('module settings written to');
       expect(res.out).toContain('smoke ok: /api/config lists the expected modules');
 
-      // Re-running with the same module list (even when CROVE_MODULES sits in the middle of .env) makes no backup and writes nothing.
+      // Re-running with the same module list (even when LUDY_MODULES sits in the middle of .env) makes no backup and writes nothing.
       const done = envFile();
       const second = deployModules('v1.1.0', 'b', 'finance,crm,social,sign');
       expect(second.status, second.out).toBe(0);
@@ -1928,16 +1929,16 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
 
       // Deduplicates multiple assignments, appends when missing, and preserves CRLF line endings.
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nCROVE_MODULES=old\r\nOTHER=1\r\nexport CROVE_MODULES = finance\r\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nCROVE_MODULES=old\r\nOTHER=1\r\nexport LUDY_MODULES = finance\r\n');
       const crlf = deployModules('v1.2.0', 'c', 'finance,sign');
       expect(crlf.status, crlf.out).toBe(0);
-      expect(envFile()).toBe('POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nOTHER=1\r\nCROVE_MODULES=finance,sign\r\n');
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nOTHER=1\r\nLUDY_MODULES=finance,sign\r\n');
       expect(deployModules('v1.3.0', 'd', 'finance,sign').out).toContain('already in');
 
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n');
       const appended = deployModules('v1.4.0', 'e', 'finance,sign');
       expect(appended.status, appended.out).toBe(0);
-      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\nCROVE_MODULES=finance,sign\n');
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nLUDY_MODULES=finance,sign\n');
     });
 
     it('smoke checks /api/config modules as {kernel} U <modules> regardless of JSON order and rejects mismatches', () => {
@@ -1970,7 +1971,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(deploy('v1.0.0', 'a').status).toBe(0);
 
       // Bad compose config after rewrite puts .env back immediately.
-      const badCompose = deployModules('v1.1.0', 'b', 'finance,crm,social,sign', { STUB_CONFIG_FAIL_IF_ENV_HAS: 'CROVE_MODULES=finance,crm,social,sign' });
+      const badCompose = deployModules('v1.1.0', 'b', 'finance,crm,social,sign', { STUB_CONFIG_FAIL_IF_ENV_HAS: 'LUDY_MODULES=finance,crm,social,sign' });
       expect(badCompose.status, badCompose.out).toBe(1);
       expect(badCompose.out).toContain('do not load with the module settings; the env file was put back');
       expect(envFile()).toBe(MOD_BEFORE);
@@ -1987,7 +1988,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       // Successful deploy followed by rollback (even with caller SMOKE_EXPECT_MODULES set) restores MOD_BEFORE when unmodified.
       expect(deployModules('v1.1.0', 'b', 'finance,crm,social,sign').status).toBe(0);
       const written = envFile();
-      expect(written).toContain('CROVE_MODULES=finance,crm,social,sign');
+      expect(written).toContain('LUDY_MODULES=finance,crm,social,sign');
 
       // Failed rollback puts module settings back so release b keeps running with its settings.
       const failedRollback = run(['rollback'], { STUB_BAD_DIGEST: digest('a') });
@@ -2055,7 +2056,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(ok.status, ok.out).toBe(0);
       expect(copies()).toHaveLength(1);
       expect(readFileSync(`${dir}/${copies()[0]}`, 'utf8')).toBe(COMBINED_BEFORE);
-      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social,sign');
+      expect(envFile()).toContain('LUDY_MODULES=finance,crm,social,sign');
       expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
       expect(ok.out).toContain('smoke ok: /api/config names the configured Auth URL');
       expect(ok.out).toContain('smoke ok: /api/config lists the expected modules');
@@ -2070,7 +2071,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(copies()).toHaveLength(1);
       expect(envFile()).toBe(afterBoth);
 
-      // Manual rollback restores COMBINED_BEFORE (both AUTH_* and CROVE_MODULES).
+      // Manual rollback restores COMBINED_BEFORE (both AUTH_* and LUDY_MODULES).
       const back = run(['rollback']);
       expect(back.status, back.out).toBe(0);
       expect(envFile()).toBe(COMBINED_BEFORE);
@@ -2082,27 +2083,27 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       // Redeploy same release c with same auth-settings (already matching) and new modules: keeps pre-c backup!
       const secondC = deployBoth('v1.2.0', 'c', IDP, 'finance,sign');
       expect(secondC.status, secondC.out).toBe(0);
-      expect(envFile()).toContain('CROVE_MODULES=finance,sign');
+      expect(envFile()).toContain('LUDY_MODULES=finance,sign');
       expect(envFile()).not.toBe(afterC);
       expect(run(['rollback']).status).toBe(0);
       expect(envFile()).toBe(COMBINED_BEFORE);
 
-      // Fresh release where CROVE_MODULES already matches while auth-settings changes -> backs up, updates AUTH_*, rollback restores.
+      // Fresh release where LUDY_MODULES already matches while auth-settings changes -> backs up, updates AUTH_*, rollback restores.
       const authOnlyChanged = deployBoth('v1.2.1', 'f', IDP, 'finance,crm,social');
       expect(authOnlyChanged.status, authOnlyChanged.out).toBe(0);
       expect(authOnlyChanged.out).toContain('identity provider settings written to');
-      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social');
+      expect(envFile()).toContain('LUDY_MODULES=finance,crm,social');
       expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
       expect(run(['rollback']).status).toBe(0);
       expect(envFile()).toBe(COMBINED_BEFORE);
 
-      // Next fresh release where auth-settings already matches while CROVE_MODULES changes -> backs up, updates CROVE_MODULES, rollback restores.
+      // Next fresh release where auth-settings already matches while LUDY_MODULES changes -> backs up, updates LUDY_MODULES, rollback restores.
       expect(deployBoth('v1.2.1', 'f', IDP, 'finance,crm,social').status).toBe(0);
       const afterAuthOnly = envFile();
       const freshModOnly = deployBoth('v1.2.2', '1', IDP, 'finance,sign');
       expect(freshModOnly.status, freshModOnly.out).toBe(0);
       expect(freshModOnly.out).toContain('module settings written to');
-      expect(envFile()).toContain('CROVE_MODULES=finance,sign');
+      expect(envFile()).toContain('LUDY_MODULES=finance,sign');
       expect(run(['rollback']).status).toBe(0);
       expect(envFile()).toBe(afterAuthOnly);
       // Reset .env to COMBINED_BEFORE before testing sequential --auth-settings then --modules on the same release.
@@ -2113,7 +2114,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       writeSettings(IDP);
       expect(run(['deploy', '--release', 'v1.4.0', '--image', image('e'), '--extract-image', extract('e'), '--media-image', media('e'), '--compose', compose, '--auth-settings', settingsPath()]).status).toBe(0);
       expect(deployModules('v1.4.0', 'e', 'finance,crm,social,sign').status).toBe(0);
-      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social,sign');
+      expect(envFile()).toContain('LUDY_MODULES=finance,crm,social,sign');
       expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
       expect(run(['rollback']).status).toBe(0);
       expect(envFile()).toBe(COMBINED_BEFORE);

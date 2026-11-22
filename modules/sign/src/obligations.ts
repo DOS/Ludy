@@ -640,7 +640,6 @@ export const obligationPropose = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  noIdempotency: true,
   target,
   writes: [OBLIGATION_PROPOSE_WRITE],
   handler: async (ctx, input): Promise<SignEnvelopeObligationRecordContract> => {

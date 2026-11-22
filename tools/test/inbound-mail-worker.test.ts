@@ -54,7 +54,7 @@ describe('inbound mail relay (tools/inbound-mail/worker.js)', () => {
       expect(req.method).toBe('POST');
       expect(req.url).toBe('/api/inbound/email');
       expect(req.headers.authorization).toBe(`Bearer ${SECRET}`);
-      expect(req.headers['x-crove-recipient']).toBe(to);
+      expect(req.headers['x-ludy-recipient']).toBe(to);
       expect(req.headers['content-type']).toBe('message/rfc822');
       expect(req.body.equals(RAW)).toBe(true);
     }
@@ -72,8 +72,8 @@ describe('inbound mail relay (tools/inbound-mail/worker.js)', () => {
       [404, { code: 'UNKNOWN_RECIPIENT', message: 'Địa chỉ nhận không hợp lệ' }, 'Unknown recipient'],
       [413, { code: 'TOO_LARGE', message: 'Thư vượt quá 40 MB' }, 'Message too large (40 MB limit)'],
       [400, { code: 'EMPTY_MESSAGE' }, 'Empty message'],
-      [422, { code: 'SOMETHING_NEW' }, 'Refused by Crove (SOMETHING_NEW)'],
-      [413, undefined, 'Refused by Crove (HTTP_413)'],
+      [422, { code: 'SOMETHING_NEW' }, 'Refused by Ludy (SOMETHING_NEW)'],
+      [413, undefined, 'Refused by Ludy (HTTP_413)'],
     ];
     for (const [status, body, reason] of cases) {
       answer = { status, body };

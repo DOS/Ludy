@@ -19,8 +19,8 @@ const render = (node: React.ReactNode, locale: 'vi' | 'en' = 'vi') =>
   );
 
 describe('mergePublished', () => {
-  it("merges outside posts into Crove's list by publish time without reordering Crove's rows", () => {
-    const crove = [
+  it("merges outside posts into Ludy's list by publish time without reordering Ludy's rows", () => {
+    const ludy = [
       { variantId: 'v1', publishedAt: '2026-10-20T08:00:00.000Z' },
       { variantId: 'v2', publishedAt: null },
       { variantId: 'v3', publishedAt: '2026-10-18T08:00:00.000Z' },
@@ -29,9 +29,9 @@ describe('mergePublished', () => {
       { id: 'e1', publishedAt: '2026-10-21T08:00:00.000Z' },
       { id: 'e2', publishedAt: '2026-10-18T08:00:00.000Z' },
     ];
-    expect(mergePublished(crove, outside).map((i) => (i.kind === 'crove' ? i.row.variantId : i.row.id))).toEqual(['e1', 'v1', 'e2', 'v2', 'v3']);
-    // With no outside posts the Crove list is unchanged.
-    expect(mergePublished(crove, []).map((i) => i.row)).toEqual(crove);
+    expect(mergePublished(ludy, outside).map((i) => (i.kind === 'ludy' ? i.row.variantId : i.row.id))).toEqual(['e1', 'v1', 'e2', 'v2', 'v3']);
+    // With no outside posts the Ludy list is unchanged.
+    expect(mergePublished(ludy, []).map((i) => i.row)).toEqual(ludy);
   });
 
   it('links only https pages', () => {

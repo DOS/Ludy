@@ -74,8 +74,9 @@ export async function sweepSecuritySignals(deps: SecurityAlertDeps): Promise<num
     const text = securityAlertText(signal, thresholds);
     log(`[security] ALERT ${signal.signal}: ${text}`);
     if (!deps.target?.webhookUrl) continue;
+    // Keep [Crove] subject prefix until #3969 widens protected ddl-watch.db.test.ts; switch to [Ludy] in #3970/#3972.
     const delivery = await postMessage(
-      { text: `[Crove] Security alert from ${deps.target.instance}: ${text}`, crove: { kind: 'security', instance: deps.target.instance, ...signal } },
+      { text: `[Crove] Security alert from ${deps.target.instance}: ${text}`, ludy: { kind: 'security', instance: deps.target.instance, ...signal } },
       { webhookUrl: deps.target.webhookUrl, format: deps.target.webhookFormat, telegramChatId: deps.target.telegramChatId, fetch: deps.fetch },
     );
     if (!delivery.ok) log(`[security] could not post the alert: ${delivery.error ?? 'unknown error'}`);

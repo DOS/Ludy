@@ -33,10 +33,10 @@ describe('opsAlert (#1993)', () => {
     expect(post).not.toHaveBeenCalled();
     await flushOpsAlerts();
     expect(post).toHaveBeenCalledOnce();
-    const [message, options] = post.mock.calls[0] as unknown as [{ text: string; crove: Record<string, unknown> }, { webhookUrl: string }];
-    expect(message.text).toBe('[Crove] pilot.example.com: [org-export] ALERT export of org 0b0d6f1e-3c1a-4d2e-9f00-0123456789ab failed after 4 attempts');
+    const [message, options] = post.mock.calls[0] as unknown as [{ text: string; ludy: Record<string, unknown> }, { webhookUrl: string }];
+    expect(message.text).toBe('[Ludy] pilot.example.com: [org-export] ALERT export of org 0b0d6f1e-3c1a-4d2e-9f00-0123456789ab failed after 4 attempts');
     expect(message.text).not.toContain('connection refused');
-    expect(message.crove).toMatchObject({ kind: 'ops_alert', instance: 'pilot.example.com' });
+    expect(message.ludy).toMatchObject({ kind: 'ops_alert', instance: 'pilot.example.com' });
     expect(options.webhookUrl).toBe(target.webhookUrl);
   });
 
@@ -65,7 +65,7 @@ describe('opsAlert (#1993)', () => {
     for (let i = 0; i < 60; i++) opsAlert(`[retention] ALERT sweep ${'abcdefghij'[i % 10]}${String.fromCharCode(97 + Math.floor(i / 10))} failed`);
     await flushOpsAlerts();
     expect(post).toHaveBeenCalledTimes(51);
-    expect(texts(post).at(-1)).toBe('[Crove] pilot.example.com: 10 more operational alert(s) are in the log only');
+    expect(texts(post).at(-1)).toBe('[Ludy] pilot.example.com: 10 more operational alert(s) are in the log only');
   });
 
   it('only logs without a webhook, or unconfigured', async () => {
@@ -96,7 +96,7 @@ describe('opsAlert (#1993)', () => {
     opsAlert(long);
     await flushOpsAlerts();
     expect(error).toHaveBeenCalledWith(long);
-    expect(texts(post)[0]).toBe(`[Crove] pilot.example.com: ${long.slice(0, 299)}…`);
+    expect(texts(post)[0]).toBe(`[Ludy] pilot.example.com: ${long.slice(0, 299)}…`);
   });
 
   it('stops posting at the deadline of a stop, and says what is left in the log', async () => {
@@ -148,8 +148,8 @@ describe('ALERT lines of the kernel (#1993)', () => {
         // The call the literal is the first argument of, across line breaks.
         const before = text.slice(0, m.index).replace(/\s+$/, '');
         if (/\bopsAlert\($/.test(before) || /\balertTo\((?:options\.)?log\)\($/.test(before)) continue;
-        // The prober's own headline ('[Crove] ALERT on <instance>: ...') is a posted alert, not a log line.
-        if (m[1] === '[Crove] ALERT') continue;
+        // The prober's own headline ('[Ludy] ALERT on <instance>: ...') is a posted alert, not a log line.
+        if (m[1] === '[Ludy] ALERT') continue;
         const key = `${file} ${m[1]}`;
         if (key in OWN_SINK) other[key] = (other[key] ?? 0) + 1;
         else unrouted.push(`${file}:${text.slice(0, m.index).split('\n').length} ${m[1]}`);

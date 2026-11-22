@@ -5,6 +5,7 @@
 // chapters' titles and the minutes templates' titles use (controls, bidi, zero-width and separators). Nothing here reads a database, names a table or command, or persists anything (the boundary test pins that):
 // the candidates go back to the recorder's browser as plain text and are not stored; the recorder's own click on one runs the rename command.
 import { privateText, revealPrivateText } from '../private-text.ts';
+import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import { foldTitleText } from './meeting-chapters.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -31,6 +32,8 @@ export class TitleError extends Error {
 export interface MeetingTitleInput {
   segments: readonly SummarySegment[];
   language: 'vi' | 'en';
+  // The organization's glossary (#4043), as the caller read it for the recorder: data beside the transcript, and the candidates are spelled its way by code. Absent or empty: the run is what it was.
+  glossary?: readonly string[];
 }
 export interface MeetingTitleAnswer {
   // The candidates that passed the checks, in the order the model wrote them, at most TITLE_LIMITS.candidates.
@@ -61,7 +64,7 @@ function jsonObject(raw: string): unknown {
  * is empty after cleaning, is not 3 to 80 characters (counted in UTF-16 units, like the contract and the database; never cut to fit), carries a way to reach someone off the page, a run of 8 or more digits or a
  * figure the transcript does not write, or repeats an earlier candidate (compared without case and after NFKC).
  */
-export function checkTitles(raw: string, segments: readonly SummarySegment[]): MeetingTitleAnswer {
+export function checkTitles(raw: string, segments: readonly SummarySegment[], glossary: readonly string[] = []): MeetingTitleAnswer {
   const root = jsonObject(raw);
   if (!isRecord(root) || !Array.isArray(root.titles)) throw new TitleError('TITLE_UNPARSABLE');
   // The figures the meeting says (the speakers' words, not the clock of the lines).
@@ -74,7 +77,8 @@ export function checkTitles(raw: string, segments: readonly SummarySegment[]): M
       dropped += 1;
       continue;
     }
-    const title = foldTitleText(entry);
+    const folded = foldTitleText(entry);
+    const title = glossary.length === 0 ? folded : spellGlossary(folded, glossary);
     const key = title.normalize('NFKC').toLowerCase();
     const digits = title.normalize('NFKC').replace(/[^\p{Nd}]/gu, '').length;
     if (
@@ -97,13 +101,14 @@ export function checkTitles(raw: string, segments: readonly SummarySegment[]): M
   return { titles, dropped };
 }
 
-const INSTRUCTION = (language: 'vi' | 'en'): string =>
+const INSTRUCTION = (language: 'vi' | 'en', glossary: readonly string[] = []): string =>
   [
     'You suggest a title for one meeting from its transcript, for the person who recorded it.',
     `Write the titles in ${language === 'vi' ? 'Vietnamese' : 'English'}.`,
     'Answer with one JSON object only, no other text: {"titles": [string]}.',
     'Write 3 different titles, best first. Each is a short plain phrase of 3 to 60 characters on one line that says what the meeting was about, like a subject line.',
     'Use only numbers, names and dates that appear in the transcript. Never write a link, an email address or a phone number. Add nothing the transcript does not say.',
+    ...(glossary.length === 0 ? [] : [GLOSSARY_LINE]),
   ].join('\n');
 
 /** One run of the recorder's Vy over a transcript: the model is asked once, the checks above decide what is kept. */
@@ -112,6 +117,12 @@ export async function suggestMeetingTitles(input: MeetingTitleInput, ports: Boun
   // Refused before any call, never cut.
   if (input.segments.length === 0) throw new TitleError('TITLE_NO_TRANSCRIPT');
   if (new TextEncoder().encode(text).length > TITLE_LIMITS.transcriptBytes) throw new TitleError('TITLE_TOO_LONG');
-  const out = await runFeature({ instruction: INSTRUCTION(input.language), subject: privateText(text), maxSubjectChars: TITLE_LIMITS.transcriptBytes, feature: 'meetings.title' }, ports);
-  return { answer: checkTitles(revealPrivateText(out.text), input.segments), usage: out.usage };
+  const glossary = glossaryTerms(input.glossary);
+  const block = glossary.length === 0 ? '' : `${glossaryData(glossary)}TRANSCRIPT:\n`;
+  const out = await runFeature(
+    { instruction: INSTRUCTION(input.language, glossary), subject: privateText(block + text), maxSubjectChars: TITLE_LIMITS.transcriptBytes + block.length, feature: 'meetings.title' },
+    ports,
+  );
+  const answer = checkTitles(revealPrivateText(out.text), input.segments, glossary);
+  return { answer, usage: out.usage };
 }

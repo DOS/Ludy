@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
@@ -31,11 +31,12 @@ import {
   signQueries,
 } from '@ludy/mod-sign';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbPool, resolveDbIdentifiers, setActiveRolePasswords } from './fixtures/db-identifiers.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -153,7 +154,8 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'mtg-inv-app-pw', crove_worker: 'mtg-inv-worker-pw' });
+    const ids = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'mtg-inv-app-pw', crove_worker: 'mtg-inv-worker-pw' }, ids);
 
     const loginUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
@@ -162,9 +164,9 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       return u.toString();
     };
 
-    adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'mtg-inv-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'mtg-inv-worker-pw'), max: 3 });
+    adminPool = createDbPool({ connectionString: adminUrl, max: 2 }, ids);
+    appPool = createDbPool({ connectionString: loginUrl('crove_app', 'mtg-inv-app-pw'), max: 6 }, ids);
+    workerPool = createDbPool({ connectionString: loginUrl('crove_worker', 'mtg-inv-worker-pw'), max: 3 }, ids);
 
     const appDb = createDb(appPool);
     const workerDb = createDb(workerPool);

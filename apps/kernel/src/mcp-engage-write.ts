@@ -212,7 +212,7 @@ export function engageWriteTools(runtime: Runtime, actor: UserActor, orgId: stri
       module: 'ads',
       scope: ADS,
       title: 'Save an ads campaign draft',
-      description: `Saves ONE NEW campaign draft for an ad account (adAccountId from ludy_ads_spend) with the plan fields you set (name, objective, daily budget, days, targeting, link, creative). The plan may be incomplete: what is missing or over a cap comes back as issues. The draft is marked as made by an AI app. It spends nothing: a person reads it, changes it and submits it for approval in Ludy, and launching, boosting or pausing is theirs. It edits no draft. ${TAINT}${LIMIT}`,
+      description: `Saves ONE NEW campaign draft for an ad account (adAccountId from ludy_ads_spend) with the plan fields you set (name, objective, daily budget, days, targeting, link, creative, and the Facebook Page the ad runs as: pageConnectionId, an id from ludy_ads_pages; every ad needs one, and a draft with none cannot be submitted). The plan may be incomplete: what is missing or over a cap comes back as issues. The draft is marked as made by an AI app. It spends nothing: a person reads it, changes it and submits it for approval in Ludy, and launching, boosting or pausing is theirs. It edits no draft. ${TAINT}${LIMIT}`,
       command: mcpAdsCampaignDraftSave,
       outputSchema: {
         type: 'object',

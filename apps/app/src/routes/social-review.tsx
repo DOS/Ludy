@@ -15,7 +15,7 @@ import { Label } from '@ludy/ui/components/label';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { FileSource } from '../components/social-media.tsx';
 import { PlatformPreview } from '../components/social-preview.tsx';
-import { AccentRule, BrandMark, MadeWithCrove, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
+import { AccentRule, BrandMark, MadeWithLudy, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiUrl } from '../lib/api-base.ts';
@@ -344,7 +344,7 @@ export function SocialReviewPage() {
             )}
           </>
         ) : null}
-        <MadeWithCrove brand={brand} />
+        <MadeWithLudy brand={brand} />
       </div>
     </div>
   );

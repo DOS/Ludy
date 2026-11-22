@@ -4,8 +4,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -21,6 +21,7 @@ const FUNCTIONS = [
 suite('the held-event definers (ADR-0053, C3b)', () => {
   const dbName = `crove_test_heldinv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appPool: pg.Pool;
   let workerPool: pg.Pool;
 
@@ -33,15 +34,16 @@ suite('the held-event definers (ADR-0053, C3b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, pw: string) => {
       const u = new URL(adminUrl);
-      u.username = user;
+      u.username = dbIds ? dbIds.roleName(user) : user;
       u.password = pw;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    appPool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 }, dbIds);
+    workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 }, dbIds);
   }, 120_000);
 
   afterAll(async () => {
@@ -55,7 +57,7 @@ suite('the held-event definers (ADR-0053, C3b)', () => {
   });
 
   it('grants every function to the worker alone', async () => {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       const { rows } = await admin.query<{ fn: string; grantees: string[] }>(

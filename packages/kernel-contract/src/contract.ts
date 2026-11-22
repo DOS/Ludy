@@ -203,8 +203,8 @@ import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
 import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
-import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceProposalNoteAsk, zMarketplaceProposalNote, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceReturnDecide, zMarketplaceReturnDecided, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
@@ -214,6 +214,7 @@ import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPayme
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
+import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
@@ -297,6 +298,7 @@ import {
   zHrDepartmentEdit,
   zHrDepartmentList,
   zHrDepartmentRef,
+  zHrDepartmentSetManager,
   zHrDepartmentView,
   zHrDepartmentWritten,
   zHrDependentAdd,
@@ -311,6 +313,7 @@ import {
   zHrEmployeeErased,
   zHrEmployeeJobLossAsk,
   zHrEmployeeJobLossResult,
+  zHrEmployeeLinkMember,
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmployeeSeveranceAsk,
@@ -321,7 +324,27 @@ import {
 } from './hr.ts';
 import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
-import { zHrLeaveBalanceAsk, zHrLeaveBalanceResult, zHrLeaveDelete, zHrLeaveSet, zHrLeaveWritten } from './hr-leave.ts';
+import {
+  zHrLeaveBalanceAsk,
+  zHrLeaveBalanceResult,
+  zHrLeaveDelete,
+  zHrLeaveRequestActionResult,
+  zHrLeaveRequestDecide,
+  zHrLeaveRequestList,
+  zHrLeaveRequestRef,
+  zHrLeaveRequestView,
+  zHrLeaveSet,
+  zHrLeaveWritten,
+  zHrSelfLeaveBalanceAsk,
+  zHrSelfLeaveBalanceResult,
+  zHrSelfLeaveRequestList,
+  zHrSelfLeaveRequestSubmit,
+  zHrSelfLeaveSubmitResult,
+  zHrSelfPayslipSummary,
+  zHrSelfPayslipsList,
+  zHrSelfProfile,
+  zHrSelfProfileAsk,
+} from './hr-leave.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1159,10 +1182,30 @@ export const contract = {
       list: oc.input(zHrDepartmentList).output(z.array(zHrDepartmentView)),
       add: oc.input(zHrDepartmentAdd).output(zHrDepartmentWritten),
       edit: oc.input(zHrDepartmentEdit).output(zHrDepartmentWritten),
+      setManager: oc.input(zHrDepartmentSetManager).output(zHrDepartmentWritten),
       archive: oc.input(zHrDepartmentRef).output(zHrDepartmentWritten),
     },
     employee: {
       contractPdf: oc.input(zHrEmployeeContractPdfAsk).output(zHrEmployeeContractPdf),
+    },
+    self: {
+      profile: { get: oc.input(zHrSelfProfileAsk).output(zHrSelfProfile) },
+      leave: {
+        balance: oc.input(zHrSelfLeaveBalanceAsk).output(zHrSelfLeaveBalanceResult),
+        requests: oc.input(zHrSelfLeaveRequestList).output(z.array(zHrLeaveRequestView)),
+        submit: oc.input(zHrSelfLeaveRequestSubmit).output(zHrSelfLeaveSubmitResult),
+        cancel: oc.input(zHrLeaveRequestRef).output(zHrLeaveRequestActionResult),
+      },
+      payslips: {
+        list: oc.input(zHrSelfPayslipsList).output(z.array(zHrSelfPayslipSummary)),
+        get: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
+    },
+    leaveRequests: {
+      list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),
+      approveL1: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
+      approveFinal: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
+      reject: oc.input(zHrLeaveRequestDecide).output(zHrLeaveRequestActionResult),
     },
     payroll: {
       employees: {
@@ -1170,6 +1213,7 @@ export const contract = {
         get: oc.input(zHrEmployeeRef).output(zHrEmployee),
         add: oc.input(zHrEmployeeAdd).output(zHrWritten),
         edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        linkMember: oc.input(zHrEmployeeLinkMember).output(zHrWritten),
         finalization: oc.input(zHrFinalizationSet).output(zHrWritten),
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
@@ -2771,6 +2815,11 @@ export const contract = {
       list: oc.input(zMarketplaceVatRatesGet).output(zMarketplaceVatRates),
       set: oc.input(zMarketplaceVatRateSet.extend({ idempotencyKey: zId })).output(zMarketplaceVatRates),
     },
+    // The answer to "are the goods back?" for a marketplace line that came back (#4355, rule 8 of #2520): `back` writes the stock-in, `not_back` moves nothing; the work list offers the lines (`returns`). Owners, admins and
+    // members, a person only (R1, audited). MARKETPLACE_RETURN_NOT_FOUND (404), MARKETPLACE_RETURN_NOT_OFFERED (422), MARKETPLACE_RETURN_DECIDED (409), MARKETPLACE_RETURN_COMPENSATED (409), FORBIDDEN (403) for an agent.
+    returns: {
+      decide: oc.input(zMarketplaceReturnDecide.extend({ idempotencyKey: zId })).output(zMarketplaceReturnDecided),
+    },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
     balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
@@ -2783,6 +2832,8 @@ export const contract = {
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
     // The finance coworker's note under the Sàn table for each platform with fees waiting on its 331 (#3711 slice 7): how old they are and what to do, from the books read again on the server. Read only: it posts nothing and changes no figure.
     feeNotes: oc.input(zMarketplaceFeeNotesAsk).output(zMarketplaceFeeNotes),
+    // The finance coworker's note on a pending settlement or payout proposal (#4389): the figures and the Uncertain (#2520) points are chosen by code from the stored proposal; the model only words the figures. Read only: it changes no payload and has no action.
+    proposalNote: oc.input(zMarketplaceProposalNoteAsk).output(zMarketplaceProposalNote.nullable()),
     // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read in the extract sandbox, which only the worker reaches, so `columnsCheck` files a request and queues the worker's
     // job (the sheet alone, or a mapping to check on the real file; a press while one waits returns it), `columns` reads what the worker found (the masked sheet, the check's refusal and a preview of at most 20
     // parsed lines), and `columnsProposal` asks Ly for a first mapping from the masked sheet alone, within the AI budget. Nothing is imported or saved. Owners, admins and members.
@@ -2982,6 +3033,10 @@ export const contract = {
   // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
   // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
   // do not hold (ai says why there is none).
+  financeCashForecast: {
+    get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
+    explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),

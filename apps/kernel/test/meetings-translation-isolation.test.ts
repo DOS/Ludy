@@ -75,6 +75,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_sign_obligations.sql',
       // #3817 (eSign Slice 4a): the purge restatement that adds crove_sign.member_signature and crove_sign.org_stamp restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_sign_stamps.sql',
+      // #4300 (HR leave requests): the purge restatement that adds crove_hr.leave_request restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_hr_leave_request.sql',
     ]);
   });
 });

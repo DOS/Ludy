@@ -32,7 +32,7 @@ describe('brand name outside the app (#1045)', () => {
     expect(ics).toContain('X-WR-CALNAME:Tiệm bánh - Tên Mới');
     expect(ics).toContain('Mở trong Tên Mới: https://crove.example/o/tiem-banh/social/');
     // PRODID and UID name the software that wrote the feed, not the product.
-    expect(ics).toContain('PRODID:-//Crove//Social//VI');
+    expect(ics).toContain('PRODID:-//Ludy//Social//VI');
     expect(chatAlertTestText('Tên Mới')).toBe('Tên Mới: tin thử. Từ giờ nhóm sẽ nhận tin báo về bài đăng mạng xã hội tại đây.');
   });
 });

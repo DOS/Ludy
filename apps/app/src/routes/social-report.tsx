@@ -21,7 +21,7 @@ import { engagementRate, engagementRateOfBases, rateBasesOf, type RateBases } fr
 import { ChangeChip, EngagementRateCard, EngagementRateCell } from '../components/social-growth.tsx';
 import { useRatePhrase } from '../components/social-engagement-rate.tsx';
 import { OutsideChip } from '../components/social-external-posts.tsx';
-import { AccentRule, BrandMark, MadeWithCrove, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
+import { AccentRule, BrandMark, MadeWithLudy, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiUrl } from '../lib/api-base.ts';
@@ -334,7 +334,7 @@ export function SocialReportPage() {
               </Fragment>
             ))}
             <p className="text-xs text-subtle-foreground">{t('footer', { until: f.date(data.expiresAt) })}</p>
-            <MadeWithCrove brand={brand} />
+            <MadeWithLudy brand={brand} />
           </>
         ) : null}
       </div>

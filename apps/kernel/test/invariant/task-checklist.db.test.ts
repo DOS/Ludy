@@ -8,8 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { ProjectBoard } from '@ludy/kernel-contract';
 import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
@@ -17,6 +17,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { enterUser } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_scope', () => {
   const dbName = `crove_inv_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -44,7 +46,7 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
   });
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -54,7 +56,7 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
   }
 
   async function inUserContext<T>(userId: string, orgId: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -67,7 +69,7 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
   }
 
   async function inAgentContext<T>(orgId: string, actor: AgentActor, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -101,20 +103,21 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
 
     const uApp = new URL(adminUrl);
-    uApp.username = 'crove_app';
+    uApp.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     uApp.password = 'test-app-pw';
     appUrl = uApp.toString();
 
     const uWorker = new URL(adminUrl);
-    uWorker.username = 'crove_worker';
+    uWorker.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     uWorker.password = 'test-worker-pw';
     workerUrl = uWorker.toString();
 
-    const appPool = createPool({ connectionString: appUrl, max: 4 });
-    const workerPool = createPool({ connectionString: workerUrl, max: 4 });
+    const appPool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
+    const workerPool = createDbPool({ connectionString: workerUrl, max: 4 }, dbIds);
     pools.push(appPool, workerPool);
     db = createDb(appPool);
 

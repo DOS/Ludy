@@ -56,17 +56,20 @@ describe('Engage wake feed helpers', () => {
     const org = randomUUID();
     const base = { accountName: 'Tài khoản 1', skippedAccounts: 0 };
     const flags: AdsFlag[] = [
-      { ...base, kind: 'pace', scope: 'account', adAccountId: account, currency: 'USD', cap: '5000', spent: '3000', projected: '6200.456789', elapsedDays: 12, daysInMonth: 30 },
-      { ...base, kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'CHF', cap: '5000', spent: '3000', projected: '6200', elapsedDays: 12, daysInMonth: 30 },
+      { ...base, kind: 'pace', scope: 'account', adAccountId: account, currency: 'USD', cap: '5000', spent: '3000', projected: '6200.456789', elapsedDays: 12, daysInMonth: 30, month: '2026-11-01' },
+      { ...base, kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'CHF', cap: '5000', spent: '3000', projected: '6200', elapsedDays: 12, daysInMonth: 30, month: '2026-10-01' },
       { ...base, kind: 'day', scope: 'account', adAccountId: account, currency: 'VND', period: 'daily', cap: '1000000', share: '33333', day: '2026-11-18', spend: '90000', ratio: '2.7' },
       { ...base, kind: 'day', scope: 'account', adAccountId: account, currency: 'VND', period: 'monthly', cap: '30000000', share: '1000000', day: '2026-11-18', spend: '2400000', ratio: '2.4' },
       { kind: 'cpr', adAccountId: account, accountName: 'x', campaignId: 'c', campaignName: 'x', currency: 'VND', day: '2026-11-18', recentCost: '1', medianCost: '1', ratio: '3', recentResults: '1', historyDays: 7 },
     ];
-    const items = adsItems(flags, org, new Date('2026-11-19T03:00:00Z'));
+    const items = adsItems(flags, org);
     expect(items.map((i) => i.type)).toEqual(['ads.pace_over', 'ads.pace_over', 'ads.daily_cap_over', 'ads.monthly_cap_over']);
     expect(items[0]?.data).toEqual({ subject_id: account, scope: 'account', month: '2026-11-01', projected: '6200.4568', cap: '5000', currency: 'usd' });
     // An org-wide flag is about the org; a currency the list does not know is `other`.
     expect(items[1]?.data).toMatchObject({ subject_id: org, scope: 'org', currency: 'other' });
+    // The month is the one the flag judged (in the ad account's calendar), so a flag of the month before keeps its own month and key, whatever day it is in Vietnam.
+    expect(items[1]?.data).toMatchObject({ month: '2026-10-01' });
+    expect(items[1]?.key).toBe(`ads_pace_over:${org}:2026-10-01`);
     // The daily and monthly share of one account on one day never meet in one key.
     expect(items[2]?.key).not.toBe(items[3]?.key);
     for (const i of items) {

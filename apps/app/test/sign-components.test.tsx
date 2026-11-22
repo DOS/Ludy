@@ -66,6 +66,7 @@ const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
 const {
+  canManageEnvelopeLinksAndVoid,
   filterPendingProposalsForSigners,
   fromDatetimeLocalValue,
   SignEnvelopeDetailPage,
@@ -1961,5 +1962,107 @@ describe('Slice 4b choice fields (dropdown/radio) and verified signer supporting
     expect(attachmentPresetsHtml).toContain('data-testid="field-attachment-preset-idCard"');
     expect(attachmentPresetsHtml).toContain('CCCD / CMND');
     expect(attachmentPresetsHtml).toContain('Giấy ĐKKD');
+  });
+});
+
+describe('Envelope link rotation and void RBAC (#3428 L3)', () => {
+  it('restricts envelope link rotation and void controls to creator, owner, or admin (#3428 L3)', () => {
+    const creatorId = '01900000-0000-7000-8000-000000000088';
+    const otherMemberId = '01900000-0000-7000-8000-000000000077';
+
+    expect(canManageEnvelopeLinksAndVoid({ role: 'owner', userId: otherMemberId, createdBy: creatorId })).toBe(true);
+    expect(canManageEnvelopeLinksAndVoid({ role: 'admin', userId: otherMemberId, createdBy: creatorId })).toBe(true);
+    expect(canManageEnvelopeLinksAndVoid({ role: 'member', userId: creatorId, createdBy: creatorId })).toBe(true);
+    expect(canManageEnvelopeLinksAndVoid({ role: 'member', userId: otherMemberId, createdBy: creatorId })).toBe(false);
+    expect(
+      canManageEnvelopeLinksAndVoid({
+        role: 'member',
+        userId: otherMemberId,
+        createdBy: creatorId,
+        sourceKind: 'meeting_minutes',
+      }),
+    ).toBe(true);
+    expect(
+      canManageEnvelopeLinksAndVoid({
+        role: 'viewer',
+        userId: creatorId,
+        createdBy: creatorId,
+        sourceKind: 'meeting_minutes',
+      }),
+    ).toBe(false);
+    expect(canManageEnvelopeLinksAndVoid({ role: 'viewer', userId: creatorId, createdBy: creatorId })).toBe(false);
+    expect(canManageEnvelopeLinksAndVoid({ role: null, userId: creatorId, createdBy: creatorId })).toBe(false);
+
+    const makeSentClient = (role: 'owner' | 'admin' | 'member' | 'viewer', userId: string) => {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const envId = routerState.id;
+      qc.setQueryData(['me', 'get'], {
+        userId,
+        email: 'user@example.com',
+        displayName: 'User',
+        orgs: [{ orgId: '01900000-0000-7000-8000-000000000055', slug: routerState.slug, name: 'Acme', role }],
+      });
+      qc.setQueryData(['sign', 'envelope', envId], {
+        envelope: {
+          id: envId,
+          title: 'Hợp đồng dịch vụ đã gửi',
+          subject: null,
+          message: null,
+          status: 'sent',
+          routingMode: 'parallel',
+          sourceKind: 'standalone',
+          sourceId: null,
+          sourceFileId: '01900000-0000-7000-8000-000000000099',
+          sourceSha256: 'a'.repeat(64),
+          inspectStatus: 'passed',
+          inspectError: null,
+          pageCount: 1,
+          pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+          detectedTags: [],
+          sealedFileId: null,
+          sealedSha256: null,
+          sealStatus: null,
+          certificateFileId: null,
+          certificateSha256: null,
+          certificateCode: null,
+          expiresAt: null,
+          sentAt: '2026-11-17T01:00:00Z',
+          completedAt: null,
+          declinedAt: null,
+          voidedAt: null,
+          voidedBy: null,
+          voidReason: null,
+          expiredAt: null,
+          version: 2,
+          createdBy: creatorId,
+          createdAt: '2026-11-17T00:00:00Z',
+          updatedAt: '2026-11-17T01:00:00Z',
+        },
+        signers: [
+          {
+            ...SIGNER_1,
+            deliveryMode: 'email',
+            email: 'signer@example.com',
+          },
+        ],
+        fields: [],
+      });
+      return qc;
+    };
+
+    const creatorHtml = renderVi(<SignEnvelopeDetailPage />, makeSentClient('member', creatorId));
+    expect(creatorHtml).toContain('Hủy hồ sơ');
+    expect(creatorHtml).toContain('Chép link Zalo');
+    expect(creatorHtml).toContain('Nhắc ký');
+
+    const otherMemberHtml = renderVi(<SignEnvelopeDetailPage />, makeSentClient('member', otherMemberId));
+    expect(otherMemberHtml).not.toContain('Hủy hồ sơ');
+    expect(otherMemberHtml).not.toContain('Chép link Zalo');
+    expect(otherMemberHtml).toContain('Nhắc ký');
+
+    const viewerHtml = renderVi(<SignEnvelopeDetailPage />, makeSentClient('viewer', creatorId));
+    expect(viewerHtml).not.toContain('Hủy hồ sơ');
+    expect(viewerHtml).not.toContain('Chép link Zalo');
+    expect(viewerHtml).not.toContain('Nhắc ký');
   });
 });

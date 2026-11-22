@@ -45,14 +45,14 @@ describe('calendar feed (#862)', () => {
     expect(text.endsWith('\r\n')).toBe(true);
     expect(text.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
     const lines = unfold(text).split('\r\n');
-    expect(lines.slice(0, 6)).toEqual(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Crove//Social//VI', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Cửa hàng\\; Bánh\\, Trà - Ludy']);
+    expect(lines.slice(0, 6)).toEqual(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ludy//Social//VI', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Cửa hàng\\; Bánh\\, Trà - Ludy']);
     expect(lines.filter((l) => l === 'BEGIN:VEVENT')).toHaveLength(2);
     expect(lines.filter((l) => l === 'END:VEVENT')).toHaveLength(2);
     expect(lines.at(-2)).toBe('END:VCALENDAR');
     const first = lines.slice(lines.indexOf('BEGIN:VEVENT'), lines.indexOf('END:VEVENT') + 1);
     expect(first).toEqual([
       'BEGIN:VEVENT',
-      'UID:01900000-0000-7000-8000-000000000001@crove',
+      'UID:01900000-0000-7000-8000-000000000001@ludy',
       'DTSTAMP:20261021T080000Z',
       'DTSTART:20261025T020000Z',
       'DURATION:PT15M',

@@ -245,7 +245,7 @@ suite('invite mail on PostgreSQL', () => {
       provider: 'capture',
       provider_message_id: `capture-${captured}`,
     });
-    expect(mail?.messageId).toMatch(/^<[0-9a-f-]{36}@crove\.invalid>$/);
+    expect(mail?.messageId).toMatch(/^<[0-9a-f-]{36}@ludy\.invalid>$/);
 
     // The link works for the invitee.
     expect(await rpc('invites/accept', await tokenFor(invitee), { token }, null)).toMatchObject({ status: 200, body: { slug: org.slug } });

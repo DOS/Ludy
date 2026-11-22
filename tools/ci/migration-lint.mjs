@@ -112,7 +112,7 @@ const ADR_DIR = 'docs/adr/';
 // (some break them: they predate the rules). With --since, as CI runs, the cutoff is not used: every file a PR adds
 // gets every rule, so raising it exempts nothing in CI.
 export const BREAKING_RULES_AFTER = '20261103090000';
-const MODULE = /^\d{14}_crove_([a-z0-9]+)_[a-z0-9_]+\.sql$/;
+const MODULE = /^\d{14}_(crove|ludy)_([a-z0-9]+)_[a-z0-9_]+\.sql$/;
 const BANNED_GRANTEES = new Set(['anon', 'authenticated', 'public']);
 const TRANSACTION_WORDS = new Set(['begin', 'start', 'commit', 'end', 'rollback', 'abort']);
 
@@ -444,6 +444,7 @@ export function touchedObjects(tokens) {
     let j = k;
     if (word(j) === 'materialized' || word(j) === 'foreign') j++;
     if (word(j) === 'text' && word(j + 1) === 'search') j += 3;
+    else if (word(j) === 'operator' && (word(j + 1) === 'class' || word(j + 1) === 'family')) j += 2;
     else j++;
     return skipIfExists(tokens, skipWords(tokens, j, 'concurrently'));
   };
@@ -483,11 +484,26 @@ export function touchedObjects(tokens) {
         const at = findWord(tokens, 2, 'schema');
         if (at !== -1) schemas.push({ schema: tokens[at + 1]?.v, line: head.line });
       } else if (kind === 'schema') {
-        schemas.push({ schema: tokens[2]?.v, line: head.line });
+        const src = tokens[2];
+        if (src) schemas.push({ schema: src.v, line: head.line });
+        const renameAt = findWord(tokens, 3, 'rename');
+        if (renameAt !== -1 && isWord(tokens[renameAt + 1], 'to') && tokens[renameAt + 2]) {
+          schemas.push({ schema: tokens[renameAt + 2].v, line: tokens[renameAt + 2].line ?? head.line, what: 'ALTER SCHEMA RENAME TO target' });
+        }
       } else if (kind === 'trigger' || kind === 'policy' || kind === 'rule') {
         onTable(2);
-      } else if (kind !== undefined && OBJECT_KINDS.has(kind)) {
-        push(qualifiedName(tokens, skipWords(tokens, named(1), 'only')));
+      } else if (kind !== undefined && (OBJECT_KINDS.has(kind) || kind === 'extension')) {
+        if (OBJECT_KINDS.has(kind)) push(qualifiedName(tokens, skipWords(tokens, named(1), 'only')));
+        // Scan depth-0 SET SCHEMA <dest> (handles ALTER TABLE|VIEW|FUNCTION|...|EXTENSION ... SET SCHEMA <dest>).
+        let depth = 0;
+        for (let j = 2; j < tokens.length - 2; j++) {
+          if (isPunct(tokens[j], '(')) depth++;
+          else if (isPunct(tokens[j], ')')) depth--;
+          else if (depth === 0 && isWord(tokens[j], 'set') && isWord(tokens[j + 1], 'schema') && tokens[j + 2]) {
+            const dest = tokens[j + 2];
+            if (!isPunct(dest, '%')) schemas.push({ schema: dest.v, line: dest.line ?? head.line, what: 'SET SCHEMA destination' });
+          }
+        }
       }
       break;
     }
@@ -593,7 +609,14 @@ function withWrites(tokens, objects, schemas) {
 // roles definer functions run as (crove_definer_tenant, crove_auth_reader, crove_definer_einvoice); any object may stay the runner's own
 // (CURRENT_USER, CURRENT_ROLE, SESSION_USER, as keywords). No table, schema or other object goes to another role: its
 // owner bypasses the table's RLS and its grants. Login roles own nothing (AGENTS.md, "Tenancy").
-const DEFINER_OWNER_ROLES = new Set(['crove_definer_tenant', 'crove_auth_reader', 'crove_definer_einvoice']);
+const DEFINER_OWNER_ROLES = new Set([
+  'crove_definer_tenant',
+  'crove_auth_reader',
+  'crove_definer_einvoice',
+  'ludy_definer_tenant',
+  'ludy_auth_reader',
+  'ludy_definer_einvoice',
+]);
 const RUNNER_KEYWORDS = new Set(['current_user', 'current_role', 'session_user']);
 const ROUTINE_KINDS = new Set(['function', 'procedure', 'routine', 'aggregate']);
 
@@ -821,7 +844,8 @@ export const sameSignature = (a, b) => a.length === b.length && a.every((ways, i
 // behind itself, so it runs in the lock-retry block. Index names are matched like table names, so an index of a hot
 // table is recognised only when its name is (crove_jobs.*, outbox_*).
 const HOT_KERNEL = /^(outbox_.*|audit_event|record|idempotency_key|processed_message)$/;
-export const isHotTable = ({ schema, name }) => schema === 'crove_jobs' || (schema === 'crove_kernel' && HOT_KERNEL.test(name));
+export const isHotTable = ({ schema, name }) =>
+  (schema === 'crove_jobs' || schema === 'ludy_jobs') || ((schema === 'crove_kernel' || schema === 'ludy_kernel') && HOT_KERNEL.test(name));
 
 // The existing tables a DDL statement locks: ALTER TABLE or INDEX (and the partition it attaches or detaches, the
 // parent it inherits from or stops inheriting), CREATE INDEX, TRIGGER or POLICY ON, CREATE RULE ... TO, CREATE
@@ -1054,9 +1078,9 @@ export function inRetryBlock(blocks, at) {
 
 // --- Rules -------------------------------------------------------------------------------------------------------
 
-// The module a migration file belongs to (crove_<module>), from its name, or undefined.
+// The module a migration file belongs to ((crove|ludy)_<module>), from its name, or undefined.
 export function moduleOf(file) {
-  return MODULE.exec(basename(file))?.[1];
+  return MODULE.exec(basename(file))?.[2];
 }
 
 // The functions and procedures a migration creates, as "<schema>.<name>" (overloads share a key).
@@ -1072,7 +1096,7 @@ export function functionsCreated(sql) {
 }
 
 const WAIVER = /^--\s*migration-lint:\s*cross-module(?:\s+(.*))?$/;
-const CONTRACT = /^--\s*crove:contract(?:\s+adr=(\S*))?(?:\s|$)/;
+const CONTRACT = /^--\s*(?:crove|ludy):contract(?:\s+adr=(\S*))?(?:\s|$)/;
 // Kinds a plain CREATE (no OR REPLACE, no IF NOT EXISTS) makes new in this file, so dropping or locking them later in
 // the same file is neither a contract change nor DDL on a table anyone else holds.
 const PLAIN_CREATE_KINDS = new Set(['table', 'view', 'materialized', 'sequence', 'type', 'domain']);
@@ -1080,6 +1104,8 @@ const PLAIN_CREATE_KINDS = new Set(['table', 'view', 'materialized', 'sequence',
 // A file the runner applies outside a transaction to build indexes concurrently (#1791, packages/db/src/migrate.ts,
 // concurrentIndexes): CONCURRENT_INDEX_MARKER is one of its leading comment lines, before the first statement.
 export const CONCURRENT_INDEX_MARKER = '-- crove:concurrent-index';
+const LUDY_CONCURRENT_INDEX_MARKER = '-- ludy:concurrent-index';
+const CONCURRENT_INDEX_MARKERS = new Set([CONCURRENT_INDEX_MARKER, LUDY_CONCURRENT_INDEX_MARKER]);
 // The access methods PostgreSQL ships, as the runner lists them (BUILT_IN_INDEX_METHODS).
 const BUILT_IN_INDEX_METHODS = ['btree', 'hash', 'gist', 'spgist', 'gin', 'brin'];
 export function concurrentIndexMarked(sql) {
@@ -1087,7 +1113,7 @@ export function concurrentIndexMarked(sql) {
     const line = raw.trim();
     if (line === '') continue;
     if (!line.startsWith('--')) return false;
-    if (line === CONCURRENT_INDEX_MARKER) return true;
+    if (CONCURRENT_INDEX_MARKERS.has(line)) return true;
   }
   return false;
 }
@@ -1100,7 +1126,7 @@ export function concurrentIndexProblems(sql, statements, marked) {
   const problems = [];
   const lines = sql.replaceAll('\r\n', '\n').split('\n');
   if (!marked) {
-    const at = lines.findIndex((l) => l.includes('crove:concurrent-index'));
+    const at = lines.findIndex((l) => l.includes('crove:concurrent-index') || l.includes('ludy:concurrent-index'));
     if (at !== -1) problems.push({ line: at + 1, message: `the ${CONCURRENT_INDEX_MARKER} marker counts only among the comment lines before the first statement` });
     return problems;
   }
@@ -1151,7 +1177,7 @@ export function concurrentIndexProblems(sql, statements, marked) {
 
 // The schemas that hold hot tables (isHotTable): a REINDEX of one of them, or of the database or its catalogs, rebuilds a
 // hot table's indexes under a lock.
-const HOT_SCHEMAS = new Set(['crove_jobs', 'crove_kernel']);
+const HOT_SCHEMAS = new Set(['crove_jobs', 'crove_kernel', 'ludy_jobs', 'ludy_kernel']);
 
 // The index a statement builds with a lock that blocks writes, as { table, what, constraint } (or { all, target, what }
 // when it covers a whole schema or database), or undefined: CREATE [UNIQUE] INDEX without CONCURRENTLY (but ON ONLY,
@@ -1232,8 +1258,16 @@ export function lintMigration(file, sql, {
   const findings = [];
   // A file the runner applies outside a transaction to build indexes concurrently (#1791).
   const marked = concurrentIndexMarked(sql);
-  const module = moduleOf(file);
-  const schema = module === undefined ? undefined : `crove_${module}`;
+  const fileMatch = MODULE.exec(basename(file));
+  const fileBrand = fileMatch?.[1];
+  const module = fileMatch?.[2];
+  const schema = module === undefined ? undefined : `${fileBrand}_${module}`;
+  const allowedSameModule =
+    module === undefined
+      ? undefined
+      : fileBrand === 'ludy'
+        ? new Set([`ludy_${module}`, `crove_${module}`])
+        : new Set([`crove_${module}`]);
   const report = (line, rule, message) => findings.push({ file, line, rule, message });
   const droppedPolicies = new Set();
   const functions = []; // { key, line }: functions created, waiting for their REVOKE
@@ -1315,22 +1349,23 @@ export function lintMigration(file, sql, {
     if (name && !name.dynamic) createdPlain.add(`${kind}:${name.schema ?? ''}.${name.name}`);
   };
 
-  if (schema === undefined) report(1, 'module-schema', `the file name does not match <14-digit version>_crove_<module>_<description>.sql, so its module is unknown`);
+  if (schema === undefined) report(1, 'module-schema', `the file name does not match <14-digit version>_(crove|ludy)_<module>_<description>.sql, so its module is unknown`);
 
   // `waiver` is the cross-module waiver on the line before the statement, if any; `waived` collects the schemas it
-  // covered. A waiver covers only crove_* schemas: no module touches public, auth or extensions.
+  // covered. A waiver covers only crove_* or ludy_* schemas: no module touches public, auth or extensions.
+  const isBrandSchema = (name) => name.startsWith('crove_') || name.startsWith('ludy_');
   const checkSchema = (name, line, what, waiver, waived) => {
     if (schema === undefined) return;
     if (name === undefined) {
       report(line, 'module-schema', `${what} is not qualified by a schema; write ${schema}.<name>`);
-    } else if (name !== schema) {
-      if (waiver?.reason && name.startsWith('crove_')) {
+    } else if (!allowedSameModule.has(name)) {
+      if (waiver?.reason && isBrandSchema(name)) {
         waived.add(name);
         return;
       }
       const why = waiver === undefined
-        ? `put that change in a crove_${name.replace(/^crove_/, '')} migration, or put \`-- migration-lint: cross-module <reason>\` on the line before the statement`
-        : waiver.reason ? 'a waiver covers only crove_* schemas' : `the waiver on line ${waiver.line} has no reason`;
+        ? `put that change in a ${fileBrand}_${name.replace(/^(?:crove|ludy)_/, '')} migration, or put \`-- migration-lint: cross-module <reason>\` on the line before the statement`
+        : waiver.reason ? 'a waiver covers only crove_* or ludy_* schemas' : `the waiver on line ${waiver.line} has no reason`;
       report(line, 'module-schema', `touches schema ${name}, but this file belongs to ${schema}; ${why}`);
     }
   };

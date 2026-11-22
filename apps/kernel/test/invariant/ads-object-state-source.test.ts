@@ -92,12 +92,12 @@ describe('what may read the platform\'s object states (#3301)', () => {
     expect(commands).not.toMatch(/\bsql\b/);
     expect(commands).not.toMatch(/from 'kysely'/);
     // The only table it updates is the object's, and only these columns; the launch, the caps and the ledger of commitments are never named for a write.
-    const updates = [...commands.matchAll(/updateTable\('([^']+)'\)/g)].map((m) => m[1]);
+    const updates = [...commands.matchAll(/updateTable\('([^']+)'\)/g)].map((m) => m[1]?.replace(/^ludy_/, 'crove_'));
     expect(updates).toEqual(['crove_ads.ad_object', 'crove_kernel.external_call']);
-    expect(commands).toMatch(/updateTable\('crove_ads\.ad_object'\)\s*\.set\(\{ effective_status: status, review_reason: reason, last_seen_at: ctx\.now, updated_at: ctx\.now \}\)/);
-    expect(commands).not.toMatch(/insertInto\('crove_ads\.|deleteFrom\(|ctx\.emit\(|stopRunningLaunch|setLaunch|needAttention|launchCapsProblems/);
+    expect(commands).toMatch(/updateTable\('(?:crove|ludy)_ads\.ad_object'\)\s*\.set\(\{ effective_status: status, review_reason: reason, last_seen_at: ctx\.now, updated_at: ctx\.now \}\)/);
+    expect(commands).not.toMatch(/insertInto\('(?:crove|ludy)_ads\.|deleteFrom\(|ctx\.emit\(|stopRunningLaunch|setLaunch|needAttention|launchCapsProblems/);
     // An answer is matched to a recorded object by the platform's id and level; nothing is created from it.
     expect(commands).toContain('rowOf.get(');
-    expect(commands).not.toMatch(/insertInto\('crove_ads\.ad_object'\)/);
+    expect(commands).not.toMatch(/insertInto\('(?:crove|ludy)_ads\.ad_object'\)/);
   });
 });

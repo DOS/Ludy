@@ -296,7 +296,7 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
     const session = await storedSession(page);
     const rpcHeaders = {
       authorization: `Bearer ${session?.access_token ?? ''}`,
-      'x-crove-org': slug,
+      'x-ludy-org': slug,
     };
 
     const createTplRes = await page.request.post('/api/rpc/sign/template/create', {
@@ -407,7 +407,7 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
     const toggleRes = await page.request.post('/api/rpc/org/setApp', {
       headers: {
         authorization: `Bearer ${session?.access_token ?? ''}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
       data: { json: { module: 'sign', enabled: false } },
     });
