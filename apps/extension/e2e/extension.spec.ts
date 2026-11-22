@@ -361,14 +361,20 @@ test('the consent step shows the recording notice: the text, the other language,
   // The English one is one click away, and copying then copies that text.
   await page.locator('#notice-lang').click();
   await expect(page.locator('#notice-text')).toContainText('This meeting is being recorded to prepare the minutes');
+  await expect(page.locator('#copy-note')).toHaveCount(0);
   await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void (window as unknown as { copied: string[] }).copied.push(text) }, configurable: true }));
   await page.locator('#copy-notice').click();
+  await expect(page.locator('#copy-note')).toContainText('Đã sao chép');
   const copied = await page.evaluate(() => (window as unknown as { copied: string[] }).copied);
   expect(copied).toHaveLength(2);
   expect(copied[0]).toContain('Cuộc họp này đang được ghi âm');
   expect(copied[1]).toContain('This meeting is being recorded');
   // Copying ticks nothing: the start is still refused without the method and the confirmation.
-  await page.locator('#title').fill('Họp thử');
+  const titleInput = page.locator('#title');
+  await expect(titleInput).toBeEditable();
+  await titleInput.fill('Họp thử');
+  await expect(titleInput).toHaveValue('Họp thử');
+  await expect(page.locator('#start')).toBeEnabled();
   await page.locator('#start').click();
   await expect(page.getByRole('alert')).toContainText('Vui lòng chọn cách đã báo cho người tham gia');
   await page.close();
