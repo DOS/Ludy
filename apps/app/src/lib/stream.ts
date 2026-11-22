@@ -3,7 +3,7 @@
 // authorized calls. While the stream is down the screens poll as before. No browser or API imports, so it is unit
 // tested; stream-hook.ts wires it to EventSource and the query client.
 import type { Query, QueryClient } from '@tanstack/react-query';
-import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@ludy/kernel-contract';
+import { STREAM_CLOSE_REASONS, STREAM_HINT_MANY_ID, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@ludy/kernel-contract';
 import { apiUrl } from './api-base.ts';
 
 // oRPC query keys are [path, { type, input }], for example [['inbox', 'get'], { type: 'query', input: { id } }].
@@ -98,14 +98,14 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     case 'crm_deal': {
       if (path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.byParty' || path === 'crm.contacts.list' || path === 'parties.timeline' || path.startsWith('crm.nextSteps.')) return true;
       const options = query.queryKey[1] as { input?: { dealId?: unknown } } | undefined;
-      return path === 'crm.deals.get' && options?.input?.dealId === id;
+      return path === 'crm.deals.get' && (id === STREAM_HINT_MANY_ID || options?.input?.dealId === id);
     }
     // A party's contact details changed (#3293): the contacts list and the contact pickers, the deal cards, list and details, which show the contact's name, and that contact's own panels.
     // crm.contacts alone is the key of the people of a company and of a person's company suggestions, which sit under the contacts' own key (company-link.tsx).
     case 'crm_party': {
       if (path === 'crm.contacts' || path === 'crm.contacts.list' || path === 'crm.parties.search' || path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.get') return true;
       const options = query.queryKey[1] as { input?: { partyId?: unknown } } | undefined;
-      return (path === 'crm.deals.byParty' || path === 'parties.timeline') && options?.input?.partyId === id;
+      return (path === 'crm.deals.byParty' || path === 'parties.timeline') && (id === STREAM_HINT_MANY_ID || options?.input?.partyId === id);
     }
   }
 }
