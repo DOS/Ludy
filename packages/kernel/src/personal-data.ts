@@ -536,6 +536,8 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.work_permit_expires_on': { kind: 'other', handling: 'erase', reason: "A foreign employee's work permit expiry date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
+  'crove_hr.leave_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text leave reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },

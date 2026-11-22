@@ -164,6 +164,8 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
       departmentId: null,
       departmentName: null,
       jobTitle: null,
+      linkedUserId: null,
+      linkedMemberName: null,
       status: 'active',
       endedOn: null,
       isForeign: true,

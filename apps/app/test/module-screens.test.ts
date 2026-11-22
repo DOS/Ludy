@@ -7,7 +7,7 @@ import { createMemoryHistory, createRouter, isNotFound } from '@tanstack/react-r
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { ADMIN_ITEMS, ALL_NAV, APP_ORDER, APPS, BELL_ITEM, GROUP_ORDER, TOP_ITEMS, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, APP_ORDER, APPS, BELL_ITEM, GROUP_ORDER, TOP_ITEMS, appOfPath, installedApps, isHeadedGroup, visibleApps } from '../src/lib/apps.ts';
 import { moduleOfOutsideRoute, moduleOfPath, outsideInstalled, screenInstalled } from '../src/lib/modules.ts';
 
 // What the org route's guard reads: a signed-in session and the modules of /api/config, set per test.
@@ -228,8 +228,8 @@ describe('module screens against the router (#1652)', () => {
           ['reports', ['reports']],
         ],
       ],
-      // The HR app (#2530): the staff list, for owners and admins.
-      ['hr', [['people', ['hr/employees', 'hr/recruiting', 'hr/payroll', 'hr/declarations']]]],
+      // The HR app (#2530, #4300): the staff list for owners and admins, plus self-service My HR portal for members.
+      ['hr', [['people', ['hr/employees', 'hr/recruiting', 'hr/payroll', 'hr/declarations', 'hr/my']]]],
       // The eSign app (#3325, #3526, #3554): envelopes, reusable templates, offline SHA-256 verifier, and CA settings.
       ['sign', [['sign', ['sign/envelopes', 'sign/templates', 'sign/verify', 'sign/settings']]]],
       // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
@@ -239,8 +239,35 @@ describe('module screens against the router (#1652)', () => {
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'signEnvelopes', 'signTemplates', 'signVerify', 'signSettings', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
+      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'hrMy', 'signEnvelopes', 'signTemplates', 'signVerify', 'signSettings', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
     ]);
+  });
+
+  it('sets HR home to /o/$slug/hr/my for members and hides HR from viewers (#4300)', () => {
+    const base = installedApps(['kernel', 'hr']);
+    const forManager = visibleApps(base, { manager: true, hrMember: true, showAiConnections: true });
+    const hrManager = forManager.find((a) => a.id === 'hr');
+    expect(hrManager?.home).toBe('/o/$slug/hr/employees');
+    expect(hrManager?.groups[0]?.items.map((i) => i.to)).toEqual([
+      '/o/$slug/hr/employees',
+      '/o/$slug/hr/recruiting',
+      '/o/$slug/hr/payroll',
+      '/o/$slug/hr/declarations',
+      '/o/$slug/hr/my',
+    ]);
+
+    const forMember = visibleApps(base, { manager: false, hrMember: true, showAiConnections: false });
+    const hrMember = forMember.find((a) => a.id === 'hr');
+    expect(hrMember?.home).toBe('/o/$slug/hr/my');
+    expect(hrMember?.groups).toHaveLength(1);
+    expect(hrMember?.groups[0]?.items.map((i) => i.to)).toEqual(['/o/$slug/hr/my']);
+
+    const aiMember = forMember.find((a) => a.id === 'ai');
+    expect(aiMember?.home).toBe('/o/$slug/agents');
+    expect(aiMember?.groups[0]?.items.map((i) => i.to)).toEqual(['/o/$slug/agents']);
+
+    const forViewer = visibleApps(base, { manager: false, hrMember: false, showAiConnections: false });
+    expect(forViewer.find((a) => a.id === 'hr')).toBeUndefined();
   });
 });
 

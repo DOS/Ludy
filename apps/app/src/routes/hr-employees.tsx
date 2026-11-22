@@ -12,6 +12,7 @@ import {
   HR_DEPARTMENT_CODE_MAX,
   HR_DEPARTMENT_NAME_MAX,
   HR_JOB_TITLE_MAX,
+  HR_LEAVE_REQUEST_STATUSES,
   HR_PAY_BASES,
   HR_PAY_FUNCTIONS,
   HR_PROBATION_ROLE_TIERS,
@@ -28,6 +29,8 @@ import {
   type HrEmployeeSummary,
   type HrEmploymentTerms,
   type HrEmploymentView,
+  type HrLeaveRequestStatus,
+  type HrLeaveRequestView,
   type HrPayBasis,
   type HrPayFunction,
   type HrProbationRoleTier,
@@ -58,6 +61,8 @@ const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() })
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const NUM = 'px-4 py-3 text-right tabular-nums';
+const PHONE_SELECT_TARGET = 'max-md:min-h-11 [&_select]:max-md:min-h-11';
+const PHONE_INPUT_TARGET = 'max-md:min-h-11';
 
 export interface TermsState {
   effectiveFrom: string;
@@ -568,9 +573,60 @@ export function formatDepartmentFilterOptionLabel(
   return department.archivedAt !== null ? `${withEntity} (${archivedBadge})` : withEntity;
 }
 
+export type OrgMemberOption = { userId: string; displayName: string | null; email: string; role: string };
+
+function memberOptionLabel(m: OrgMemberOption): string {
+  return m.displayName ? `${m.displayName} (${m.email})` : m.email;
+}
+
+function DepartmentManagerSelect({
+  department,
+  members,
+}: {
+  department: HrDepartmentView;
+  members: readonly OrgMemberOption[];
+}) {
+  const t = useTranslations('hrEmployees');
+  const linkable = members.filter((m) => m.role !== 'viewer');
+  const setManager = useMutation({
+    mutationFn: (managerUserId: string | null) =>
+      client.hr.departments.setManager({ departmentId: department.id, managerUserId }),
+    onSuccess: refresh,
+  });
+  return (
+    <div className="space-y-1 sm:col-span-3">
+      <Label htmlFor="hr-dept-edit-manager">{t('departments.manager')}</Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <NativeSelect
+          id="hr-dept-edit-manager"
+          className={PHONE_SELECT_TARGET}
+          value={department.managerUserId ?? ''}
+          disabled={setManager.isPending}
+          onChange={(e) => setManager.mutate(e.target.value || null)}
+          data-testid="hr-dept-edit-manager"
+        >
+          <NativeSelectOption value="">{t('departments.noManager')}</NativeSelectOption>
+          {department.managerUserId && !linkable.some((m) => m.userId === department.managerUserId) && (
+            <NativeSelectOption value={department.managerUserId} disabled>
+              {department.managerName ?? department.managerUserId}
+            </NativeSelectOption>
+          )}
+          {linkable.map((m) => (
+            <NativeSelectOption key={m.userId} value={m.userId}>
+              {memberOptionLabel(m)}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        {setManager.error && <ErrorText>{errorMessage(setManager.error)}</ErrorText>}
+      </div>
+    </div>
+  );
+}
+
 export function DepartmentsSection({
   departments,
   entities,
+  members = [],
   showArchived,
   onShowArchivedChange,
   loading = false,
@@ -578,6 +634,7 @@ export function DepartmentsSection({
 }: {
   departments: readonly HrDepartmentView[];
   entities?: readonly LegalEntity[];
+  members?: readonly OrgMemberOption[];
   showArchived: boolean;
   onShowArchivedChange: (next: boolean) => void;
   loading?: boolean;
@@ -792,6 +849,10 @@ export function DepartmentsSection({
               ))}
             </NativeSelect>
           </div>
+          {members.length > 0 && (() => {
+            const currentDept = departments.find((d) => d.id === editing.id);
+            return currentDept ? <DepartmentManagerSelect department={currentDept} members={members} /> : null;
+          })()}
           {updateDept.error !== null && updateDept.error !== undefined && updateDept.variables?.id === editing.id && (
             <div className="sm:col-span-3">
               <ErrorText>{errorMessage(updateDept.error)}</ErrorText>
@@ -862,6 +923,11 @@ export function DepartmentsSection({
                   {d.code && (
                     <Badge className="ml-2" variant="outline">
                       {d.code}
+                    </Badge>
+                  )}
+                  {d.managerName && (
+                    <Badge className="ml-2" variant="secondary" data-testid="hr-department-manager-badge">
+                      {d.managerName}
                     </Badge>
                   )}
                   {d.archivedAt !== null && (
@@ -1705,6 +1771,7 @@ export function Detail({
   onClose,
   departments,
   entities,
+  members = [],
   orgName,
   orgTaxCode,
   orgAddress,
@@ -1714,6 +1781,7 @@ export function Detail({
   onClose: () => void;
   departments?: readonly HrDepartmentView[];
   entities?: readonly LegalEntity[];
+  members?: readonly OrgMemberOption[];
   orgName?: string | null;
   orgTaxCode?: string | null;
   orgAddress?: string | null;
@@ -1792,6 +1860,8 @@ export function Detail({
   );
   const year = Number(vietnamToday().slice(0, 4));
   const authorize = useMutation(run((authorized: boolean) => client.hr.payroll.employees.finalization({ employeeId, year, authorized })));
+  const linkMember = useMutation(run((userId: string | null) => client.hr.payroll.employees.linkMember({ employeeId, userId })));
+  const linkableMembers = members.filter((m) => m.role !== 'viewer');
   const erase = useMutation(run(() => client.hr.payroll.employees.erase({ employeeId }), () => setConfirmErase(false)));
   if (q.isPending) return <TableSkeleton columns={3} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
@@ -1824,6 +1894,39 @@ export function Detail({
           <div>
             <dt className="text-subtle-foreground">{t('jobTitle')}</dt>
             <dd data-testid="hr-employee-job-title">{e.jobTitle ?? none}</dd>
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('linkedMember')}</dt>
+            <dd data-testid="hr-employee-linked-member">
+              {active && linkableMembers.length > 0 ? (
+                <div className="mt-1 space-y-1">
+                  <NativeSelect
+                    className={PHONE_SELECT_TARGET}
+                    aria-label={t('linkedMember')}
+                    value={e.linkedUserId ?? ''}
+                    disabled={linkMember.isPending}
+                    onChange={(ev) => linkMember.mutate(ev.target.value || null)}
+                    data-testid="hr-employee-link-member"
+                  >
+                    <NativeSelectOption value="">{t('noLinkedMember')}</NativeSelectOption>
+                    {e.linkedUserId && !linkableMembers.some((m) => m.userId === e.linkedUserId) && (
+                      <NativeSelectOption value={e.linkedUserId} disabled>
+                        {e.linkedMemberName ?? e.linkedUserId}
+                      </NativeSelectOption>
+                    )}
+                    {linkableMembers.map((m) => (
+                      <NativeSelectOption key={m.userId} value={m.userId}>
+                        {memberOptionLabel(m)}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <p className="text-xs text-subtle-foreground">{t('linkedMemberHint')}</p>
+                  {linkMember.error && <ErrorText>{errorMessage(linkMember.error)}</ErrorText>}
+                </div>
+              ) : (
+                e.linkedMemberName ?? none
+              )}
+            </dd>
           </div>
           <div>
             <dt className="text-subtle-foreground">{t('address')}</dt>
@@ -2130,11 +2233,161 @@ export function Detail({
   );
 }
 
+function LeaveApprovalQueue() {
+  const t = useTranslations('hrEmployees');
+  const tm = useTranslations('hrMy');
+  const f = useFormat();
+  const [statusFilter, setStatusFilter] = useState<HrLeaveRequestStatus | ''>('');
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const q = useQuery({
+    ...orpc.hr.leaveRequests.list.queryOptions({
+      input: {
+        limit: 100,
+        ...(statusFilter ? { status: statusFilter } : {}),
+      },
+    }),
+    ...ONCE,
+  });
+
+  const approveL1 = useMutation({
+    mutationFn: ({ requestId, note }: { requestId: string; note?: string }) =>
+      client.hr.leaveRequests.approveL1({ requestId, ...(note ? { note } : {}) }),
+    onSuccess: refresh,
+  });
+  const approveFinal = useMutation({
+    mutationFn: ({ requestId, note }: { requestId: string; note?: string }) =>
+      client.hr.leaveRequests.approveFinal({ requestId, ...(note ? { note } : {}) }),
+    onSuccess: refresh,
+  });
+  const reject = useMutation({
+    mutationFn: ({ requestId, note }: { requestId: string; note?: string }) =>
+      client.hr.leaveRequests.reject({ requestId, ...(note ? { note } : {}) }),
+    onSuccess: refresh,
+  });
+
+  const rows: readonly HrLeaveRequestView[] = q.data ?? [];
+
+  return (
+    <Card className="mt-6 block space-y-3 p-4" data-testid="hr-leave-queue">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium text-foreground">{t('leaveQueue.title')}</h2>
+          <p className="text-xs text-subtle-foreground">{t('leaveQueue.subtitle')}</p>
+        </div>
+        <NativeSelect
+          className={PHONE_SELECT_TARGET}
+          aria-label={t('leaveQueue.filterLabel')}
+          value={statusFilter}
+          onChange={(ev) => setStatusFilter((ev.target.value || '') as HrLeaveRequestStatus | '')}
+          data-testid="hr-leave-queue-filter"
+        >
+          <NativeSelectOption value="">{t('leaveQueue.filterAll')}</NativeSelectOption>
+          {HR_LEAVE_REQUEST_STATUSES.map((s) => (
+            <NativeSelectOption key={s} value={s}>
+              {tm(`leave.statuses.${s}`)}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      {approveL1.error && <ErrorText>{errorMessage(approveL1.error)}</ErrorText>}
+      {approveFinal.error && <ErrorText>{errorMessage(approveFinal.error)}</ErrorText>}
+      {reject.error && <ErrorText>{errorMessage(reject.error)}</ErrorText>}
+      {q.isPending ? (
+        <TableSkeleton columns={5} rows={2} />
+      ) : q.error ? (
+        <ErrorText>{errorMessage(q.error)}</ErrorText>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-subtle-foreground" data-testid="hr-leave-queue-empty">
+          {t('leaveQueue.empty')}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => {
+            const note = notes[r.id]?.trim() || undefined;
+            const pending = r.status === 'pending_l1' || r.status === 'pending_final';
+            return (
+              <div key={r.id} className="space-y-2 rounded-md border p-3 text-sm" data-testid="hr-leave-queue-row">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-foreground">{r.employeeName}</span>
+                    {r.departmentName && <Badge variant="outline">{r.departmentName}</Badge>}
+                    <span>{tm('leave.dates', { start: f.date(r.startOn), end: f.date(r.endOn), days: r.days })}</span>
+                    <Badge variant="outline">{tm(`leave.kinds.${r.kind}`)}</Badge>
+                    <Badge variant="secondary">{tm(`leave.statuses.${r.status}`)}</Badge>
+                  </div>
+                </div>
+                {r.reason && <p className="text-xs text-subtle-foreground">{r.reason}</p>}
+                {(r.l1ApproverName || r.finalActedByName || r.decisionNote) && (
+                  <p className="text-xs text-muted-foreground">
+                    {[
+                      r.l1ApproverName ? t('leaveQueue.l1Trail', { name: r.l1ApproverName }) : null,
+                      r.finalActedByName ? t('leaveQueue.finalTrail', { name: r.finalActedByName }) : null,
+                      r.decisionNote ?? null,
+                    ]
+                      .filter(Boolean)
+                      .join(' - ')}
+                  </p>
+                )}
+                {pending && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      className={`min-w-48 flex-1 ${PHONE_INPUT_TARGET}`}
+                      aria-label={t('leaveQueue.notePlaceholder')}
+                      placeholder={t('leaveQueue.notePlaceholder')}
+                      value={notes[r.id] ?? ''}
+                      onChange={(ev) => setNotes((cur) => ({ ...cur, [r.id]: ev.target.value }))}
+                      data-testid="hr-leave-queue-note"
+                    />
+                    {r.status === 'pending_l1' && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        loading={approveL1.isPending && approveL1.variables?.requestId === r.id}
+                        onClick={() => approveL1.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
+                        data-testid="hr-leave-queue-approve-l1"
+                      >
+                        {t('leaveQueue.approveL1')}
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      loading={approveFinal.isPending && approveFinal.variables?.requestId === r.id}
+                      onClick={() => approveFinal.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
+                      data-testid="hr-leave-queue-approve-final"
+                    >
+                      {t('leaveQueue.approveFinal')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      loading={reject.isPending && reject.variables?.requestId === r.id}
+                      onClick={() => reject.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
+                      data-testid="hr-leave-queue-reject"
+                    >
+                      {t('leaveQueue.reject')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function HrEmployeesPage() {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const owner = org.data?.role === 'owner';
+  const manager = owner || org.data?.role === 'admin';
+  const members: readonly OrgMemberOption[] = org.data?.members ?? [];
   const [showEnded, setShowEnded] = useState(false);
   const [showArchivedDepartments, setShowArchivedDepartments] = useState(false);
   const [departmentFilter, setDepartmentFilter] = useState('');
@@ -2174,6 +2427,7 @@ export function HrEmployeesPage() {
       <DepartmentsSection
         departments={departments}
         entities={entities}
+        members={members}
         showArchived={showArchivedDepartments}
         onShowArchivedChange={(next) => {
           setShowArchivedDepartments(next);
@@ -2192,6 +2446,7 @@ export function HrEmployeesPage() {
           owner={owner}
           departments={activeDepartments}
           entities={entities}
+          members={members}
           orgName={org.data?.name ?? null}
           orgTaxCode={org.data?.taxCode ?? null}
           orgAddress={org.data?.address ?? null}
@@ -2259,6 +2514,7 @@ export function HrEmployeesPage() {
           })}
         </DataTable>
       )}
+      {manager && <LeaveApprovalQueue />}
     </>
   );
 }
