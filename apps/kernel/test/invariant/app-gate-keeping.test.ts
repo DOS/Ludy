@@ -6,7 +6,7 @@
 // The list is strict: the 11 commands that RECORD the outcome of an irreversible call a job already made (#3310; a switch-off between the call
 // and its record would lose the outcome and a later retry could do the call twice), the 2 eSign keeping commands (#3406 / #3323), and the 3
 // Social takedown commands (#3310, C3c) that are not records: a takedown stops the exposure of a post, so it still goes out while Social is off
-// (the record of an outcome is kept, and the notice of a failed one waits for the app, #3456).
+// (the record of an outcome is kept; the notice of a failed one runs through social.notification.dispatch_removal, which this list accepts present or absent until its strict PR, #3456).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.ts';
@@ -37,6 +37,10 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
 
   // The Social takedown commands that run while Social is off (C3c): a takedown stops exposure, so it is never refused for an app that is off.
   const TAKEDOWN = ['social.remove.begin', 'social.remove.schedule', 'social.remove.watch'];
+
+  // The notice of a failed planned takedown (#3456): while Social is off the worker runs this narrow dispatch (it handles only social.variant.remove_failed and starts no
+  // push), so the owners and admins are told by mail instead of waiting for the app. Step 1 of the two-step change accepts it present or absent; a strict tests-only PR follows.
+  const TAKEDOWN_NOTICE = ['social.notification.dispatch_removal'];
 
   it('are exactly these commands', () => {
     const current = [
@@ -74,7 +78,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.report_link.revoke',
       'social.review_link.revoke',
     ].sort();
-    expect(named(commands)).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN].sort());
+    expect(named(commands).filter((name) => !TAKEDOWN_NOTICE.includes(name))).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN].sort());
   });
 
   it('are exactly these queries', () => {
