@@ -430,8 +430,13 @@ test('Phase 7 non-admin (member + Kế toán trưởng) recruiting and wage isol
     expect(journalCheck.status).toBe(200);
 
     await memberPage.goto(`/o/${slug}/overview`);
-    await expect(memberPage.getByRole('navigation').getByText('Nhân sự', { exact: true })).toHaveCount(0);
-    await expect(memberPage.getByRole('navigation').getByText('Tuyển dụng', { exact: true })).toHaveCount(0);
+    const nav = memberPage.getByRole('navigation');
+    const hrNavLink = nav.getByRole('link', { name: 'Nhân sự', exact: true });
+    await expect(hrNavLink).toHaveAttribute('href', `/o/${slug}/hr/my`);
+    for (const adminPath of ['/hr/employees', '/hr/recruiting', '/hr/payroll', '/hr/declarations']) {
+      await expect(nav.locator(`a[href*="${adminPath}"]`)).toHaveCount(0);
+    }
+    await expect(nav.getByText('Tuyển dụng', { exact: true })).toHaveCount(0);
 
     const sensitiveStrings = [
       openingTitle,

@@ -111,6 +111,12 @@ export type HrDepartmentEdit = z.infer<typeof zHrDepartmentEdit>;
 export const zHrDepartmentRef = z.strictObject({ departmentId: zId });
 export type HrDepartmentRef = z.infer<typeof zHrDepartmentRef>;
 
+export const zHrDepartmentSetManager = z.strictObject({
+  departmentId: zId,
+  managerUserId: zId.nullable(),
+});
+export type HrDepartmentSetManager = z.infer<typeof zHrDepartmentSetManager>;
+
 export const zHrDepartmentWritten = z.strictObject({ departmentId: zId });
 export type HrDepartmentWritten = z.infer<typeof zHrDepartmentWritten>;
 
@@ -120,6 +126,8 @@ export const zHrDepartmentView = z.strictObject({
   name: z.string(),
   code: z.string().nullable(),
   payFunction: z.enum(HR_PAY_FUNCTIONS),
+  managerUserId: zId.nullable(),
+  managerName: z.string().nullable(),
   archivedAt: z.string().nullable(),
   activeEmployees: z.number().int().nonnegative(),
   activeBaseWageTotal: z.string(),
@@ -264,6 +272,12 @@ export type HrDependentEnd = z.infer<typeof zHrDependentEnd>;
 export const zHrEmployeeRef = z.strictObject({ employeeId: zId });
 export type HrEmployeeRef = z.infer<typeof zHrEmployeeRef>;
 
+export const zHrEmployeeLinkMember = z.strictObject({
+  employeeId: zId,
+  userId: zId.nullable(),
+});
+export type HrEmployeeLinkMember = z.infer<typeof zHrEmployeeLinkMember>;
+
 export const zHrEmployeeList = z.strictObject({
   status: z.enum(['active', 'ended', 'all']).default('active'),
   departmentId: zId.optional(),
@@ -313,6 +327,8 @@ export const zHrEmployeeSummary = z.object({
   departmentId: zId.nullable(),
   departmentName: z.string().nullable(),
   jobTitle: z.string().nullable(),
+  linkedUserId: zId.nullable(),
+  linkedMemberName: z.string().nullable(),
   status: z.enum(HR_STATUSES),
   endedOn: z.string().nullable(),
   isForeign: z.boolean(),

@@ -49,6 +49,8 @@ export function daysInMonthOf(day: string): number {
 // How the month stands: the days over, today (a partial day) not counted, what was spent in them, and what the same pace spends in the
 // whole month (linear: spent over the days over, times the days of the month).
 export interface MonthPace {
+  // The first day of the month, in the account's own calendar (the month the pace is about).
+  month: string;
   elapsedDays: number;
   daysInMonth: number;
   spent: Decimal;
@@ -62,7 +64,7 @@ export function monthPace(input: { today: string; spentBeforeToday: Decimal.Valu
   const daysInMonth = daysInMonthOf(input.today);
   const spent = new Decimal(input.spentBeforeToday);
   // Multiplied before it is divided, so a day's share is not rounded first.
-  return { elapsedDays, daysInMonth, spent, projected: spent.times(daysInMonth).div(elapsedDays) };
+  return { month: monthStartOf(input.today), elapsedDays, daysInMonth, spent, projected: spent.times(daysInMonth).div(elapsedDays) };
 }
 
 // A flag only when the projection is above the cap, never at it.
@@ -252,6 +254,7 @@ export function evaluateFlags(input: FlagInput, now: Date, thresholds: FlagThres
             projected: flagAmount(projected, cap.currency),
             elapsedDays: first.elapsedDays,
             daysInMonth: first.daysInMonth,
+            month: first.month,
           });
         }
       }

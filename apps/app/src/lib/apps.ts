@@ -186,6 +186,34 @@ export interface InstalledApp {
   groups: readonly { id: AppGroupId; items: readonly NavItem[] }[];
 }
 
+export interface ShellVisibility {
+  manager: boolean;
+  hrMember: boolean;
+  showAiConnections: boolean;
+}
+
+export function isShellItemHidden(item: NavItem, visibility: ShellVisibility): boolean {
+  return (
+    (item.module === 'hr' && (item.label === 'hrMy' ? !visibility.hrMember : !visibility.manager)) ||
+    (item.label === 'aiUsage' && !visibility.manager) ||
+    (item.label === 'aiConnections' && !visibility.showAiConnections)
+  );
+}
+
+// Role-filtered apps for the left switcher rail and drawer: recomputes each app's `home` from its first visible item
+// so non-manager members land on `/o/$slug/hr/my` instead of the owner/admin `/o/$slug/hr/employees` route.
+export function visibleApps(apps: readonly InstalledApp[], visibility: ShellVisibility): InstalledApp[] {
+  return apps
+    .filter((a) => visibility.hrMember || a.id !== 'hr')
+    .map((a) => {
+      const groups = a.groups
+        .map((g) => ({ ...g, items: g.items.filter((i) => !isShellItemHidden(i, visibility)) }))
+        .filter((g) => g.items.length > 0);
+      return { ...a, home: groups[0]?.items[0]?.to ?? a.home, groups };
+    })
+    .filter((a) => a.groups.length > 0);
+}
+
 // The apps this deployment runs, each with its installed items; an app left with no item is not listed.
 export function installedApps(modules: readonly string[]): InstalledApp[] {
   return APPS.flatMap((app) => {

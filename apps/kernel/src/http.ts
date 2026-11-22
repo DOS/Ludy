@@ -168,6 +168,7 @@ import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
+import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush, isMarketplaceHookKey } from './marketplace-push-hook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import type { AmisCallbackKey } from '@ludy/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
@@ -278,6 +279,7 @@ import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize }
 import { safeFilename, sniffType } from './sniff.ts';
 import { sniffConversationImage } from './conversation-media.ts';
 import { handleNoteAttachmentDownload, handleNoteAttachmentUpload } from './note-attachments.ts';
+import { handleEnexImportUpload, handleTodoistImportUpload } from './note-imports.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -335,6 +337,9 @@ export interface HttpDeps {
   // Requests per minute per client address, checked before the body is read, and notices per minute per hook, checked once the hook is found.
   bankFeedHookLimit?: RateLimiter;
   bankFeedHookBudget?: RateLimiter;
+  // The marketplaces whose push (webhook) the route takes (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315): POST /api/marketplace/<adapter>/webhook/<hookKey> exists for these alone, with finance installed, and only where
+  // the deployment runs the adapter (MARKETPLACE_PROVIDERS) and holds a credential broker (the worker's relay opens the connection's secret). Unset or empty: the route does not exist.
+  marketplacePush?: { adapters: readonly string[]; limit?: RateLimiter; budget?: RateLimiter };
   // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
   // The HMAC keys of the callback's signature: one ClientID (MISA AMIS's), or one per product the deployment holds (MISA AMIS and MISA ASP, #4103), tried all, never told apart.
   misaAmisCallback?: { clientId: string } | { keys: readonly AmisCallbackKey[] };
@@ -1089,6 +1094,47 @@ export function createHttpApp(deps: HttpDeps) {
           // Nothing of the error is logged: a database error's DETAIL can quote the notice's body, which is personal data. The line carries the error's name only.
           console.error('[bank-feed-hook] request failed:', error instanceof Error ? error.name : 'error');
           return c.json({ code: 'INTERNAL', message: 'Lỗi hệ thống' }, 500);
+        }
+      },
+    );
+  }
+
+  // A marketplace's signed push at the address of one connection (#4346, S2 of #4315; the verifiers and the worker relay are #4344): public like the routes above, and signed with each seller's own app secret that only the worker
+  // can open, so the address carries a hook key of the connection. In order: the adapter must be one the deployment runs (else a 404 and nothing is stored), the per-address limit (ahead of the body cap), the 16 KB cap, then
+  // acceptMarketplacePush: the key's SHA-256 is looked up (the org and the connection come from our own row, never from the body), and the RAW bytes are stored for the worker. Every answer is an empty 2xx or a bare 404, never a 429
+  // (Shopee disables a subscription below 30% success), and nothing of the key, the header, the body or a secret is logged or answered. Shopee's signed address is built from PUBLIC_URL, never from Host or X-Forwarded-*.
+  const marketplacePush = deps.marketplacePush;
+  if (marketplacePush && marketplacePush.adapters.length > 0 && runtime.installed('finance')) {
+    const pushAddressLimit = marketplacePush.limit ?? new RateLimiter({ perMinute: MARKETPLACE_PUSH_ADDRESS_PER_MINUTE });
+    const pushBudget = marketplacePush.budget ?? new RateLimiter({ perMinute: MARKETPLACE_PUSHES_PER_MINUTE });
+    app.post(
+      '/api/marketplace/:adapter/webhook/:hookKey',
+      async (c, next) => {
+        // An adapter this deployment does not run, or a key of the wrong shape, is a 404 before any body is read.
+        if (!marketplacePush.adapters.includes(c.req.param('adapter')) || !isMarketplaceHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        // Over the address limit the push is dropped with an empty success: the periodic poll makes up what it would have said. The proxy warning is the one the other public routes give: behind a proxy that is not counted in
+        // TRUSTED_PROXY_HOPS every platform shares one bucket, and this is where that shows.
+        if (!pushAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))).allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          return c.body(null, 200);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MARKETPLACE_PUSH_BYTES, onError: (c) => c.body(null, 200) }),
+      async (c) => {
+        try {
+          const outcome = await acceptMarketplacePush(
+            runtime,
+            c.req.param('adapter'),
+            { key: c.req.param('hookKey'), authorization: c.req.header('authorization'), body: new Uint8Array(await c.req.arrayBuffer()) },
+            pushBudget,
+            config.PUBLIC_URL,
+          );
+          return outcome.status === 404 ? c.json({ code: 'NOT_FOUND' }, 404) : c.body(null, 200);
+        } catch (error) {
+          // Nothing of the error is logged: a database error's DETAIL can quote the push's body. The line carries the error's name only.
+          console.error('[marketplace-push] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL' }, 500);
         }
       },
     );
@@ -3011,6 +3057,59 @@ export function createHttpApp(deps: HttpDeps) {
         orgId,
         attachmentId: c.req.param('id'),
       });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // 1-step Evernote (.enex) and Todoist (.csv) importers (#3564, docs/plan/notes-v2.md V2-9, ADR-0037):
+  // refuses extension tokens (403), enforces Origin check, notes app gate, bounded streaming, and BlobStore rollback.
+  app.post('/api/notes/import/enex', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleEnexImportUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.post('/api/notes/import/todoist', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleTodoistImportUpload({
+        runtime,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
     } catch (error) {
       return problem(c, error);
     }

@@ -3561,7 +3561,8 @@ async function stampFields(
     }
 
     switch (field.type) {
-      case 'signature': {
+      case 'signature':
+      case 'stamp': {
         const embedded = await embedSignaturePng(pdfDoc, pngCache, field.imagePngBase64);
         drawFittedImage(page, box, rot, vx, vy, vw, vh, embedded.image, embedded.info);
         break;

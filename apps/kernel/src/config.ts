@@ -61,7 +61,9 @@ const schema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
   // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
-  PUBLIC_URL: z.string().default('http://localhost:8080'),
+  // At most 340 characters: Shopee's push address (`<PUBLIC_URL>/api/marketplace/shopee/webhook/<22-character key>`, 54 characters after it) is stored with each Shopee push, and the definer refuses an address of over 400
+  // characters (#4346), so a longer value would turn every Shopee push into an error. Checked here, at boot, rather than on a request.
+  PUBLIC_URL: z.string().max(340, 'PUBLIC_URL is at most 340 characters (the push address built from it must stay under 400)').default('http://localhost:8080'),
   // Where people open the web app, when it is served from another origin than the API (a split deployment, #2261: the app
   // at app.<domain>, the API at api.<domain>). Every link that opens a screen of the app (invite, notification and report
   // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,

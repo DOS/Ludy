@@ -298,8 +298,9 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     // 16: the settlement of an approved supplier payment by its bank line was given its approval policy (#3700 S3c; two-step, finished by #3778).
     // 17: a resume, a raised budget and a longer schedule of a running ad were given their approval policy (#3835, ads W4; two-step, finished by the follow-up that pins 17 only).
     // 18: the proposal-only twins of the Engage commands were given their approval policy (#3863, Engage E4 part 1; two-step, finished by the follow-up that pins 18 only).
-    // Two-step for the bump to 19 (#4181: the proposal-only twin that cancels a queued raise of a running ad was given its approval policy): this accepts 18 (main) and 19; the PR that raises it pins 19, then a follow-up pins 19 only.
-    expect([18, 19]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
+    // 19: the proposal-only twin that cancels a queued change of a running ad that would start or raise spend was given its approval policy (#4181; two-step, finished by the follow-up that pins 19 only).
+    // Two-step for the bump to 20 (#4148: the proposal-only twin that creates a team task linked to a thread was given its approval policy): this accepts 19 (main) and 20; the PR that raises it pins 20, then a follow-up pins 20 only.
+    expect([19, 20]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');

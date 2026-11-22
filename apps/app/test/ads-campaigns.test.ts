@@ -84,10 +84,21 @@ describe('the form and its plan', () => {
     expect(isDirty({ ...form, name: `  ${form.name}  ` }, p)).toBe(false);
   });
 
-  it('leaves the link out of a Messenger plan and the Page out of the others, whatever the form still holds', () => {
+  it('leaves the link out of a Messenger plan and keeps the Page for every objective, whatever the form still holds (#3864)', () => {
     const form = { ...planToForm(plan()), pageConnectionId: ID };
-    expect(formToPlan(form)).toMatchObject({ linkUrl: 'https://example.com/khai-truong', pageConnectionId: null });
-    expect(formToPlan({ ...form, objective: 'messenger' })).toMatchObject({ linkUrl: null, pageConnectionId: ID });
+    for (const objective of ['traffic', 'engagement', 'messenger'] as const) {
+      expect(formToPlan({ ...form, objective }), objective).toMatchObject({ pageConnectionId: ID });
+    }
+    expect(formToPlan(form)).toMatchObject({ linkUrl: 'https://example.com/khai-truong' });
+    expect(formToPlan({ ...form, objective: 'engagement' })).toMatchObject({ linkUrl: 'https://example.com/khai-truong' });
+    expect(formToPlan({ ...form, objective: 'messenger' })).toMatchObject({ linkUrl: null });
+    // No Page chosen is no Page in the plan (null), which the server's validation then asks for; a switch of objective keeps the Page that was chosen.
+    expect(formToPlan({ ...form, pageConnectionId: '' })).toMatchObject({ pageConnectionId: null });
+    const traffic = plan({ pageConnectionId: ID });
+    expect(planToForm(traffic).pageConnectionId).toBe(ID);
+    expect(isDirty(planToForm(traffic), traffic)).toBe(false);
+    expect(isDirty({ ...planToForm(traffic), pageConnectionId: '' }, traffic)).toBe(true);
+    expect(formToPlan({ ...planToForm(traffic), objective: 'messenger' }).pageConnectionId).toBe(ID);
   });
 
   it('splits interests on commas and new lines and keeps a repeat for the server to warn about', () => {
