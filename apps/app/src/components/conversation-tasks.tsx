@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Create task" in the Inbox's contact panel (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): follow-up work is an ordinary task of the org's task
 // list that links back to the thread, and the thread lists its open tasks here. The conversation keeps its own status; a person types the title (a task is read
-// by every member, so the customer's words are not copied in) and picks the seat and the day. No AI coworker takes part, and nothing here needs one.
+// by every member, so the customer's words are not copied in) and picks the seat and the day. Nothing here needs an AI coworker; a task an AI coworker asked for and a person approved (#4148)
+// is listed too, marked as AI-written like on the task board.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
@@ -112,6 +113,11 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
                 <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="block truncate text-link hover:underline">
                   {task.title}
                 </Link>
+                {task.tainted && (
+                  <Badge variant="warning" title={tt('taintedHint')}>
+                    {tt('tainted')}
+                  </Badge>
+                )}
                 {task.due && <span className="text-xs text-muted-foreground">{t('due', { date: f.date(task.due) })}</span>}
               </span>
               <Badge variant="outline">{tt(`status.${task.status}`)}</Badge>

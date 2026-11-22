@@ -2242,7 +2242,8 @@ export const conversationFollowUp = defineCommand({
 });
 
 // The open tasks of one thread, for the contact panel: the tasks whose source_ref names it, any status but done and cancelled. Read by the thread's own rule
-// (a thread the caller may not read is "not found") and the tasks' own (every member reads tasks). Ids, status and dates; the title is the person's own text.
+// (a thread the caller may not read is "not found") and the tasks' own (every member reads tasks). Ids, status, dates and the `tainted` mark; the title is the person's own text, or an AI coworker's
+// when the task was made from its approved ask (`tainted`, #4148).
 export const conversationTasks = defineQuery({
   name: 'kernel.conversation.tasks',
   input: zConversationId,
@@ -2257,7 +2258,7 @@ export const conversationTasks = defineQuery({
     if (!conversation) throw notFound();
     const rows = await ctx.trx
       .selectFrom('crove_kernel.task')
-      .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at'])
+      .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`source_ref @> ${JSON.stringify({ type: 'kernel.conversation', id: conversation.id })}::jsonb`)
       .where('status', 'not in', ['done', 'cancelled'])
@@ -2266,7 +2267,7 @@ export const conversationTasks = defineQuery({
       .limit(CONVERSATION_TASKS_MAX)
       .execute();
     return {
-      tasks: rows.map((t) => ({ id: t.id, title: t.title, status: t.status, assigneePositionId: t.assignee_position_id, due: t.due?.toISOString() ?? null, createdAt: t.created_at.toISOString() })),
+      tasks: rows.map((t) => ({ id: t.id, title: t.title, status: t.status, assigneePositionId: t.assignee_position_id, due: t.due?.toISOString() ?? null, createdAt: t.created_at.toISOString(), tainted: t.tainted })),
     };
   },
 });

@@ -84,6 +84,15 @@ suite('the follow-up task proposal twin (#4148)', () => {
     const conversation = await thread('Một hội thoại nữa');
     const made = await h.runtime.execute<{ taskId: string }>('kernel.conversation.follow_up', { conversationId: conversation, title: 'Việc tôi tự tạo', assigneePositionId: null }, { actor: h.person(h.owner, true), orgId: h.orgId });
     expect(await tasksOf(conversation)).toEqual([expect.objectContaining({ id: made.taskId, tainted: false })]);
+    // The thread's task list says which tasks are an AI's (the panel marks them): a person's is not, an approved ask's is.
+    const listed = await h.runtime.query<{ tasks: Array<{ id: string; tainted: boolean }> }>('kernel.conversation.tasks', { conversationId: conversation }, { actor: h.person(h.owner), orgId: h.orgId });
+    expect(listed.tasks).toEqual([expect.objectContaining({ id: made.taskId, tainted: false })]);
+    const asked = await thread('Một hội thoại có việc do AI đề nghị');
+    const proposal = await h.propose((await h.grant()).actor, COMMAND, { conversationId: asked, title: 'Việc AI đề nghị', assigneePositionId: null });
+    await h.approve(proposal.proposalId);
+    const taskId = (await tasksOf(asked))[0]?.id;
+    const marked = await h.runtime.query<{ tasks: Array<{ id: string; tainted: boolean }> }>('kernel.conversation.tasks', { conversationId: asked }, { actor: h.person(h.owner), orgId: h.orgId });
+    expect(marked.tasks).toEqual([expect.objectContaining({ id: taskId, tainted: true })]);
   });
 
   it('a rejected proposal creates nothing, an approval the agent claims counts for nothing, and the twin runs only from an approved proposal', async () => {
