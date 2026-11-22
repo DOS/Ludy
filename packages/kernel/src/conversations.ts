@@ -2215,9 +2215,9 @@ export const conversationNoteAdd = defineCommand({
 });
 
 // "Create task" (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): follow-up work is an ordinary kernel task that links back to the thread, so the
-// conversation stays New, Pending or Resolved on its own and the task lives in the org's task list. A person only: the thread is read and locked under
+// conversation stays New, Pending or Resolved on its own and the task lives in the org's task list. A person's click, or the approval of an AI coworker's ask (kernel.conversation.follow_up_approved, #4148): the thread is read and locked under
 // row-level security first (a private message the caller may not read is "not found"), then kernel.task.create_from_conversation makes the task with a
-// source_ref only kernel code sets. The task holds the title the person typed and nothing of the thread; the audit row holds ids, never a title.
+// source_ref only kernel code sets. The task holds the title as typed or as approved (tainted in the second case) and nothing of the thread; the audit row holds ids, never a title.
 export const conversationFollowUp = defineCommand({
   name: 'kernel.conversation.follow_up',
   input: zConversationFollowUp,

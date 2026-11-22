@@ -171,6 +171,10 @@ describe('the follow-up task card (#4148)', () => {
     for (const word of ['Tạo công việc này cho nhóm', 'Tiêu đề công việc', 'Vị trí nhận công việc', 'Hạn', 'Gửi báo giá 20 hộp cho chị Lan', 'Lịch hẹn', '2030-01-15T16:59:00.000Z']) expect(vi, word).toContain(word);
     const en = render('en', 'pending', task, 'kernel.conversation_follow_up');
     for (const word of ['Create this task for the team', 'Task title', 'Seat that gets the task', 'Due', 'Gửi báo giá 20 hộp cho chị Lan']) expect(en, word).toContain(word);
+    // No seat named: the card says who gets it in words, never a bare null.
+    const root = { ...task, fields: task.fields.map((f) => (f.key === 'assigneePositionId' ? { ...f, value: 'null' } : f)) } satisfies EngageProposalView;
+    expect(render('en', 'pending', root, 'kernel.conversation_follow_up')).toContain('the owner at the root of the chart');
+    expect(render('vi', 'pending', root, 'kernel.conversation_follow_up')).toContain('chủ sở hữu ở gốc sơ đồ tổ chức');
     for (const html of [vi, en]) {
       expect(html).not.toContain('engageAbout');
       expect(html).not.toContain('engageKinds');

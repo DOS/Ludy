@@ -125,7 +125,7 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
               </dd>
             ) : (
               <dd className="break-words text-base text-foreground" data-testid={`engage-field-${f.key}`}>
-                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.value}
+                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.key === 'assigneePositionId' && f.value === 'null' ? t('engageField.rootSeat') : f.value}
               </dd>
             )}
           </div>
