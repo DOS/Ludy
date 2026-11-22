@@ -70,6 +70,9 @@ suite('Marketplace push hook (#4316)', () => {
   const member: Account = { subject: randomUUID(), email: 'member@marketplace-hook.test', session: randomUUID(), userId: '' };
   let orgId = '';
   let otherOrgId = '';
+  // The org header of a call is the org's slug.
+  let slug = '';
+  let otherSlug = '';
   let connectionId = '';
   let otherConnectionId = '';
   let hookId = '';
@@ -147,8 +150,10 @@ suite('Marketplace push hook (#4316)', () => {
     }
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty nhận push', idempotencyKey: randomUUID() }, null);
     orgId = String(created.body?.orgId);
+    slug = String(created.body?.slug);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherOrgId = String(other.body?.orgId);
+    otherSlug = String(other.body?.slug);
     await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
     // A marketplace connection of each org (the channel connection that holds its credential, then the connection itself: its entity is the org's default, by its trigger), and a hook of each.
     const connect = async (org: string, by: string, adapter: string) => {
@@ -177,8 +182,10 @@ suite('Marketplace push hook (#4316)', () => {
   // The owner's command and the status (S3b, #4348), through the real app: a connection of its own (TikTok Shop) so the hook of the other tests is not touched.
   describe('the owner command and the status', () => {
     let pushConnectionId = '';
-    const pushSet = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHookSet', await tokenFor(who), { id });
-    const pushStatus = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHook', await tokenFor(who), { id });
+    // The call names the caller's own org by its slug (the outsider's is the other one, so a connection of this org is not found for it, as an unknown id is).
+    const orgOf = (who: Account) => (who === outsider ? otherSlug : slug);
+    const pushSet = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHookSet', await tokenFor(who), { id }, orgOf(who));
+    const pushStatus = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHook', await tokenFor(who), { id }, orgOf(who));
     const keyOf = (address: string) => String(address.split('/').pop());
     const lookupTiktok = (hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', hash]);
 
