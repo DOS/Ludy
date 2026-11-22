@@ -14,14 +14,19 @@ import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
+import { StampPadModal } from '../components/sign/stamp-pad-modal.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import {
+  loadCeremonyWorkspaceProfiles,
   publicSignApi,
   PublicSignError,
+  saveCeremonyMemberSignature,
   type PublicFieldSubmission,
   type PublicSignField,
   type PublicSignFieldAttachment,
   type PublicSignViewState,
+  type SignMemberSignatureItem,
+  type SignOrgStampItem,
 } from '../lib/sign-api.ts';
 import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } from '../lib/sign-fields.ts';
 import {
@@ -33,6 +38,7 @@ import {
   scrubSignTokenHash,
   subscribeToHash,
 } from '../lib/sign-hash.ts';
+import { rawBase64ToPngDataUrl, stripPngDataUrlPrefix } from '../lib/sign-signature.ts';
 import { toast } from '../lib/toast.ts';
 
 export interface CeremonyFieldAnswer {
@@ -53,12 +59,14 @@ function isOtpRequiredError(error: unknown): error is PublicSignError {
 export function isApproverCeremonyMode(view: Pick<ReadySignView, 'signerRole' | 'fields'>): boolean {
   return (
     view.signerRole === 'approver' &&
-    view.fields.every((field) => field.fieldType !== 'signature' && field.fieldType !== 'initials')
+    view.fields.every(
+      (field) => field.fieldType !== 'signature' && field.fieldType !== 'initials' && field.fieldType !== 'stamp',
+    )
   );
 }
 
 export function isFieldFilled(field: PublicSignField, answer: CeremonyFieldAnswer | undefined): boolean {
-  if (field.fieldType === 'signature' || field.fieldType === 'initials') {
+  if (field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp') {
     return Boolean(answer?.signaturePngDataUrl);
   }
   if (field.fieldType === 'checkbox') {
@@ -228,6 +236,9 @@ export function SignCeremonyPage() {
   const [declineReason, setDeclineReason] = useState('');
   const [declineError, setDeclineError] = useState<string | null>(null);
   const [declining, setDeclining] = useState(false);
+  const [workspaceOrgSlug, setWorkspaceOrgSlug] = useState<string | null>(null);
+  const [savedSignatures, setSavedSignatures] = useState<SignMemberSignatureItem[]>([]);
+  const [savedStamps, setSavedStamps] = useState<SignOrgStampItem[]>([]);
 
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateName, setDelegateName] = useState('');
@@ -267,6 +278,9 @@ export function SignCeremonyPage() {
     setDelegateReason('');
     setDelegateError(null);
     setPageNumber(1);
+    setWorkspaceOrgSlug(null);
+    setSavedSignatures([]);
+    setSavedStamps([]);
   }, []);
 
   useEffect(() => {
@@ -382,6 +396,34 @@ export function SignCeremonyPage() {
     if (!token) return;
     void loadView(token);
   }, [token, tokenEpoch, loadView]);
+
+  const readyOrgName = viewState?.state === 'ready' ? viewState.orgName : null;
+  const isInPersonReady = Boolean(inPersonMode || (viewState?.state === 'ready' && viewState.inPerson));
+  useEffect(() => {
+    // Never load or offer the host's personal saved signatures or workspace stamps during an in-person ceremony (#3820).
+    if (!readyOrgName || isInPersonReady) {
+      setWorkspaceOrgSlug(null);
+      setSavedSignatures([]);
+      setSavedStamps([]);
+      return;
+    }
+    let cancelled = false;
+    void loadCeremonyWorkspaceProfiles(readyOrgName).then((profile) => {
+      if (cancelled) return;
+      if (!profile) {
+        setWorkspaceOrgSlug(null);
+        setSavedSignatures([]);
+        setSavedStamps([]);
+        return;
+      }
+      setWorkspaceOrgSlug(profile.orgSlug);
+      setSavedSignatures(profile.signatures);
+      setSavedStamps(profile.stamps);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [readyOrgName, isInPersonReady, tokenEpoch]);
 
   const handlePdfRenderStatus = useCallback((status: { rendered: boolean; error: string | null }) => {
     setPdfRendered(status.rendered);
@@ -507,7 +549,7 @@ export function SignCeremonyPage() {
     setPageNumber(nextField.pageNumber);
     const el = fieldCardRefs.current[nextField.id];
     el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-    if (nextField.fieldType === 'signature' || nextField.fieldType === 'initials') {
+    if (nextField.fieldType === 'signature' || nextField.fieldType === 'initials' || nextField.fieldType === 'stamp') {
       setPadFieldId(nextField.id);
     } else {
       const inputEl = document.getElementById(
@@ -875,6 +917,18 @@ export function SignCeremonyPage() {
             onDelegateEmailChange={setDelegateEmail}
             onDelegateReasonChange={setDelegateReason}
             onDelegateSubmit={(event) => void handleDelegate(event)}
+            savedSignatures={savedSignatures}
+            savedStamps={savedStamps}
+            canSaveSignatureProfile={Boolean(workspaceOrgSlug)}
+            onSaveSignatureProfile={async (input) => {
+              if (!workspaceOrgSlug) return;
+              const ok = await saveCeremonyMemberSignature(workspaceOrgSlug, input);
+              if (!ok) return;
+              const reloaded = await loadCeremonyWorkspaceProfiles(viewState.orgName);
+              if (reloaded) {
+                setSavedSignatures(reloaded.signatures);
+              }
+            }}
             setFieldCardRef={(fieldId, el) => {
               fieldCardRefs.current[fieldId] = el;
             }}
@@ -929,6 +983,15 @@ export interface SignCeremonyReadyViewProps {
   onDelegateEmailChange?: (email: string) => void;
   onDelegateReasonChange?: (reason: string) => void;
   onDelegateSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  savedSignatures?: readonly SignMemberSignatureItem[];
+  savedStamps?: readonly SignOrgStampItem[];
+  canSaveSignatureProfile?: boolean;
+  onSaveSignatureProfile?: (input: {
+    kind: 'signature' | 'initials';
+    signatureKind: 'draw' | 'type';
+    signatureTypedText?: string | null;
+    signaturePngBase64: string;
+  }) => Promise<void> | void;
   setFieldCardRef?: (fieldId: string, el: HTMLDivElement | null) => void;
 }
 
@@ -1032,7 +1095,8 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
               .map((field) => {
                 const answer = answers[field.id];
                 const filled = isFieldFilled(field, answer);
-                const isSig = field.fieldType === 'signature' || field.fieldType === 'initials';
+                const isSig =
+                  field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp';
                 return (
                   <button
                     key={field.id}
@@ -1079,6 +1143,8 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                                 : field.label || tField('types.checkbox')
                               : field.fieldType === 'initials'
                                 ? t('tapToInitial')
+                                : field.fieldType === 'stamp'
+                                  ? t('tapToStamp')
                                 : isSig
                                   ? t('tapToSign')
                                   : field.label || tField(`types.${field.fieldType}`))}
@@ -1107,8 +1173,13 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
               const answer = answers[field.id];
               const complete = isFieldComplete(field, answer);
               const filled = isFieldFilled(field, answer);
-              const isSig = field.fieldType === 'signature' || field.fieldType === 'initials';
+              const isSig =
+                field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp';
               const fieldLabel = field.label || tField(`types.${field.fieldType}`);
+              const quickSavedSig =
+                field.fieldType === 'signature' || field.fieldType === 'initials'
+                  ? (props.savedSignatures ?? []).find((item) => item.kind === field.fieldType) ?? null
+                  : null;
               return (
                 <div
                   key={field.id}
@@ -1123,9 +1194,11 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                       <span className="text-sm font-medium">{fieldLabel}</span>
                       <Badge variant={filled ? 'success' : 'outline'}>
                         {filled
-                          ? isSig
-                            ? t('signedMark')
-                            : t('filledMark')
+                          ? field.fieldType === 'stamp'
+                            ? t('stampedMark')
+                            : isSig
+                              ? t('signedMark')
+                              : t('filledMark')
                           : field.required
                             ? tField('requiredToggle')
                             : tField('optionalBadge')}
@@ -1137,19 +1210,54 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                   </div>
 
                   {isSig ? (
-                    <Button
-                      type="button"
-                      variant={complete ? 'outline' : 'default'}
-                      className="min-h-11"
-                      onClick={() => props.onOpenPad(field.id)}
-                      data-testid={`ceremony-sign-btn-${field.id}`}
-                    >
-                      {answer?.signaturePngDataUrl
-                        ? t('signedMark')
-                        : field.fieldType === 'initials'
-                          ? t('tapToInitial')
-                          : t('tapToSign')}
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {quickSavedSig && !answer?.signaturePngDataUrl ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="min-h-11"
+                          onClick={() => {
+                            const pngDataUrl = rawBase64ToPngDataUrl(quickSavedSig.signaturePngBase64);
+                            if (!pngDataUrl) return;
+                            const targets =
+                              field.fieldType === 'initials'
+                                ? viewState.fields.filter((f) => f.fieldType === 'initials')
+                                : [field];
+                            for (const target of targets) {
+                              props.onUpdateAnswer(target.id, (prev) => ({
+                                ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                                ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                                signaturePngDataUrl: pngDataUrl,
+                                signatureKind: quickSavedSig.signatureKind === 'type' ? 'typed' : 'drawn',
+                                ...(quickSavedSig.signatureTypedText
+                                  ? { signatureTypedText: quickSavedSig.signatureTypedText }
+                                  : {}),
+                              }));
+                            }
+                          }}
+                          data-testid={`ceremony-quick-saved-btn-${field.id}`}
+                        >
+                          {t('useSavedSignature')}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant={complete ? 'outline' : 'default'}
+                        className="min-h-11"
+                        onClick={() => props.onOpenPad(field.id)}
+                        data-testid={`ceremony-sign-btn-${field.id}`}
+                      >
+                        {answer?.signaturePngDataUrl
+                          ? field.fieldType === 'stamp'
+                            ? t('stampedMark')
+                            : t('signedMark')
+                          : field.fieldType === 'initials'
+                            ? t('tapToInitial')
+                            : field.fieldType === 'stamp'
+                              ? t('tapToStamp')
+                              : t('tapToSign')}
+                      </Button>
+                    </div>
                   ) : field.fieldType === 'checkbox' ? (
                     <label
                       htmlFor={`ceremony-field-checkbox-${field.id}`}
@@ -1383,22 +1491,69 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
       </Card>
 
       {!isApproverCeremony ? (
-        <SignaturePadModal
-          open={props.padFieldId !== null}
-          defaultName={viewState.signerName}
-          onOpenChange={(next) => !next && props.onOpenPad(null)}
-          onConfirm={({ pngDataUrl, kind, typedText }) => {
-            if (!props.padFieldId) return;
-            props.onUpdateAnswer(props.padFieldId, (prev) => ({
-              ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
-              ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
-              ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
-              signaturePngDataUrl: pngDataUrl,
-              signatureKind: kind,
-              ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
-            }));
-          }}
-        />
+        (() => {
+          const activePadField = props.padFieldId
+            ? viewState.fields.find((f) => f.id === props.padFieldId) ?? null
+            : null;
+          if (activePadField?.fieldType === 'stamp') {
+            return (
+              <StampPadModal
+                open={props.padFieldId !== null}
+                defaultOrgName={viewState.orgName}
+                savedStamps={props.savedStamps ?? []}
+                onOpenChange={(next) => !next && props.onOpenPad(null)}
+                onConfirm={({ pngDataUrl }) => {
+                  if (!props.padFieldId) return;
+                  props.onUpdateAnswer(props.padFieldId, (prev) => ({
+                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
+                    signaturePngDataUrl: pngDataUrl,
+                  }));
+                }}
+              />
+            );
+          }
+          const padMode: 'signature' | 'initials' = activePadField?.fieldType === 'initials' ? 'initials' : 'signature';
+          const savedForMode = (props.savedSignatures ?? []).find((item) => item.kind === padMode) ?? null;
+          const initialsCount = viewState.fields.filter((f) => f.fieldType === 'initials').length;
+          return (
+            <SignaturePadModal
+              open={props.padFieldId !== null}
+              mode={padMode}
+              defaultName={viewState.signerName}
+              savedSignature={savedForMode}
+              canSaveProfile={Boolean(props.canSaveSignatureProfile)}
+              showApplyAllInitials={padMode === 'initials' && initialsCount > 1}
+              onOpenChange={(next) => !next && props.onOpenPad(null)}
+              onConfirm={({ pngDataUrl, kind, typedText, saveForNextTime, applyToAllInitials }) => {
+                if (!props.padFieldId) return;
+                const targets =
+                  padMode === 'initials' && applyToAllInitials
+                    ? viewState.fields.filter((f) => f.fieldType === 'initials').map((f) => f.id)
+                    : [props.padFieldId];
+                for (const targetFieldId of targets) {
+                  props.onUpdateAnswer(targetFieldId, (prev) => ({
+                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
+                    signaturePngDataUrl: pngDataUrl,
+                    signatureKind: kind,
+                    ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
+                  }));
+                }
+                if (saveForNextTime && props.onSaveSignatureProfile) {
+                  void props.onSaveSignatureProfile({
+                    kind: padMode,
+                    signatureKind: kind === 'typed' ? 'type' : 'draw',
+                    ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
+                    signaturePngBase64: stripPngDataUrlPrefix(pngDataUrl),
+                  });
+                }
+              }}
+            />
+          );
+        })()
       ) : null}
 
       <Dialog open={props.declineOpen} onOpenChange={props.onDeclineOpenChange}>

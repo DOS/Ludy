@@ -150,3 +150,145 @@ export function typedTextToPngDataUrl(
   const url = canvas.toDataURL('image/png');
   return isValidSignaturePngDataUrl(url) ? url : null;
 }
+
+export function rawBase64ToPngDataUrl(rawOrDataUrl: string): string {
+  const trimmed = rawOrDataUrl.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:image/png;base64,')) return trimmed;
+  return `data:image/png;base64,${trimmed}`;
+}
+
+export function stripPngDataUrlPrefix(rawOrDataUrl: string): string {
+  const trimmed = rawOrDataUrl.trim();
+  return trimmed.startsWith('data:image/png;base64,')
+    ? trimmed.slice('data:image/png;base64,'.length)
+    : trimmed;
+}
+
+export const STAMP_CANVAS_WIDTH = 360;
+export const STAMP_CANVAS_HEIGHT = 220;
+
+// Generates a crisp transparent-background red corporate or title stamp PNG on canvas (#3817, <= 256 KB, zero SVG/XSS).
+export function stampTextToPngDataUrl(
+  primaryText: string,
+  options: {
+    subtitle?: string;
+    stampKind?: 'company' | 'title' | 'custom';
+    width?: number;
+    height?: number;
+    fontFamily?: string;
+  } = {},
+): string | null {
+  const title = primaryText.trim();
+  if (!title || typeof document === 'undefined') return null;
+  const subtitle = (options.subtitle ?? '').trim();
+  const stampKind = options.stampKind ?? 'company';
+  const width = options.width ?? STAMP_CANVAS_WIDTH;
+  const height = options.height ?? STAMP_CANVAS_HEIGHT;
+  const fontFamily = options.fontFamily ?? '"Be Vietnam Pro", system-ui, sans-serif';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.clearRect(0, 0, width, height);
+  // Corporate and title stamps render in vermilion/crimson seal ink onto white PDF sheets.
+  ctx.strokeStyle = 'crimson';
+  ctx.fillStyle = 'crimson';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (stampKind === 'company') {
+    const cx = width / 2;
+    const cy = height / 2;
+    const outerRx = Math.min(width / 2 - 12, 152);
+    const outerRy = Math.min(height / 2 - 12, 92);
+
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, outerRx - 7, outerRy - 7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const maxInnerW = (outerRx - 20) * 2;
+    let titleSize = 22;
+    while (titleSize > 12) {
+      ctx.font = `700 ${titleSize}px ${fontFamily}`;
+      if (ctx.measureText(title.toUpperCase()).width <= maxInnerW) break;
+      titleSize -= 1;
+    }
+    ctx.fillText(title.toUpperCase(), cx, subtitle ? cy - 12 : cy, maxInnerW);
+
+    if (subtitle) {
+      ctx.font = `600 13px ${fontFamily}`;
+      ctx.fillText(subtitle.toUpperCase(), cx, cy + 16, maxInnerW);
+    }
+  } else {
+    const padX = 16;
+    const padY = 34;
+    const boxW = width - padX * 2;
+    const boxH = height - padY * 2;
+
+    ctx.lineWidth = 3.5;
+    ctx.strokeRect(padX, padY, boxW, boxH);
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(padX + 6, padY + 6, boxW - 12, boxH - 12);
+
+    const maxInnerW = boxW - 28;
+    let titleSize = 24;
+    while (titleSize > 13) {
+      ctx.font = `700 ${titleSize}px ${fontFamily}`;
+      if (ctx.measureText(title.toUpperCase()).width <= maxInnerW) break;
+      titleSize -= 1;
+    }
+    ctx.fillText(title.toUpperCase(), width / 2, subtitle ? height / 2 - 12 : height / 2, maxInnerW);
+
+    if (subtitle) {
+      ctx.font = `600 14px ${fontFamily}`;
+      ctx.fillText(subtitle, width / 2, height / 2 + 18, maxInnerW);
+    }
+  }
+
+  const url = canvas.toDataURL('image/png');
+  return isValidSignaturePngDataUrl(url) ? url : null;
+}
+
+export async function readPngFileAsDataUrl(file: File): Promise<string> {
+  if (file.type !== 'image/png') {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  if (file.size <= 0 || file.size > SIGNATURE_MAX_BYTES) {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (
+    bytes.byteLength < 45 ||
+    bytes.byteLength > SIGNATURE_MAX_BYTES ||
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47 ||
+    bytes[4] !== 0x0d ||
+    bytes[5] !== 0x0a ||
+    bytes[6] !== 0x1a ||
+    bytes[7] !== 0x0a
+  ) {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+  if (!isValidSignaturePngDataUrl(dataUrl)) {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  return dataUrl;
+}
