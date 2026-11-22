@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, type ExpenseVarianceNoteFacts, type ExpenseVarianceNotesResult } from '@ludy/agent';
 import type { ExpenseVarianceContributor, ExpenseVarianceLine, FinanceExpenseVariance } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { EXPENSE_VARIANCE_KEEP_MS, expenseVarianceAi, expenseVarianceFacts, explainExpenseVariance, type ExpenseVarianceAi } from '../src/finance-expense-variance-ai.ts';
+import { EXPENSE_VARIANCE_KEEP_MS, expenseVarianceAi, expenseVarianceFacts, expenseVarianceGroup, explainExpenseVariance, type ExpenseVarianceAi } from '../src/finance-expense-variance-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -48,7 +48,7 @@ const VARIANCE: FinanceExpenseVariance = {
   averageMonths: ['2026-04', '2026-05', '2026-06'],
   missing: { previous: false, average: false },
   empty: false,
-  lines: [line('6421'), line('632', { direction: 'down', against: 'average', contributors: [contributor({ kind: 'voucher', partyId: null, name: null, partyKind: null, entryId: 'e-1', entryDate: '2026-06-28', description: 'Giá vốn', vouchers: 0, sourceKind: 'manual' })] })],
+  lines: [line('642'), line('632', { direction: 'down', against: 'average', contributors: [contributor({ kind: 'voucher', partyId: null, name: null, partyKind: null, entryId: 'e-1', entryDate: '2026-06-28', description: 'Giá vốn', vouchers: 0, sourceKind: 'manual' })] })],
   moreFlagged: 0,
 };
 
@@ -74,12 +74,12 @@ afterEach(() => vi.restoreAllMocks());
 describe('expenseVarianceFacts', () => {
   it('carries the kind, direction, basis and contributors of each line and no figure', () => {
     const { facts, codes } = expenseVarianceFacts(VARIANCE, 'vi');
-    expect(codes).toEqual(['6421', '632']);
+    expect(codes).toEqual(['642', '632']);
     expect(facts).toEqual({
       language: 'vi',
       lines: [
         { group: '642', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', name: 'Công ty Sao Mai', partyKind: 'organization', sourceKind: 'invoice', vouchers: 'single' }] },
-        { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', name: null, partyKind: null, sourceKind: 'manual', vouchers: 'single' }] },
+        { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', name: null, partyKind: null, sourceKind: 'manual', vouchers: 'none' }] },
       ],
     });
     // No amount, percent, date, voucher count or entry id travels in the facts.
@@ -97,13 +97,32 @@ describe('expenseVarianceFacts', () => {
   });
 });
 
+describe('expenseVarianceGroup', () => {
+  it('labels a TT133 line by what it is: 6421 is selling expenses, 6422 administration, never both as 642', () => {
+    expect(expenseVarianceGroup('6421', 'tt133')).toBe('641');
+    expect(expenseVarianceGroup('6422', 'tt133')).toBe('642');
+    expect(expenseVarianceGroup('642', 'tt133')).toBe('642');
+    expect(expenseVarianceGroup('632', 'tt133')).toBe('632');
+    expect(expenseVarianceGroup('641', 'tt99')).toBe('641');
+    expect(expenseVarianceGroup('642', 'tt99')).toBe('642');
+  });
+
+  it('tells a supplier or voucher that is only in the months it is compared with as none, not as a single voucher', () => {
+    const lines = [line('632', { direction: 'down', contributors: [contributor({ vouchers: 0 }), contributor({ vouchers: 1 }), contributor({ vouchers: 4 })] })];
+    const { facts } = expenseVarianceFacts({ ...VARIANCE, lines }, 'en');
+    expect(facts.lines[0]?.contributors.map((c) => c.vouchers)).toEqual(['none', 'single', 'several']);
+    const tt133 = expenseVarianceFacts({ ...VARIANCE, lines: [line('6421'), line('6422')] }, 'en');
+    expect(tt133.facts.lines.map((l) => l.group)).toEqual(['641', '642']);
+  });
+});
+
 describe('explainExpenseVariance', () => {
   it('asks the model once and puts each note back on its line by its code', async () => {
     const { ai, asked } = setup(async () => SAID);
     expect(await explainExpenseVariance(ai, ORG, USER, VARIANCE, 'vi')).toEqual({
       ai: 'used',
       notes: [
-        { code: '6421', text: 'Một hóa đơn có thể giải thích.' },
+        { code: '642', text: 'Một hóa đơn có thể giải thích.' },
         { code: '632', text: 'Có thể mua ít hơn.' },
       ],
     });
@@ -113,7 +132,7 @@ describe('explainExpenseVariance', () => {
 
   it('drops a note for a row that has no line', async () => {
     const { ai } = setup(async () => ({ kind: 'notes', notes: [{ row: 1, text: 'A' }, { row: 7, text: 'B' }] }));
-    expect(await explainExpenseVariance(ai, ORG, USER, VARIANCE, 'en')).toEqual({ ai: 'used', notes: [{ code: '6421', text: 'A' }] });
+    expect(await explainExpenseVariance(ai, ORG, USER, VARIANCE, 'en')).toEqual({ ai: 'used', notes: [{ code: '642', text: 'A' }] });
   });
 
   it('says off, with no notes and no call, when the deployment has no model', async () => {

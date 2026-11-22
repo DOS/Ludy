@@ -22,8 +22,8 @@ transaction, so only the entities the member may see are counted, and a month st
 
 **Lines, by the entity's books on the last day of the month.** Expense accounts are class 6 and the class 8 expense
 accounts 811 and 821; revenue, income and the year-end closing entries are left out. Under TT133 the line is 4 digits
-for 64xx (6411 to 6418, 6421 to 6428) and 3 digits for every other account; under TT99 it is 3 digits everywhere, so
-641 and 642 are one line each. A comparison whose months are not all in the chart of the month (a fiscal year that
+for 64xx (its chart has 6421, selling expenses, and 6422, administration) and 3 digits for every other account; under
+TT99 it is 3 digits everywhere, so 641 and 642 are one line each, whatever their level-2 accounts. A comparison whose months are not all in the chart of the month (a fiscal year that
 changed regime) is not made and the card says so; no translation between charts is attempted.
 
 **Thresholds are defaults, not settings.** A line is flagged when its change against the month before, or against the
@@ -34,9 +34,9 @@ and is not built.
 **What the coworker does.** One sentence per flagged line (at most 8) with a possible reason, marked as a possibility.
 It is told, per line, a fixed kind of expense, the direction, which comparison flagged it, the supplier's name (only an
 organization's, with no digit, in plain letters, clipped), what kind of voucher it is and whether there is a single
-voucher or several. It is told no amount, percent, date, count or account number, and the note may state none: any
+voucher, several or none this month. It is told no amount, percent, date, count or account number, and the note may state none: any
 digit, number in words, date, name it was not given, certainty word, claim that something was done, promise, advice or
-direction that contradicts the line refuses the note. The table shows every figure. With AI off, the budget spent or
+direction that contradicts the line refuses the note, and a note must open with a hedge word ("Possibly", "Có thể"). The table shows every figure. With AI off, the budget spent or
 every note refused, the table is the same, without sentences and without a notice.
 
 **Where.** `finance.expense_variance` and `financeExpenseVariance.explain` (contract in

@@ -162,17 +162,18 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
       await a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, branch]);
     });
 
-    // The main entity (TT133, no books row). 6421: 10,000,000 a month from supplier A; in July supplier B adds 20,000,000. 6411 is steady at 3,000,000. 6417 has 9,000,000 in July only (no supplier).
+    // The main entity (TT133, no books row: its chart has 6421 selling, 6422 administration and 635, 632, 811, 821, and no 641 or 6411 to 6418). 6422: 10,000,000 a month from supplier A; in July supplier B adds
+    // 20,000,000. 6421 is steady at 3,000,000. 635 has 9,000,000 in July only (no supplier).
     // 632 is 40,000,000 a month and 10,000,000 in July, and a closing entry in July moves 10,000,000 of it to 911, which must not count. Revenue is posted in July and must not count either.
     for (const [month, day] of [['04', '10'], ['05', '10'], ['06', '10']] as const) {
-      await spend({ entity: main, date: `2026-${month}-${day}`, account: '6421', amount: '10000000', party: supplierA });
-      await spend({ entity: main, date: `2026-${month}-${day}`, account: '6411', amount: '3000000' });
+      await spend({ entity: main, date: `2026-${month}-${day}`, account: '6422', amount: '10000000', party: supplierA });
+      await spend({ entity: main, date: `2026-${month}-${day}`, account: '6421', amount: '3000000' });
       await spend({ entity: main, date: `2026-${month}-2${month === '06' ? '8' : '5'}`, account: '632', amount: '40000000', description: `Giá vốn ${month}` });
     }
-    await spend({ entity: main, date: '2026-07-10', account: '6421', amount: '10000000', party: supplierA });
-    await spend({ entity: main, date: '2026-07-12', account: '6421', amount: '20000000', party: supplierB });
-    await spend({ entity: main, date: '2026-07-10', account: '6411', amount: '3000000' });
-    await spend({ entity: main, date: '2026-07-15', account: '6417', amount: '9000000', description: 'Chi phí mới' });
+    await spend({ entity: main, date: '2026-07-10', account: '6422', amount: '10000000', party: supplierA });
+    await spend({ entity: main, date: '2026-07-12', account: '6422', amount: '20000000', party: supplierB });
+    await spend({ entity: main, date: '2026-07-10', account: '6421', amount: '3000000' });
+    await spend({ entity: main, date: '2026-07-15', account: '635', amount: '9000000', description: 'Chi phí mới' });
     await spend({ entity: main, date: '2026-07-20', account: '632', amount: '10000000', description: 'Giá vốn 07' });
     await closing(main, '2026-07-31', '632', '10000000');
     await sale(main, '2026-07-05', '100000000');
@@ -200,8 +201,8 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     const v = await variance({});
     expect(v).toMatchObject({ month: MONTH, legalEntityId: main, regime: 'tt133', chartVersion: '2026.1', previousMonth: '2026-06', averageMonths: ['2026-04', '2026-05', '2026-06'], missing: { previous: false, average: false }, empty: false, moreFlagged: 0 });
     expect(v.thresholds).toEqual({ amount: '5000000', percent: '30' });
-    // 632 fell by 30,000,000, 6421 rose by 20,000,000, 6417 is new at 9,000,000; 6411 is steady and no revenue line is there.
-    expect(v.lines.map((l) => l.code)).toEqual(['632', '6421', '6417']);
+    // 632 fell by 30,000,000, 6422 rose by 20,000,000, 635 is new at 9,000,000; 6421 is steady and no revenue line is there.
+    expect(v.lines.map((l) => l.code)).toEqual(['632', '6422', '635']);
     const [cost, staff, fresh] = v.lines;
     expect(cost).toMatchObject({ amount: '10000000', direction: 'down', against: 'previous', isNew: false });
     expect(cost?.previous).toEqual({ basis: '40000000', change: '-30000000', percent: '75.0', flagged: true });
@@ -216,12 +217,12 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
 
   it('names the supplier or the voucher behind each flagged line, measured against the basis that flagged it', async () => {
     const v = await variance({});
-    const staff = v.lines.find((l) => l.code === '6421');
+    const staff = v.lines.find((l) => l.code === '6422');
     // Supplier A paid the same as before (no change); supplier B is the whole rise.
     expect(staff?.contributors).toHaveLength(1);
     expect(staff?.contributors[0]).toMatchObject({ kind: 'supplier', partyId: supplierB, name: 'Công ty B', partyKind: 'organization', amount: '20000000', basis: '0', change: '20000000', vouchers: 1, entryId: null, description: null });
-    // 6417 has no supplier: the voucher itself, with the member's own description and its kind from the closed list.
-    const fresh = v.lines.find((l) => l.code === '6417');
+    // 635 has no supplier: the voucher itself, with the member's own description and its kind from the closed list.
+    const fresh = v.lines.find((l) => l.code === '635');
     expect(fresh?.contributors).toHaveLength(1);
     expect(fresh?.contributors[0]).toMatchObject({ kind: 'voucher', partyId: null, name: null, entryDate: '2026-07-15', description: 'Chi phí mới', sourceKind: 'other', amount: '9000000', basis: '0', change: '9000000', vouchers: 1 });
     expect(fresh?.contributors[0]?.entryId).toEqual(expect.any(String));
@@ -241,7 +242,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     expect(v.lines[0]?.contributors[0]).toMatchObject({ kind: 'voucher', description: 'Dịch vụ mua ngoài', amount: '14000000' });
     // The main entity's figures are its own: nothing of the branch is in them, and the other way round.
     const m = await variance({ legalEntityId: main });
-    expect(m.lines.map((l) => l.code)).toEqual(['632', '6421', '6417']);
+    expect(m.lines.map((l) => l.code)).toEqual(['632', '6422', '635']);
   });
 
   it('reads an entity with no entry in the four months as empty, with no flagged line', async () => {
@@ -274,7 +275,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
 
   it('is open to a viewer, who reads the same figures', async () => {
     const asViewer = await variance({ legalEntityId: main }, viewer);
-    expect(asViewer.lines.map((l) => l.code)).toEqual(['632', '6421', '6417']);
+    expect(asViewer.lines.map((l) => l.code)).toEqual(['632', '6422', '635']);
   });
 
   it('writes nothing: no entry, no line, no audit row', async () => {

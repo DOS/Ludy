@@ -3,8 +3,8 @@
 // average of the three months before it, and which lines are flagged. Money is decimal strings and decimal.js throughout, never JS numbers. The query (../expense-variance.ts) reads the amounts;
 // nothing here reads or writes.
 // - Expense accounts, both regimes: class 6 and the expense accounts of class 8 (811, 821). Revenue, income and the closing entries are the query's to leave out.
-// - Line level, the key a line is compared under (an org's sub-account extends its parent's code, so it rolls up by prefix): TT133 keeps 4 digits for 64xx (6411 to 6418, 6421 to 6428) and 3 for every
-//   other account; TT99 keeps 3 everywhere (641 and 642 are one line each).
+// - Line level, the key a line is compared under (an org's sub-account extends its parent's code, so it rolls up by prefix): TT133 keeps 4 digits for 64xx (its chart has 6421, selling expenses, and 6422,
+//   administration, under 642) and 3 for every other account; TT99 keeps 3 everywhere (641 and 642 are one line each, whatever their level-2 accounts 6411 to 6418 and 6421 to 6428).
 // - Flagged: the change against the month before, or against the average, is at least the amount AND the percent threshold (exact decimals, never the rounded percent). A basis of 0 has no percent: the
 //   line is flagged on the amount alone and is `new` when it rose. A comparison whose months are not all in the chart of the month is not made at all (no translation between charts).
 import { Decimal, type DecimalValue } from '@ludy/l10n-vn';

@@ -25,8 +25,16 @@ export function expenseVarianceAi(reader: ExpenseVarianceAi['reader'], budget: D
   return { reader, budget, kept: new Map() };
 }
 
-// The lines the coworker is given (the largest changes first, at most EXPENSE_VARIANCE_NOTE_LINES) as facts, and the account code of each row to put an answer back on its line. A voucher is one voucher; a
-// supplier is `single` for one voucher or none in the month (a supplier that only appears in the basis months) and `several` for more.
+// The kind of expense a line is, as the three-digit group the prompt labels. Under TT133 the chart has 6421 (selling expenses) and 6422 (administration), both under 642, so a 6421 line is the SELLING group
+// (641's label), not 642's; under TT99 the line is already 641 or 642. Every other line is its own first three digits.
+export function expenseVarianceGroup(code: string, regime: FinanceExpenseVariance['regime']): string {
+  if (regime === 'tt133' && code === '6421') return '641';
+  if (regime === 'tt133' && code === '6422') return '642';
+  return code.slice(0, 3);
+}
+
+// The lines the coworker is given (the largest changes first, at most EXPENSE_VARIANCE_NOTE_LINES) as facts, and the account code of each row to put an answer back on its line. A voucher counts as one voucher in
+// the month it is in and as none when it is only in the months it is compared with; a supplier is none, single or several by its vouchers of the month.
 export function expenseVarianceFacts(variance: FinanceExpenseVariance, language: 'vi' | 'en'): { facts: ExpenseVarianceNoteFacts; codes: string[] } {
   const lines = variance.lines.slice(0, EXPENSE_VARIANCE_NOTE_LINES);
   return {
@@ -34,7 +42,7 @@ export function expenseVarianceFacts(variance: FinanceExpenseVariance, language:
     facts: {
       language,
       lines: lines.map((l) => ({
-        group: l.code.slice(0, 3),
+        group: expenseVarianceGroup(l.code, variance.regime),
         direction: l.direction,
         against: l.against,
         isNew: l.isNew,
@@ -43,7 +51,7 @@ export function expenseVarianceFacts(variance: FinanceExpenseVariance, language:
           name: c.name,
           partyKind: c.partyKind,
           sourceKind: c.sourceKind,
-          vouchers: c.kind === 'supplier' && c.vouchers > 1 ? ('several' as const) : ('single' as const),
+          vouchers: c.vouchers === 0 ? ('none' as const) : c.vouchers === 1 ? ('single' as const) : ('several' as const),
         })),
       })),
     },

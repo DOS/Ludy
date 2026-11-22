@@ -31,7 +31,7 @@ describe('which accounts are expense lines', () => {
     for (const code of ['511', '5111', '515', '711', '911', '131', '331', '1561', '421', '8']) expect(isExpenseAccount(code), code).toBe(false);
   });
 
-  it('keeps 4 digits for 64xx under TT133 and 3 digits under TT99', () => {
+  it('keeps 4 digits for 64xx under TT133 (6421 selling, 6422 administration) and 3 digits under TT99', () => {
     expect(varianceLineCode('6411', 'tt133')).toBe('6411');
     expect(varianceLineCode('6421', 'tt133')).toBe('6421');
     expect(varianceLineCode('64211', 'tt133')).toBe('6421');
@@ -176,21 +176,31 @@ describe('buildExpenseVariance', () => {
 
   it('on TT99 treats 641 and 642 as one line each', () => {
     const books = [TT99_FROM_2026];
+    // The same postings under both regimes: selling expenses 6421 steady, administration 6422 up (TT133 accounts), and on TT99 the accounts 6417 (a 641 account) and 6421 (a 642 account).
     const rows = [
-      month('2026-08', [['6411', '5000000'], ['6417', '5000000']]),
-      month('2026-09', [['6411', '5000000'], ['6417', '5000000']]),
-      month('2026-10', [['6411', '5000000'], ['6417', '5000000']]),
-      month('2026-11', [['6411', '5000000'], ['6417', '14000000']]),
+      month('2026-08', [['6421', '5000000'], ['6422', '5000000']]),
+      month('2026-09', [['6421', '5000000'], ['6422', '5000000']]),
+      month('2026-10', [['6421', '5000000'], ['6422', '5000000']]),
+      month('2026-11', [['6421', '5000000'], ['6422', '14000000']]),
     ];
+    // TT133: two lines, 6421 steady and 6422 up by 9M against 5M.
+    const tt133 = buildExpenseVariance('2026-11', rows, []);
+    expect(tt133.regime).toBe('tt133');
+    expect(tt133.lines.map((l) => l.code)).toEqual(['6422']);
+    expect(tt133.lines[0]).toMatchObject({ amount: '14000000', direction: 'up' });
+    // TT99: both accounts are 642 (level-2 accounts of the administration line), one line of 19M against 10M.
     const tt99 = buildExpenseVariance('2026-11', rows, books);
     expect(tt99.regime).toBe('tt99');
-    expect(tt99.lines.map((l) => l.code)).toEqual(['641']);
+    expect(tt99.lines.map((l) => l.code)).toEqual(['642']);
     expect(tt99.lines[0]).toMatchObject({ amount: '19000000', direction: 'up' });
     expect(tt99.lines[0]?.previous).toEqual({ basis: '10000000', change: '9000000', percent: '90.0', flagged: true });
-    // The same postings under TT133 are two lines: 6411 steady, 6417 up by 9M against 5M.
-    const tt133 = buildExpenseVariance('2026-11', rows, []);
-    expect(tt133.lines.map((l) => l.code)).toEqual(['6417']);
-    expect(tt133.lines[0]).toMatchObject({ amount: '14000000' });
+    // 641 accounts of TT99 are their own line.
+    const selling = buildExpenseVariance(
+      '2026-11',
+      [month('2026-08', [['6411', '5000000'], ['6417', '5000000']]), month('2026-09', [['6411', '5000000'], ['6417', '5000000']]), month('2026-10', [['6411', '5000000'], ['6417', '5000000']]), month('2026-11', [['6411', '5000000'], ['6417', '14000000']])],
+      books,
+    );
+    expect(selling.lines.map((l) => l.code)).toEqual(['641']);
   });
 
   it('does not compare with months that are in another chart', () => {

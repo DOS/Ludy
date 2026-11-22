@@ -60,6 +60,9 @@ describe('what the model is told', () => {
     expect(text).toContain('a single voucher');
     expect(text).toContain('several vouchers');
     expect(text).toContain('a cost that was not there before');
+    const none = expenseVarianceFactsText({ language: 'en', lines: [{ group: '632', direction: 'down', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', name: 'Beta Supplies', partyKind: 'organization', sourceKind: 'invoice', vouchers: 'none' }] }] });
+    expect(none).toContain('no voucher this month');
+    expect(none).not.toContain('a single voucher');
   });
 
   it('refuses a name with a digit, a symbol that could carry an instruction, another script or too long', () => {
@@ -85,28 +88,30 @@ describe('what the model is told', () => {
 });
 
 describe('a note that stands', () => {
-  it('is one hedged sentence from the facts of its row, in English and in Vietnamese', () => {
-    expect(verdict(1, 'A single invoice from Acme Logistics Co may explain why this cost went up.')).toEqual([{ row: 1, text: 'A single invoice from Acme Logistics Co may explain why this cost went up.' }]);
-    expect(stands(2, 'Fewer purchases from Beta Supplies might explain the drop.')).toBe(true);
-    expect(stands(3, 'An extra purchase from a supplier could possibly explain the new cost.')).toBe(true);
+  it('is one hedged sentence that opens with the hedge, from the facts of its row, in English and in Vietnamese', () => {
+    expect(verdict(1, 'Possibly a single invoice from Acme Logistics Co explains why this cost went up.')).toEqual([{ row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains why this cost went up.' }]);
+    expect(stands(2, 'Perhaps fewer purchases from Beta Supplies explain the drop.')).toBe(true);
+    expect(stands(3, 'Maybe an extra purchase from a supplier explains the new cost.')).toBe(true);
+    expect(stands(1, 'May be a larger invoice from Acme Logistics Co.')).toBe(true);
     const vi = facts('vi');
-    expect(stands(1, 'Một hóa đơn từ Acme Logistics Co có thể giải thích vì sao khoản này tăng.', vi)).toBe(true);
+    expect(stands(1, 'Có thể một hóa đơn từ Acme Logistics Co giải thích vì sao khoản này tăng.', vi)).toBe(true);
     expect(stands(2, 'Có lẽ lượng hàng mua từ Beta Supplies ít hơn, khoản này giảm.', vi)).toBe(true);
+    expect(stands(1, 'Nhiều khả năng có thêm một hóa đơn từ Acme Logistics Co.', vi)).toBe(true);
   });
 
   it('keeps each note on its own and drops only the ones that fail', () => {
     const r = checkExpenseVarianceNotes(facts(), {
       notes: [
-        { row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' },
+        { row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' },
         { row: 2, text: 'This is clearly because of fewer purchases.' },
-        { row: 3, text: 'An extra purchase from a supplier might explain it.' },
+        { row: 3, text: 'Possibly an extra purchase from a supplier explains it.' },
       ],
     });
     expect(r).toEqual({
       kind: 'notes',
       notes: [
-        { row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' },
-        { row: 3, text: 'An extra purchase from a supplier might explain it.' },
+        { row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' },
+        { row: 3, text: 'Possibly an extra purchase from a supplier explains it.' },
       ],
     });
   });
@@ -115,106 +120,158 @@ describe('a note that stands', () => {
 describe('a note that is refused', () => {
   const refused = (text: string, row = 1, f = facts()) => expect(stands(row, text, f), text).toBe(false);
 
-  it('refuses ANY digit, a number in words and a scaled number', () => {
-    refused('An invoice from Acme Logistics Co may explain the 30 percent rise.');
-    refused('An invoice from Acme Logistics Co may explain it, 2 vouchers.');
-    refused('An invoice from Acme Logistics Co may explain it, in 1 voucher.');
-    refused('An invoice from Acme Logistics Co may explain a rise of about 5m.');
-    refused('Two invoices from Acme Logistics Co may explain it.');
-    refused('Three vouchers may explain it.');
-    refused('Hai hóa đơn từ Acme Logistics Co có thể giải thích điều này.', 1, facts('vi'));
+  it('refuses ANY digit, a number in words, a size and a scaled number', () => {
+    refused('Possibly an invoice from Acme Logistics Co explains the 30 percent rise.');
+    refused('Possibly 2 vouchers explain it.');
+    refused('Possibly an invoice from Acme Logistics Co explains a rise of about 5m.');
+    refused('Possibly two invoices from Acme Logistics Co explain it.');
+    refused('Possibly three vouchers explain it.');
+    refused('Có thể hai hóa đơn từ Acme Logistics Co giải thích điều này.', 1, facts('vi'));
     refused('Có thể do hai chứng từ.', 1, facts('vi'));
-    refused('A voucher worth fifty million may explain it.');
-    refused('An invoice may explain it ① .');
-    refused('An invoice may explain it ½ more.');
-    refused('An invoice from Acme Logistics Co may explain it​.');
+    refused('Possibly a voucher worth fifty million explains it.');
+    refused('Possibly an invoice explains it ① .');
+    refused('Possibly an invoice explains it ½ more.');
+    refused('Possibly an invoice from Acme Logistics Co explains it​.');
+    // Sizes the digit check cannot see: plurals, "twice", Vietnamese scale words.
+    refused('Có thể chi phí bán hàng tăng thêm hàng chục triệu đồng từ hóa đơn của Acme Logistics Co.', 1, facts('vi'));
+    refused('Possibly selling expenses are up by millions of dong.');
+    refused('Possibly hundreds of dong more explain it.');
+    refused('Possibly thousands explain it.');
+    refused('Possibly dozens of invoices explain it.');
+    refused('Possibly the cost doubled with an extra invoice.');
+    refused('Possibly the cost went up twice as much.');
+    refused('Có thể khoản này gấp đôi vì hóa đơn mới.', 1, facts('vi'));
+    refused('Có thể hóa đơn nhân đôi khoản này.', 1, facts('vi'));
+    refused('Possibly half of it is one invoice.');
   });
 
-  it('refuses a date, a month, a weekday, a quarter and a year', () => {
-    refused('An invoice from Acme Logistics Co may explain it in November.');
-    refused('An invoice from Acme Logistics Co may explain it on Monday.');
-    refused('A quarter end invoice from Acme Logistics Co may explain it.');
-    refused('Last year an invoice from Acme Logistics Co may have explained it.');
+  it('refuses a date, a month, a weekday, a week, a quarter and a year', () => {
+    refused('Possibly an invoice from Acme Logistics Co explains it in November.');
+    refused('Possibly an invoice from Acme Logistics Co explains it on Monday.');
+    refused('Possibly a quarter end invoice from Acme Logistics Co explains it.');
+    refused('Possibly last year an invoice from Acme Logistics Co explains it.');
+    refused('Possibly an invoice came last week.');
+    refused('Possibly an invoice came today.');
     refused('Có thể do hóa đơn từ Acme Logistics Co hồi tháng ba.', 1, facts('vi'));
     refused('Có thể do hóa đơn từ Acme Logistics Co năm ngoái.', 1, facts('vi'));
+    refused('Có thể giảm vì ít hóa đơn hơn so với quý hai.', 2, facts('vi'));
+    refused('Có thể giảm vì tuần trước ít hóa đơn hơn.', 2, facts('vi'));
+    refused('Có thể do hóa đơn hôm qua.', 1, facts('vi'));
     // "last month" and "the months before" are not dates.
-    expect(stands(1, 'An invoice from Acme Logistics Co may explain it, more than last month.')).toBe(true);
+    expect(stands(1, 'Possibly an invoice from Acme Logistics Co explains it, more than last month.')).toBe(true);
   });
 
-  it('refuses a name it was not given', () => {
-    refused('An invoice from Gamma Trading may explain it.');
-    refused('An invoice from Acme may explain it.');
-    refused('A payment to Shopee may explain it.');
-    refused('An invoice from Beta Supplies may explain it.');
-    refused('An invoice from beta supplies may explain it.');
-    refused('An invoice from Nguyen Van A may explain it.', 3);
-    refused('A larger Invoice may explain it.');
-    refused('Hóa đơn từ Công ty Sao Mai có thể giải thích.', 1, facts('vi'));
+  it('refuses a name it was not given, in the first place of the sentence and anywhere else', () => {
+    refused('Possibly an invoice from Gamma Trading explains it.');
+    refused('Possibly an invoice from Acme explains it.');
+    refused('Possibly a payment to Shopee explains it.');
+    refused('Possibly an invoice from Beta Supplies explains it.');
+    refused('Possibly an invoice from beta supplies explains it.');
+    refused('Possibly an invoice from Nguyen Van A explains it.', 3);
+    refused('Possibly a larger Invoice explains it.');
+    refused('Có thể hóa đơn từ Công ty Sao Mai giải thích.', 1, facts('vi'));
+    // The first word is the hedge, so a name cannot open the sentence.
+    refused('Viettel may charge more on these invoices.');
+    refused('Shopee might be charging higher fees on these invoices.');
+    refused('Acme Logistics Co may explain it.');
     // A nameless supplier is "a supplier", not a name.
-    expect(stands(3, 'A larger purchase from a supplier might explain it.')).toBe(true);
+    expect(stands(3, 'Possibly a larger purchase from a supplier explains it.')).toBe(true);
   });
 
-  it('refuses certainty, cause words, done-claims, promises, advice and the future', () => {
-    refused('This is certainly an invoice from Acme Logistics Co.');
-    refused('It was clearly a single invoice, which may help.');
-    refused('The rise is caused by an invoice from Acme Logistics Co, which may repeat.');
-    refused('The rise is due to a single invoice and may repeat.');
-    refused('The reason is a single invoice, which may repeat.');
-    refused('Chắc chắn là do hóa đơn từ Acme Logistics Co, có thể lặp lại.', 1, facts('vi'));
-    refused('Nguyên nhân là hóa đơn từ Acme Logistics Co, có thể lặp lại.', 1, facts('vi'));
-    refused('An invoice from Acme Logistics Co was posted and may explain it.');
-    refused('An invoice from Acme Logistics Co has been paid and may explain it.');
-    refused('Hóa đơn từ Acme Logistics Co đã ghi sổ nên có thể giải thích điều này.', 1, facts('vi'));
-    refused('An invoice from Acme Logistics Co will probably explain it, it may.');
-    refused('You should check the invoice from Acme Logistics Co, it may explain it.');
-    refused('Hãy kiểm tra hóa đơn từ Acme Logistics Co, có thể giải thích điều này.', 1, facts('vi'));
-    refused('Please review it; an invoice may explain it.');
+  it('does not let a very short supplier name hide the rest of a word', () => {
+    expect(givenSupplierName('V', 'organization')).toBeNull();
+    expect(givenSupplierName('AB', 'organization')).toBeNull();
+    expect(givenSupplierName('ABC', 'organization')).toBe('ABC');
+    const short = facts();
+    const withV: ExpenseVarianceNoteFacts = { ...short, lines: [{ ...(short.lines[0] as ExpenseVarianceNoteFacts['lines'][number]), contributors: [{ kind: 'supplier', name: 'Vi', partyKind: 'organization', sourceKind: 'invoice', vouchers: 'single' }] }] };
+    refused('Possibly more invoices from Vietcombank.', 1, withV);
+    // A name given in full is stripped as a whole word only.
+    const named: ExpenseVarianceNoteFacts = { ...short, lines: [{ ...(short.lines[0] as ExpenseVarianceNoteFacts['lines'][number]), contributors: [{ kind: 'supplier', name: 'Acme', partyKind: 'organization', sourceKind: 'invoice', vouchers: 'single' }] }] };
+    refused('Possibly more invoices from Acmefoods.', 1, named);
+    expect(stands(1, 'Possibly more invoices from Acme explain it.', named)).toBe(true);
   });
 
-  it('refuses a text that is not marked as a possibility', () => {
+  it('refuses certainty and cause words, also behind a hedge, and done-claims, promises, advice and the future', () => {
+    refused('Possibly this is certainly an invoice from Acme Logistics Co.');
+    refused('Possibly it was clearly a single invoice.');
+    refused('Possibly the rise is caused by an invoice from Acme Logistics Co.');
+    refused('Possibly the rise is due to a single invoice.');
+    refused('Possibly the reason is a single invoice.');
+    refused('Possibly, but in fact this rise is the result of the extra invoices from Acme Logistics Co.');
+    refused('Possibly the rise stems from the extra invoices.');
+    refused('Possibly the rise is attributable to the extra invoices.');
+    refused('Possibly it could only be the extra invoices.');
+    refused('Có thể chắc chắn là do hóa đơn từ Acme Logistics Co.', 1, facts('vi'));
+    refused('Có thể tăng, hẳn là vì hóa đơn mới.', 1, facts('vi'));
+    refused('Có thể tăng, chắc hẳn do hóa đơn mới.', 1, facts('vi'));
+    refused('Có thể nguyên nhân là hóa đơn từ Acme Logistics Co.', 1, facts('vi'));
+    refused('Possibly an invoice from Acme Logistics Co was posted.');
+    refused('Possibly an invoice from Acme Logistics Co has been paid.');
+    refused('Có thể hóa đơn từ Acme Logistics Co đã ghi sổ.', 1, facts('vi'));
+    refused('Possibly Acme Logistics Co billed an extra invoice.');
+    refused('Possibly an extra invoice was charged.');
+    refused('Possibly an invoice from Acme Logistics Co will explain it.');
+    refused('Possibly you should check the invoice from Acme Logistics Co.');
+    refused('Có thể hãy kiểm tra hóa đơn từ Acme Logistics Co.', 1, facts('vi'));
+    refused('Possibly a larger invoice from Acme Logistics Co; consider contacting them.');
+    refused('Possibly a larger invoice, worth a look into the supplier.');
+    refused('Possibly a larger invoice, please verify.');
+    refused('Có thể do hóa đơn lớn hơn của Acme Logistics Co, bạn thử liên hệ họ.', 1, facts('vi'));
+    refused('Có thể do hóa đơn lớn hơn, nên xác minh với nhà cung cấp.', 1, facts('vi'));
+  });
+
+  it('refuses a text that is not marked as a possibility, or that does not open with the hedge', () => {
     refused('A single invoice from Acme Logistics Co raised this cost.');
+    refused('A single invoice from Acme Logistics Co may explain it.');
     refused('Một hóa đơn từ Acme Logistics Co làm khoản này tăng.', 1, facts('vi'));
+    refused('Một hóa đơn từ Acme Logistics Co có thể giải thích.', 1, facts('vi'));
   });
 
-  it('refuses a direction that contradicts the row', () => {
-    refused('A single invoice from Acme Logistics Co may explain why this cost fell.');
-    refused('A single invoice from Acme Logistics Co may explain a lower cost.');
-    refused('Fewer purchases from Beta Supplies may explain why the cost rose.', 2);
-    refused('Lower purchases might explain why the cost went up.', 2);
+  it('refuses a direction that contradicts the row, in either language', () => {
+    refused('Possibly a single invoice from Acme Logistics Co explains why this cost fell.');
+    refused('Possibly a single invoice from Acme Logistics Co explains a lower cost.');
+    refused('Possibly the cost shrunk.');
+    refused('Possibly fewer invoices explain it.');
+    refused('Có thể do ít đơn mua hơn.', 1, facts('vi'));
+    refused('Possibly fewer purchases from Beta Supplies explain why the cost rose.', 2);
+    refused('Possibly lower purchases explain why the cost went up.', 2);
+    refused('Possibly a larger invoice explains it.', 2);
+    refused('Có thể do phát sinh thêm hóa đơn.', 2, facts('vi'));
+    refused('Có thể do bớt hóa đơn.', 1, facts('vi'));
     // A discount is not a fall of the cost.
-    expect(stands(1, 'A supplier discount with an invoice from Acme Logistics Co may explain it.')).toBe(true);
+    expect(stands(1, 'Possibly a supplier discount with an invoice from Acme Logistics Co explains it.')).toBe(true);
   });
 
   it('refuses links, markup, emoji, another script, an empty text and more than one sentence', () => {
-    refused('An invoice from Acme Logistics Co may explain it, see example.com.');
-    refused('An invoice from Acme Logistics Co may explain it, write to a@b.vn.');
-    refused('An **invoice** from Acme Logistics Co may explain it.');
-    refused('An invoice from Acme Logistics Co may explain it 🙂.');
-    refused('An invoice from Acme Logistics Co may exрlain it.');
+    refused('Possibly an invoice from Acme Logistics Co explains it, see example.com.');
+    refused('Possibly an invoice from Acme Logistics Co explains it, write to a@b.vn.');
+    refused('Possibly an **invoice** from Acme Logistics Co explains it.');
+    refused('Possibly an invoice from Acme Logistics Co explains it 🙂.');
+    refused('Possibly an invoice from Acme Logistics Co exрlains it.');
     refused('');
     refused('   ');
-    refused('An invoice from Acme Logistics Co may explain it. A second sentence may too.');
-    refused(`An invoice from Acme Logistics Co may explain it${' and so on'.repeat(30)}.`);
+    refused('Possibly an invoice from Acme Logistics Co explains it. A second sentence may too.');
+    refused(`Possibly an invoice from Acme Logistics Co explains it${' and so on'.repeat(30)}.`);
   });
 
   it('drops a row that is not given or is given twice, and says why when nothing stands', () => {
-    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 9, text: 'An invoice may explain it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
-    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 0, text: 'An invoice may explain it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
-    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 1.5, text: 'An invoice may explain it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
+    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 9, text: 'Possibly an invoice explains it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
+    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 0, text: 'Possibly an invoice explains it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
+    expect(checkExpenseVarianceNotes(facts(), { notes: [{ row: 1.5, text: 'Possibly an invoice explains it.' }] })).toEqual({ kind: 'none', code: 'REFUSED' });
     const twice = checkExpenseVarianceNotes(facts(), {
       notes: [
-        { row: 3, text: 'An extra purchase might explain it.' },
-        { row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' },
-        { row: 3, text: 'A larger purchase might explain it.' },
+        { row: 3, text: 'Possibly an extra purchase explains it.' },
+        { row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' },
+        { row: 3, text: 'Possibly a larger purchase explains it.' },
       ],
     });
-    expect(twice).toEqual({ kind: 'notes', notes: [{ row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' }] });
+    expect(twice).toEqual({ kind: 'notes', notes: [{ row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' }] });
     expect(checkExpenseVarianceNotes(facts(), null)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkExpenseVarianceNotes(facts(), { notes: [] })).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 
   it('never lets a text with a digit through, whatever else it holds (property over many shapes)', () => {
-    const bases = ['A single invoice from Acme Logistics Co may explain it', 'Several vouchers might explain it', 'An extra purchase could possibly explain the cost'];
+    const bases = ['Possibly a single invoice from Acme Logistics Co explains it', 'Maybe several vouchers explain it', 'Perhaps an extra purchase explains the cost'];
     const digits = ['0', '1', '7', '٣', '²', '１'];
     for (const base of bases) {
       for (const d of digits) {
@@ -233,9 +290,9 @@ describe('ExpenseVarianceCoworker', () => {
     let asked = 0;
     const coworker = new ExpenseVarianceCoworker(config, async ({ system, prompt }) => {
       asked += 1;
-      expect(system).toContain('NO number');
+      expect(system).toContain('Write NO number');
       expect(prompt).not.toMatch(/[0-9]{2}/);
-      return { output: { notes: [{ row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' }, { row: 2, text: 'It fell by 40 percent.' }] }, usage: { inputTokens: 3, outputTokens: 4 } };
+      return { output: { notes: [{ row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' }, { row: 2, text: 'It fell by 40 percent.' }] }, usage: { inputTokens: 3, outputTokens: 4 } };
     });
     expect(await coworker.notes({ language: 'en', lines: [] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(asked).toBe(0);
@@ -243,7 +300,7 @@ describe('ExpenseVarianceCoworker', () => {
     const result = await coworker.notes(facts(), (u) => used.push(u.inputTokens + u.outputTokens));
     expect(asked).toBe(1);
     expect(used).toEqual([7]);
-    expect(result).toEqual({ kind: 'notes', notes: [{ row: 1, text: 'A single invoice from Acme Logistics Co may explain it.' }] });
+    expect(result).toEqual({ kind: 'notes', notes: [{ row: 1, text: 'Possibly a single invoice from Acme Logistics Co explains it.' }] });
   });
 
   it('says why when the model gave nothing', async () => {
